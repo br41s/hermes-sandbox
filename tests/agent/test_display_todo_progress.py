@@ -5,6 +5,9 @@ todo tool call paths: read, create (merge=False), update (merge=True).
 """
 
 import json
+
+import pytest
+
 from agent.display import get_cute_tool_message
 
 
@@ -236,6 +239,17 @@ class TestTodoSkinIntegration:
     """Verify the skin prefix is applied to todo messages too.
     This uses the same pattern as test_skin_engine test_tool_message_uses_skin_prefix.
     """
+
+    @pytest.fixture(autouse=True)
+    def reset_skin_state(self):
+        """Same reset as test_skin_engine — earlier tests may leave a
+        non-default skin cached in the module global."""
+        from hermes_cli import skin_engine
+        skin_engine._active_skin = None
+        skin_engine._active_skin_name = "default"
+        yield
+        skin_engine._active_skin = None
+        skin_engine._active_skin_name = "default"
 
     def test_default_skin_prefix(self):
         msg = get_cute_tool_message("todo", {}, 0.5)

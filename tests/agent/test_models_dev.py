@@ -1,6 +1,9 @@
 """Tests for agent.models_dev — models.dev registry integration."""
 from unittest.mock import patch, MagicMock
 
+import pytest
+
+import agent.models_dev
 from agent.models_dev import (
     PROVIDER_TO_MODELS_DEV,
     _extract_context,
@@ -8,6 +11,18 @@ from agent.models_dev import (
     get_model_capabilities,
     lookup_models_dev_context,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_models_dev_cache():
+    """Tests below assign the module-level in-memory cache directly; restore
+    it afterwards so SAMPLE_REGISTRY never leaks into later test files
+    (poisoned capability lookups broke e.g. test_vision_routing_31179)."""
+    saved_cache = agent.models_dev._models_dev_cache
+    saved_time = agent.models_dev._models_dev_cache_time
+    yield
+    agent.models_dev._models_dev_cache = saved_cache
+    agent.models_dev._models_dev_cache_time = saved_time
 
 
 SAMPLE_REGISTRY = {

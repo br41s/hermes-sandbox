@@ -1,5 +1,11 @@
 from unittest.mock import patch
 
+import pytest
+
+# This file tests dep_ensure itself, including the real
+# _find_install_script resolution the conftest lazy-installer guard stubs.
+pytestmark = pytest.mark.dep_install_guard_bypass
+
 
 def test_ensure_dependency_skips_when_present():
     """ensure_dependency is a no-op when the dep is already available."""

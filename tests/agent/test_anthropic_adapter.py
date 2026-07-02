@@ -488,6 +488,17 @@ class TestResolveWithRefresh:
 
 
 class TestRunOauthSetupToken:
+    @pytest.fixture(autouse=True)
+    def no_keychain(self, monkeypatch):
+        # On Darwin read_claude_code_credentials() consults the macOS Keychain
+        # first; with subprocess.run mocked the keychain query "succeeds" with
+        # MagicMock data and json.loads raises TypeError. Same guard as
+        # TestReadClaudeCodeCredentials.
+        monkeypatch.setattr(
+            "agent.anthropic_adapter._read_claude_code_credentials_from_keychain",
+            lambda: None,
+        )
+
     def test_raises_when_claude_not_installed(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda _: None)
         with pytest.raises(FileNotFoundError, match="claude.*CLI.*not installed"):

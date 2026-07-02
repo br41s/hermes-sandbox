@@ -51,6 +51,27 @@ def isolated_home(monkeypatch):
         if k.endswith("_API_KEY") or k.endswith("_TOKEN"):
             monkeypatch.delenv(k, raising=False)
 
+    # Capability lookups must not hit the live models.dev registry (fresh
+    # HERMES_HOME means no disk cache, so an unmocked call goes to the
+    # network). Pin a minimal fresh in-memory cache carrying the one fact
+    # these scenarios rely on: deepseek models are text-only.
+    import time as _time
+    import agent.models_dev as _md
+    monkeypatch.setattr(_md, "_models_dev_cache", {
+        "deepseek": {
+            "id": "deepseek",
+            "models": {
+                "deepseek-v4-pro": {
+                    "id": "deepseek-v4-pro",
+                    "attachment": False,
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "limit": {"context": 128000, "output": 8192},
+                },
+            },
+        },
+    })
+    monkeypatch.setattr(_md, "_models_dev_cache_time", _time.time())
+
     yield hermes_home
     shutil.rmtree(test_home, ignore_errors=True)
 

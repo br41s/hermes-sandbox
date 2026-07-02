@@ -330,8 +330,9 @@ class TestSkillsShSource:
         ]
         assert all(r.source == "skills.sh" for r in results)
 
+    @patch.object(SkillsShSource, "_fetch_detail_page", return_value=None)
     @patch.object(GitHubSource, "fetch")
-    def test_fetch_delegates_to_github_source_and_relabels_bundle(self, mock_fetch):
+    def test_fetch_delegates_to_github_source_and_relabels_bundle(self, mock_fetch, _mock_detail):
         mock_fetch.return_value = SkillBundle(
             name="vercel-react-best-practices",
             files={"SKILL.md": "# Test"},
@@ -347,8 +348,9 @@ class TestSkillsShSource:
         assert bundle.identifier == "skills-sh/vercel-labs/agent-skills/vercel-react-best-practices"
         mock_fetch.assert_called_once_with("vercel-labs/agent-skills/vercel-react-best-practices")
 
+    @patch.object(SkillsShSource, "_fetch_detail_page", return_value=None)
     @patch.object(GitHubSource, "fetch")
-    def test_fetch_accepts_common_skills_sh_prefix_typo(self, mock_fetch):
+    def test_fetch_accepts_common_skills_sh_prefix_typo(self, mock_fetch, _mock_detail):
         expected_identifier = "anthropics/skills/frontend-design"
         mock_fetch.side_effect = lambda identifier: SkillBundle(
             name="frontend-design",
@@ -399,8 +401,9 @@ class TestSkillsShSource:
         assert meta.extra["security_audits"]["socket"] == "Pass"
         mock_inspect.assert_called_once_with("vercel-labs/agent-skills/vercel-react-best-practices")
 
+    @patch.object(SkillsShSource, "_fetch_detail_page", return_value=None)
     @patch.object(GitHubSource, "inspect")
-    def test_inspect_accepts_common_skills_sh_prefix_typo(self, mock_inspect):
+    def test_inspect_accepts_common_skills_sh_prefix_typo(self, mock_inspect, _mock_detail):
         expected_identifier = "anthropics/skills/frontend-design"
         mock_inspect.side_effect = lambda identifier: SkillMeta(
             name="frontend-design",
@@ -419,9 +422,10 @@ class TestSkillsShSource:
         assert meta.identifier == "skills-sh/anthropics/skills/frontend-design"
         assert mock_inspect.call_args_list[0] == ((expected_identifier,), {})
 
+    @patch.object(SkillsShSource, "_fetch_detail_page", return_value=None)
     @patch.object(GitHubSource, "_list_skills_in_repo")
     @patch.object(GitHubSource, "inspect")
-    def test_inspect_falls_back_to_repo_skill_catalog_when_slug_differs(self, mock_inspect, mock_list_skills):
+    def test_inspect_falls_back_to_repo_skill_catalog_when_slug_differs(self, mock_inspect, mock_list_skills, _mock_detail):
         resolved = SkillMeta(
             name="vercel-react-best-practices",
             description="React rules",
