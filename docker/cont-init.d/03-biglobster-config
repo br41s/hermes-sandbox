@@ -373,6 +373,24 @@ def _reconcile_config(config_path, label):
                 else:
                     cfg["model"] = {"default": eff_model, "provider": "openrouter", "base_url": ""}
                 changed = True
+        # AUDITOR: pin OpenRouter provider routing to DeepSeek's own endpoint.
+        # The orchestrator cached erratically (56% hit) DESPITE stable
+        # session_id — OpenRouter session-stickiness is best-effort, so the
+        # deepseek-v4-flash orchestrator needs explicit provider pinning for
+        # a warm prompt cache (input tokens are 99% of its cost; see
+        # tasks/token-optimization.md). Safe: allow_fallbacks stays on (a
+        # DeepSeek outage degrades instead of breaking), and the "deepseek"
+        # slug is a no-op for non-deepseek models. Auditor profile ONLY —
+        # pinning the main profile is deliberately deferred until the
+        # deepseek-v4-pro migration (CEO decision, token-optimization.md).
+        if label == "auditor":
+            pr = cfg.get("provider_routing")
+            if not isinstance(pr, dict):
+                pr = {}
+                cfg["provider_routing"] = pr
+            if pr.get("order") != ["deepseek"]:
+                pr["order"] = ["deepseek"]
+                changed = True
         # Enable the Langfuse observability plugin when its keys are present.
         # The recorder is OPT-IN via plugins.enabled — the env keys alone do
         # NOT activate it (the #1 source of "I set the keys but see no traces").

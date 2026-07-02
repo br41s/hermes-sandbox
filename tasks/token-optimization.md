@@ -72,12 +72,17 @@ Code audit shows the prefix-stability lever is already implemented and correct:
       DeepSeek outage degrades instead of breaking the gate). Tests added in
       `tests/auditor/test_llm.py`; behavior verified. Backwards-compatible.
 
-- [ ] **ORCHESTRATOR (bigger auditor spender) — CONFIG, not code:** the auditor
+- [x] **ORCHESTRATOR (bigger auditor spender) — CONFIG, not code:** the auditor
       orchestrator is a `run_agent.py` cron agent on deepseek-v4-flash. It
       cached erratically (56%) DESPITE the openrouter profile emitting
       session_id → proves OpenRouter session-stickiness is best-effort and
       DeepSeek needs explicit provider pinning. Set its OpenRouter
       `provider.order=["deepseek"]` via cron/env config (`providers_order`).
+      **DONE 2026-07-02:** `03-biglobster-config` reconciles
+      `provider_routing.order: ["deepseek"]` into the auditor profile
+      config.yaml at boot (auditor ONLY — main-profile pinning stays deferred
+      per the migration guidance below). Takes effect on next deploy; re-pull
+      Langfuse cache-hit% after.
 
 ### MIGRATION GUIDANCE (deepseek-v4-pro as main) — SHARPENED
 session_id stickiness alone is NOT a guarantee for DeepSeek (orchestrator
