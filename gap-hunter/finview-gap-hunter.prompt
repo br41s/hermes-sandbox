@@ -133,8 +133,9 @@ git add frontend/src/app/blog/SLUG/page.mdx frontend/src/app/blog/SLUG/layout.ts
 git diff --cached --name-only
 git commit -m "blog(articles): nuevo artículo sobre [tema]"
 git push origin blog/SLUG-YYYYMMDD
-Crea PR via API de GitHub: POST /repos/braisntext/FinView/pulls con base: "main", head: "blog/SLUG-YYYYMMDD"
-Si el PAT falla: reporta URL manual https://github.com/braisntext/FinView/pull/new/blog/SLUG-YYYYMMDD
+La autenticación de git ya está configurada (credential helper con $GITHUB_TOKEN). NO incluyas tokens en comandos ni en archivos.
+Crea el PR con: gh pr create --base main --head blog/SLUG-YYYYMMDD --title "…" --body "…" (gh ya está autenticado). No uses curl ni la API cruda.
+Si gh falla: reporta URL manual https://github.com/braisntext/FinView/pull/new/blog/SLUG-YYYYMMDD
 
 OUTPUT
 Si creaste artículo:
@@ -155,9 +156,3 @@ Si creaste artículo:
 **PR:** [link al PR]
 
 Si no hay gap: [SILENT]
-
-CRÍTICO — PAT de GitHub
-NO embedas el PAT directamente en el prompt. Si necesitas hacer git push o crear PR:
-* El token está en /opt/data/.gh_pat — léelo con read_file cuando lo necesites
-* Usa terminal con git push configurando el token desde el archivo
-* Si el push funciona pero el API de GitHub falla, reporta la branch y la URL para PR manual
