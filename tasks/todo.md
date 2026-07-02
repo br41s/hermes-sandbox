@@ -1,5 +1,8 @@
 # Per-run isolated checkouts for cron agents
 
+> **STATUS: SHIPPED & VERIFIED LIVE 2026-06-28** (PR #94 core, #95 hardening,
+> trace c4538230…). All tasks below done; kept for design record.
+
 ## Problem
 Cron agents (biglobster SEO, gap-hunter) share ONE physical git working tree
 `/opt/data/biglobster` as their `workdir`. Uncommitted edits from agent A survive
@@ -21,18 +24,18 @@ shared tree, so cross-agent clobbering is impossible. A fresh clone always start
 from clean committed `origin/main`, so prior-run leftovers vanish too.
 
 ## Tasks
-- [ ] `cron/scheduler.py`: add `tempfile` import.
-- [ ] `cron/scheduler.py`: `_is_git_worktree(path)` helper.
-- [ ] `cron/scheduler.py`: `_provision_isolated_checkout(job, workdir) -> (eff, cleanup)`
+- [x] `cron/scheduler.py`: add `tempfile` import.
+- [x] `cron/scheduler.py`: `_is_git_worktree(path)` helper.
+- [x] `cron/scheduler.py`: `_provision_isolated_checkout(job, workdir) -> (eff, cleanup)`
       kill-switch `HERMES_CRON_ISOLATE_WORKDIR=0/false/no`; non-git/missing -> passthrough;
       else mkdtemp under `HERMES_CRON_CHECKOUT_DIR` or tempdir, `git clone --local`,
       set origin to source's origin URL, copy `user.*`+`credential.*` local config.
       Clone failure -> **fail-closed** (abort run; never run a write-agent on shared tree).
-- [ ] Wire into AGENT run path (~scheduler.py:1548); clean up in existing `finally` (~1910).
-- [ ] `_sweep_stale_checkouts(base, max_age_h=6)` once per `tick()` — reap crashed-run dirs.
-- [ ] `onsite-seo/seo-agent.prompt`: stop hardcoding `/opt/data/biglobster`; use run workdir.
+- [x] Wire into AGENT run path (~scheduler.py:1548); clean up in existing `finally` (~1910).
+- [x] `_sweep_stale_checkouts(base, max_age_h=6)` once per `tick()` — reap crashed-run dirs.
+- [x] `onsite-seo/seo-agent.prompt`: stop hardcoding `/opt/data/biglobster`; use run workdir.
       Simplify PASO 0 (fresh clone => no leftovers). Keep per-URL atomic commit+push.
-- [ ] `tests/test_cron_isolated_checkout.py`: detection, provisioning, isolation from a
+- [x] `tests/test_cron_isolated_checkout.py`: detection, provisioning, isolation from a
       DIRTY source (the incident), origin/identity copy, cleanup, kill-switch, passthrough.
 
 ## Out of scope / follow-up
@@ -96,18 +99,22 @@ CODE DONE (this branch), needs deploy + runtime steps:
 - [x] `03-biglobster-config §1c` — stamp those two model vars into auditor `.env` so the
       cron agent inherits them (Zeabur env → .env). Auditor-only, not in shared inject.
 - [x] `auditor.prompt` + SOUL — use `auditor/llm.py --tier <tier>` for the review.
-- [ ] RUNTIME (on container, post-deploy): `hermes profile create auditor`; confirm
+- [x] RUNTIME (on container, post-deploy): `hermes profile create auditor`; confirm
       `HERMES_AUDITOR_GITHUB_TOKEN` reachable by cont-init; `hermes cron create` agent job
       (profile=auditor, workdir=.../workspace/hermes-sandbox, ~*/10min, prompt=auditor.prompt).
-- [ ] DEPLOY GATE: commit + push + deploy (Cloud Build→ghcr→Zeabur) — needs Brais's OK.
-- [ ] Adopt branch+PR workflow: Claude Code (me) + Telegram Hermes prompt.
+      ✓ LIVE 2026-06-26.
+- [x] DEPLOY GATE: commit + push + deploy (Cloud Build→ghcr→Zeabur) — deployed 2026-06-26.
+- [x] Adopt branch+PR workflow: Claude Code (me) + Telegram Hermes prompt.
 
-### Phase 3 — grant merge + enforce
-- [ ] Flip merge authority on after clean dry-runs (gh pr merge on approve).
-- [ ] git-guard `pre-push` layer: block agent identities pushing directly to `main`
-      (makes the gate enforced, not just conventional).
+### Phase 3 — grant merge + enforce  ✅ LIVE 2026-06-26 (account-wide, all repos)
+- [x] Flip merge authority on after clean dry-runs — content tier auto-merges;
+      system tier stays advisory BY DESIGN (APPROVE comment, CEO merges).
+- [x] git-guard `pre-push` layer: block agent identities pushing directly to `main`
+      — deployed with the merge-time mass-deletion safety net.
 
-### Phase 4 (later) — extend to profile repos + dead-cron handling
+### Phase 4 (later) — extend to profile repos + dead-cron handling — STILL OPEN
+NOTE 2026-07-02: the auditor already polls account-wide (all repos), but the
+per-repo risk-tier profiles and dead-cron handling below remain unbuilt.
 TOPOLOGY: each profile owns its OWN GitHub repo, not a path in hermes-sandbox.
 Repo set = union of `docker/profiles/<name>/repos.txt` + `hermes-sandbox`:
 biglobster, grow-shop-api, grow-shop-landing, FinView, SocialAgenda (+ engine).
@@ -120,9 +127,10 @@ biglobster, grow-shop-api, grow-shop-landing, FinView, SocialAgenda (+ engine).
       escalate to human (live agents already converse via PR comments).
 - [ ] PAT scope: `hermes-auditor` needs write on every gated repo (see Blocked).
 
-## Blocked on Brais
-- Create GitHub bot account `hermes-auditor` + fine-grained PAT (repo write on the
-  hermes repo). Everything else builds against a placeholder `HERMES_AUDITOR_GITHUB_TOKEN`.
+## Blocked on Brais — RESOLVED 2026-06-24
+- ~~Create GitHub bot account `hermes-auditor` + fine-grained PAT~~ — done; bot is
+  a Write collaborator and the token flows via `HERMES_AUDITOR_GITHUB_TOKEN`.
+  Phase 4 note: the PAT still needs write on every profile repo before extension.
 
 ## Verification
 - Phase 1: unit tests green; run `auditor/pending.py` against a throwaway PR; confirm

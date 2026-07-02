@@ -6,7 +6,8 @@ detect failures, dedup, silent-when-clean, and the 24h heartbeat.
 """
 from datetime import timedelta
 
-from incidents.sweep import Incident, cron_failure_incidents, sweep
+from incidents.sweep import (Incident, cron_failure_incidents, cron_stale_incidents,
+                             prompt_drift_incidents, sweep)
 from incidents.sweep import _now as now_fn
 
 
@@ -19,6 +20,23 @@ def _failed_job(jid="j1", name="finview-cron", agent_err="boom", delivery_err=No
 def _ok_job(jid="ok1"):
     return {"id": jid, "name": "healthy", "last_error": None,
             "last_delivery_error": None, "last_run_at": now_fn().isoformat()}
+
+
+def _recurring_job(jid="r1", name="seo-cron", *, minutes=10, last_run_ago_hours=None,
+                   created_ago_hours=None, enabled=True, state="scheduled",
+                   kind="interval", expr=None):
+    """A recurring job with NO error recorded — the silent-stall shape."""
+    schedule = {"kind": kind, "minutes": minutes}
+    if kind == "cron":
+        schedule = {"kind": "cron", "expr": expr or "*/10 * * * *"}
+    last_run = None
+    if last_run_ago_hours is not None:
+        last_run = (now_fn() - timedelta(hours=last_run_ago_hours)).isoformat()
+    created = (now_fn() - timedelta(hours=created_ago_hours if created_ago_hours
+                                    is not None else 100)).isoformat()
+    return {"id": jid, "name": name, "enabled": enabled, "state": state,
+            "schedule": schedule, "created_at": created, "last_run_at": last_run,
+            "last_error": None, "last_delivery_error": None}
 
 
 class TestDetection:
@@ -37,6 +55,101 @@ class TestDetection:
     def test_delivery_error_is_flagged(self):
         incs = cron_failure_incidents([_failed_job(agent_err=None, delivery_err="telegram 502")])
         assert len(incs) == 1 and "delivery error" in incs[0].title
+
+
+class TestStaleDetection:
+    """The silent-abort blind spot: no last_error, but runs stopped completing."""
+
+    def test_stalled_interval_job_is_flagged(self):
+        # 10-min job, last completed run 3h ago, no error recorded.
+        incs = cron_stale_incidents([_recurring_job(last_run_ago_hours=3)])
+        assert len(incs) == 1
+        assert "silently stalled" in incs[0].title
+        assert "no error was recorded" in incs[0].detail
+
+    def test_job_within_cadence_plus_grace_is_healthy(self):
+        # 10-min job that ran 30 min ago — overdue, but inside the 1h grace.
+        assert cron_stale_incidents([_recurring_job(last_run_ago_hours=0.5)]) == []
+
+    def test_paused_and_disabled_jobs_are_ignored(self):
+        jobs = [_recurring_job(jid="p", last_run_ago_hours=48, state="paused"),
+                _recurring_job(jid="d", last_run_ago_hours=48, enabled=False)]
+        assert cron_stale_incidents(jobs) == []
+
+    def test_oneshot_jobs_are_ignored(self):
+        job = _recurring_job(last_run_ago_hours=48, kind="once")
+        job["schedule"] = {"kind": "once", "run_at": now_fn().isoformat()}
+        assert cron_stale_incidents([job]) == []
+
+    def test_job_that_never_ran_is_flagged_from_created_at(self):
+        incs = cron_stale_incidents([_recurring_job(last_run_ago_hours=None,
+                                                    created_ago_hours=6)])
+        assert len(incs) == 1
+        assert "never" in incs[0].detail
+
+    def test_stalled_cron_kind_schedule_is_flagged(self):
+        incs = cron_stale_incidents([_recurring_job(last_run_ago_hours=5,
+                                                    kind="cron", expr="*/10 * * * *")])
+        assert len(incs) == 1
+
+    def test_loudly_failing_job_is_not_double_flagged(self):
+        # It ran (and recorded an error) recently — cron_failure_incidents
+        # owns that signal; staleness must stay quiet.
+        job = _recurring_job(last_run_ago_hours=0.1)
+        job["last_error"] = "boom"
+        assert cron_stale_incidents([job]) == []
+
+    def test_stall_is_reported_once_then_deduped(self, tmp_path):
+        sp = tmp_path / "s.json"
+        job = _recurring_job(last_run_ago_hours=3)  # stable last_run_at
+        first = sweep(jobs=[job], langfuse=[], state_path=sp)
+        assert "silently stalled" in first
+        assert sweep(jobs=[job], langfuse=[], state_path=sp) == ""
+
+    def test_stall_does_not_classify_as_remediable(self):
+        # A silent stall must stay a human-handled incident: blindly
+        # re-triggering a job that is stuck on approval (or was killed for
+        # cause) is not a bounded fix. Guards against transient-marker drift.
+        from remediation.registry import classify
+        (inc,) = cron_stale_incidents([_recurring_job(last_run_ago_hours=3)])
+        assert classify(inc) is None
+
+
+class TestPromptDrift:
+    """Opt-in repo-.prompt vs live-jobs.json drift detection."""
+
+    def _job(self, prompt, source="onsite-seo/seo.prompt", jid="pd1"):
+        return {"id": jid, "name": "seo", "prompt": prompt, "prompt_source": source}
+
+    def test_matching_prompt_is_silent(self, tmp_path):
+        (tmp_path / "p.prompt").write_text("do seo\n")
+        job = self._job("do seo", source="p.prompt")
+        assert prompt_drift_incidents([job], repo_root=tmp_path) == []
+
+    def test_drifted_prompt_is_flagged(self, tmp_path):
+        (tmp_path / "p.prompt").write_text("do seo v2")
+        job = self._job("do seo v1", source="p.prompt")
+        incs = prompt_drift_incidents([job], repo_root=tmp_path)
+        assert len(incs) == 1 and "drifted" in incs[0].title
+
+    def test_missing_source_file_is_flagged(self, tmp_path):
+        job = self._job("do seo", source="gone.prompt")
+        incs = prompt_drift_incidents([job], repo_root=tmp_path)
+        assert len(incs) == 1 and "missing" in incs[0].title
+
+    def test_jobs_without_prompt_source_are_skipped(self, tmp_path):
+        assert prompt_drift_incidents([{"id": "x", "prompt": "hi"}],
+                                      repo_root=tmp_path) == []
+
+    def test_drift_realerts_only_when_content_changes_again(self, tmp_path):
+        (tmp_path / "p.prompt").write_text("v2")
+        job = self._job("v1", source="p.prompt")
+        (first,) = prompt_drift_incidents([job], repo_root=tmp_path)
+        (again,) = prompt_drift_incidents([job], repo_root=tmp_path)
+        assert first.id == again.id  # same drift -> same id -> deduped by sweep
+        (tmp_path / "p.prompt").write_text("v3")
+        (changed,) = prompt_drift_incidents([job], repo_root=tmp_path)
+        assert changed.id != first.id  # content moved -> new alert
 
 
 class TestSweepBehaviour:
