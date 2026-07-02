@@ -373,6 +373,26 @@ def _reconcile_config(config_path, label):
                 else:
                     cfg["model"] = {"default": eff_model, "provider": "openrouter", "base_url": ""}
                 changed = True
+        # fallback_model must stay a DIFFERENT model than model.default — a
+        # fallback that matches the main model is a no-op retry against the
+        # same dead/rate-limited upstream. Incident 2026-07-02: swapping the
+        # main model to tencent/hy3-preview also clobbered fallback_model to
+        # the same value on 4 profiles (main, biglobster, finview, grow-shop,
+        # socialagenda), silently disabling fallback account-wide. Reconciled
+        # here like model.default so this can't drift again. Auditor is
+        # exempt — its fallback path is the DeepSeek pin below, not this key.
+        if label != "auditor":
+            fb_model = os.environ.get(
+                "HERMES_FALLBACK_MODEL", "deepseek/deepseek-v4-flash").strip()
+            if fb_model:
+                fbv = cfg.get("fallback_model")
+                if not isinstance(fbv, dict):
+                    fbv = {}
+                if fbv.get("model") != fb_model:
+                    fbv["model"] = fb_model
+                    fbv["provider"] = "openrouter"
+                    cfg["fallback_model"] = fbv
+                    changed = True
         # AUDITOR: pin OpenRouter provider routing to DeepSeek's own endpoint.
         # The orchestrator cached erratically (56% hit) DESPITE stable
         # session_id — OpenRouter session-stickiness is best-effort, so the
