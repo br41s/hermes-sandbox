@@ -7,6 +7,12 @@ stdout is delivered to the incidents Telegram thread.
 Signals:
   * Failed cron jobs — the scheduler records ``last_error`` / ``last_delivery_error``
     (+ ``last_run_at``) on each job record.
+  * Silently stalled cron jobs — enabled recurring jobs whose own schedule says a
+    run should have completed by now (+ grace) but ``last_run_at`` never advanced.
+    Catches aborts that record no error (approval stalls, killed agents).
+  * Prompt drift — jobs carrying a ``prompt_source`` field whose live prompt no
+    longer matches the repo ``.prompt`` file (they are independent by design;
+    editing one side silently diverges the other). Opt-in per job.
   * Errored Langfuse traces — best-effort via the public read API (ERROR-level
     observations grouped by trace). Degrades to nothing if the API/keys are absent.
 
@@ -36,6 +42,7 @@ from typing import List, Optional
 
 HEARTBEAT_HOURS = 24
 CRON_FAILURE_WINDOW_HOURS = 26  # a failure stays "current" until the job runs again
+STALE_GRACE_HOURS = 1  # slack past the expected next run before a job counts as stalled
 LANGFUSE_WINDOW_HOURS = 2
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
@@ -113,6 +120,125 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
             title=f"Cron job '{job.get('name') or jid}' failed ({err_kind})",
             detail=f"when: {last_run}\nerror: {str(err)[:500]}",
             handoff=f"cron job id {jid}",
+        ))
+    return out
+
+
+def cron_stale_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
+                         grace_hours: float = STALE_GRACE_HOURS) -> List[Incident]:
+    """Flag enabled recurring jobs that silently stopped completing runs.
+
+    Closes the watcher's known blind spot: a run that aborts before
+    ``mark_job_run`` (approval stall, killed agent, scheduler wedge) leaves
+    ``last_error`` empty, so :func:`cron_failure_incidents` never fires.
+    Health is judged by outcome instead — the job's own schedule says when it
+    should have completed a run; if that moment is more than ``grace_hours``
+    in the past and ``last_run_at`` hasn't advanced, the job is stalled.
+
+    Uses ``cron.jobs.compute_next_run`` so interval and cron schedules are
+    handled by the same logic the scheduler itself uses. One-shot jobs are
+    skipped (they auto-delete / have their own recovery path). Degrades to
+    [] if cron.jobs is unavailable, per the sweep's best-effort philosophy.
+    """
+    now = now or _now()
+    try:
+        from cron.jobs import compute_next_run
+    except Exception:
+        return []
+
+    out: List[Incident] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        if not job.get("enabled", True) or job.get("state") == "paused":
+            continue
+        schedule = job.get("schedule")
+        if not isinstance(schedule, dict) or schedule.get("kind") == "once":
+            continue
+        base = job.get("last_run_at") or job.get("created_at")
+        if not base:
+            continue
+        try:
+            expected_next = _parse_iso(compute_next_run(schedule, base))
+        except Exception:
+            continue
+        if expected_next is None:
+            continue
+        overdue = now - expected_next
+        if overdue <= timedelta(hours=grace_hours):
+            continue
+        jid = str(job.get("id") or job.get("name") or "unknown")
+        last_run = job.get("last_run_at")
+        out.append(Incident(
+            id=f"cron-stale:{jid}:{base}",
+            kind="cron",
+            title=f"Cron job '{job.get('name') or jid}' silently stalled",
+            detail=(
+                f"expected a completed run by: {expected_next.isoformat()}\n"
+                f"last completed run: {last_run or 'never'}\n"
+                "no error was recorded — the run likely aborted before "
+                "finishing (approval stall, killed agent, or scheduler wedge)"
+            ),
+            handoff=f"cron job id {jid} (silent stall — check scheduler logs, not last_error)",
+        ))
+    return out
+
+
+def prompt_drift_incidents(jobs: List[dict], *,
+                           repo_root: Optional[Path] = None) -> List[Incident]:
+    """Flag agent jobs whose live prompt has drifted from its repo source.
+
+    Repo ``.prompt`` files and live job prompts (jobs.json on the volume) are
+    independent — editing one without the other has already caused silent
+    divergence (infographic cron, 2026-06). Opt-in per job: set
+    ``prompt_source`` on the job record to the repo-relative path of its
+    ``.prompt`` file (e.g. ``onsite-seo/seo-agent.prompt``) and the watcher
+    compares content each sweep. Jobs without the field are skipped, so
+    rollout is a runtime field-set, not a migration.
+
+    Dedup id includes both content hashes — a drift alerts once, then again
+    only if either side changes again.
+    """
+    import hashlib
+
+    root = repo_root or Path(__file__).resolve().parent.parent
+    out: List[Incident] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        source = job.get("prompt_source")
+        if not source or not isinstance(source, str):
+            continue
+        jid = str(job.get("id") or job.get("name") or "unknown")
+        name = job.get("name") or jid
+        path = root / source
+        try:
+            repo_text = path.read_text(encoding="utf-8")
+        except OSError:
+            out.append(Incident(
+                id=f"prompt-drift:{jid}:missing:{source}",
+                kind="cron",
+                title=f"Cron job '{name}' prompt source missing",
+                detail=f"prompt_source: {source}\nfile not found under {root}",
+                handoff=f"cron job id {jid} — fix its prompt_source path or restore the file",
+            ))
+            continue
+        live_text = job.get("prompt") or ""
+        if repo_text.strip() == live_text.strip():
+            continue
+        repo_hash = hashlib.sha256(repo_text.strip().encode()).hexdigest()[:12]
+        live_hash = hashlib.sha256(live_text.strip().encode()).hexdigest()[:12]
+        out.append(Incident(
+            id=f"prompt-drift:{jid}:{repo_hash}:{live_hash}",
+            kind="cron",
+            title=f"Cron job '{name}' prompt drifted from repo source",
+            detail=(
+                f"prompt_source: {source}\n"
+                f"repo sha256: {repo_hash}  live sha256: {live_hash}\n"
+                "repo .prompt and live jobs.json prompt no longer match — "
+                "update BOTH sides (they are independent by design)"
+            ),
+            handoff=f"cron job id {jid} — diff {source} against the live job prompt",
         ))
     return out
 
@@ -297,7 +423,10 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     lf = langfuse if langfuse is not None else langfuse_error_incidents(now=now)
     bc = blocked if blocked is not None else blocked_commit_incidents()
 
-    incidents = cron_failure_incidents(jobs, now=now) + list(lf) + list(bc)
+    incidents = (cron_failure_incidents(jobs, now=now)
+                 + cron_stale_incidents(jobs, now=now)
+                 + prompt_drift_incidents(jobs)
+                 + list(lf) + list(bc))
     new = [i for i in incidents if i.id not in seen]
 
     incident_text = ""
