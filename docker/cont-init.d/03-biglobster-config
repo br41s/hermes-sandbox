@@ -26,6 +26,9 @@
 #   6b. Provision isolated BigLobster site checkouts (one per consuming cron
 #      job) under checkouts/ so the SEO/GEO and Gap Hunter jobs no longer
 #      share a working tree.
+#   6e. Wire the auditor's GitHub PR trigger: enable the webhook platform on
+#      the main profile and downgrade the auditor's own poll to a 6h safety
+#      net (event-driven replaces most of the 10-min polling cost).
 #   7. Log egress reachability for OpenRouter / HuggingFace.
 #
 # Never fatal: a non-zero exit from a cont-init script aborts container
@@ -939,6 +942,119 @@ for job in list_jobs(include_disabled=True):
         n += 1
 print(f"[03-biglobster] Resynced auditor cron prompt into {n} job(s)")
 PYEOF
+fi
+
+# --- 6e: auditor GitHub webhook trigger (event-driven, replaces the poll) ---
+# The auditor's own cron job used to fire every 10 minutes just to find out
+# there was nothing to review — ~95% of those runs were a wasted LLM turn
+# (python -m auditor.pending coming back empty). Root fix: let GitHub tell us
+# when there's work, instead of asking on a timer.
+#
+# The webhook listener is enabled on the MAIN profile's gateway, never the
+# auditor's: _GATEWAYLESS_PROFILES (hermes_cli/container_boot.py) forces the
+# auditor profile's gateway hard-down unconditionally, because a second
+# gateway seized the shared Telegram bot token and took down the default
+# poller on 2026-06-24. The route's prompt is a single fixed instruction that
+# does nothing but force the auditor's REAL job due via `hermes cron run
+# <id>` — the main profile's existing 60s in-process cron ticker
+# (gateway/run.py) then executes the full, unchanged review/tiering/merge
+# pipeline under the auditor's own profile context (creds, SOUL.md, tiers).
+# No review logic, GitHub payload, or LLM reasoning ever touches this route.
+#
+# The auditor's own schedule is downgraded to a 6-hourly safety net here too,
+# so a missed/failed webhook delivery still self-heals same-day.
+#
+# Idempotent + non-fatal, matching the rest of this script. Requires
+# HERMES_AUDITOR_WEBHOOK_SECRET (HMAC secret shared with every GitHub webhook
+# registered against /webhooks/auditor-pr-trigger — registering the webhook
+# on each covered repo is a one-time `gh api repos/<owner>/<repo>/hooks` step
+# done from the CLI, not by this script).
+WEBHOOK_SECRET="${HERMES_AUDITOR_WEBHOOK_SECRET:-}"
+if [ -z "$WEBHOOK_SECRET" ] && [ -f "$HERMES_HOME/.env" ]; then
+    WEBHOOK_SECRET=$(grep -E '^HERMES_AUDITOR_WEBHOOK_SECRET=' "$HERMES_HOME/.env" 2>/dev/null \
+        | tail -n1 | cut -d= -f2- | tr -d '\r')
+fi
+if [ -n "$WEBHOOK_SECRET" ]; then
+    PYTHONPATH="$INSTALL_DIR" HERMES_HOME="$HERMES_HOME" WEBHOOK_SECRET="$WEBHOOK_SECRET" \
+        as_hermes "$PY" - <<'PYEOF' || echo "[03-biglobster] Warning: auditor webhook reconcile failed (non-fatal)"
+import os
+import yaml
+from pathlib import Path
+from cron.jobs import list_jobs, update_job
+
+home = Path(os.environ.get("HERMES_HOME", "/opt/data"))
+secret = os.environ["WEBHOOK_SECRET"]
+
+# Downgrade the auditor's own poll to a 6h safety net (was every 10 min).
+auditor_job_id = None
+for job in list_jobs(include_disabled=True):
+    if job.get("profile") == "auditor":
+        auditor_job_id = job["id"]
+        # parse_schedule("every 6 hours") normalizes to {"kind": "interval",
+        # "minutes": 360, "display": "every 360m"} — compare on minutes, not
+        # the display string, so this stays idempotent across boots.
+        sched = job.get("schedule") or {}
+        if sched.get("kind") != "interval" or sched.get("minutes") != 360:
+            update_job(job["id"], {"schedule": "every 6 hours"})
+            print(f"[03-biglobster] Auditor job {job['id']}: schedule -> every 6 hours")
+        break
+
+if auditor_job_id is None:
+    print("[03-biglobster] Warning: no cron job with profile=auditor found — webhook route not wired")
+else:
+    config_path = home / "config.yaml"
+    if not config_path.exists():
+        print("[03-biglobster] main: config.yaml not present yet — webhook route not wired")
+    else:
+        cfg = yaml.safe_load(config_path.read_text()) or {}
+        changed = False
+
+        platforms = cfg.get("platforms")
+        if not isinstance(platforms, dict):
+            platforms = {}
+            cfg["platforms"] = platforms
+        webhook = platforms.get("webhook")
+        if not isinstance(webhook, dict):
+            webhook = {}
+            platforms["webhook"] = webhook
+        if webhook.get("enabled") is not True:
+            webhook["enabled"] = True
+            changed = True
+        extra = webhook.get("extra")
+        if not isinstance(extra, dict):
+            extra = {}
+            webhook["extra"] = extra
+        if extra.get("port") != 8644:
+            extra["port"] = 8644
+            changed = True
+        routes = extra.get("routes")
+        if not isinstance(routes, dict):
+            routes = {}
+            extra["routes"] = routes
+
+        route = {
+            "secret": secret,
+            "events": ["pull_request"],
+            "prompt": (
+                "A GitHub pull_request webhook fired (action: {action}) for "
+                "{repository.full_name}#{number}. Run exactly this command "
+                "and do nothing else — no review, no comment, no other tool "
+                f"calls:\n    hermes cron run {auditor_job_id}"
+            ),
+            "deliver": "log",
+        }
+        if routes.get("auditor-pr-trigger") != route:
+            routes["auditor-pr-trigger"] = route
+            changed = True
+
+        if changed:
+            config_path.write_text(yaml.dump(cfg, default_flow_style=False))
+            print("[03-biglobster] main: reconciled platforms.webhook (auditor-pr-trigger)")
+        else:
+            print("[03-biglobster] main: platforms.webhook already current")
+PYEOF
+else
+    echo "[03-biglobster] HERMES_AUDITOR_WEBHOOK_SECRET not set — auditor webhook route not wired"
 fi
 
 # --- 7: egress diagnostics (non-fatal) ---
