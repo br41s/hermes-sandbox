@@ -68,6 +68,7 @@ curl -s https://blhermes.zeabur.app/api/status   # auth_required, auth_providers
 | Code still old after redeploy | Zeabur served the cached `:latest` digest | Use **Redeploy** (force re-pull), not Restart |
 | "There's no redeploy button" | Restart ≠ Redeploy on Zeabur | Restart reuses the current image; Redeploy re-pulls. For new code you need a re-pull. |
 | `docker login ghcr.io` fails in Cloud Build | `_GITHUB_TOKEN` expired / rotated | Pass a current PAT with `write:packages` |
+| `curl https://<existing-domain>/health` hits the wrong service | An existing public domain (e.g. the dashboard's) is bound to a different container port than the one you're testing | Zeabur supports multiple public domains per service, each bound to its own container port — under Networking → Public, click **Generate Domain** again and pick the correct port instead of reusing an existing domain |
 
 ## Restart vs Redeploy vs Rebuild — what each does
 
