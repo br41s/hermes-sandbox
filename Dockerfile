@@ -303,6 +303,9 @@ ENV PATH="/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:${PATH}"
 RUN mkdir -p /opt/data
 VOLUME [ "/opt/data" ]
 EXPOSE 9119
+# Generic webhook platform (gateway/platforms/webhook.py) — used by the
+# main profile's auditor-pr-trigger route (docker/cont-init.d/03-biglobster-config §6e).
+EXPOSE 8644
 
 # s6-overlay's /init is PID 1. It sets up the supervision tree, runs
 # /etc/cont-init.d/* (our stage2 hook), starts s6-rc services
