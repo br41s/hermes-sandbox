@@ -954,12 +954,19 @@ fi
 # auditor's: _GATEWAYLESS_PROFILES (hermes_cli/container_boot.py) forces the
 # auditor profile's gateway hard-down unconditionally, because a second
 # gateway seized the shared Telegram bot token and took down the default
-# poller on 2026-06-24. The route's prompt is a single fixed instruction that
-# does nothing but force the auditor's REAL job due via `hermes cron run
-# <id>` — the main profile's existing 60s in-process cron ticker
-# (gateway/run.py) then executes the full, unchanged review/tiering/merge
-# pipeline under the auditor's own profile context (creds, SOUL.md, tiers).
-# No review logic, GitHub payload, or LLM reasoning ever touches this route.
+# poller on 2026-06-24. The route uses trigger_cron_job_id (not a prompt) —
+# it forces the auditor's REAL job due via the cron API directly, with ZERO
+# agent/LLM turn involved. This is required, not just cheaper:
+# _HERMES_WEBHOOK_SAFE_TOOLS (toolsets.py) intentionally excludes the
+# terminal tool from every webhook-triggered agent session (webhook payloads
+# can carry attacker-controlled content), so a prompt telling a model to run
+# a shell command would have no tool able to execute it — found live
+# 2026-07-03 when the first version of this route (agent-turn + fixed
+# prompt) silently did nothing every time. The main profile's existing 60s
+# in-process cron ticker (gateway/run.py) then executes the full, unchanged
+# review/tiering/merge pipeline under the auditor's own profile context
+# (creds, SOUL.md, tiers). No review logic, GitHub payload, or LLM reasoning
+# ever touches this route.
 #
 # The auditor's own schedule is downgraded to a 6-hourly safety net here too,
 # so a missed/failed webhook delivery still self-heals same-day.
@@ -1035,13 +1042,7 @@ else:
         route = {
             "secret": secret,
             "events": ["pull_request"],
-            "prompt": (
-                "A GitHub pull_request webhook fired (action: {action}) for "
-                "{repository.full_name}#{number}. Run exactly this command "
-                "and do nothing else — no review, no comment, no other tool "
-                f"calls:\n    hermes cron run {auditor_job_id}"
-            ),
-            "deliver": "log",
+            "trigger_cron_job_id": auditor_job_id,
         }
         if routes.get("auditor-pr-trigger") != route:
             routes["auditor-pr-trigger"] = route

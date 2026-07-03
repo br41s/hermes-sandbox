@@ -181,6 +181,17 @@ class WebhookAdapter(BasePlatformAdapter):
                         f"deliver is '{deliver}'. Direct delivery requires a "
                         f"real target (telegram, discord, slack, github_comment, etc.)."
                     )
+            # trigger_cron_job_id and deliver_only are mutually exclusive
+            # dispatch modes — a route either forces an existing cron job due
+            # (no agent, no delivery) or pushes a rendered message somewhere
+            # (no agent, but a delivery target). Reject the nonsensical
+            # combination at startup rather than silently picking one.
+            if route.get("trigger_cron_job_id") and route.get("deliver_only"):
+                raise ValueError(
+                    f"[webhook] Route '{name}' sets both trigger_cron_job_id "
+                    f"and deliver_only — these are separate dispatch modes, "
+                    f"pick one."
+                )
 
         app = web.Application()
         app.router.add_get("/health", self._handle_health)
@@ -519,6 +530,60 @@ class WebhookAdapter(BasePlatformAdapter):
                 status=200,
             )
         self._seen_deliveries[delivery_id] = now
+
+        # ── Direct cron trigger (trigger_cron_job_id) ────────────
+        # Force an EXISTING cron job due, with zero agent/LLM involvement —
+        # no model ever sees this route's payload. Use case: an event source
+        # should wake up a specific cron job right now instead of waiting for
+        # its next scheduled tick (e.g. a GitHub PR event forcing a review
+        # job due). This is deliberately NOT routed through an agent turn:
+        # _HERMES_WEBHOOK_SAFE_TOOLS (toolsets.py) intentionally excludes the
+        # terminal/shell tool from every webhook-triggered session, since
+        # webhook payloads can carry attacker-controlled content — so a
+        # prompt telling the model to run a shell command has no tool that
+        # could ever execute it. Calling the cron API directly here bypasses
+        # that (correctly restrictive) toolset instead of trying to carve out
+        # an exception in it.
+        trigger_job_id = route_config.get("trigger_cron_job_id")
+        if trigger_job_id:
+            try:
+                from tools.cronjob_tools import cronjob as _cronjob_tool
+                trigger_result = json.loads(_cronjob_tool(action="run", job_id=trigger_job_id))
+            except Exception:
+                logger.exception(
+                    "[webhook] trigger_cron_job_id failed route=%s job_id=%s delivery=%s",
+                    route_name, trigger_job_id, delivery_id,
+                )
+                return web.json_response(
+                    {"status": "error", "error": "Cron trigger failed", "delivery_id": delivery_id},
+                    status=502,
+                )
+            if not trigger_result.get("success"):
+                logger.warning(
+                    "[webhook] trigger_cron_job_id rejected route=%s job_id=%s error=%s delivery=%s",
+                    route_name, trigger_job_id, trigger_result.get("error"), delivery_id,
+                )
+                return web.json_response(
+                    {
+                        "status": "error",
+                        "error": trigger_result.get("error", "unknown"),
+                        "delivery_id": delivery_id,
+                    },
+                    status=502,
+                )
+            logger.info(
+                "[webhook] direct-cron-trigger event=%s route=%s job_id=%s delivery=%s",
+                event_type, route_name, trigger_job_id, delivery_id,
+            )
+            return web.json_response(
+                {
+                    "status": "triggered",
+                    "route": route_name,
+                    "job_id": trigger_job_id,
+                    "delivery_id": delivery_id,
+                },
+                status=200,
+            )
 
         # ── Direct delivery mode (deliver_only) ─────────────────
         # Skip the agent entirely — the rendered prompt IS the message we
