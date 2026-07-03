@@ -5,8 +5,16 @@ The auditor's cron job used to fire every 10 minutes just to find out there
 was nothing to review (~95% wasted LLM turns). §6e enables the webhook
 platform on the MAIN profile only (the auditor profile must never run its own
 gateway — see _GATEWAYLESS_PROFILES in hermes_cli/container_boot.py, a prod
-incident on 2026-06-24) with a route whose fixed prompt does nothing but force
-the auditor's real job due via ``hermes cron run <id>``.
+incident on 2026-06-24) with a ``trigger_cron_job_id`` route that forces the
+auditor's real job due directly via the cron API — zero agent/LLM turn.
+
+An earlier version of this route used an agent-turn + fixed prompt telling
+the model to run ``hermes cron run <id>`` via a shell command. That shipped
+broken: found live 2026-07-03 that every webhook-triggered session is
+restricted to _HERMES_WEBHOOK_SAFE_TOOLS (toolsets.py), which has no
+terminal tool, so the model had nothing that could execute the command. See
+tests/gateway/test_webhook_trigger_cron_job.py for the adapter-side coverage
+of the ``trigger_cron_job_id`` dispatch mode itself.
 
 Content-assertion style (matching tests/test_auditor_provider_pinning.py):
 executing the real cont-init script needs root + s6-setuidgid. We assert the
@@ -43,13 +51,15 @@ def test_webhook_route_targets_auditor_job_dynamically(webhook_block: str) -> No
     # hardcoded — a hardcoded id would silently stop matching if the auditor
     # job is ever recreated with a new id.
     assert 'job.get("profile") == "auditor"' in webhook_block
-    assert 'hermes cron run {auditor_job_id}' in webhook_block
+    assert '"trigger_cron_job_id": auditor_job_id' in webhook_block
 
 
 def test_webhook_route_is_content_free(webhook_block: str) -> None:
-    # The route must never do the actual review — no skills, no
-    # github_comment delivery — it only forces the real cron job due.
-    assert '"deliver": "log"' in webhook_block
+    # The route must never invoke an agent at all — no prompt, no skills,
+    # no github_comment delivery — it only forces the real cron job due via
+    # trigger_cron_job_id (zero-LLM dispatch, see gateway/platforms/webhook.py).
+    assert '"trigger_cron_job_id"' in webhook_block
+    assert '"prompt"' not in webhook_block
     assert 'github_comment' not in webhook_block
     assert '"skills"' not in webhook_block
 
@@ -99,8 +109,7 @@ def test_config_reconcile_logic_on_sample_configs() -> None:
         route = {
             "secret": secret,
             "events": ["pull_request"],
-            "prompt": f"...hermes cron run {auditor_job_id}",
-            "deliver": "log",
+            "trigger_cron_job_id": auditor_job_id,
         }
         if routes.get("auditor-pr-trigger") != route:
             routes["auditor-pr-trigger"] = route
@@ -114,7 +123,7 @@ def test_config_reconcile_logic_on_sample_configs() -> None:
     assert cfg["platforms"]["webhook"]["extra"]["port"] == 8644
     route = cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"]
     assert route["events"] == ["pull_request"]
-    assert "job_abc123" in route["prompt"]
+    assert route["trigger_cron_job_id"] == "job_abc123"
 
     # Second boot, same inputs: idempotent, no rewrite.
     assert reconcile(cfg, "job_abc123", "s3cr3t") is False
