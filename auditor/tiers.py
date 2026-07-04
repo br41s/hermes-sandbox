@@ -157,6 +157,16 @@ _PROFILE_CONTENT_SUFFIXES = (
 _REPO_EXTRA_CONTENT_DIRS = {
     "braisntext/biglobster": ("web/blog/", "web/assets/"),
 }
+# Per-repo exact files that are safe content despite living outside the publish
+# dirs above. biglobster: every new blog PR also touches these two — blog.html
+# gets one additive <article-card> linking the new post, sitemap.xml gets one
+# additive <url> entry — because that's how a post gets linked/indexed. Both
+# are mechanically generated, append-only edits from the content-gap-hunter
+# agent, not template/build changes, so listing the exact paths (not a prefix)
+# keeps the rest of web/ system-tier.
+_REPO_EXTRA_CONTENT_FILES = {
+    "braisntext/biglobster": ("web/blog.html", "web/sitemap.xml"),
+}
 # Files that define autonomous-agent or operational BEHAVIOUR — never content, at
 # any depth, on any repo. A bad SOUL/prompt is the cover-wipe class of risk, so it
 # always gets the strong reviewer + a human merge.
@@ -180,6 +190,8 @@ def _is_content_profile(path: str, repo: str) -> bool:
     if any(p.startswith(pre) for pre in _PROFILE_CONTENT_DIR_PREFIXES):
         return True
     if any(p.startswith(pre) for pre in _REPO_EXTRA_CONTENT_DIRS.get(repo, ())):
+        return True
+    if p in _REPO_EXTRA_CONTENT_FILES.get(repo, ()):
         return True
     if any(p.endswith(suf) for suf in _PROFILE_CONTENT_SUFFIXES):
         return True
