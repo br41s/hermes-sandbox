@@ -353,9 +353,17 @@ class TestRunJobProfileContext:
         assert observed["hermes_home_during_init"] == str(root)
         assert os.environ["HERMES_HOME"] == str(root)
 
-    def test_run_job_falls_back_on_missing_runtime_profile(
+    def test_run_job_raises_on_missing_runtime_profile_instead_of_falling_back(
         self, isolated_cron_profile_home, monkeypatch
     ):
+        # A job that opts into a profile relies on that profile's isolated
+        # identity (e.g. the auditor's dedicated hermes-auditor GitHub bot,
+        # kept separate from the CEO's own account). Silently continuing
+        # under the scheduler's default profile would run the job as the
+        # WRONG identity, so this must raise instead of fall back — the
+        # caller (tick()'s _process_job) marks the run as failed and retries
+        # on the job's normal schedule rather than acting under an
+        # unintended identity.
         import cron.scheduler as sched
 
         root, _profile_home = isolated_cron_profile_home
@@ -369,12 +377,12 @@ class TestRunJobProfileContext:
             "schedule_display": "manual",
         }
 
-        # Should succeed with fallback, not raise
-        success, _output, response, error = sched.run_job(job)
+        with pytest.raises(sched.ProfileResolutionError):
+            sched.run_job(job)
 
-        assert success is True, f"run_job should fallback, not fail: error={error!r}"
-        # Verify it used the default home, not the missing profile
-        assert observed["hermes_home_during_init"] == str(root)
+        # The job body must never have executed under the wrong identity.
+        assert observed == {}
+        # HERMES_HOME must be restored to the scheduler default, untouched.
         assert os.environ["HERMES_HOME"] == str(root)
 
 

@@ -2716,3 +2716,62 @@ class TestSendMediaTimeoutCancelsFuture:
         # 2. Second file still got dispatched — one timeout doesn't abort the batch
         adapter.send_video.assert_called_once()
         assert adapter.send_video.call_args[1]["video_path"] == str(fast.resolve())
+
+
+class TestJobProfileContextFailsClosed:
+    """A job with an unresolvable profile must not silently run under the
+    scheduler's default identity — see ProfileResolutionError's docstring
+    for the incident this prevents (auditor briefly acting as the CEO's own
+    GitHub account instead of its dedicated hermes-auditor bot)."""
+
+    def test_valid_profile_yields_normalized_name(self, tmp_path, monkeypatch):
+        from cron.scheduler import _job_profile_context
+
+        profile_dir = tmp_path / "profiles" / "auditor"
+        profile_dir.mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env",
+            lambda name: str(profile_dir),
+        )
+        monkeypatch.setattr(
+            "hermes_cli.profiles.normalize_profile_name", lambda name: name
+        )
+
+        with _job_profile_context("job-1", "auditor") as resolved:
+            assert resolved == "auditor"
+
+    def test_no_profile_yields_none(self):
+        from cron.scheduler import _job_profile_context
+
+        with _job_profile_context("job-1", None) as resolved:
+            assert resolved is None
+
+    def test_unresolvable_profile_raises_instead_of_falling_back(self, monkeypatch):
+        from cron.scheduler import _job_profile_context, ProfileResolutionError
+
+        def _boom(name):
+            raise FileNotFoundError(f"Profile '{name}' does not exist.")
+
+        monkeypatch.setattr("hermes_cli.profiles.resolve_profile_env", _boom)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.normalize_profile_name", lambda name: name
+        )
+
+        with pytest.raises(ProfileResolutionError):
+            with _job_profile_context("auditor-job", "auditor"):
+                pytest.fail("job body must not execute when profile resolution fails")
+
+    def test_run_job_propagates_profile_resolution_error(self, monkeypatch):
+        # run_job() must not swallow the error into a "ran under default
+        # profile" outcome — it should surface so the caller (tick()'s
+        # _process_job) marks the run as failed and retries later, rather
+        # than delivering a review/action taken under the wrong identity.
+        from cron.scheduler import ProfileResolutionError
+
+        def _boom(job_id, profile):
+            raise ProfileResolutionError("profile 'auditor' could not be resolved")
+
+        monkeypatch.setattr("cron.scheduler._job_profile_context", _boom)
+
+        with pytest.raises(ProfileResolutionError):
+            run_job({"id": "auditor-job", "profile": "auditor"})

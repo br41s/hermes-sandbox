@@ -130,6 +130,24 @@ def test_profile_mixed_content_and_code_is_system():
     assert classify(["web/blog/post.html", "web/main.js"], BIG) == "system"
 
 
+def test_profile_extra_file_allowlist_is_repo_scoped():
+    # A real blog PR always touches these two alongside the new article/image
+    # (link the post from the index, register it in the sitemap) — both are
+    # additive, mechanically generated edits, not template/build changes.
+    assert classify(
+        [
+            "web/blog.html",
+            "web/blog/post.html",
+            "web/blog/images/post-cover.png",
+            "web/sitemap.xml",
+        ],
+        BIG,
+    ) == "content"
+    # Repo-scoped like the dir allowlist — unknown on FinView, fail-safe system.
+    assert classify(["web/blog.html"], FIN) == "system"
+    assert classify(["web/sitemap.xml"], FIN) == "system"
+
+
 def test_profile_code_repo_defaults_to_system():
     assert classify(["api.js"], GS) == "system"
     assert classify(["package.json"], GS) == "system"
