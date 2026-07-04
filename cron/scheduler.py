@@ -171,6 +171,20 @@ def _get_lock_paths() -> tuple[Path, Path]:
     return lock_dir, lock_dir / ".tick.lock"
 
 
+class ProfileResolutionError(RuntimeError):
+    """Raised when a job's configured profile can't be resolved.
+
+    A job that opts into a profile is relying on that profile's isolated
+    identity (its own GITHUB_TOKEN/HERMES_HOME) — e.g. the auditor's dedicated
+    ``hermes-auditor`` bot account, kept separate from the CEO's own account on
+    purpose. Silently continuing under the scheduler's default profile would
+    run the job as the WRONG identity instead of not running it at all, so
+    this is raised rather than swallowed — the caller should skip the run
+    (job stays due, retried on the job's normal schedule) instead of executing
+    under an unintended identity.
+    """
+
+
 @contextmanager
 def _job_profile_context(job_id: str, profile: Optional[str]):
     """Temporarily run a job under a specific Hermes profile.
@@ -186,6 +200,10 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
     os.environ, so profile jobs also snapshot and restore the process
     environment on exit. tick() runs profile jobs sequentially to keep that
     temporary mutation isolated from other scheduled jobs.
+
+    Raises ``ProfileResolutionError`` (rather than falling back to the
+    scheduler's default profile) if the configured profile can't be resolved —
+    see that class's docstring for why fail-open is unsafe here.
     """
     raw_profile = str(profile or "").strip()
     if not raw_profile:
@@ -203,13 +221,15 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
     try:
         profile_home = Path(resolve_profile_env(normalized_profile)).resolve()
     except (FileNotFoundError, ValueError) as exc:
-        logger.warning(
-            "Job '%s': configured profile %r no longer valid (%s) — "
-            "falling back to scheduler default",
+        logger.error(
+            "Job '%s': configured profile %r could not be resolved (%s) — "
+            "skipping this run rather than executing under the scheduler's "
+            "default identity",
             job_id, raw_profile, exc,
         )
-        yield None
-        return
+        raise ProfileResolutionError(
+            f"profile {raw_profile!r} could not be resolved: {exc}"
+        ) from exc
 
     override_token = None
     try:
