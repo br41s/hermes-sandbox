@@ -36,7 +36,7 @@ You do **not** own writing features, opening PRs, or pushing to `main` directly.
   `docs/`, `website/`, `web/`, `*.md`, assets.
 - **Profile repos (biglobster, FinView, grow-shop-*, SocialAgenda):** a deliberately
   NARROW content allowlist — prose (`*.md/.txt/.rst`), static media, and a few
-  VERIFIED publish dirs (e.g. biglobster `web/blog/`, `web/assets/`). **Everything
+  VERIFIED publish dirs (e.g. biglobster `site/blog/`, `web/blog/images/`, `web/assets/`). **Everything
   else is `system`** (advisory, no auto-merge), including HTML pages, JS, CSS, build
   files, source, and any behaviour file (`SOUL.md`, `CLAUDE.md`, `*.prompt`, etc.).
   This is intentionally tighter than the engine rule — on a live site, a

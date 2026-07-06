@@ -67,7 +67,7 @@ across repos from a single checkout, so an unqualified `gh` would hit the wrong 
      - Blockers (ANY tier) → REQUEST CHANGES: for each, `file:line — what — why it
        matters — suggested fix`. Be concrete. Do NOT merge.
      - No blockers, tier == `content` → MERGE IT. A clean content PR (prose, assets,
-       a repo's verified publish dirs — e.g. biglobster `web/blog/`) is yours to
+       a repo's verified publish dirs — e.g. biglobster `site/blog/`) is yours to
        land. First confirm it is actually ready:
            gh pr view <number> --repo <repo> --json mergeable,isDraft
        Merge ONLY if `mergeable` is `MERGEABLE` and `isDraft` is `false`. If

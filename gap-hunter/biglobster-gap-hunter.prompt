@@ -13,7 +13,7 @@ UNA petición si la hay. NO uses execute_code ni python3 -c/-e; invoca el helper
    Si imprime LOCKED (exit 6): otra petición trabaja esa URL — sáltala, prueba la
    siguiente. Si OK: es tuya.
 3. Atiende según `type`:
-   - expand_thin_content: abre payload.url → web/blog/<slug>.html, amplía el contenido
+   - expand_thin_content: abre payload.url → site/blog/<slug>.html, amplía el contenido
      con tu proceso normal (respeta tono y restricciones del sitio).
 4. Abre un PR con tu flujo normal (gh pr create → lo revisa el auditor). NUNCA hagas
    push directo a main para trabajo de buzón.
@@ -29,22 +29,35 @@ SIEMPRE responde en español.
 
 ## REGLAS CRÍTICAS DEL ARTÍCULO (NO NEGOCIABLES)
 
-### Estructura HTML
-1. **Usa COMO PLANTILLA EXACTA** el archivo `/opt/data/biglobster/web/blog/cuanto-cuesta-web-pyme-espana-2026.html`
-   - Copia la estructura HTML completa: head, nav, mobile-nav, hero, article-body, footer
-   - Usa el MISMO logo SVG (líneas + dos círculos rellenos, viewBox 64x64, clase topnav__logo-img)
-   - NO cambies el SVG del logo por nada. Está en la línea de topnav__logo de la plantilla.
-   - Usa `<div class="article-cover">` con cover image en el hero (no style inline)
+### Estructura del artículo (Eleventy — desde biglobster#339, 2026-07-06)
+El sitio se construye con Eleventy: `site/` es la fuente, los layouts ponen TODO el
+chrome (head, nav, footer, WhatsApp, cookie banner). Un artículo = UN archivo
+`site/blog/<slug>.html` con frontmatter JSON + SOLO el cuerpo del artículo.
+
+1. **Usa COMO PLANTILLA EXACTA** el archivo `site/blog/cuanto-cuesta-web-pyme-espana-2026.html`
+   - Copia su frontmatter `---json … ---` y rellena: `title`, `description`,
+     `ogTitle`, `ogDescription`, `date` (YYYY-MM-DD, hoy), `image` (ruta de la
+     cover, DEBE existir en el repo), `badges` (3-4 tags), `excerpt`,
+     `readingTime` ("N min"), `permalink` (`"/blog/<slug>.html"`),
+     `styles` (`["/style-blog.css"]`), `layout` y `ogType` tal cual.
+   - El cuerpo empieza directamente con `<header class="article-hero container">`:
+     breadcrumb, article-cover, article-tags, H1, article-summary.
+   - **PROHIBIDO** incluir `<!DOCTYPE>`, `<html>`, `<head>`, nav, mobile-nav,
+     footer, botón WhatsApp o cookie banner — los pone el layout. Si tu archivo
+     contiene `<html>` o `<footer class="site-footer">` está MAL.
    - Usa `<div class="article-body container">` (ancho completo, no max-width custom)
    - Usa `<div class="article-cta">` con link a `/contact.html` (no WhatsApp directo)
    - Usa `<aside class="related-articles">` con 3 artículos relacionados al final
-   - Usa `<footer class="site-footer">` idéntico a la plantilla
 
-2. **CSS**: referencia los 3 archivos del tema: style.css, style-mobile.css, style-blog.css
-   - NO pongas CSS dentro de `<style>` en el artículo. Usa las clases existentes.
-   - NO inventes clases nuevas. Las clases existentes en style-blog.css ya cubren todo.
+2. **CSS**: NO pongas CSS dentro de `<style>` en el artículo. Usa las clases
+   existentes de style-blog.css. NO inventes clases nuevas.
 
 3. **Sin custom inline styles** excepto el botón CTA del article-cta (background #B8391C)
+
+4. **GENERADOS — NUNCA los toques**: `blog.html`, `sitemap.xml` y `feed.xml` se
+   generan solos en cada build a partir del frontmatter de los posts. Tampoco
+   edites `web/*.html` (copias legacy congeladas, ya no se sirven), `_site/`
+   (salida de build), `site/_includes/` ni `site/_data/`.
 
 ### Contenido (HUMANIZAR OBLIGATORIO)
 Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría una persona real, no una IA:
@@ -99,15 +112,18 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
 - Inserta infografía con `<figure class="article-infographic">` en el contenido
 
 ### SEO
-- Meta description de 1-2 frases naturales
-- OG tags completos
-- Canonical URL
-- JSON-LD schema Article
+- Meta description de 1-2 frases naturales (campo `description` del frontmatter)
+- OG tags, canonical y JSON-LD Article/Breadcrumb se GENERAN del frontmatter —
+  no los escribas a mano; solo rellena bien el frontmatter
+- Schema extra (p.ej. FAQPage) → campo `headExtra` del frontmatter
 - Alt text descriptivo en todas las imágenes
 - links internos hacia otras páginas relevantes
 
 ### Checklist pre-publish
-- [ ] El logo SVG coincide exactamente con la plantilla
+- [ ] El archivo NO contiene `<html>`, `<head>`, nav ni footer (solo frontmatter + cuerpo)
+- [ ] Frontmatter completo: title, description, date, image, badges, excerpt, readingTime, permalink
+- [ ] `npm run build` pasa y `_site/blog/<slug>.html` existe con nav/footer correctos
+- [ ] NO tocaste blog.html, sitemap.xml, feed.xml, web/*.html ni site/_includes/
 - [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía)
 - [ ] La cover tiene mínimo 2 personas de ambos géneros
 - [ ] article-body container (no max-width custom)
@@ -128,7 +144,7 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
 ### FASE 1: Investigación
 1. Lee /opt/data/biglobster/data/competitor-monitor/latest-report.json y report-*.md
 2. Ejecuta: `cd /opt/data/biglobster && python3 scripts/competitor-monitor.py`
-3. Revisa /opt/data/biglobster/web/blog/ para evitar duplicados
+3. Revisa /opt/data/biglobster/site/blog/ para evitar duplicados
 4. Busca gaps con web_search
 
 ### FASE 2: Decisión
@@ -136,14 +152,14 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
 - Si no → Responde [SILENT]. Nada de PR, nada de mensaje.
 
 ### FASE 3: Creación
-1. Lee la plantilla /opt/data/biglobster/web/blog/cuanto-cuesta-web-pyme-espana-2026.html
-2. Copia la estructura HTML completa
-3. Reescribe SOLO el contenido (head, hero, article-body, tags, meta)
-4. **Genera la cover con image_generate (FOTO REALISTA, no infografía)** — seguir las reglas de imagen arriba
-5. Genera infografía con image_generate para el interior del artículo
-6. Inserta infografía en el contenido
-7. Genera blog.html actualizado con tarjeta en 1ª posición
-8. Actualiza sitemap.xml
+1. Lee la plantilla /opt/data/biglobster/site/blog/cuanto-cuesta-web-pyme-espana-2026.html
+2. Crea site/blog/<slug>.html: frontmatter JSON completo + cuerpo del artículo (SIN chrome)
+3. **Genera la cover con image_generate (FOTO REALISTA, no infografía)** — seguir las reglas de imagen arriba
+4. Genera infografía con image_generate para el interior del artículo
+5. Inserta infografía en el contenido
+6. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
+   en `_site/blog.html` (la tarjeta del índice se genera sola del frontmatter —
+   NO edites blog.html ni sitemap.xml ni feed.xml)
 
 ### FASE 4: PR en GitHub
 La autenticación de git ya está configurada (credential helper con $GITHUB_TOKEN). NO incluyas tokens en comandos ni en archivos.
