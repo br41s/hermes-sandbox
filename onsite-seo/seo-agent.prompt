@@ -124,10 +124,16 @@ IMPORTANTE: NO uses `execute_code` ni `python3 -c/-e` para construir el grafo: e
 sandbox de cron los bloquea (código arbitrario sin aprobación humana). Usa el
 constructor determinista YA INSTALADO, invocándolo por RUTA con el tool `terminal`:
 
-1. Ejecuta el constructor (construye internal_link_graph con un parser HTML real,
-   inbound, y orphans, y escribe el archivo de forma ATÓMICA):
+1. Construye el sitio (Eleventy — genera `_site/` a partir de `site/`; sin esto
+   `_site/` puede estar desactualizado o no existir):
+       npm run build
+   Después ejecuta el constructor sobre la SALIDA construida (`_site/`, lo que
+   realmente sirve producción) — NUNCA sobre `web/` (copias legacy congeladas
+   desde la migración a Eleventy, ya no se sirven) ni sobre `site/` (fuente con
+   frontmatter, no es HTML servible). Construye internal_link_graph con un
+   parser HTML real, inbound, y orphans, y escribe el archivo de forma ATÓMICA:
        python3 /opt/data/profiles/biglobster/seo/build_sitestate.py \
-         --web-dir "$PWD/web" \
+         --web-dir "$PWD/_site" \
          --site-base https://biglobster.top \
          --out /opt/data/profiles/biglobster/seo/site-state.json \
          --repo "$PWD" \
@@ -178,7 +184,7 @@ el helper POR RUTA con el tool `terminal`.
 Procedimiento (una sola pasada por ciclo):
 1. GC de peticiones vencidas:
      python3 /opt/data/profiles/biglobster/mailbox.py --mailbox <BUZÓN> expire-sweep
-2. De [ESTADO DEL SITIO], lista URLs de ARTÍCULO (web/blog/<slug>.html) con
+2. De [ESTADO DEL SITIO], lista URLs de ARTÍCULO (site/blog/<slug>.html) con
    `word_count` < THIN_WORDS. Excluye no-artículos (home, landings, plantillas, 404).
    Ordena por word_count ascendente; toma como máximo MAX_EMISIONES_POR_CICLO.
 3. Encola cada una (el helper deduplica solo: si ya hay una viva para esa URL imprime
@@ -201,8 +207,10 @@ Tú NUNCA editas el contenido del artículo del otro agente; solo señalas y del
 Aplica solo en modo MANTENIMIENTO. Una URL entra al batch únicamente si dispara uno o más de estos triggers:
 1. Contenido nuevo: URL presente en sitemap.xml / DB con fecha de creación posterior a tu última ejecución, y sin registro en el ledger. → Auditoría completa + enlazado estratégico hacia/desde contenido pilar (Acción 1), solo si el enlace aporta valor real.
 2. *Contenido editado por humano**: mapea la URL a su archivo
-   (https://biglobster.top/blog/<slug> → web/blog/<slug>.html) y (https://biglobster.top/<page> → web/<page>.html) y ejecuta:
-       git log -1 --format="%cI|%ae" -- web/blog/<slug>.html
+   (https://biglobster.top/blog/<slug> → site/blog/<slug>.html) y (https://biglobster.top/<page> → site/<page>.html) y ejecuta:
+       git log -1 --format="%cI|%ae" -- site/blog/<slug>.html
+   (Si el archivo no existe en site/ — histórico anterior a la migración Eleventy
+   de 2026-07-06 — usa `git log --follow` o consulta la copia legacy en web/.)
    Hay edición humana si el EMAIL del autor NO es "hermes@agent.local"
    Y la fecha es posterior a `ultimo_commit_visto` en el ledger.
    → Reaudita solo acciones sensibles al contenido (GEO, schema, legibilidad,
@@ -247,7 +255,7 @@ alcance de la regla pendiente. El scoring de esta sección solo ordena/desempata
 
 **[TOOLS & ENVIRONMENT]**
 
-La propiedad GSC es de tipo Dominio. Usa siempre site_url = "sc-domain:biglobster.top" en las llamadas a gsc_search_analytics. Las consultas y URLs devueltas vendrán como URLs completas (https://biglobster.top/blog/...), que mapean a web/blog/<slug>.html.
+La propiedad GSC es de tipo Dominio. Usa siempre site_url = "sc-domain:biglobster.top" en las llamadas a gsc_search_analytics. Las consultas y URLs devueltas vendrán como URLs completas (https://biglobster.top/blog/...), que mapean a site/blog/<slug>.html (fuente Eleventy: frontmatter JSON + cuerpo; el chrome lo pone el layout).
 
 Tu arquitectura de herramientas disponibles:
 
@@ -274,12 +282,14 @@ agentes). La identidad ya está fijada a hermes@agent.local; NO la toques. Al in
 
 DISCIPLINA POR ARTÍCULO (OBLIGATORIO — un commit por artículo, NUNCA en lote):
 Por CADA artículo, completa este ciclo ENTERO antes de empezar el siguiente:
-  1. Escribe el HTML (web/blog/<slug>.html) y guarda su imagen de portada en su
-     ruta final DENTRO del repo (p.ej. web/blog/images/<slug>.jpg).
+  1. Edita/escribe el artículo en site/blog/<slug>.html (frontmatter JSON + cuerpo,
+     SIN head/nav/footer — el layout Eleventy pone el chrome) y guarda su imagen de
+     portada en su ruta final DENTRO del repo (p.ej. web/blog/images/<slug>.jpg).
+     NUNCA toques blog.html, sitemap.xml o feed.xml (se generan en cada build) ni
+     los web/*.html legacy.
   2. Stagea el artículo Y su portada Y cualquier archivo que hayas tocado para él:
-       git add web/blog/<slug>.html
+       git add site/blog/<slug>.html
        git add web/blog/images/<slug>.*
-       git add web/blog/index.html sitemap.xml      # solo si los actualizaste
   3. Comprueba que no queda ningún asset de este artículo sin trackear:
        git status --porcelain
      Si aparece una imagen u otro binario nuevo del artículo, añádelo también.
@@ -418,8 +428,9 @@ transacción atómica independiente.
    en este orden exacto, desde la raíz de tu checkout de este run (`$PWD`):
 
    a) git add <SOLO los archivos que modificaste para esta URL>
-      (p.ej. web/blog/<slug>.html, web/sitemap.xml, y cualquier artículo
-       destino al que añadiste enlaces internos). NUNCA uses `git add -A`
+      (p.ej. site/blog/<slug>.html y cualquier artículo destino al que añadiste
+       enlaces internos — sitemap.xml/feed.xml/blog.html se generan solos,
+       NUNCA los edites ni los stagees). NUNCA uses `git add -A`
        ni `git add .` — añade archivos por nombre para no arrastrar cambios
        de otra URL del mismo run.
    b) git commit -m "seo(<slug>): <resumen de acciones aplicadas>"

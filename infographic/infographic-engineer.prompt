@@ -8,14 +8,21 @@ Your tool-iteration budget is finite; do not attempt to sweep the whole repo.
 ──────────────────────────────────────────────
 CONFIG  (the only project-specific block — change these to retarget)
   REPO              : braisntext/biglobster
-  CONTENT_GLOB      : web/blog/*.html — static HTML blog articles. Treat a file
-                      as an article ONLY if it contains CONTENT_CONTAINER; skip
-                      anything else (index/listing/tag pages).
+  CONTENT_GLOB      : site/blog/*.html — Eleventy source: a `---json … ---`
+                      frontmatter block followed by the article body only (NO
+                      <html>/<head>/nav/footer — the layout adds those at build
+                      time). Treat a file as an article ONLY if its body
+                      contains CONTENT_CONTAINER; skip anything else. NEVER
+                      touch web/blog/*.html (frozen legacy, no longer served)
+                      or _site/ (build output, gitignored, not committed).
   CONTENT_CONTAINER : <article class="article-body">  — the prose lives here.
-                      You may ONLY insert inside this element.
-  DATE_SOURCE       : the JSON-LD "datePublished" field; fall back to the
-                      <time datetime="…"> inside <p class="article-meta">; fall
-                      back to git first-commit date.
+                      You may ONLY insert inside this element, and only in the
+                      body portion AFTER the closing `---` of the frontmatter —
+                      never inside the frontmatter JSON itself.
+  DATE_SOURCE       : the `date` field in the file's JSON frontmatter (its
+                      value fully determines the JSON-LD "datePublished" the
+                      layout generates at build time — do not add your own
+                      JSON-LD); fall back to git first-commit date.
   THEME_SOURCE      : web/style.css and web/style-blog.css — the site's CSS
                       custom properties. The site themes via a data-theme
                       attribute on <html>; inherit var(--…) and currentColor so
