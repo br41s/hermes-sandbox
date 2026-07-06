@@ -8211,6 +8211,7 @@ class HermesCLI:
                 "clear_skills": False,
                 "all": False,
                 "prompt": None,
+                "prompt_source": None,
                 "schedule": None,
                 "positionals": [],
             }
@@ -8247,6 +8248,9 @@ class HermesCLI:
                     i += 1
                 elif token == "--prompt" and i + 1 < len(tokens):
                     opts["prompt"] = tokens[i + 1]
+                    i += 2
+                elif token == "--prompt-source" and i + 1 < len(tokens):
+                    opts["prompt_source"] = tokens[i + 1]
                     i += 2
                 elif token == "--schedule" and i + 1 < len(tokens):
                     opts["schedule"] = tokens[i + 1]
@@ -8357,7 +8361,7 @@ class HermesCLI:
         if subcommand == "edit":
             positionals = opts["positionals"]
             if not positionals:
-                print("(._.) Usage: /cron edit <job_id> [--schedule ...] [--prompt ...] [--skill ...]")
+                print("(._.) Usage: /cron edit <job_id> [--schedule ...] [--prompt ...] [--prompt-source <repo/path.prompt>] [--skill ...]")
                 return
             job_id = positionals[0]
             existing = get_job(job_id)
@@ -8385,6 +8389,7 @@ class HermesCLI:
                 job_id=job_id,
                 schedule=opts["schedule"],
                 prompt=opts["prompt"],
+                prompt_source=opts["prompt_source"],
                 name=opts["name"],
                 deliver=opts["deliver"],
                 repeat=opts["repeat"],
