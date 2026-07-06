@@ -12666,6 +12666,15 @@ def main():
         "--profile",
         help="Hermes profile name to run the job under. Use 'default' for the root profile. Pass empty string to clear.",
     )
+    cron_edit.add_argument(
+        "--prompt-source",
+        help=(
+            "Repo-relative path to this job's canonical .prompt file (e.g. "
+            "'gap-hunter/biglobster-gap-hunter.prompt'). Opts the job into "
+            "incidents.sweep's prompt-drift watch, which alerts when the live "
+            "prompt diverges from this file. Pass empty string to clear."
+        ),
+    )
     cron_edit_ping = cron_edit.add_mutually_exclusive_group()
     cron_edit_ping.add_argument(
         "--no-progress-ping",
