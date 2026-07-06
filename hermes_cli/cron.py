@@ -286,6 +286,7 @@ def cron_edit(args):
         profile=getattr(args, "profile", None),
         no_agent=getattr(args, "no_agent", None),
         progress_ping=getattr(args, "progress_ping", None),
+        prompt_source=getattr(args, "prompt_source", None),
     )
     if not result.get("success"):
         print(color(f"Failed to update job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -309,6 +310,8 @@ def cron_edit(args):
         print(f"  Workdir: {updated['workdir']}")
     if updated.get("profile"):
         print(f"  Profile: {updated['profile']}")
+    if updated.get("prompt_source"):
+        print(f"  Prompt source: {updated['prompt_source']}")
     return 0
 
 

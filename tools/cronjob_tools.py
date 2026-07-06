@@ -455,6 +455,8 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
         result["profile"] = job["profile"]
     if job.get("progress_ping") is not None:
         result["progress_ping"] = job["progress_ping"]
+    if job.get("prompt_source"):
+        result["prompt_source"] = job["prompt_source"]
     return result
 
 
@@ -480,6 +482,7 @@ def cronjob(
     profile: Optional[str] = None,
     no_agent: Optional[bool] = None,
     progress_ping: Optional[bool] = None,
+    prompt_source: Optional[str] = None,
     task_id: str = None,
 ) -> str:
     """Unified cron job management tool."""
@@ -716,6 +719,13 @@ def cronjob(
                 if job.get("state") != "paused":
                     updates["state"] = "scheduled"
                     updates["enabled"] = True
+            if prompt_source is not None:
+                # Empty string clears the field; otherwise opt this job into
+                # incidents.sweep's prompt-drift watch (incidents/sweep.py
+                # prompt_drift_incidents) by pointing at its repo-relative
+                # .prompt source. No filesystem check here — the sweep itself
+                # already reports a clear incident if the path is missing.
+                updates["prompt_source"] = _normalize_optional_job_value(prompt_source)
             if not updates:
                 return tool_error("No updates provided.", success=False)
             updated = update_job(job_id, updates)

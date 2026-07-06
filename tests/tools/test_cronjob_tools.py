@@ -336,6 +336,24 @@ class TestUnifiedCronjobTool:
         assert updated["job"]["provider"] == "openrouter"
         assert updated["job"]["base_url"] is None
 
+    def test_update_prompt_source_can_set_and_clear(self):
+        created = json.loads(cronjob(action="create", prompt="Check", schedule="every 1h"))
+        job_id = created["job_id"]
+
+        updated = json.loads(
+            cronjob(
+                action="update",
+                job_id=job_id,
+                prompt_source="gap-hunter/biglobster-gap-hunter.prompt",
+            )
+        )
+        assert updated["success"] is True
+        assert updated["job"]["prompt_source"] == "gap-hunter/biglobster-gap-hunter.prompt"
+
+        cleared = json.loads(cronjob(action="update", job_id=job_id, prompt_source=""))
+        assert cleared["success"] is True
+        assert cleared["job"].get("prompt_source") is None
+
     def test_create_skill_backed_job(self):
         result = json.loads(
             cronjob(
