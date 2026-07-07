@@ -12,12 +12,12 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research. You 
 ## Stack
 - **Backend:** Flask 3.x (Python 3.11), blueprint architecture
 - **LLM:** Groq / Llama 3.3 70B via OpenAI-compatible SDK — provider is configurable via env vars only (`GROQ_API_KEY`, `LLM_BASE_URL`, `GROQ_MODEL`)
-- **DB:** SQLite (local dev) / PostgreSQL via Neon (prod) — always use `db_utils.execute()` / `fetchone()` / `fetchall()`, never raw connections
+- **DB:** SQLite (local dev) / PostgreSQL on Zeabur-managed Postgres (prod) — schema is owned by SQLAlchemy models (`social_agenda/models.py`) with Alembic migrations in `migrations/`; change the schema via `flask db migrate` + a reviewed migration file, never hand-written DDL/SQL. `database.py` and `db_utils.py` no longer exist.
 - **Auth:** Magic links (Brevo) + optional password; all protected routes use `@login_required`
 - **Frontend:** Jinja2 templates (all extend `base.html`) + FullCalendar.js + custom CSS
 - **Email:** Brevo transactional API via `email_service.py`
 - **Scheduler:** `calendar_agent.py` — background daemon for reminders and past event cleanup
-- **Deploy:** Render (auto-deploy on push to `main` via `render.yaml`)
+- **Deploy:** Zeabur, 3 services (`web`, `scheduler`, managed Postgres) — auto-deploy on push to `main`. Render is decommissioned.
 
 ## Key Modules
 - `discovery_agent.py` — Web scraper → LLM extraction → scoring → dedup → DB storage
@@ -27,8 +27,7 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research. You 
 - `chat.py` — Per-event chat with AI moderation
 - `admin.py` — Admin dashboard, user/event management, security scans
 - `security_agent.py` — Automated security scanning (background daemon)
-- `database.py` — Schema DDL (21 tables, all prefixed `sa_`) + migrations
-- `db_utils.py` — Thread-local DB adapter + shared utilities (`utcnow`, `row_to_dict`, `row_val`)
+- `models.py` — SQLAlchemy models, single source of truth for the schema (21 tables, all prefixed `sa_`); migrations live in `migrations/` (Alembic)
 
 ## Invariants (never break these)
 - All event text must be in English — AI-translated at extraction time, never stored in other languages

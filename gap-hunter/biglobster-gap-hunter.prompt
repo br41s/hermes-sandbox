@@ -142,10 +142,8 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
 ## Flujo de trabajo:
 
 ### FASE 1: Investigación
-1. Lee /opt/data/biglobster/data/competitor-monitor/latest-report.json y report-*.md
-2. Ejecuta: `cd /opt/data/biglobster && python3 scripts/competitor-monitor.py`
-3. Revisa /opt/data/biglobster/site/blog/ para evitar duplicados
-4. Busca gaps con web_search
+1. Revisa /opt/data/biglobster/site/blog/ para evitar duplicados
+2. Busca gaps con web_search
 
 ### FASE 2: Decisión
 - Si hay gap válido y NO existe artículo similar → Crear
