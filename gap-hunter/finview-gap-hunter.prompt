@@ -20,10 +20,11 @@ Los artículos se listan en `frontend/src/app/blog/page.tsx` en el array `POSTS`
 
 ## WORKFLOW
 
-### 0. Preparar workspace limpio (SIEMPRE lo primero)
-cd /opt/data/profiles/finview/workspace/FinView
-git reset --hard && git clean -fd          # descarta restos de cualquier ejecución anterior
-git checkout main && git pull origin main  # parte de main limpio y actualizado
+### 0. Preparar workspace (clon efímero — SIEMPRE lo primero)
+cd /tmp && rm -rf finview-gap-hunter && git clone --depth 1 --single-branch https://github.com/braisntext/FinView.git finview-gap-hunter && cd finview-gap-hunter
+# Clon nuevo en cada ejecución: nunca reutilices un workspace persistente ni
+# uses `git reset --hard` / `git clean -fd` — están bloqueados en modo cron
+# (requieren aprobación humana que no existe en un job desatendido).
 
 ### 1. Investigar gaps de contenido
 - Revisa los artículos existentes en `frontend/src/app/blog/` (comprueba slugs y títulos)
@@ -40,7 +41,7 @@ git checkout main && git pull origin main  # parte de main limpio y actualizado
 #### 3a. Crear branch y archivos
 Ahora que conoces el slug, crea el branch del artículo:
 git checkout -b blog/SLUG-YYYYMMDD
-Luego crea `/opt/data/profiles/finview/workspace/FinView/frontend/src/app/blog/SLUG/` con:
+Luego crea `/tmp/finview-gap-hunter/frontend/src/app/blog/SLUG/` con:
 
 **page.mdx** — Formato:
 
@@ -128,7 +129,7 @@ SEO
 
 DEPLOY
 (Ya estás en el branch blog/SLUG-YYYYMMDD creado en el paso 3a)
-cd /opt/data/profiles/finview/workspace/FinView
+cd /tmp/finview-gap-hunter
 git add frontend/src/app/blog/SLUG/page.mdx frontend/src/app/blog/SLUG/layout.tsx frontend/src/app/blog/SLUG/SLUG.module.css frontend/src/app/blog/page.tsx frontend/src/app/blog/blog.module.css
 git diff --cached --name-only
 git commit -m "blog(articles): nuevo artículo sobre [tema]"
