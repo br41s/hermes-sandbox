@@ -398,6 +398,80 @@ class TestResolveDeliveryTarget:
         assert _resolve_delivery_targets({"deliver": []}) == []
 
 
+class TestProfileAwareDeliveryTarget:
+    """A profile-scoped job's routing.env-seeded chat/thread must win over
+    the scheduler's global home-channel env, even though delivery resolution
+    runs *after* run_job()'s per-job profile env context has already been
+    torn down (see _job_profile_context / _read_profile_env_value). Regression
+    for the BigLobster/FinView/Infographic jobs silently landing on the main
+    Hermes thread instead of their own project thread (2026-07-08)."""
+
+    @pytest.fixture
+    def profile_root(self, tmp_path, monkeypatch):
+        root = tmp_path / "hermes-root"
+        (root / "profiles" / "biglobster").mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(root))
+        return root
+
+    def _write_profile_env(self, root, profile, content):
+        (root / "profiles" / profile / ".env").write_text(content, encoding="utf-8")
+
+    def test_profile_thread_wins_over_global_home_thread(self, monkeypatch, profile_root):
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")  # global/default thread
+        self._write_profile_env(
+            profile_root,
+            "biglobster",
+            "TELEGRAM_HOME_CHANNEL=-1004224848555\nTELEGRAM_CRON_THREAD_ID=2\n",
+        )
+
+        job = {"deliver": "telegram", "profile": "biglobster", "origin": None}
+        assert _resolve_delivery_target(job) == {
+            "platform": "telegram",
+            "chat_id": "-1004224848555",
+            "thread_id": "2",
+        }
+
+    def test_profile_without_routing_env_falls_back_to_global(self, monkeypatch, profile_root):
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
+        # biglobster profile dir exists but has no .env — must not error, must
+        # fall back to the global home channel exactly like a profile-less job.
+        job = {"deliver": "telegram", "profile": "biglobster", "origin": None}
+        assert _resolve_delivery_target(job) == {
+            "platform": "telegram",
+            "chat_id": "-1004224848555",
+            "thread_id": "1",
+        }
+
+    def test_unknown_profile_falls_back_to_global_without_raising(self, monkeypatch, profile_root):
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
+        job = {"deliver": "telegram", "profile": "does-not-exist", "origin": None}
+        assert _resolve_delivery_target(job) == {
+            "platform": "telegram",
+            "chat_id": "-1004224848555",
+            "thread_id": "1",
+        }
+
+    def test_profile_scoped_job_without_profile_field_uses_global(self, monkeypatch, profile_root):
+        """Sanity check: jobs with no `profile` key are completely unaffected."""
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
+        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
+        self._write_profile_env(
+            profile_root,
+            "biglobster",
+            "TELEGRAM_HOME_CHANNEL=-1004224848555\nTELEGRAM_CRON_THREAD_ID=2\n",
+        )
+
+        job = {"deliver": "telegram", "origin": None}
+        assert _resolve_delivery_target(job) == {
+            "platform": "telegram",
+            "chat_id": "-1004224848555",
+            "thread_id": "1",
+        }
+
+
 class TestRoutingIntents:
     """``all`` routing intent expands at fire time."""
 

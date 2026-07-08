@@ -378,6 +378,61 @@ def _normalize_deliver_param(value: Any) -> Optional[str]:
     return text or None
 
 
+def _profile_routing_gap_warning(profile: Optional[str], deliver: Optional[str]) -> Optional[str]:
+    """Warn (non-blocking) when a profile-scoped job's bare platform ``deliver``
+    (e.g. ``"telegram"``) has no per-profile routing override.
+
+    ``cron.scheduler`` resolves such a job's chat/thread from the profile's own
+    routing env first (see ``_read_profile_env_value``), falling back to the
+    scheduler's global home channel/thread. If the profile has no routing env
+    at all, that fallback is silent — the job just quietly lands on whatever
+    thread the global default happens to be, which is exactly how the
+    BigLobster/FinView/Infographic jobs ended up on the main Hermes thread
+    instead of their own project thread (2026-07-08). ``origin``/``local``/
+    explicit ``platform:chat:thread`` targets are unaffected and skipped.
+    """
+    profile = (profile or "").strip()
+    if not profile or profile.lower() == "default":
+        return None
+    normalized = (deliver or "local").strip() or "local"
+    if normalized in {"local", "origin"}:
+        return None
+
+    from cron.scheduler import (
+        _expand_routing_tokens,
+        _normalize_deliver_value,
+        _read_profile_env_value,
+        _resolve_home_env_var,
+    )
+
+    parts: List[str] = []
+    for raw in _normalize_deliver_value(normalized).split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        parts.extend(_expand_routing_tokens(raw))
+
+    bare_platforms = [p for p in parts if p not in {"local", "origin"} and ":" not in p]
+    if not bare_platforms:
+        return None
+
+    unrouted = []
+    for platform_name in bare_platforms:
+        env_var = _resolve_home_env_var(platform_name)
+        if env_var and not _read_profile_env_value(profile, env_var):
+            unrouted.append(platform_name)
+
+    if not unrouted:
+        return None
+    return (
+        f"Profile '{profile}' has no routing override for {', '.join(unrouted)} — "
+        f"this job will deliver to the scheduler's global home channel/thread, not "
+        f"a profile-specific one. Add docker/profiles/{profile}/routing.env (see "
+        "docker/profiles/biglobster/routing.env for the pattern) or use an explicit "
+        "deliver target like 'telegram:<chat_id>:<thread_id>'."
+    )
+
+
 def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
     """Validate a cron job script path at the API boundary.
 
@@ -551,22 +606,23 @@ def cronjob(
                 profile=_normalize_optional_job_value(profile),
                 no_agent=_no_agent,
             )
-            return json.dumps(
-                {
-                    "success": True,
-                    "job_id": job["id"],
-                    "name": job["name"],
-                    "skill": job.get("skill"),
-                    "skills": job.get("skills", []),
-                    "schedule": job["schedule_display"],
-                    "repeat": _repeat_display(job),
-                    "deliver": job.get("deliver", "local"),
-                    "next_run_at": job["next_run_at"],
-                    "job": _format_job(job),
-                    "message": f"Cron job '{job['name']}' created.",
-                },
-                indent=2,
-            )
+            response = {
+                "success": True,
+                "job_id": job["id"],
+                "name": job["name"],
+                "skill": job.get("skill"),
+                "skills": job.get("skills", []),
+                "schedule": job["schedule_display"],
+                "repeat": _repeat_display(job),
+                "deliver": job.get("deliver", "local"),
+                "next_run_at": job["next_run_at"],
+                "job": _format_job(job),
+                "message": f"Cron job '{job['name']}' created.",
+            }
+            routing_warning = _profile_routing_gap_warning(job.get("profile"), job.get("deliver"))
+            if routing_warning:
+                response["warning"] = routing_warning
+            return json.dumps(response, indent=2)
 
         if normalized == "list":
             jobs = [_format_job(job) for job in list_jobs(include_disabled=include_disabled)]
@@ -779,7 +835,11 @@ def cronjob(
             if not updates:
                 return tool_error("No updates provided.", success=False)
             updated = update_job(job_id, updates)
-            return json.dumps({"success": True, "job": _format_job(updated)}, indent=2)
+            response = {"success": True, "job": _format_job(updated)}
+            routing_warning = _profile_routing_gap_warning(updated.get("profile"), updated.get("deliver"))
+            if routing_warning:
+                response["warning"] = routing_warning
+            return json.dumps(response, indent=2)
 
         return tool_error(f"Unknown cron action '{action}'", success=False)
 

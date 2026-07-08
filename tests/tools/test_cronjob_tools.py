@@ -528,3 +528,87 @@ class TestUnifiedCronjobTool:
         assert updated["success"] is True
         stored = get_job(created["job_id"])
         assert stored["deliver"] == "telegram"
+
+
+class TestProfileRoutingGapWarning:
+    """cronjob(action='create'/'update') should flag — not block — a
+    profile-scoped job whose bare `deliver` platform has no per-profile
+    routing override, since that job will silently ride the scheduler's
+    global home channel/thread instead of the profile's own (the 2026-07-08
+    BigLobster/FinView/Infographic thread-misroute pattern)."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_cron_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
+        monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
+        monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
+        root = tmp_path / "hermes-root"
+        (root / "profiles" / "biglobster").mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(root))
+        self.profile_root = root
+
+    def test_create_warns_when_profile_has_no_routing_env(self):
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="x",
+                schedule="every 1h",
+                deliver="telegram",
+                profile="biglobster",
+            )
+        )
+        assert result["success"] is True
+        assert "warning" in result
+        assert "biglobster" in result["warning"]
+
+    def test_create_no_warning_when_profile_has_routing_env(self):
+        (self.profile_root / "profiles" / "biglobster" / ".env").write_text(
+            "TELEGRAM_HOME_CHANNEL=-1004224848555\nTELEGRAM_CRON_THREAD_ID=2\n",
+            encoding="utf-8",
+        )
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="x",
+                schedule="every 1h",
+                deliver="telegram",
+                profile="biglobster",
+            )
+        )
+        assert result["success"] is True
+        assert "warning" not in result
+
+    def test_create_no_warning_without_profile(self):
+        result = json.loads(
+            cronjob(action="create", prompt="x", schedule="every 1h", deliver="telegram")
+        )
+        assert result["success"] is True
+        assert "warning" not in result
+
+    @pytest.mark.parametrize("deliver_value", ["local", "origin"])
+    def test_create_no_warning_for_local_or_origin(self, deliver_value):
+        result = json.loads(
+            cronjob(
+                action="create",
+                prompt="x",
+                schedule="every 1h",
+                deliver=deliver_value,
+                profile="biglobster",
+            )
+        )
+        assert result["success"] is True
+        assert "warning" not in result
+
+    def test_update_warns_on_profile_routing_gap(self):
+        created = json.loads(cronjob(action="create", prompt="x", schedule="every 1h"))
+        result = json.loads(
+            cronjob(
+                action="update",
+                job_id=created["job_id"],
+                deliver="telegram",
+                profile="biglobster",
+            )
+        )
+        assert result["success"] is True
+        assert "warning" in result
+        assert "biglobster" in result["warning"]
