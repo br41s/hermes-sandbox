@@ -604,6 +604,7 @@ def create_job(
     workdir: Optional[str] = None,
     profile: Optional[str] = None,
     no_agent: bool = False,
+    prompt_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -653,6 +654,12 @@ def create_job(
                 and deliver its stdout directly. Empty stdout = silent (no
                 delivery). Requires ``script`` to be set. Ideal for classic
                 watchdogs and periodic alerts that don't need LLM reasoning.
+        prompt_source: Optional repo-relative path this job's prompt was loaded
+                from (e.g. ``gap-hunter/bl-site-package-gap-hunter.prompt``).
+                Recorded so ``incidents/sweep.py``'s prompt-drift detector and
+                the ``cronjob(action="sync_prompt")`` / "update" actions can
+                tell when the live ``prompt`` has fallen out of sync with the
+                file. Purely informational — never read back from disk here.
 
     Returns:
         The created job dict
@@ -688,6 +695,8 @@ def create_job(
     normalized_workdir = _normalize_workdir(workdir)
     normalized_profile = _normalize_profile(profile)
     normalized_no_agent = bool(no_agent)
+    normalized_prompt_source = str(prompt_source).strip() if isinstance(prompt_source, str) else None
+    normalized_prompt_source = normalized_prompt_source or None
 
     # no_agent jobs are meaningless without a script — the script IS the job.
     # Surface this as a clear ValueError at create time so bad configs never
@@ -742,6 +751,7 @@ def create_job(
         "enabled_toolsets": normalized_toolsets,
         "workdir": normalized_workdir,
         "profile": normalized_profile,
+        "prompt_source": normalized_prompt_source,
     }
 
     jobs = load_jobs()

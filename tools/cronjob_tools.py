@@ -605,6 +605,7 @@ def cronjob(
                 workdir=_normalize_optional_job_value(workdir),
                 profile=_normalize_optional_job_value(profile),
                 no_agent=_no_agent,
+                prompt_source=_normalize_optional_job_value(prompt_source),
             )
             response = {
                 "success": True,
