@@ -315,6 +315,20 @@ def cron_edit(args):
     return 0
 
 
+def cron_sync_prompt(args):
+    result = _cron_api(
+        action="sync_prompt",
+        job_id=args.job_id,
+        prompt_source=getattr(args, "prompt_source", None),
+    )
+    if not result.get("success"):
+        print(color(f"Failed to sync prompt: {result.get('error', 'unknown error')}", Colors.RED))
+        return 1
+    verb = "Synced" if result.get("changed") else "Already up to date"
+    print(color(f"{verb}: {result.get('message', '')}", Colors.GREEN))
+    return 0
+
+
 def _job_action(action: str, job_id: str, success_verb: str) -> int:
     result = _cron_api(action=action, job_id=job_id)
     if not result.get("success"):
@@ -351,6 +365,9 @@ def cron_command(args):
 
     if subcmd == "edit":
         return cron_edit(args)
+
+    if subcmd in {"sync-prompt", "sync_prompt"}:
+        return cron_sync_prompt(args)
 
     if subcmd == "pause":
         return _job_action("pause", args.job_id, "Paused")

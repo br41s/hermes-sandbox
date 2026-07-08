@@ -12710,6 +12710,20 @@ def main():
     )
     cron_remove.add_argument("job_id", help="Job ID to remove")
 
+    cron_sync_prompt = cron_subparsers.add_parser(
+        "sync-prompt",
+        aliases=["sync_prompt"],
+        help="Push a job's repo .prompt file into its live prompt",
+    )
+    cron_sync_prompt.add_argument("job_id", help="Job ID to sync")
+    cron_sync_prompt.add_argument(
+        "--prompt-source",
+        help=(
+            "Repo-relative path to the .prompt file to sync from. Defaults to "
+            "the job's existing prompt_source field if omitted."
+        ),
+    )
+
     # cron status
     cron_subparsers.add_parser("status", help="Check if cron scheduler is running")
 

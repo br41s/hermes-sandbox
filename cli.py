@@ -8275,6 +8275,7 @@ class HermesCLI:
             print("    /cron edit <job_id> --skill blogwatcher --skill maps")
             print("    /cron edit <job_id> --remove-skill blogwatcher")
             print("    /cron edit <job_id> --clear-skills")
+            print("    /cron sync-prompt <job_id>  (push the repo .prompt file into the live job)")
             print("    /cron pause <job_id>")
             print("    /cron resume <job_id>")
             print("    /cron run <job_id>")
@@ -8407,6 +8408,22 @@ class HermesCLI:
                 print(f"(x_x) Failed to update job: {result.get('error')}")
             return
 
+        if subcommand in {"sync-prompt", "sync_prompt"}:
+            positionals = opts["positionals"]
+            if not positionals:
+                print("(._.) Usage: /cron sync-prompt <job_id> [--prompt-source <repo/path.prompt>]")
+                return
+            job_id = positionals[0]
+            result = _cron_api(action="sync_prompt", job_id=job_id, prompt_source=opts["prompt_source"])
+            if not result.get("success"):
+                print(f"(x_x) Failed to sync prompt: {result.get('error')}")
+                return
+            if result.get("changed"):
+                print(f"(^_^)b {result.get('message')}")
+            else:
+                print(f"(-_-) {result.get('message')}")
+            return
+
         if subcommand in {"pause", "resume", "run", "remove", "rm", "delete"}:
             positionals = opts["positionals"]
             if not positionals:
@@ -8432,7 +8449,7 @@ class HermesCLI:
             return
 
         print(f"(._.) Unknown cron command: {subcommand}")
-        print("  Available: list, add, edit, pause, resume, run, remove")
+        print("  Available: list, add, edit, sync-prompt, pause, resume, run, remove")
 
     def _handle_curator_command(self, cmd: str):
         """Handle /curator slash command.
