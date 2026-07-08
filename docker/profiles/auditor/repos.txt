@@ -5,3 +5,4 @@
 # Pilot: the auditor reviews the Hermes engine repo only. Phase 4 adds the
 # profile repos (biglobster, FinView, grow-shop-*, SocialAgenda) here.
 braisntext/hermes-sandbox
+braisntext/bl-site-package
