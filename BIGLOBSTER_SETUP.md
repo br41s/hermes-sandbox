@@ -229,19 +229,25 @@ on branch + git identity between the two jobs.
 > hermes cron edit ce583d11dedd --workdir /opt/data/checkouts/biglobster-gaphunter
 > ```
 >
-> **Gotcha — `sync_prompt` reads `/opt/hermes/`, not `/opt/data/hermes-sandbox`.**
-> `/opt/data/hermes-sandbox` is a separate, independent checkout on the data volume
-> (used for `sync_prompt`'s source-of-truth *comparison* origin when you invoke it
-> from that directory, and possibly other tooling) — it is NOT what the running
-> gateway process reads. `sync_prompt`'s `repo_root` resolves relative to
-> `cronjob_tools.py`'s own location, which is `/opt/hermes/` — a plain directory
-> copy (no `.git`), refreshed by the boot hook, not a live checkout. Pulling
-> `main` into `/opt/data/hermes-sandbox` alone does **not** update what
-> `sync_prompt` compares against: it will report `"already matches"` — a false
-> positive — against the stale `/opt/hermes/` copy. To actually push a prompt fix
-> to a live job: merge to `main`, refresh `/opt/hermes/<path>` from the merged repo
-> (`cp` the file, or wait for a container restart to re-run the boot hook), *then*
-> run `hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>`.
+> **Gotcha — `sync_prompt` reads `/opt/hermes/`, not `/opt/data/hermes-sandbox`,
+> and `/opt/hermes/` is image-baked, not a live checkout.** `/opt/data/hermes-sandbox`
+> is a separate, independent git checkout on the persistent volume (`/dev/vda2`) —
+> it is NOT what the running gateway process reads. `sync_prompt`'s `repo_root`
+> resolves relative to `cronjob_tools.py`'s own location, which is `/opt/hermes/` —
+> a plain directory copy (no `.git`) living on the container's **ephemeral overlay
+> filesystem**, baked in at Docker image build time (see Deploy Process above:
+> Cloud Build → GHCR → manual Zeabur restart pulls the new image). Pulling `main`
+> into `/opt/data/hermes-sandbox` does **not** update what `sync_prompt` compares
+> against — it reports a false `"already matches"` against the stale `/opt/hermes/`
+> copy. A `cp` hot-patch into the running container's `/opt/hermes/<path>` works
+> immediately (and, critically, `sync_prompt`'s target — the job's `prompt` field
+> in `/opt/data/cron/jobs.json` — **is** persistent once synced), but the
+> `/opt/hermes/` source itself reverts to whatever's in the current `:latest` image
+> on the next container restart/recreation. A live-patched prompt fix stays durable
+> in `jobs.json` until someone runs `sync_prompt` again post-restart without
+> redoing the hot-patch — that would silently push the stale prompt back over the
+> fix. To make a prompt fix permanent: merge to `main`, then run the real Cloud
+> Build + Zeabur restart deploy so `/opt/hermes/` is rebuilt from the merged repo.
 
 **`skills/seo-geo/*/SKILL.md` are pointers, not workflows.** These files (under
 `/opt/data/profiles/biglobster/skills/seo-geo/`, not version-controlled — no git
