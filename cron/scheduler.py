@@ -347,11 +347,52 @@ def _resolve_home_env_var(platform_name: str) -> str:
     return _plugin_cron_env_var(name)
 
 
-def _get_home_target_chat_id(platform_name: str) -> str:
-    """Return the configured home target chat/room ID for a delivery platform."""
+def _read_profile_env_value(profile: Optional[str], key: str) -> str:
+    """Read a single value from a profile's ``.env`` file, without touching
+    ``os.environ``.
+
+    Delivery resolution (``_deliver_result``) runs *after* ``run_job()``'s
+    ``_job_profile_context`` has already restored the process environment
+    (see that context manager's docstring) — so by the time a job's output
+    is delivered, ``os.getenv()`` only ever sees the scheduler's own default
+    environment, never the job's profile overrides. A profile-scoped job's
+    routing.env-seeded chat/thread IDs (docker/profiles/<name>/routing.env,
+    synced into profiles/<name>/.env on boot) must be read directly off
+    disk instead. Returns "" on any resolution failure — callers already
+    treat an empty string as "not configured" and fall back to the global
+    env var.
+    """
+    raw_profile = str(profile or "").strip()
+    if not raw_profile:
+        return ""
+    try:
+        from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
+        profile_home = Path(resolve_profile_env(normalize_profile_name(raw_profile)))
+    except (FileNotFoundError, ValueError):
+        return ""
+    env_path = profile_home / ".env"
+    if not env_path.is_file():
+        return ""
+    try:
+        from dotenv import dotenv_values
+        return (dotenv_values(str(env_path)).get(key) or "").strip()
+    except Exception:
+        return ""
+
+
+def _get_home_target_chat_id(platform_name: str, profile: Optional[str] = None) -> str:
+    """Return the configured home target chat/room ID for a delivery platform.
+
+    Checks the job's own ``profile`` routing env first (if given), then falls
+    back to the scheduler's global env — see ``_read_profile_env_value``.
+    """
     env_var = _resolve_home_env_var(platform_name)
     if not env_var:
         return ""
+    if profile:
+        profile_value = _read_profile_env_value(profile, env_var)
+        if profile_value:
+            return profile_value
     value = os.getenv(env_var, "")
     if not value:
         legacy = _LEGACY_HOME_TARGET_ENV_VARS.get(env_var)
@@ -360,7 +401,7 @@ def _get_home_target_chat_id(platform_name: str) -> str:
     return value
 
 
-def _get_home_target_thread_id(platform_name: str) -> Optional[str]:
+def _get_home_target_thread_id(platform_name: str, profile: Optional[str] = None) -> Optional[str]:
     """Return the optional thread/topic ID for a platform home target.
 
     Telegram-only override: ``TELEGRAM_CRON_THREAD_ID`` takes precedence over
@@ -370,11 +411,23 @@ def _get_home_target_thread_id(platform_name: str) -> Optional[str]:
     the lobby reminder and drops ``reply_to_message_id`` (#24409). Pointing
     cron at a dedicated topic via this env var lets replies work as expected
     without changing the lobby invariant.
+
+    Checks the job's own ``profile`` routing env first (if given), then falls
+    back to the scheduler's global env — see ``_read_profile_env_value``.
     """
     env_var = _resolve_home_env_var(platform_name)
     if not env_var:
         return None
-    if platform_name.lower() == "telegram":
+    is_telegram = platform_name.lower() == "telegram"
+    if profile:
+        if is_telegram:
+            profile_cron_thread = _read_profile_env_value(profile, "TELEGRAM_CRON_THREAD_ID")
+            if profile_cron_thread:
+                return profile_cron_thread
+        profile_thread = _read_profile_env_value(profile, f"{env_var}_THREAD_ID")
+        if profile_thread:
+            return profile_thread
+    if is_telegram:
         cron_thread = os.getenv("TELEGRAM_CRON_THREAD_ID", "").strip()
         if cron_thread:
             return cron_thread
@@ -408,6 +461,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
     """Resolve one concrete auto-delivery target for a cron job."""
 
     origin = _resolve_origin(job)
+    profile = job.get("profile")
 
     if deliver_value == "local":
         return None
@@ -422,7 +476,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
         # Origin missing (e.g. job created via API/script) — try each
         # platform's home channel as a fallback instead of silently dropping.
         for platform_name in _iter_home_target_platforms():
-            chat_id = _get_home_target_chat_id(platform_name)
+            chat_id = _get_home_target_chat_id(platform_name, profile)
             if chat_id:
                 logger.info(
                     "Job '%s' has deliver=origin but no origin; falling back to %s home channel",
@@ -432,7 +486,7 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
                 return {
                     "platform": platform_name,
                     "chat_id": chat_id,
-                    "thread_id": _get_home_target_thread_id(platform_name),
+                    "thread_id": _get_home_target_thread_id(platform_name, profile),
                 }
         return None
 
@@ -479,14 +533,14 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
 
     if not _is_known_delivery_platform(platform_name):
         return None
-    chat_id = _get_home_target_chat_id(platform_name)
+    chat_id = _get_home_target_chat_id(platform_name, profile)
     if not chat_id:
         return None
 
     return {
         "platform": platform_name,
         "chat_id": chat_id,
-        "thread_id": _get_home_target_thread_id(platform_name),
+        "thread_id": _get_home_target_thread_id(platform_name, profile),
     }
 
 
