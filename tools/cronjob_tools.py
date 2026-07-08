@@ -631,6 +631,56 @@ def cronjob(
             updated = trigger_job(job_id)
             return json.dumps({"success": True, "job": _format_job(updated)}, indent=2)
 
+        if normalized == "sync_prompt":
+            # Pushes the repo .prompt file's current content into the job's
+            # live `prompt` field. prompt_source only records a path for
+            # incidents.sweep's drift *detector* (see prompt_drift_incidents) —
+            # it never copies content on its own, so a repo-side prompt fix
+            # silently never reaches the running job until someone manually
+            # re-types it via `update(prompt=...)`. This action closes that
+            # loop with one call instead of a copy-paste round trip.
+            source = prompt_source if prompt_source is not None else job.get("prompt_source")
+            if not source:
+                return tool_error(
+                    "Job has no prompt_source and none was provided. Set one with "
+                    "cronjob(action='update', prompt_source='<repo/path.prompt>') or "
+                    "pass prompt_source directly to this call.",
+                    success=False,
+                )
+            repo_root = Path(__file__).resolve().parent.parent
+            file_path = repo_root / source
+            try:
+                file_text = file_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return tool_error(f"Could not read prompt_source '{source}': {exc}", success=False)
+            scan_error = _scan_cron_prompt(file_text)
+            if scan_error:
+                return tool_error(scan_error, success=False)
+            live_text = job.get("prompt") or ""
+            if file_text.strip() == live_text.strip():
+                return json.dumps(
+                    {
+                        "success": True,
+                        "changed": False,
+                        "message": f"Job '{job['name']}' prompt already matches {source} — nothing to sync.",
+                        "job": _format_job(job),
+                    },
+                    indent=2,
+                )
+            updates: Dict[str, Any] = {"prompt": file_text}
+            if job.get("prompt_source") != source:
+                updates["prompt_source"] = source
+            updated = update_job(job_id, updates)
+            return json.dumps(
+                {
+                    "success": True,
+                    "changed": True,
+                    "message": f"Job '{job['name']}' prompt synced from {source} ({len(file_text)} chars).",
+                    "job": _format_job(updated),
+                },
+                indent=2,
+            )
+
         if normalized == "update":
             updates: Dict[str, Any] = {}
             if prompt is not None:

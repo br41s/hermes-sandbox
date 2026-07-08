@@ -1,7 +1,11 @@
 """Tests for tools/cronjob_tools.py — prompt scanning, schedule/list/remove dispatchers."""
 
 import json
+from pathlib import Path
+
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from tools.cronjob_tools import (
     _scan_cron_prompt,
@@ -353,6 +357,60 @@ class TestUnifiedCronjobTool:
         cleared = json.loads(cronjob(action="update", job_id=job_id, prompt_source=""))
         assert cleared["success"] is True
         assert cleared["job"].get("prompt_source") is None
+
+    def test_sync_prompt_pulls_repo_file_into_live_prompt(self):
+        """sync_prompt closes the loop prompt_source only detects: a repo-side
+        .prompt fix (merged, reviewed) previously had no way to reach the live
+        job's `prompt` field short of hand-copying the file into --prompt."""
+        created = json.loads(cronjob(action="create", prompt="stale text", schedule="every 1h"))
+        job_id = created["job_id"]
+
+        synced = json.loads(
+            cronjob(
+                action="sync_prompt",
+                job_id=job_id,
+                prompt_source="gap-hunter/biglobster-gap-hunter.prompt",
+            )
+        )
+        assert synced["success"] is True
+        assert synced["changed"] is True
+        assert synced["job"]["prompt_source"] == "gap-hunter/biglobster-gap-hunter.prompt"
+
+        from cron.jobs import get_job
+        expected = (REPO_ROOT / "gap-hunter" / "biglobster-gap-hunter.prompt").read_text(encoding="utf-8")
+        assert get_job(job_id)["prompt"].strip() == expected.strip()
+
+    def test_sync_prompt_noop_when_already_matching(self):
+        expected = (REPO_ROOT / "gap-hunter" / "biglobster-gap-hunter.prompt").read_text(encoding="utf-8")
+        created = json.loads(cronjob(action="create", prompt=expected, schedule="every 1h"))
+        job_id = created["job_id"]
+        json.loads(
+            cronjob(
+                action="update",
+                job_id=job_id,
+                prompt_source="gap-hunter/biglobster-gap-hunter.prompt",
+            )
+        )
+
+        synced = json.loads(cronjob(action="sync_prompt", job_id=job_id))
+        assert synced["success"] is True
+        assert synced["changed"] is False
+
+    def test_sync_prompt_requires_a_source(self):
+        created = json.loads(cronjob(action="create", prompt="x", schedule="every 1h"))
+        job_id = created["job_id"]
+
+        result = json.loads(cronjob(action="sync_prompt", job_id=job_id))
+        assert result["success"] is False
+
+    def test_sync_prompt_missing_file_errors(self):
+        created = json.loads(cronjob(action="create", prompt="x", schedule="every 1h"))
+        job_id = created["job_id"]
+
+        result = json.loads(
+            cronjob(action="sync_prompt", job_id=job_id, prompt_source="gap-hunter/does-not-exist.prompt")
+        )
+        assert result["success"] is False
 
     def test_create_skill_backed_job(self):
         result = json.loads(
