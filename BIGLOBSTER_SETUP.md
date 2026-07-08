@@ -214,22 +214,43 @@ boot normalizes the remote to tokenless HTTPS, fetches, `checkout main`, and
 mid-run) survive. This replaces the old single shared working tree that collided
 on branch + git identity between the two jobs.
 
-> **Operational steps (cron jobs live on the volume at `/opt/data/.hermes/cron/jobs.json`, not in the image).** After this change is deployed and the checkouts exist, repoint each job's workdir and trim the now-redundant prompt logic. The workdir-setting subcommand is `hermes cron edit` (there is no `update`):
+> **Operational steps — DONE (2026-07-09).** Cron jobs live on the volume at
+> `/opt/data/cron/jobs.json` (not `/opt/data/.hermes/cron/jobs.json` — corrected
+> path; not in the image). Both jobs' `workdir` now point at their isolated
+> checkout, and both prompts were trimmed to match — SEO/GEO's prompt already used
+> `$PWD`-relative paths with no `-C`/identity-pin (fixed in an earlier pass);
+> Gap Hunter's prompt (`gap-hunter/biglobster-gap-hunter.prompt`) was still on the
+> abandoned-clone paths and got the same fix, plus per-artifact commit→push
+> discipline, in [PR #116](https://github.com/braisntext/hermes-sandbox/pull/116).
+> The workdir-setting subcommand is `hermes cron edit` (there is no `update`):
 >
 > ```sh
 > hermes cron edit 20ec3607f2c6 --workdir /opt/data/checkouts/biglobster-seo
 > hermes cron edit ce583d11dedd --workdir /opt/data/checkouts/biglobster-gaphunter
 > ```
 >
-> - **SEO prompt:** PASO 0's identity pin (`git config user.email hermes@agent.local`) is now redundant — section 6b pins it locally per checkout, so remove it. Also drop the `-C /opt/data/biglobster` from the remaining PASO 0 steps: the job's workdir is now its own checkout, so the commands must run there, not on the abandoned shared clone. The defensive run-start hygiene becomes (no `-C`, no identity line):
->
->   ```sh
->   git fetch origin
->   git checkout main
->   git pull --ff-only origin main
->   ```
->
-> - **Gap Hunter prompt:** add the same per-artifact commit→push discipline the SEO job uses — commit each article **together with its cover image** and push immediately, one artifact per commit, then end the run with a `git status --porcelain` clean-tree check. This stops orphaned untracked cover images from accumulating (they previously lingered because Gap Hunter committed in a single batch at the end and missed binaries it had written). Same no-`-C` PASO 0 as the SEO job (workdir is `/opt/data/checkouts/biglobster-gaphunter`).
+> **Gotcha — `sync_prompt` reads `/opt/hermes/`, not `/opt/data/hermes-sandbox`.**
+> `/opt/data/hermes-sandbox` is a separate, independent checkout on the data volume
+> (used for `sync_prompt`'s source-of-truth *comparison* origin when you invoke it
+> from that directory, and possibly other tooling) — it is NOT what the running
+> gateway process reads. `sync_prompt`'s `repo_root` resolves relative to
+> `cronjob_tools.py`'s own location, which is `/opt/hermes/` — a plain directory
+> copy (no `.git`), refreshed by the boot hook, not a live checkout. Pulling
+> `main` into `/opt/data/hermes-sandbox` alone does **not** update what
+> `sync_prompt` compares against: it will report `"already matches"` — a false
+> positive — against the stale `/opt/hermes/` copy. To actually push a prompt fix
+> to a live job: merge to `main`, refresh `/opt/hermes/<path>` from the merged repo
+> (`cp` the file, or wait for a container restart to re-run the boot hook), *then*
+> run `hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>`.
+
+**`skills/seo-geo/*/SKILL.md` are pointers, not workflows.** These files (under
+`/opt/data/profiles/biglobster/skills/seo-geo/`, not version-controlled — no git
+repo on that path) used to duplicate the cron prompts' full workflow. That
+duplication drifted from the canonical `.prompt` files and caused a 2026-07
+incident (WordPress/Blogger-targeting content added to `offsite-geo-scout/SKILL.md`
+that the live cron prompt never had). As of 2026-07-09 both files just point at
+their canonical `.prompt` file in this repo and explain how to sync a change —
+do not re-expand them into full copies of the workflow.
 
 ---
 
