@@ -13,7 +13,8 @@ once told; nothing calls it on its own.
 Prerequisite for each order: the CEO has already confirmed the client actually
 signed up (per `bl-site-package`'s own `ONBOARDING-INTERNO.md`/`FORMULARIO-CLIENTE.md`
 flow) and has their site URL, panel password, and their own model API key
-in hand.
+in hand. If the client ordered `onboarding-content` (below), the CEO also
+needs their existing/old site URL — `FORMULARIO-CLIENTE.md` asks for this.
 
 ## What each rented agent needs, and what it doesn't
 
@@ -23,10 +24,18 @@ client's own bl-site-package panel API, **not** git. There is no per-client
 repo to check out, so unlike biglobster's own agents these jobs need no
 `workdir`/checkout at all.
 
-| Agent | Prompt file | Publishes via |
-|---|---|---|
-| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (draft) |
-| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct) |
+| Agent | Prompt file | Publishes via | Schedule |
+|---|---|---|---|
+| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (draft) | daily |
+| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct) | daily |
+| Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
+
+Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
+recurring daily job like the other two. It runs once, scans the client's old
+site (`--old-site-url`), and bulk-populates the new site's blank pages —
+existing pages already filled by the client via `/setup` are left untouched.
+Order it only when the client actually has an old site to migrate content
+from; there's nothing for it to do otherwise.
 
 Infographic Engineer and Off-Site GEO Scout are **not yet adapted** —
 bl-site-package's blog schema has no cover-image field (Infographic Engineer
@@ -52,17 +61,20 @@ this pulls in via `cron/jobs.py`):
   --site-url https://blcliente.zeabur.app \
   --panel-password '<their panel password>' \
   --openrouter-key sk-or-v1-... \
-  --agents gap-hunter,seo
+  --agents gap-hunter,seo,onboarding-content \
+  --old-site-url https://their-old-site.example.com
 ```
 
-`--agents` is a comma-separated list from `gap-hunter`, `seo`. What the script does, in order:
+`--agents` is a comma-separated list from `gap-hunter`, `seo`, `onboarding-content`.
+`--old-site-url` is required only if `onboarding-content` is ordered — omit
+both if the client has no existing site. What the script does, in order:
 
 1. Validates the slug and checks a profile with that name doesn't already exist.
 2. Calls the live OpenRouter API to confirm the client's key actually works — fails here instead of every cron run failing silently until someone notices.
 3. `hermes profile create <slug> --no-skills` — an isolated `~/.hermes/profiles/<slug>/` (empty, no clone — this client needs none of BigLobster's own skills/config).
 4. Writes that profile's `SOUL.md`, matching the terse style of `docker/profiles/grow-shop/SOUL.md` — scope, working boundaries, nothing more.
-5. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key).
-6. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`, on a deterministic off-peak time staggered by client+agent so jobs don't all collide.
+5. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `OLD_SITE_URL` if given.
+6. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` gets a one-shot run 5 minutes out instead.
 
 Confirm back to the CEO: profile slug, job IDs created (the script prints them as JSON), and which agents are now active for this client.
 
