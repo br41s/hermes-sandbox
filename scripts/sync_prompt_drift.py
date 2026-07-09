@@ -11,15 +11,16 @@ job sharing a template in one pass, e.g. after editing
 gap-hunter/bl-site-package-gap-hunter.prompt for all rented bl-site-package
 customers at once.
 
-Usage:
+Usage (must run with the repo's venv Python — the bare `python3` on PATH
+won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
     # Preview what would change across every drifted job
-    python scripts/sync_prompt_drift.py --dry-run
+    .venv/bin/python3 scripts/sync_prompt_drift.py --dry-run
 
     # Sync only jobs built from one template
-    python scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt
+    .venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt
 
     # Apply without the confirmation prompt (e.g. from another script)
-    python scripts/sync_prompt_drift.py --yes
+    .venv/bin/python3 scripts/sync_prompt_drift.py --yes
 """
 
 import argparse

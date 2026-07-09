@@ -19,8 +19,9 @@ the same trust boundary the manual runbook has today — it just removes the
 chance of an LLM skipping a runbook step (e.g. forgetting to validate the
 key before the job goes live).
 
-Usage:
-    python scripts/provision_bl_client.py \\
+Usage (must run with the repo's venv Python — the bare `python3` on PATH
+won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
+    .venv/bin/python3 scripts/provision_bl_client.py \\
         --slug bl-cliente-nieto \\
         --client-name "Francisco Nieto" \\
         --site-url https://blcliente.zeabur.app \\
