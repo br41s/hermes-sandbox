@@ -41,10 +41,12 @@ Hermes profile, never in the prompt.
 
 ## Onboarding a client
 
-Run `scripts/provision_bl_client.py` from the repo root:
+Run `scripts/provision_bl_client.py` from the repo root, using the repo's
+venv Python (the bare `python3` on PATH won't have PyYAML and other deps
+this pulls in via `cron/jobs.py`):
 
 ```bash
-python scripts/provision_bl_client.py \
+.venv/bin/python3 scripts/provision_bl_client.py \
   --slug bl-cliente-nieto \
   --client-name "Francisco Nieto" \
   --site-url https://blcliente.zeabur.app \
@@ -75,8 +77,8 @@ job stores its own frozen copy of the prompt text from creation time, and
 edit to every customer job built from that file in one pass:
 
 ```bash
-python scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --dry-run   # preview
-python scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --yes       # apply
+.venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --dry-run   # preview
+.venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --yes       # apply
 ```
 
 ## Removing a client
