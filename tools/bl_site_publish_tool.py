@@ -64,6 +64,8 @@ def bl_site_publish(
     excerpt: Optional[str] = None,
     field: Optional[str] = None,
     value: Optional[str] = None,
+    cta_url: Optional[str] = None,
+    cta_label: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
 
@@ -80,10 +82,14 @@ def bl_site_publish(
         if action == "create_blog_post":
             if not title or not content:
                 return tool_error("create_blog_post requires 'title' and 'content'.")
+            payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "draft"}
+            if cta_url:
+                payload["cta_url"] = cta_url
+                payload["cta_label"] = cta_label or "Ver ficha original"
             result = _http_json(
                 "POST",
                 f"{site_url}/api/blog/posts",
-                {"title": title, "content": content, "excerpt": excerpt or "", "status": "draft"},
+                payload,
                 token=token,
             )
             return json.dumps({
@@ -105,7 +111,27 @@ def bl_site_publish(
             )
             return json.dumps({"success": bool(result.get("success")), "field": field})
 
-        return tool_error(f"Unknown action '{action}'. Use 'create_blog_post' or 'update_page_text'.")
+        if action == "list_posts":
+            # Authenticated, unlike a plain GET /api/blog/posts — returns
+            # drafts too, so agents can dedup against posts they already
+            # created but the client hasn't published yet.
+            result = _http_json("GET", f"{site_url}/api/blog/posts", token=token)
+            posts = result.get("posts", [])
+            return json.dumps({
+                "success": True,
+                "posts": [
+                    {
+                        "id": p.get("id"),
+                        "title": p.get("title"),
+                        "slug": p.get("slug"),
+                        "status": p.get("status"),
+                        "cta_url": p.get("cta_url"),
+                    }
+                    for p in posts
+                ],
+            })
+
+        return tool_error(f"Unknown action '{action}'. Use 'create_blog_post', 'update_page_text', or 'list_posts'.")
     except RuntimeError as e:
         return tool_error(str(e))
 
@@ -119,6 +145,10 @@ BL_SITE_PUBLISH_SCHEMA = {
         "Use action='update_page_text' to directly update one page-text field (e.g. "
         "'page_servicios_desc') — this applies immediately, no draft step, matching how the "
         "client's own built-in agent already edits page text. "
+        "Use action='list_posts' to list ALL existing posts (drafts included) — use this to "
+        "check what's already been created before writing new ones, so you don't duplicate "
+        "a post the client hasn't published yet (a plain unauthenticated GET only returns "
+        "published posts and will miss your own prior drafts). "
         "Only ever touches the one site configured for this profile (BL_SITE_URL) — never another client's."
     ),
     "parameters": {
@@ -126,7 +156,7 @@ BL_SITE_PUBLISH_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create_blog_post", "update_page_text"],
+                "enum": ["create_blog_post", "update_page_text", "list_posts"],
                 "description": "Which operation to perform.",
             },
             "title": {"type": "string", "description": "Blog post title. Required for create_blog_post."},
@@ -140,6 +170,17 @@ BL_SITE_PUBLISH_SCHEMA = {
                 ),
             },
             "value": {"type": "string", "description": "New value for update_page_text."},
+            "cta_url": {
+                "type": "string",
+                "description": (
+                    "Optional for create_blog_post: URL for a CTA button rendered at the end of "
+                    "the post (e.g. a product's original page on the client's old site)."
+                ),
+            },
+            "cta_label": {
+                "type": "string",
+                "description": "Optional label for the CTA button. Defaults to 'Ver ficha original' if cta_url is set but this isn't.",
+            },
         },
         "required": ["action"],
     },
@@ -158,5 +199,7 @@ registry.register(
         excerpt=args.get("excerpt"),
         field=args.get("field"),
         value=args.get("value"),
+        cta_url=args.get("cta_url"),
+        cta_label=args.get("cta_label"),
     ),
 )

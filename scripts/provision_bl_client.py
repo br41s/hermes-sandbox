@@ -27,13 +27,17 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --site-url https://blcliente.zeabur.app \\
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
-        --agents gap-hunter,seo,onboarding-content \\
+        --agents gap-hunter,seo,onboarding-content,product-articles \\
         --old-site-url https://their-old-site.example.com
 
-`--old-site-url` is only required when `onboarding-content` is ordered — it's
-a one-shot agent (not daily like the other two) that scans the client's old
-site once, shortly after provisioning, and populates their new site's blank
-pages from it. Omit both if the client has no existing site to migrate from.
+`--old-site-url` is required when `onboarding-content` and/or
+`product-articles` is ordered. `onboarding-content` is a one-shot agent that
+scans the old site once, shortly after provisioning, and populates the new
+site's blank pages from it. `product-articles` is daily (like gap-hunter/seo)
+but scoped to the old site's product catalog: it crawls it for product pages,
+skips ones it's already covered, and writes up to 3 new product blog posts
+per run (draft, with a CTA button back to the original product page) until
+the catalog is exhausted. Omit both flags if the client has no existing site.
 
 Removing a client (unchanged from the runbook — still manual, still
 confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
@@ -70,7 +74,15 @@ AGENT_SOURCES = {
         "Onboarding Content Agent",
         "once",
     ),
+    "product-articles": (
+        "product-articles/bl-site-package-product-articles.prompt",
+        "Product Article Agent",
+        "daily",
+    ),
 }
+
+# Agents that need --old-site-url (the client's existing site to migrate/read from).
+AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
 
 # Delay before the one-shot onboarding-content job fires — long enough that
 # the profile/.env writes below are certainly flushed to disk first.
@@ -176,11 +188,12 @@ def provision(
         raise ValueError(f"Unknown agent(s) {unknown} — choose from {list(AGENT_SOURCES)}")
     if not agents:
         raise ValueError("At least one agent must be ordered")
-    if "onboarding-content" in agents and not old_site_url:
+    needs_old_site = AGENTS_REQUIRING_OLD_SITE & set(agents)
+    if needs_old_site and not old_site_url:
         raise ValueError(
-            "The onboarding-content agent needs --old-site-url (the client's "
-            "existing site to migrate content from) — omit the agent if the "
-            "client has no existing site to draw from."
+            f"{sorted(needs_old_site)} need(s) --old-site-url (the client's "
+            "existing site to read/migrate content from) — omit the agent(s) if "
+            "the client has no existing site to draw from."
         )
 
     if not skip_key_check:
@@ -225,13 +238,13 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
     parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key validation call")
     parser.add_argument(
         "--old-site-url",
         default=None,
-        help="Client's existing site to migrate content from — required if --agents includes onboarding-content",
+        help="Client's existing site to migrate/read content from — required if --agents includes onboarding-content and/or product-articles",
     )
     args = parser.parse_args()
 
