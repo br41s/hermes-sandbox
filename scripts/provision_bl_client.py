@@ -27,7 +27,13 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --site-url https://blcliente.zeabur.app \\
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
-        --agents gap-hunter,seo
+        --agents gap-hunter,seo,onboarding-content \\
+        --old-site-url https://their-old-site.example.com
+
+`--old-site-url` is only required when `onboarding-content` is ordered — it's
+a one-shot agent (not daily like the other two) that scans the client's old
+site once, shortly after provisioning, and populates their new site's blank
+pages from it. Omit both if the client has no existing site to migrate from.
 
 Removing a client (unchanged from the runbook — still manual, still
 confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
@@ -53,11 +59,22 @@ from hermes_cli.profiles import (  # noqa: E402
 )
 from cron.jobs import create_job  # noqa: E402
 
-# agent key -> (prompt_source relative to repo root, display name)
+# agent key -> (prompt_source relative to repo root, display name, schedule kind)
+# schedule kind "daily" = recurring via pick_stagger_schedule(); "once" = single
+# run a few minutes after provisioning (see provision()).
 AGENT_SOURCES = {
-    "gap-hunter": ("gap-hunter/bl-site-package-gap-hunter.prompt", "Content Gap Hunter"),
-    "seo": ("onsite-seo/bl-site-package-seo-agent.prompt", "SEO/GEO On-Site"),
+    "gap-hunter": ("gap-hunter/bl-site-package-gap-hunter.prompt", "Content Gap Hunter", "daily"),
+    "seo": ("onsite-seo/bl-site-package-seo-agent.prompt", "SEO/GEO On-Site", "daily"),
+    "onboarding-content": (
+        "onboarding-content/bl-site-package-onboarding-content.prompt",
+        "Onboarding Content Agent",
+        "once",
+    ),
 }
+
+# Delay before the one-shot onboarding-content job fires — long enough that
+# the profile/.env writes below are certainly flushed to disk first.
+ONBOARDING_CONTENT_DELAY = "5m"
 
 SOUL_TEMPLATE = """# {client_name} — Hermes Agent (rented, bl-site-package)
 
@@ -93,14 +110,22 @@ def _validate_openrouter_key(key: str) -> None:
         raise ValueError(f"Could not reach OpenRouter to validate the key: {exc.reason}")
 
 
-def _write_env(profile_dir: Path, site_url: str, panel_password: str, openrouter_key: str) -> Path:
+def _write_env(
+    profile_dir: Path,
+    site_url: str,
+    panel_password: str,
+    openrouter_key: str,
+    old_site_url: str | None = None,
+) -> Path:
     env_path = profile_dir / ".env"
-    env_path.write_text(
+    contents = (
         f"BL_SITE_URL={site_url}\n"
         f"BL_SITE_PANEL_PASSWORD={panel_password}\n"
-        f"OPENROUTER_API_KEY={openrouter_key}\n",
-        encoding="utf-8",
+        f"OPENROUTER_API_KEY={openrouter_key}\n"
     )
+    if old_site_url:
+        contents += f"OLD_SITE_URL={old_site_url}\n"
+    env_path.write_text(contents, encoding="utf-8")
     os.chmod(env_path, 0o600)
     return env_path
 
@@ -135,6 +160,7 @@ def provision(
     agents: list[str],
     deliver: str = "local",
     skip_key_check: bool = False,
+    old_site_url: str | None = None,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -150,6 +176,12 @@ def provision(
         raise ValueError(f"Unknown agent(s) {unknown} — choose from {list(AGENT_SOURCES)}")
     if not agents:
         raise ValueError("At least one agent must be ordered")
+    if "onboarding-content" in agents and not old_site_url:
+        raise ValueError(
+            "The onboarding-content agent needs --old-site-url (the client's "
+            "existing site to migrate content from) — omit the agent if the "
+            "client has no existing site to draw from."
+        )
 
     if not skip_key_check:
         _validate_openrouter_key(openrouter_key)
@@ -158,21 +190,25 @@ def provision(
     (profile_dir / "SOUL.md").write_text(
         SOUL_TEMPLATE.format(client_name=client_name), encoding="utf-8"
     )
-    env_path = _write_env(profile_dir, site_url, panel_password, openrouter_key)
+    env_path = _write_env(profile_dir, site_url, panel_password, openrouter_key, old_site_url)
 
     created_jobs = []
     for agent_key in agents:
-        source, display_name = AGENT_SOURCES[agent_key]
-        cron_expr = pick_stagger_schedule(canon, agent_key)
+        source, display_name, schedule_kind = AGENT_SOURCES[agent_key]
+        schedule = (
+            ONBOARDING_CONTENT_DELAY
+            if schedule_kind == "once"
+            else pick_stagger_schedule(canon, agent_key)
+        )
         job = create_job(
             prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8"),
-            schedule=cron_expr,
+            schedule=schedule,
             name=f"{display_name} — {client_name}",
             deliver=deliver,
             profile=canon,
             prompt_source=source,
         )
-        created_jobs.append({"job_id": job["id"], "name": job["name"], "schedule": cron_expr, "source": source})
+        created_jobs.append({"job_id": job["id"], "name": job["name"], "schedule": schedule, "source": source})
 
     return {
         "profile": canon,
@@ -189,9 +225,14 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
     parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key validation call")
+    parser.add_argument(
+        "--old-site-url",
+        default=None,
+        help="Client's existing site to migrate content from — required if --agents includes onboarding-content",
+    )
     args = parser.parse_args()
 
     agents = [a.strip() for a in args.agents.split(",") if a.strip()]
@@ -206,6 +247,7 @@ def main() -> int:
             agents=agents,
             deliver=args.deliver,
             skip_key_check=args.skip_key_check,
+            old_site_url=args.old_site_url,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)
