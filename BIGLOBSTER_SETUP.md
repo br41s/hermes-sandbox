@@ -125,15 +125,16 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 ## Model
 
-`openrouter/owl-alpha` via OpenRouter (active as of 2026-06-02).
+`tencent/hy3` via OpenRouter (active as of 2026-07-10) — the GA release of Tencent's Hy3 (295B MoE, 21B active, 256K context), replacing the `-preview` slug.
 
 Set via `HERMES_DEFAULT_MODEL` env var in Zeabur — the `03-biglobster-config` boot hook updates `config.yaml` on the persistent volume at every boot. The `docker/config.yaml` in the repo also reflects this as the default. `deepseek/deepseek-v4-flash` is kept as the `fallback_model`.
 
 ### owl-alpha instability window (resolved)
-`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha has since recovered and is back as the active model (2026-06-02); deepseek remains the fallback.
+`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10); deepseek remains the fallback.
 
-### Why not tencent/hy3-preview
-In Hermes, the `tencent/` prefix resolves to the `tencent-tokenhub` provider (TokenHub API), not OpenRouter. Using it as the default causes a startup crash because `TOKENHUB_API_KEY` is not set.
+### tencent/ prefix vs. TokenHub provider (still relevant — read before changing this model again)
+In Hermes, the vendor alias table maps the bare provider name `tencent` → the `tencent-tokenhub` provider (TokenHub API), which needs `TOKENHUB_API_KEY` — not set in this deployment. This previously blocked using `tencent/hy3-preview` as the default: any path that *auto-detects* a provider from the model ID's vendor segment (e.g. running `hermes model tencent/hy3-preview` interactively with no explicit `--provider`) resolves straight to TokenHub and fails.
+It's safe here because `HERMES_DEFAULT_MODEL` flows through `03-biglobster-config`'s reconciler, which always pairs it with an explicit `provider: openrouter` in `config.yaml` — verified via `hermes doctor` (all profiles show `tencent/hy3` green) and the OpenRouter connectivity check passing. The hazard is real for *interactive* model switches without `--provider openrouter`, not for this env-var-driven default.
 
 ---
 
