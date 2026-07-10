@@ -62,6 +62,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     # Xiaomi
     ("xiaomi/mimo-v2.5-pro",                   ""),
     # Tencent
+    ("tencent/hy3",                            "recommended"),
     ("tencent/hy3-preview",                    ""),
     # StepFun
     ("stepfun/step-3.7-flash",                 ""),
@@ -179,6 +180,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         # Xiaomi
         "xiaomi/mimo-v2.5-pro",
         # Tencent
+        "tencent/hy3",
         "tencent/hy3-preview",
         # StepFun
         "stepfun/step-3.7-flash",
