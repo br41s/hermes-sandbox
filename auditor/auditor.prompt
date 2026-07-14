@@ -63,7 +63,14 @@ across repos from a single checkout, so an unqualified `gh` would hit the wrong 
      HERMES_AUDITOR_CONTENT_MODEL for `content`; check which with
      `python -m auditor.llm --tier <tier> --show-model`.) Use the judge's
      output to form your verdict — apply your own judgement, don't rubber-stamp it.
-  e. Act on your verdict (PR comment via `gh pr comment <number> --repo <repo> --body "..."`):
+  e. Record that you reviewed this head NOW, before acting on the verdict:
+         python -m auditor.pending --mark <number> <headRefOid> --repo <repo>
+     Do this even if you are about to escalate (PASO 3) or a step below fails —
+     marking must never depend on how step f finishes. Otherwise an escalated or
+     failed PR stays "pending" and gets reviewed again from scratch on the next
+     run with zero new commits, which is the exact double-review bug this line
+     exists to prevent.
+  f. Act on your verdict (PR comment via `gh pr comment <number> --repo <repo> --body "..."`):
      - Blockers (ANY tier) → REQUEST CHANGES: for each, `file:line — what — why it
        matters — suggested fix`. Be concrete. Do NOT merge.
      - No blockers, tier == `content` → MERGE IT. A clean content PR (prose, assets,
@@ -91,8 +98,6 @@ across repos from a single checkout, so an unqualified `gh` would hit the wrong 
        resolution. Never merge a conflicting PR (content included); do NOT push the
        resolution (auto-improve is still deferred).
      - Judgement call → say so, give your recommendation, and ESCALATE (PASO 3).
-  f. Record that you reviewed this head so you don't repeat it:
-         python -m auditor.pending --mark <number> <headRefOid> --repo <repo>
 
 PASO 3 — Escalation: if any PR needs the CEO's judgement, your final response is
 ONE tight brief (it is delivered to the incidents Telegram thread): PR link, the
@@ -125,7 +130,10 @@ HARD RULES (from SOUL.md):
   (server-side). Never use `--no-verify`.
 - Auto-improve is still deferred: never push fix commits or conflict resolutions
   to a PR branch yet — comment and let the author push.
-- One review per head SHA. Don't re-comment if nothing changed.
+- One review per head SHA. Don't re-comment if nothing changed. Mark the head
+  reviewed (PASO 2e) as soon as you have a verdict, BEFORE acting on it — never
+  after — so an escalation or a failed `gh` call can't leave the PR "pending"
+  for the next run to review from scratch.
 - Concrete over diplomatic. Point at the problem, suggest the fix.
 - The incidents thread is escalation-only: deliver an escalation brief, the daily
   heartbeat line, or exactly [SILENT] — never a chatty "all clean" status.
