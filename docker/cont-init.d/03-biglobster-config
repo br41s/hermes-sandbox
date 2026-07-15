@@ -148,9 +148,11 @@ inject = [
     "GSC_SERVICE_ACCOUNT_B64",
 ]
 
-def _sync_env_file(env_path):
+def _sync_env_file(env_path, exclude=()):
     content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
     for var in inject:
+        if var in exclude:
+            continue
         val = os.environ.get(var, "")
         if not val:
             continue
@@ -179,6 +181,26 @@ def _sync_env_file(env_path):
 _sync_env_file(home / ".env")
 print(f"[03-biglobster] Synced env vars into {home / '.env'}")
 
+# 1b. Auditor profile uses its OWN GitHub identity (hermes-auditor), never the
+#     shared agent token — a reviewer must be a distinct identity from the
+#     authors it reviews. Resolve HERMES_AUDITOR_GITHUB_TOKEN from os.environ
+#     first, then the durable main .env (mirrors the GITHUB_TOKEN resolution
+#     in the shell preamble), BEFORE the per-profile sync loop below so the
+#     loop can exclude GITHUB_TOKEN/GH_TOKEN from the auditor's .env outright
+#     instead of writing the shared token and hoping a later override catches
+#     it. Invariant: the auditor profile holds ONLY the bot token, NEVER the
+#     shared one — fail closed (no credential at all) if HERMES_AUDITOR_GITHUB_TOKEN
+#     is unset, never fall back to the shared token. A silent fallback here
+#     previously let the auditor authenticate `gh`/`git` AS the human account
+#     that owns the shared token when the bot token was transiently missing at
+#     boot (found 2026-07-15, biglobster PR #356's first review posted under
+#     the CEO's own GitHub identity instead of hermes-auditor).
+auditor_token = os.environ.get("HERMES_AUDITOR_GITHUB_TOKEN", "")
+if not auditor_token and (home / ".env").exists():
+    _m = re.search(r"^HERMES_AUDITOR_GITHUB_TOKEN=(.*)$",
+                   (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
+    auditor_token = _m.group(1).strip() if _m else ""
+
 # Per-profile .env files — keeps tenant gateways on current keys after a
 # rotation. SOUL.md is the "real profile" marker (same as the s6 reconciler).
 profiles_root = home / "profiles"
@@ -186,33 +208,37 @@ if profiles_root.is_dir():
     for prof in sorted(p for p in profiles_root.iterdir() if p.is_dir()):
         if not (prof / "SOUL.md").exists():
             continue
-        _sync_env_file(prof / ".env")
+        # Never let the auditor profile's .env receive the shared token via
+        # the generic path — §1b below is its ONLY source for these two keys.
+        _exclude = ("GITHUB_TOKEN", "GH_TOKEN") if prof.name == "auditor" else ()
+        _sync_env_file(prof / ".env", exclude=_exclude)
         print(f"[03-biglobster] Synced env vars into {prof / '.env'}")
 
-# 1b. Auditor profile uses its OWN GitHub identity (hermes-auditor), never the
-#     shared agent token. The sync loop above just stamped the shared
-#     GITHUB_TOKEN/GH_TOKEN into profiles/auditor/.env; override them here from
-#     HERMES_AUDITOR_GITHUB_TOKEN so the auditor's gh/git act as the bot account
-#     that reviews the PRs (a reviewer must be a distinct identity from the
-#     authors). Invariant: the auditor profile holds ONLY the bot token, never
-#     the shared one. Resolve from os.environ first, then the durable main .env
-#     (mirrors the GITHUB_TOKEN resolution in the shell preamble). No-op if the
-#     profile or the token is absent.
-auditor_token = os.environ.get("HERMES_AUDITOR_GITHUB_TOKEN", "")
-if not auditor_token and (home / ".env").exists():
-    _m = re.search(r"^HERMES_AUDITOR_GITHUB_TOKEN=(.*)$",
-                   (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
-    auditor_token = _m.group(1).strip() if _m else ""
 _auditor_env = profiles_root / "auditor" / ".env"
-if auditor_token and (profiles_root / "auditor" / "SOUL.md").exists():
-    _c = _auditor_env.read_text(encoding="utf-8") if _auditor_env.exists() else ""
-    for _v in ("GITHUB_TOKEN", "GH_TOKEN"):
-        _c = re.sub(rf"^{_v}=.*(?:\n|$)", "", _c, flags=re.MULTILINE)
-    if _c and not _c.endswith("\n"):
-        _c += "\n"
-    _c += f"GITHUB_TOKEN={auditor_token}\nGH_TOKEN={auditor_token}\n"
-    _auditor_env.write_text(_c, encoding="utf-8")
-    print("[03-biglobster] Auditor profile pinned to hermes-auditor GitHub identity")
+if (profiles_root / "auditor" / "SOUL.md").exists():
+    if auditor_token:
+        _c = _auditor_env.read_text(encoding="utf-8") if _auditor_env.exists() else ""
+        for _v in ("GITHUB_TOKEN", "GH_TOKEN"):
+            _c = re.sub(rf"^{_v}=.*(?:\n|$)", "", _c, flags=re.MULTILINE)
+        if _c and not _c.endswith("\n"):
+            _c += "\n"
+        _c += f"GITHUB_TOKEN={auditor_token}\nGH_TOKEN={auditor_token}\n"
+        _auditor_env.write_text(_c, encoding="utf-8")
+        print("[03-biglobster] Auditor profile pinned to hermes-auditor GitHub identity")
+    else:
+        # Fail closed: strip any stale GITHUB_TOKEN/GH_TOKEN lines (defense in
+        # depth — the loop above already excluded them) so the auditor's gh/git
+        # simply have no credential this boot, instead of silently keeping
+        # whatever was written before. Loud, because a quiet no-op here is
+        # exactly what let the fallback slip by unnoticed before.
+        if _auditor_env.exists():
+            _c = _auditor_env.read_text(encoding="utf-8")
+            for _v in ("GITHUB_TOKEN", "GH_TOKEN"):
+                _c = re.sub(rf"^{_v}=.*(?:\n|$)", "", _c, flags=re.MULTILINE)
+            _auditor_env.write_text(_c, encoding="utf-8")
+        print("[03-biglobster] WARNING: HERMES_AUDITOR_GITHUB_TOKEN not set — "
+              "auditor profile has NO GitHub credential this boot (fail-closed, "
+              "will never fall back to the shared token)")
 
 # 1c. Auditor review-model knobs. Two env vars let the CEO swap the system- and
 #     content-tier review models from Zeabur without a redeploy (auditor/llm.py
@@ -581,9 +607,19 @@ if [ -n "$GITHUB_TOKEN" ]; then
     if [ -d "$HERMES_HOME/profiles" ]; then
         for prof_dir in "$HERMES_HOME/profiles"/*/; do
             [ -f "${prof_dir}SOUL.md" ] || continue
+            prof_name=$(basename "$prof_dir")
+            # The auditor profile's git/gh identity is provisioned EXCLUSIVELY
+            # by §4b below (dedicated hermes-auditor bot token) — skip it here
+            # entirely, not just the hosts.yml write. Previously only the
+            # hosts.yml write was skipped, so this loop still wrote the SHARED
+            # (human-linked) token into the auditor's .git-credentials; if §4b
+            # then no-op'd because HERMES_AUDITOR_GITHUB_TOKEN was transiently
+            # unset, that shared credential was left in place with no warning
+            # — the auditor could then git/gh AS that human account instead of
+            # failing closed (found 2026-07-15, biglobster PR #356).
+            [ "$prof_name" = "auditor" ] && continue
             prof_home="${prof_dir}home"
             as_hermes mkdir -p "$prof_home"
-            prof_name=$(basename "$prof_dir")
             HOME="$prof_home" as_hermes git config --global credential.helper store \
                 || echo "[03-biglobster] Warning: git config failed for profile $prof_name (non-fatal)"
             HOME="$prof_home" as_hermes git config --global user.name "Hermes Agent" 2>/dev/null || true
@@ -598,17 +634,13 @@ if [ -n "$GITHUB_TOKEN" ]; then
             # (only git's on-disk .git-credentials is honoured there). Without
             # this, profile crons can git push but every `gh pr create` 401s —
             # the FinView Content Gap Hunter failure (2026-06-25), the same gap
-            # PR #73 closed for the auditor. Skip the auditor profile: §4b pins
-            # its gh auth to the dedicated hermes-auditor bot token, and the
-            # shared agent token must never reach the auditor identity.
-            if [ "$prof_name" != "auditor" ]; then
-                as_hermes mkdir -p "$prof_home/.config/gh"
-                printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \
-                    "$GITHUB_TOKEN" "$gh_login" > "$prof_home/.config/gh/hosts.yml"
-                chmod 600 "$prof_home/.config/gh/hosts.yml"
-                chown -R hermes:hermes "$prof_home/.config" 2>/dev/null || true
-                echo "[03-biglobster] gh hosts.yml provisioned for profile: $prof_name"
-            fi
+            # PR #73 closed for the auditor.
+            as_hermes mkdir -p "$prof_home/.config/gh"
+            printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \
+                "$GITHUB_TOKEN" "$gh_login" > "$prof_home/.config/gh/hosts.yml"
+            chmod 600 "$prof_home/.config/gh/hosts.yml"
+            chown -R hermes:hermes "$prof_home/.config" 2>/dev/null || true
+            echo "[03-biglobster] gh hosts.yml provisioned for profile: $prof_name"
         done
     fi
 else
@@ -629,28 +661,41 @@ if [ -z "$AUDITOR_TOKEN" ] && [ -f "$HERMES_HOME/.env" ]; then
         | tail -n1 | cut -d= -f2-)
 fi
 auditor_home="$HERMES_HOME/profiles/auditor/home"
-if [ -n "$AUDITOR_TOKEN" ] && [ -f "$HERMES_HOME/profiles/auditor/SOUL.md" ]; then
-    as_hermes mkdir -p "$auditor_home"
-    HOME="$auditor_home" as_hermes git config --global credential.helper store \
-        || echo "[03-biglobster] Warning: git config failed for auditor (non-fatal)"
-    HOME="$auditor_home" as_hermes git config --global user.name "hermes-auditor" 2>/dev/null || true
-    HOME="$auditor_home" as_hermes git config --global user.email \
-        "${HERMES_AUDITOR_GIT_EMAIL:-hermes-auditor@users.noreply.github.com}" 2>/dev/null || true
-    printf 'https://x-access-token:%s@github.com\n' "$AUDITOR_TOKEN" > "$auditor_home/.git-credentials"
-    chmod 600 "$auditor_home/.git-credentials"
-    chown hermes:hermes "$auditor_home/.git-credentials" 2>/dev/null || true
-    echo "[03-biglobster] Auditor git credential pinned to hermes-auditor identity"
-    # gh CLI auth: on-disk hosts.yml so `gh` authenticates WITHOUT an env token.
-    # The cron lane does not export GH_TOKEN into the terminal subprocess (only
-    # git's on-disk .git-credentials is honoured there), so without this every
-    # `gh pr ...` 401s and the auditor cron flails (prod 2026-06-24). gh reads
-    # $HOME/.config/gh/hosts.yml, and the auditor's subprocess HOME is here.
-    as_hermes mkdir -p "$auditor_home/.config/gh"
-    printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: hermes-auditor\n' "$AUDITOR_TOKEN" \
-        > "$auditor_home/.config/gh/hosts.yml"
-    chmod 600 "$auditor_home/.config/gh/hosts.yml"
-    chown -R hermes:hermes "$auditor_home/.config" 2>/dev/null || true
-    echo "[03-biglobster] Auditor gh hosts.yml provisioned"
+if [ -f "$HERMES_HOME/profiles/auditor/SOUL.md" ]; then
+    if [ -n "$AUDITOR_TOKEN" ]; then
+        as_hermes mkdir -p "$auditor_home"
+        HOME="$auditor_home" as_hermes git config --global credential.helper store \
+            || echo "[03-biglobster] Warning: git config failed for auditor (non-fatal)"
+        HOME="$auditor_home" as_hermes git config --global user.name "hermes-auditor" 2>/dev/null || true
+        HOME="$auditor_home" as_hermes git config --global user.email \
+            "${HERMES_AUDITOR_GIT_EMAIL:-hermes-auditor@users.noreply.github.com}" 2>/dev/null || true
+        printf 'https://x-access-token:%s@github.com\n' "$AUDITOR_TOKEN" > "$auditor_home/.git-credentials"
+        chmod 600 "$auditor_home/.git-credentials"
+        chown hermes:hermes "$auditor_home/.git-credentials" 2>/dev/null || true
+        echo "[03-biglobster] Auditor git credential pinned to hermes-auditor identity"
+        # gh CLI auth: on-disk hosts.yml so `gh` authenticates WITHOUT an env token.
+        # The cron lane does not export GH_TOKEN into the terminal subprocess (only
+        # git's on-disk .git-credentials is honoured there), so without this every
+        # `gh pr ...` 401s and the auditor cron flails (prod 2026-06-24). gh reads
+        # $HOME/.config/gh/hosts.yml, and the auditor's subprocess HOME is here.
+        as_hermes mkdir -p "$auditor_home/.config/gh"
+        printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: hermes-auditor\n' "$AUDITOR_TOKEN" \
+            > "$auditor_home/.config/gh/hosts.yml"
+        chmod 600 "$auditor_home/.config/gh/hosts.yml"
+        chown -R hermes:hermes "$auditor_home/.config" 2>/dev/null || true
+        echo "[03-biglobster] Auditor gh hosts.yml provisioned"
+    else
+        # Fail CLOSED, never fall back to the shared token: remove any stale
+        # git-credentials/hosts.yml so git/gh simply have NO auth for this
+        # profile (a loud 401 / push failure) instead of silently keeping
+        # whatever was written on a prior boot, or — worse — the shared
+        # human-linked credential the §4 loop above no longer even writes
+        # here. A quiet no-op in this branch is exactly what let the auditor
+        # authenticate as the CEO's own GitHub account go unnoticed before
+        # (found 2026-07-15, biglobster PR #356).
+        rm -f "$auditor_home/.git-credentials" "$auditor_home/.config/gh/hosts.yml" 2>/dev/null || true
+        echo "[03-biglobster] WARNING: HERMES_AUDITOR_GITHUB_TOKEN not set — auditor profile has NO git/gh credential this boot (fail-closed, will never fall back to the shared token)"
+    fi
 fi
 
 # --- 5: seed per-profile bootstrap files from docker/profiles/<name>/ (once) ---
