@@ -579,22 +579,46 @@ fi
 # the home/ subdir is created on demand so a profile that never had one still
 # gets working credentials (grow-shop hit exactly this on 2026-06-15).
 if [ -n "$GITHUB_TOKEN" ]; then
-    HOME="$HERMES_HOME" git config --global credential.helper store
-    HOME="$HERMES_HOME" git config --global user.name "Hermes Agent"
-    HOME="$HERMES_HOME" git config --global user.email "hermes@agent.local"
-    printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$HERMES_HOME/.git-credentials"
-    chmod 600 "$HERMES_HOME/.git-credentials"
-    chown hermes:hermes "$HERMES_HOME/.git-credentials" 2>/dev/null || true
-    echo "[03-biglobster] git HTTPS credential configured (x-access-token)"
-
-    # Resolve the shared token's GitHub login once, for the gh hosts.yml `user:`
-    # field written per profile below. The value is cosmetic — gh authenticates
-    # via oauth_token, so a stale/blank user still authenticates (the hand-placed
-    # finview hosts.yml proved this, 2026-06-25) — but a correct login keeps
-    # `gh pr` display + multi-account checks happy. Falls back to the deployment
-    # owner if the API is unreachable at boot.
+    # Resolve the shared token's GitHub login FIRST — before writing any
+    # credential from it. Two uses: (a) the gh hosts.yml `user:` field written
+    # per profile below (cosmetic — gh authenticates via oauth_token, so a
+    # stale/blank user still authenticates; the hand-placed finview hosts.yml
+    # proved this, 2026-06-25); (b) an identity tripwire (next block). Falls
+    # back to the deployment owner if the API is unreachable at boot, so a
+    # transient network blip never trips the guard or blocks git.
     gh_login=$(HOME="$HERMES_HOME" GH_TOKEN="$GITHUB_TOKEN" gh api user --jq .login 2>/dev/null || true)
     [ -n "$gh_login" ] || gh_login="braisntext"
+
+    # TRIPWIRE: the shared/content token must be the CEO identity, NEVER the
+    # hermes-auditor bot. If it positively resolves to hermes-auditor, refuse to
+    # write ANY shared/content credential from it (the default-profile store
+    # below AND every per-profile home). Writing it makes content agents push
+    # and open PRs AS the reviewer, which the auditor by design refuses to
+    # review or merge (SOUL.md: "Never review or merge your own commits") — so a
+    # whole night of content PRs silently went unaudited on 2026-07-15 when the
+    # auditor PAT briefly sat in GITHUB_TOKEN/GH_TOKEN. We LEAVE any existing
+    # on-disk credentials untouched: the last good boot wrote the correct CEO
+    # identity, so content keeps authoring correctly (or, on a fresh volume with
+    # none, simply fails to push) — never as the reviewer. Loud, because the fix
+    # is an env change: move the bot PAT to HERMES_AUDITOR_GITHUB_TOKEN and set
+    # GITHUB_TOKEN back to the CEO token.
+    if [ "$gh_login" = "hermes-auditor" ]; then
+        echo "[03-biglobster] GUARD: shared GITHUB_TOKEN resolves to hermes-auditor" \
+             "— refusing to write shared/content git credentials from it; content" \
+             "PRs would be authored by the reviewer and go unaudited. Move the bot" \
+             "PAT to HERMES_AUDITOR_GITHUB_TOKEN and restore the CEO token in" \
+             "GITHUB_TOKEN. Existing on-disk credentials left as-is." >&2
+    fi
+
+    if [ "$gh_login" != "hermes-auditor" ]; then
+        HOME="$HERMES_HOME" git config --global credential.helper store
+        HOME="$HERMES_HOME" git config --global user.name "Hermes Agent"
+        HOME="$HERMES_HOME" git config --global user.email "hermes@agent.local"
+        printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$HERMES_HOME/.git-credentials"
+        chmod 600 "$HERMES_HOME/.git-credentials"
+        chown hermes:hermes "$HERMES_HOME/.git-credentials" 2>/dev/null || true
+        echo "[03-biglobster] git HTTPS credential configured (x-access-token)"
+    fi
 
     # Per-profile subprocess homes — run as hermes (profile homes are
     # hermes-owned). Idempotent + non-fatal, matching the script's contract.
@@ -603,8 +627,9 @@ if [ -n "$GITHUB_TOKEN" ]; then
     # was bootstrapped (or via a path that didn't make it) would otherwise
     # silently never get git/gh auth — the failure hand-fixed for grow-shop on
     # 2026-06-15. `mkdir -p` is idempotent, and get_subprocess_home() then
-    # resolves to this populated dir for the delegate lane.
-    if [ -d "$HERMES_HOME/profiles" ]; then
+    # resolves to this populated dir for the delegate lane. Skipped entirely
+    # when the tripwire above fired (shared token is the auditor identity).
+    if [ "$gh_login" != "hermes-auditor" ] && [ -d "$HERMES_HOME/profiles" ]; then
         for prof_dir in "$HERMES_HOME/profiles"/*/; do
             [ -f "${prof_dir}SOUL.md" ] || continue
             prof_name=$(basename "$prof_dir")
