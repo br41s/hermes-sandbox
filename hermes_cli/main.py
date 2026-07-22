@@ -13609,6 +13609,26 @@ Examples:
         logging.getLogger(__name__).debug("curator CLI wiring failed: %s", _exc)
 
     # =========================================================================
+    # memory-curator command — read-only factual-memory lesson digest
+    # =========================================================================
+    memory_curator_parser = subparsers.add_parser(
+        "memory-curator",
+        help="Read-only memory lesson digest — run, status, show",
+        description=(
+            "The memory curator is an auxiliary-model background task that "
+            "mines recent sessions for unsaved corrections and resolved errors "
+            "and writes a proposal digest. Slice 1 is read-only: it never "
+            "writes to memory. Opt-in via memory_curator.enabled."
+        ),
+    )
+    try:
+        from hermes_cli.memory_curator import register_cli as _register_memory_curator_cli
+
+        _register_memory_curator_cli(memory_curator_parser)
+    except Exception as _exc:
+        logging.getLogger(__name__).debug("memory-curator CLI wiring failed: %s", _exc)
+
+    # =========================================================================
     # memory command
     # =========================================================================
     memory_parser = subparsers.add_parser(
