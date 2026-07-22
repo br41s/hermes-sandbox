@@ -689,6 +689,29 @@ def revert_last() -> Dict[str, Any]:
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         except OSError as e:
             logger.debug("memory-curator: ledger rewrite failed: %s", e)
+
+        # Make revert a true inverse of apply: clear the proposal's applied
+        # flag so it can be re-applied, and decrement the per-target count.
+        # Match on entry text (the real identity) rather than id, since ids
+        # are recycled per digest run — a new run may have overwritten
+        # proposals.json with different lessons sharing the same id.
+        data = load_proposals()
+        for prop in data.get("proposals", []):
+            if prop.get("applied") and prop.get("entry") == rec.get("entry"):
+                prop["applied"] = False
+                break
+        _save_proposals(data)
+
+        st = load_state()
+        counts = st.get("applied_by_target") or {}
+        if not isinstance(counts, dict):
+            counts = {}
+        tgt = rec.get("target")
+        if tgt and int(counts.get(tgt, 0)) > 0:
+            counts[tgt] = int(counts[tgt]) - 1
+        st["applied_by_target"] = counts
+        save_state(st)
+
         return {"reverted": rec.get("id"), "target": rec.get("target")}
     return {"reverted": None, "error": "nothing to revert"}
 

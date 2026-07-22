@@ -319,3 +319,27 @@ def test_revert_last_removes_entry(mc_env):
 def test_revert_without_ledger(mc_env):
     mc = mc_env["mc"]
     assert mc.revert_last()["reverted"] is None
+
+
+def test_apply_revert_reapply_roundtrip(mc_env):
+    """revert is a true inverse: the proposal can be applied again afterwards."""
+    mc, home = mc_env["mc"], mc_env["home"]
+    from tools.memory_tool import get_memory_dir
+    _seed(mc, home, _props())
+
+    assert mc.apply_proposals(["p1"])["applied"] == ["p1"]
+    assert mc.load_state()["applied_by_target"]["user"] == 1
+
+    assert mc.revert_last()["reverted"] == "p1"
+    # flag cleared + count decremented
+    p1 = next(p for p in mc.load_proposals()["proposals"] if p["id"] == "p1")
+    assert p1["applied"] is False
+    assert mc.load_state()["applied_by_target"].get("user", 0) == 0
+    # latest.md no longer shows the applied checkmark
+    assert "✅ applied" not in (mc._digest_dir() / "latest.md").read_text()
+
+    # re-apply now succeeds (was the bug: skipped as "already applied")
+    again = mc.apply_proposals(["p1"])
+    assert again["applied"] == ["p1"] and not again["errors"]
+    assert "Use a feature branch per change" in (get_memory_dir() / "USER.md").read_text()
+    assert mc.load_state()["applied_by_target"]["user"] == 1
