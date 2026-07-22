@@ -51,22 +51,45 @@ def test_run_disabled_without_force_returns_1(cli_env, capsys):
     assert "disabled" in capsys.readouterr().out
 
 
-def test_run_force_invokes_engine(cli_env, monkeypatch, capsys):
-    mc = cli_env["mc"]
-    called = {}
-
+def _stub_engine(mc, monkeypatch, home, called):
     def fake_run(*, on_digest=None, force=False):
         called["force"] = force
         if on_digest:
             on_digest("scanned 3 session(s) — new lessons proposed")
-        return {"summary": "ok", "digest_path": str(cli_env["home"] / "d.md"),
-                "sessions": 3}
-
+        return {"summary": "ok", "digest_path": str(home / "d.md"), "sessions": 3}
     monkeypatch.setattr(mc, "run_memory_digest", fake_run)
+
+
+def test_run_force_invokes_engine(cli_env, monkeypatch, capsys):
+    called = {}
+    _stub_engine(cli_env["mc"], monkeypatch, cli_env["home"], called)
     args = cli_env["parser"].parse_args(["run", "--force"])
     assert args.func(args) == 0
     assert called["force"] is True
     assert "new lessons proposed" in capsys.readouterr().out
+
+
+def test_run_enabled_without_force_still_runs_now(cli_env, monkeypatch, capsys):
+    """A manual `run` (enabled, no --force) runs now, bypassing the interval —
+    the engine is invoked with force=True. Guards the sibling `hermes curator
+    run` contract against a regression to interval-gated behavior."""
+    mc = cli_env["mc"]
+    monkeypatch.setattr(mc, "_load_config", lambda: {"enabled": True})
+    called = {}
+    _stub_engine(mc, monkeypatch, cli_env["home"], called)
+    args = cli_env["parser"].parse_args(["run"])
+    assert args.func(args) == 0
+    assert called["force"] is True  # runs now, not gated by the schedule
+
+
+def test_run_disabled_with_force_invokes_engine(cli_env, monkeypatch):
+    """--force lets you preview even when disabled."""
+    mc = cli_env["mc"]  # fixture already stubs _load_config → enabled False
+    called = {}
+    _stub_engine(mc, monkeypatch, cli_env["home"], called)
+    args = cli_env["parser"].parse_args(["run", "--force"])
+    assert args.func(args) == 0
+    assert called["force"] is True
 
 
 def test_show_prints_latest(cli_env, capsys):

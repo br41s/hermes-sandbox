@@ -52,8 +52,12 @@ def _cmd_status(args) -> int:
 
 def _cmd_run(args) -> int:
     from agent import memory_curator as mc
-    force = bool(getattr(args, "force", False))
-    if not force and not mc.is_enabled():
+    # --force here means "run even when the curator is disabled", so you can
+    # preview a digest without flipping memory_curator.enabled on. It does NOT
+    # govern the interval: a manual `run` always runs now, bypassing the weekly
+    # schedule — same contract as `hermes curator run`.
+    allow_disabled = bool(getattr(args, "force", False))
+    if not mc.is_enabled() and not allow_disabled:
         print("Memory curator is disabled (memory_curator.enabled=false). "
               "Use --force to run a one-off digest anyway.")
         return 1
@@ -93,7 +97,7 @@ def register_cli(parent: argparse.ArgumentParser) -> None:
     p_run = subs.add_parser("run", help="Run a read-only digest now")
     p_run.add_argument(
         "--force", dest="force", action="store_true",
-        help="Run even if disabled / before the interval elapses",
+        help="Run even when the curator is disabled (memory_curator.enabled=false)",
     )
     p_run.set_defaults(func=_cmd_run)
 
