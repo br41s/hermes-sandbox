@@ -48,11 +48,16 @@ and never reach the bounded `memory` store. Do it by reusing the existing
   per-class trust level for the auto graduation).
 
 ## Build slices (smallest shippable first)
-1. **Read-only digest.** New module `agent/memory_curator.py`: enumerate
-   sessions since last run, aux-fork extracts candidate corrections/errors NOT
-   already in memory, emit a Telegram digest. No writes. Ship + observe.
-2. **Approve-to-write.** Add inline approve action → writes via memory tool.
-   Track per-class approval counts in state.
+1. **Read-only digest.** ✅ DONE (PR #130). Module `agent/memory_curator.py`:
+   enumerate sessions since last run, aux-fork extracts candidate
+   corrections/errors NOT already in memory, persist a digest. No writes.
+   CLI `hermes memory-curator run/status/show` added in PR #131.
+2. **Approve-to-write.** ✅ DONE (this PR). Aux-fork now emits structured JSON
+   proposals → `proposals.json`. `hermes memory-curator apply <id>|--all`
+   writes via `MemoryStore.add` (dedup/cap/scan-guarded); each write recorded
+   in `applied.jsonl`; `revert` undoes the last write. Per-target apply counts
+   in state (`applied_by_target`) seed slice 4's graduation. Human-gated: the
+   digest pass never writes on its own.
 3. **Consolidation/eviction pass.** When store > threshold, aux-fork proposes
    merges/evictions (umbrella pattern, same as skills curator).
 4. **Auto graduation.** Classes with K clean approvals flip to auto-apply

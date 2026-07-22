@@ -29,10 +29,15 @@ def mc_env(tmp_path, monkeypatch):
     # Default: enabled, no real LLM, no real memory file.
     monkeypatch.setattr(mc, "_load_config", lambda: {"enabled": True})
     monkeypatch.setattr(mc, "_read_current_memory", lambda: "")
+    _stub_json = (
+        '```json\n{"proposals": [{"target": "user", "title": "branches", '
+        '"lesson": "use feature branches", "evidence": "s1", '
+        '"entry": "Use a feature branch per change"}]}\n```'
+    )
     monkeypatch.setattr(
         mc, "_run_extraction",
-        lambda prompt: {"final": "### Rule\n- **Lesson:** use feature branches\n",
-                        "summary": "1 lesson", "model": "m", "provider": "p", "error": None},
+        lambda prompt: {"final": _stub_json, "summary": "1 lesson",
+                        "model": "m", "provider": "p", "error": None},
     )
     return {"home": home, "mc": mc}
 
@@ -146,14 +151,19 @@ def test_digest_written_and_state_updated(mc_env, monkeypatch):
     captured = []
     res = mc.run_memory_digest(on_digest=captured.append, now=now, force=True)
 
-    assert res is not None and res["sessions"] == 1
+    assert res is not None and res["sessions"] == 1 and res["proposals"] == 1
     assert res["digest_path"] and Path(res["digest_path"]).exists()
-    assert "use feature branches" in Path(res["digest_path"]).read_text()
+    assert "Use a feature branch per change" in Path(res["digest_path"]).read_text()
+    # proposals.json is the source of truth for apply
+    data = mc.load_proposals()
+    assert len(data["proposals"]) == 1
+    assert data["proposals"][0]["target"] == "user"
+    assert data["proposals"][0]["applied"] is False
     # latest.md mirror exists
     assert (mc_env["home"] / "memory-curator" / "latest.md").exists()
     # State advanced
     st = mc.load_state()
-    assert st["run_count"] == 1
+    assert st["run_count"] == 1 and st["pending_proposals"] == 1
     assert st["last_digest_path"] == res["digest_path"]
     assert captured and "1 session" in captured[0]
 
@@ -198,3 +208,114 @@ def test_force_bypasses_interval_gate(mc_env, monkeypatch):
     _install_fake_db(monkeypatch, [], {})
     res = mc.run_memory_digest(now=datetime.now(timezone.utc), force=True)
     assert res is not None
+
+
+# ---------------------------------------------------------------------------
+# Proposal parsing (pure function)
+# ---------------------------------------------------------------------------
+
+def test_parse_proposals_fenced_and_coerces_target(mc_env):
+    mc = mc_env["mc"]
+    text = ('prose ```json\n{"proposals":[{"target":"memory","entry":"a"},'
+            '{"target":"bogus","entry":"b"}]}\n``` trailing')
+    props = mc._parse_proposals(text)
+    assert [p["id"] for p in props] == ["p1", "p2"]
+    assert props[1]["target"] == "memory"  # invalid target coerced to memory
+
+
+def test_parse_proposals_skips_empty_and_garbage(mc_env):
+    mc = mc_env["mc"]
+    props = mc._parse_proposals(
+        '{"proposals":[{"target":"user","entry":""},{"target":"user","entry":"keep"}]}'
+    )
+    assert len(props) == 1 and props[0]["entry"] == "keep"
+    assert mc._parse_proposals("no json here") == []
+    assert mc._parse_proposals("") == []
+
+
+# ---------------------------------------------------------------------------
+# Apply / revert (write path) — real MemoryStore in the isolated HERMES_HOME
+# ---------------------------------------------------------------------------
+
+def _seed(mc, home, proposals):
+    (home / "memories").mkdir(parents=True, exist_ok=True)
+    mc._persist_run(proposals, {"sessions": 1})
+
+
+def _props():
+    return [
+        {"id": "p1", "target": "user", "title": "t1", "lesson": "l1",
+         "evidence": "s1", "entry": "Use a feature branch per change", "applied": False},
+        {"id": "p2", "target": "memory", "title": "t2", "lesson": "l2",
+         "evidence": "s2", "entry": "Cron store is centralized", "applied": False},
+    ]
+
+
+def test_apply_selected_writes_and_records(mc_env):
+    mc, home = mc_env["mc"], mc_env["home"]
+    _seed(mc, home, _props())
+    report = mc.apply_proposals(["p1"])
+    assert report["applied"] == ["p1"] and not report["errors"]
+
+    from tools.memory_tool import get_memory_dir
+    assert "Use a feature branch per change" in (get_memory_dir() / "USER.md").read_text()
+
+    data = mc.load_proposals()
+    by_id = {p["id"]: p for p in data["proposals"]}
+    assert by_id["p1"]["applied"] is True and by_id["p2"]["applied"] is False
+
+    ledger = mc._digest_dir() / "applied.jsonl"
+    assert ledger.exists() and "p1" in ledger.read_text()
+    assert mc.load_state()["applied_by_target"]["user"] == 1
+
+
+def test_apply_all_writes_both(mc_env):
+    mc, home = mc_env["mc"], mc_env["home"]
+    _seed(mc, home, _props())
+    report = mc.apply_proposals(apply_all=True)
+    assert sorted(report["applied"]) == ["p1", "p2"]
+
+    from tools.memory_tool import get_memory_dir
+    assert "Cron store is centralized" in (get_memory_dir() / "MEMORY.md").read_text()
+
+
+def test_apply_is_idempotent(mc_env):
+    mc, home = mc_env["mc"], mc_env["home"]
+    _seed(mc, home, _props())
+    mc.apply_proposals(["p1"])
+    again = mc.apply_proposals(["p1"])
+    assert again["applied"] == []
+    assert any("already applied" in s for s in again["skipped"])
+
+
+def test_apply_unknown_id_errors(mc_env):
+    mc, home = mc_env["mc"], mc_env["home"]
+    _seed(mc, home, _props())
+    report = mc.apply_proposals(["p9"])
+    assert report["applied"] == []
+    assert any("unknown proposal id" in e for e in report["errors"])
+
+
+def test_apply_no_proposals(mc_env):
+    mc = mc_env["mc"]
+    report = mc.apply_proposals(apply_all=True)
+    assert report["applied"] == [] and report["errors"]
+
+
+def test_revert_last_removes_entry(mc_env):
+    mc, home = mc_env["mc"], mc_env["home"]
+    _seed(mc, home, _props())
+    mc.apply_proposals(["p1"])
+    from tools.memory_tool import get_memory_dir
+    assert "Use a feature branch per change" in (get_memory_dir() / "USER.md").read_text()
+
+    res = mc.revert_last()
+    assert res["reverted"] == "p1" and res["target"] == "user"
+    assert "Use a feature branch per change" not in (get_memory_dir() / "USER.md").read_text()
+    # second revert finds nothing (the entry was already undone)
+    assert mc.revert_last()["reverted"] is None
+
+
+def test_revert_without_ledger(mc_env):
+    mc = mc_env["mc"]
+    assert mc.revert_last()["reverted"] is None
