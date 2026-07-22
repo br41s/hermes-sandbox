@@ -709,6 +709,25 @@ if [ -f "$HERMES_HOME/profiles/auditor/SOUL.md" ]; then
         chmod 600 "$auditor_home/.config/gh/hosts.yml"
         chown -R hermes:hermes "$auditor_home/.config" 2>/dev/null || true
         echo "[03-biglobster] Auditor gh hosts.yml provisioned"
+
+        # IDENTITY TRIPWIRE (mirror of the §4 content guard, opposite direction):
+        # the token just written MUST authenticate as hermes-auditor. If
+        # HERMES_AUDITOR_GITHUB_TOKEN is crossed to a NON-auditor identity — e.g.
+        # the CEO's own PAT, as happened in the 2026-07 Frankfurt secret rotation
+        # (auditor reviews then posted under `braisntext`, FinView #168) — the
+        # auditor would review/merge under that identity, breaking the "reviewer
+        # distinct from author" invariant and making its reviews look like the
+        # CEO's. Verify and, on a positive mismatch, STRIP the credential (fail
+        # closed) rather than review as the wrong account. A blank/unreachable
+        # API skips the check (never block the auditor on a transient blip).
+        _aud_login=$(HOME="$auditor_home" GH_TOKEN="$AUDITOR_TOKEN" gh api user --jq .login 2>/dev/null || true)
+        if [ -n "$_aud_login" ] && [ "$_aud_login" != "hermes-auditor" ]; then
+            rm -f "$auditor_home/.git-credentials" "$auditor_home/.config/gh/hosts.yml" 2>/dev/null || true
+            echo "[03-biglobster] GUARD: HERMES_AUDITOR_GITHUB_TOKEN resolves to" \
+                 "'$_aud_login', not hermes-auditor — stripped the auditor credential" \
+                 "(fail-closed). Set the hermes-auditor bot PAT in" \
+                 "HERMES_AUDITOR_GITHUB_TOKEN." >&2
+        fi
     else
         # Fail CLOSED, never fall back to the shared token: remove any stale
         # git-credentials/hosts.yml so git/gh simply have NO auth for this
@@ -722,6 +741,21 @@ if [ -f "$HERMES_HOME/profiles/auditor/SOUL.md" ]; then
         echo "[03-biglobster] WARNING: HERMES_AUDITOR_GITHUB_TOKEN not set — auditor profile has NO git/gh credential this boot (fail-closed, will never fall back to the shared token)"
     fi
 fi
+
+# --- 4c: auditor dedup-state dir must be hermes-owned (persist reviewed ledger) ---
+# The auditor cron runs as the hermes user and persists its reviewed-PR dedup
+# ledger to $HERMES_HOME/auditor/state.json (auditor/pending.py _state_path()).
+# If that dir/file is root-owned, the hermes cron cannot write it: every
+# mark_reviewed() raises PermissionError, the `seen` set never grows, and every
+# 6h poll + every webhook trigger RE-REVIEWS every open PR at the same head SHA
+# — the duplicate-review storm observed on FinView #168 (2026-07-22), whose
+# state.json was still root-owned and stale from 2026-06-25 after the Frankfurt
+# volume migration carried ownership over as root. Create it if missing and
+# force hermes ownership every boot. cont-init runs as root here, so the chown
+# succeeds; non-fatal, matching the script's contract.
+mkdir -p "$HERMES_HOME/auditor" 2>/dev/null || true
+chown -R hermes:hermes "$HERMES_HOME/auditor" 2>/dev/null || true
+echo "[03-biglobster] Auditor state dir ownership enforced (hermes:hermes)"
 
 # --- 5: seed per-profile bootstrap files from docker/profiles/<name>/ (once) ---
 # Files bundled in the image under docker/profiles/<name>/ are copied into the
