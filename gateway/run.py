@@ -19243,6 +19243,17 @@ def _start_cron_ticker(stop_event: threading.Event, adapters=None, loop=None, in
             except Exception as e:
                 logger.debug("Curator tick error: %s", e)
 
+            # Memory curator — read-only lesson digest from recent sessions.
+            # Same idle-gated cadence; opt-in (memory_curator.enabled).
+            try:
+                from agent.memory_curator import maybe_run_memory_curator
+                maybe_run_memory_curator(
+                    idle_for_seconds=float("inf"),
+                    on_digest=lambda msg: logger.info("memory-curator: %s", msg),
+                )
+            except Exception as e:
+                logger.debug("Memory curator tick error: %s", e)
+
         stop_event.wait(timeout=interval)
     logger.info("Cron ticker stopped")
 
