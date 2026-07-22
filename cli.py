@@ -12956,6 +12956,19 @@ class HermesCLI:
             )
         except Exception:
             pass
+
+        # Memory curator — read-only lesson digest from recent sessions.
+        # Opt-in (memory_curator.enabled); best-effort, never blocks startup.
+        try:
+            from agent.memory_curator import maybe_run_memory_curator
+            maybe_run_memory_curator(
+                idle_for_seconds=float("inf"),  # CLI startup = fully idle
+                on_digest=lambda msg: self._console_print(
+                    f"[dim #6b7684]🧠 {msg}[/]"
+                ),
+            )
+        except Exception:
+            pass
         if self.preloaded_skills and not self._startup_skills_line_shown:
             skills_label = ", ".join(self.preloaded_skills)
             self._console_print(

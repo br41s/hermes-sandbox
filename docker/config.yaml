@@ -136,6 +136,14 @@ curator:
   min_idle_hours: 2
   stale_after_days: 30
   archive_after_days: 90
+memory_curator:
+  # Read-only weekly digest of unsaved lessons/corrections from recent
+  # sessions (slice 1). Opt-in: flip to true to activate. Never writes memory.
+  enabled: false
+  interval_hours: 168
+  min_idle_hours: 2
+  lookback_days: 7
+  max_sessions: 20
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 60
