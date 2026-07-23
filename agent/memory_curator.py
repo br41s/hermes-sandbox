@@ -5,14 +5,19 @@ memory (agent-created skills), this maintains *factual* memory: it surfaces
 lessons that are trapped in past sessions and never reached the bounded
 ``memory`` store.
 
-Slice 1 is deliberately **read-only**. It never writes to memory. It:
+The digest pass is read-only. It:
   1. enumerates recent sessions for the active profile (since the last run),
   2. reads the current MEMORY.md so the extractor can dedupe,
   3. spawns an auxiliary-model fork that extracts ONLY (a) explicit user
      corrections and (b) errors resolved after multiple attempts that are NOT
-     already captured in memory,
-  4. writes a markdown digest to disk and hands a one-line summary to a
-     delivery callback.
+     already captured in memory, as structured JSON proposals,
+  4. persists proposals.json + a markdown digest and hands a one-line summary
+     to a delivery callback.
+
+Slice 2 adds the **write path**: ``apply_proposals`` writes approved proposals
+to memory via the memory tool (dedup/cap/scan-guarded), recording each write in
+a reversible ledger; ``revert_last`` undoes the most recent write. Writes are
+human-gated — the digest pass never writes on its own.
 
 Shares the curator's design contract:
   - inactivity-triggered (piggy-backs on the same idle hook, no new daemon)
@@ -36,6 +41,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
@@ -69,6 +75,8 @@ def _default_state() -> Dict[str, Any]:
         "last_run_at": None,
         "last_run_summary": None,
         "last_digest_path": None,
+        "pending_proposals": 0,
+        "applied_by_target": {},
         "paused": False,
         "run_count": 0,
     }
@@ -295,24 +303,33 @@ def _read_current_memory() -> str:
 # ---------------------------------------------------------------------------
 
 _DIGEST_INSTRUCTIONS = (
-    "You are the MEMORY CONSOLIDATOR for an autonomous agent. Your job is to "
-    "read recent conversation transcripts and surface durable lessons that are "
-    "NOT already captured in the agent's persistent memory.\n\n"
+    "You are the MEMORY CONSOLIDATOR for an autonomous agent. Read recent "
+    "conversation transcripts and surface durable lessons NOT already captured "
+    "in the agent's persistent memory.\n\n"
     "SCOPE — extract ONLY two kinds of item:\n"
     "  1. Explicit user CORRECTIONS: the user told the agent it was wrong, or "
     "to do something differently (a preference, a rule, a constraint).\n"
-    "  2. RESOLVED ERRORS: the agent made a mistake that took multiple attempts "
-    "to fix — capture what failed and what finally worked.\n\n"
+    "  2. RESOLVED ERRORS: a mistake that took multiple attempts to fix — "
+    "capture what failed and what finally worked.\n\n"
     "HARD RULES:\n"
     "  - Do NOT propose anything already present in CURRENT MEMORY below.\n"
     "  - Do NOT extract task progress, one-off facts, or transient TODOs.\n"
-    "  - Do NOT call any tools. Do NOT write anything. This is a proposal only.\n"
-    "  - If there is nothing new worth remembering, say exactly: NOTHING NEW.\n\n"
-    "OUTPUT — markdown, one section per item:\n"
-    "  ### <short title>\n"
-    "  - **Lesson:** <the durable rule or fact>\n"
-    "  - **Evidence:** <session id + a one-line paraphrase of what happened>\n"
-    "  - **Suggested memory entry:** <the exact text you'd add to memory, ≤200 chars>\n"
+    "  - Do NOT call any tools. This is a proposal only.\n\n"
+    "OUTPUT — respond with a SINGLE json fenced code block and nothing else:\n"
+    "```json\n"
+    "{\"proposals\": [\n"
+    "  {\n"
+    "    \"target\": \"memory\",\n"
+    "    \"title\": \"<short title>\",\n"
+    "    \"lesson\": \"<the durable rule or fact>\",\n"
+    "    \"evidence\": \"<session id + one-line paraphrase>\",\n"
+    "    \"entry\": \"<exact text to add to memory, <=200 chars>\"\n"
+    "  }\n"
+    "]}\n"
+    "```\n"
+    "Use target \"memory\" for agent notes/conventions and \"user\" for facts or "
+    "preferences about the user. If nothing new is worth remembering, return "
+    "{\"proposals\": []}.\n"
 )
 
 
@@ -413,33 +430,290 @@ def _resolve_extraction_runtime(cfg: Dict[str, Any]) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Digest persistence
+# Proposal parsing + persistence
 # ---------------------------------------------------------------------------
 
 def _digest_dir() -> Path:
     return get_hermes_home() / "memory-curator"
 
 
-def _write_digest(body: str, meta: Dict[str, Any]) -> Optional[str]:
-    """Persist the digest markdown; also refresh ``latest.md``. Returns path."""
+def _proposals_path() -> Path:
+    return _digest_dir() / "proposals.json"
+
+
+def _ledger_path() -> Path:
+    return _digest_dir() / "applied.jsonl"
+
+
+def _parse_proposals(text: str) -> List[Dict[str, Any]]:
+    """Extract a proposals list from the LLM response. Returns [] on any failure.
+
+    Prefers a ```json fenced block; falls back to the outermost {...} span.
+    Each proposal is normalized and assigned a stable id (p1, p2, …).
+    """
+    if not text:
+        return []
+    raw = None
+    m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if m:
+        raw = m.group(1).strip()
+    else:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            raw = text[start:end + 1]
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    items = data.get("proposals") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        entry = str(it.get("entry", "")).strip()
+        if not entry:
+            continue
+        target = str(it.get("target", "memory")).strip().lower()
+        if target not in ("memory", "user"):
+            target = "memory"
+        out.append({
+            "id": f"p{len(out) + 1}",
+            "target": target,
+            "title": str(it.get("title", "")).strip(),
+            "lesson": str(it.get("lesson", "")).strip(),
+            "evidence": str(it.get("evidence", "")).strip(),
+            "entry": entry,
+            "applied": False,
+        })
+    return out
+
+
+def load_proposals() -> Dict[str, Any]:
+    """Load the last run's proposals (source of truth for apply). Never raises."""
+    path = _proposals_path()
+    if not path.exists():
+        return {"ts": None, "meta": {}, "proposals": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("proposals"), list):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"ts": None, "meta": {}, "proposals": []}
+
+
+def _render_digest_md(proposals: List[Dict[str, Any]], meta: Dict[str, Any], ts: str) -> str:
+    lines = [
+        f"# Memory digest — {ts}",
+        "",
+        f"- sessions scanned: {meta.get('sessions', 0)}",
+        f"- model: {meta.get('provider', '?')}/{meta.get('model', '?')}",
+        f"- proposals: {len(proposals)}",
+        "",
+        "> Proposals only. Apply with `hermes memory-curator apply <id>` "
+        "(or `apply --all`); undo the last write with `revert`. "
+        "Nothing is written until you apply.",
+        "",
+        "---",
+        "",
+    ]
+    if not proposals:
+        lines.append("NOTHING NEW — no unsaved lessons found.")
+        return "\n".join(lines) + "\n"
+    for p in proposals:
+        mark = " ✅ applied" if p.get("applied") else ""
+        lines.append(f"### [{p['id']}] {p.get('title') or p['entry'][:60]}{mark}")
+        if p.get("lesson"):
+            lines.append(f"- **Lesson:** {p['lesson']}")
+        if p.get("evidence"):
+            lines.append(f"- **Evidence:** {p['evidence']}")
+        lines.append(f"- **Target:** `{p['target']}`")
+        lines.append(f"- **Entry:** {p['entry']}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _save_proposals(data: Dict[str, Any]) -> None:
+    """Persist proposals.json and re-render latest.md (to reflect applied flags)."""
+    try:
+        _digest_dir().mkdir(parents=True, exist_ok=True)
+        _proposals_path().write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        md = _render_digest_md(
+            data.get("proposals", []), data.get("meta", {}), data.get("ts") or ""
+        )
+        (_digest_dir() / "latest.md").write_text(md, encoding="utf-8")
+    except Exception as e:
+        logger.debug("memory-curator: failed to save proposals: %s", e)
+
+
+def _persist_run(proposals: List[Dict[str, Any]], meta: Dict[str, Any]) -> Optional[str]:
+    """Write proposals.json + a timestamped digest + latest.md. Returns digest path."""
     try:
         root = _digest_dir()
         root.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        header = (
-            f"# Memory digest — {ts}\n\n"
-            f"- sessions scanned: {meta.get('sessions', 0)}\n"
-            f"- model: {meta.get('provider', '?')}/{meta.get('model', '?')}\n\n"
-            "> Read-only proposals. Nothing was written to memory.\n\n---\n\n"
-        )
-        content = header + body.strip() + "\n"
+        _proposals_path().write_text(
+            json.dumps({"ts": ts, "meta": meta, "proposals": proposals},
+                       indent=2, ensure_ascii=False), encoding="utf-8")
+        md = _render_digest_md(proposals, meta, ts)
         path = root / f"digest-{ts}.md"
-        path.write_text(content, encoding="utf-8")
-        (root / "latest.md").write_text(content, encoding="utf-8")
+        path.write_text(md, encoding="utf-8")
+        (root / "latest.md").write_text(md, encoding="utf-8")
         return str(path)
     except Exception as e:
-        logger.debug("memory-curator: failed to write digest: %s", e, exc_info=True)
+        logger.debug("memory-curator: failed to persist run: %s", e, exc_info=True)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Apply / revert — the write path (slice 2). Human-gated, reversible.
+# ---------------------------------------------------------------------------
+
+def _memory_limits() -> tuple[int, int]:
+    """(memory_char_limit, user_char_limit) from config; code defaults otherwise."""
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config()
+        mem = cfg.get("memory", {}) if isinstance(cfg.get("memory"), dict) else {}
+    except Exception:
+        mem = {}
+
+    def _i(key: str, default: int) -> int:
+        try:
+            return int(mem.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return _i("memory_char_limit", 2200), _i("user_char_limit", 1375)
+
+
+def _memory_store():
+    from tools.memory_tool import MemoryStore
+    mlim, ulim = _memory_limits()
+    return MemoryStore(memory_char_limit=mlim, user_char_limit=ulim)
+
+
+def _append_ledger(entry: Dict[str, Any]) -> None:
+    try:
+        _digest_dir().mkdir(parents=True, exist_ok=True)
+        with open(_ledger_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.debug("memory-curator: ledger append failed: %s", e)
+
+
+def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False) -> Dict[str, Any]:
+    """Write approved proposals to memory via the memory tool. Never raises.
+
+    Each write goes through ``MemoryStore.add``, which enforces dedup, the
+    char-limit cap, and the injection scanner — so a bad or oversized entry is
+    rejected, not silently written. Applied entries are recorded in a JSONL
+    ledger so ``revert_last`` can undo them.
+    """
+    data = load_proposals()
+    proposals = data.get("proposals", [])
+    if not proposals:
+        return {"applied": [], "skipped": [], "errors": ["no proposals — run a digest first"]}
+
+    wanted = None if apply_all else set(ids or [])
+    if not apply_all and not wanted:
+        return {"applied": [], "skipped": [], "errors": ["no proposal ids given (use --all)"]}
+
+    store = _memory_store()
+    state = load_state()
+    counts = state.get("applied_by_target") or {}
+    if not isinstance(counts, dict):
+        counts = {}
+
+    applied: List[str] = []
+    skipped: List[str] = []
+    errors: List[str] = []
+    for p in proposals:
+        if not apply_all and p["id"] not in wanted:
+            continue
+        if p.get("applied"):
+            skipped.append(f"{p['id']} (already applied)")
+            continue
+        res = store.add(p["target"], p["entry"])
+        if res.get("success"):
+            p["applied"] = True
+            applied.append(p["id"])
+            counts[p["target"]] = int(counts.get(p["target"], 0)) + 1
+            _append_ledger({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "id": p["id"], "target": p["target"], "entry": p["entry"],
+            })
+        else:
+            errors.append(f"{p['id']}: {res.get('error', 'write failed')}")
+
+    if not apply_all and wanted:
+        missing = wanted - {p["id"] for p in proposals}
+        for mid in sorted(missing):
+            errors.append(f"{mid}: unknown proposal id")
+
+    _save_proposals(data)
+    state["applied_by_target"] = counts
+    save_state(state)
+    return {"applied": applied, "skipped": skipped, "errors": errors}
+
+
+def revert_last() -> Dict[str, Any]:
+    """Remove the most recently applied entry from memory. Never raises."""
+    path = _ledger_path()
+    if not path.exists():
+        return {"reverted": None, "error": "no applied entries to revert"}
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError as e:
+        return {"reverted": None, "error": f"ledger unreadable: {e}"}
+
+    for i in range(len(lines) - 1, -1, -1):
+        try:
+            rec = json.loads(lines[i])
+        except json.JSONDecodeError:
+            continue
+        if rec.get("reverted"):
+            continue
+        res = _memory_store().remove(rec["target"], rec["entry"])
+        if not res.get("success"):
+            return {"reverted": None, "error": res.get("error", "remove failed")}
+        rec["reverted"] = True
+        lines[i] = json.dumps(rec, ensure_ascii=False)
+        try:
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            logger.debug("memory-curator: ledger rewrite failed: %s", e)
+
+        # Make revert a true inverse of apply: clear the proposal's applied
+        # flag so it can be re-applied, and decrement the per-target count.
+        # Match on entry text (the real identity) rather than id, since ids
+        # are recycled per digest run — a new run may have overwritten
+        # proposals.json with different lessons sharing the same id.
+        data = load_proposals()
+        for prop in data.get("proposals", []):
+            if prop.get("applied") and prop.get("entry") == rec.get("entry"):
+                prop["applied"] = False
+                break
+        _save_proposals(data)
+
+        st = load_state()
+        counts = st.get("applied_by_target") or {}
+        if not isinstance(counts, dict):
+            counts = {}
+        tgt = rec.get("target")
+        if tgt and int(counts.get(tgt, 0)) > 0:
+            counts[tgt] = int(counts[tgt]) - 1
+        st["applied_by_target"] = counts
+        save_state(st)
+
+        return {"reverted": rec.get("id"), "target": rec.get("target")}
+    return {"reverted": None, "error": "nothing to revert"}
 
 
 # ---------------------------------------------------------------------------
@@ -477,32 +751,30 @@ def run_memory_digest(
                 {"session_id": s.get("id", ""), "title": s.get("title") or "", "text": text}
             )
 
-    summary: str
-    digest_path: Optional[str] = None
     if not transcripts:
+        proposals: List[Dict[str, Any]] = []
+        meta = {"sessions": 0}
         summary = "no recent sessions to mine"
-        body = "NOTHING NEW — no sessions in the lookback window."
-        digest_path = _write_digest(body, {"sessions": 0})
     else:
         prompt = _build_extraction_prompt(_read_current_memory(), transcripts)
         res = _run_extraction(prompt)
-        body = res.get("final") or res.get("summary") or "NOTHING NEW"
-        digest_path = _write_digest(
-            body,
-            {"sessions": len(transcripts), "model": res.get("model"),
-             "provider": res.get("provider")},
-        )
-        nothing = body.strip().upper().startswith("NOTHING NEW")
+        proposals = _parse_proposals(res.get("final") or "")
+        meta = {"sessions": len(transcripts), "model": res.get("model"),
+                "provider": res.get("provider")}
+        n = len(proposals)
         summary = (
             f"scanned {len(transcripts)} session(s) — "
-            + ("no new lessons" if nothing else "new lessons proposed")
-            + (f" → {digest_path}" if digest_path and not nothing else "")
+            + (f"{n} proposal(s) — review: hermes memory-curator show"
+               if n else "no new lessons")
         )
+
+    digest_path = _persist_run(proposals, meta)
 
     state = load_state()
     state["last_run_at"] = now.isoformat()
     state["last_run_summary"] = summary
     state["last_digest_path"] = digest_path
+    state["pending_proposals"] = len(proposals)
     state["run_count"] = int(state.get("run_count", 0)) + 1
     save_state(state)
 
@@ -512,7 +784,8 @@ def run_memory_digest(
         except Exception as e:
             logger.debug("memory-curator on_digest callback failed: %s", e)
 
-    return {"summary": summary, "digest_path": digest_path, "sessions": len(transcripts)}
+    return {"summary": summary, "digest_path": digest_path,
+            "sessions": len(transcripts), "proposals": len(proposals)}
 
 
 def maybe_run_memory_curator(

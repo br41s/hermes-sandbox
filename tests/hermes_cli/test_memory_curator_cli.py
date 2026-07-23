@@ -105,3 +105,62 @@ def test_bare_command_prints_help(cli_env):
     # No subcommand → default func prints help and returns 0.
     args = cli_env["parser"].parse_args([])
     assert args.func(args) == 0
+
+
+def test_apply_without_ids_or_all_returns_1(cli_env, capsys):
+    args = cli_env["parser"].parse_args(["apply"])
+    assert args.func(args) == 1
+    assert "proposal ids" in capsys.readouterr().out
+
+
+def test_apply_forwards_ids(cli_env, monkeypatch, capsys):
+    mc = cli_env["mc"]
+    seen = {}
+
+    def fake_apply(ids=None, *, apply_all=False):
+        seen["ids"], seen["all"] = ids, apply_all
+        return {"applied": ["p1"], "skipped": [], "errors": []}
+
+    monkeypatch.setattr(mc, "apply_proposals", fake_apply)
+    args = cli_env["parser"].parse_args(["apply", "p1", "p3"])
+    assert args.func(args) == 0
+    assert seen == {"ids": ["p1", "p3"], "all": False}
+    assert "wrote to memory: p1" in capsys.readouterr().out
+
+
+def test_apply_all_flag(cli_env, monkeypatch):
+    mc = cli_env["mc"]
+    seen = {}
+    monkeypatch.setattr(
+        mc, "apply_proposals",
+        lambda ids=None, *, apply_all=False: (
+            seen.update(all=apply_all, ids=ids),
+            {"applied": ["p1"], "skipped": [], "errors": []})[1],
+    )
+    args = cli_env["parser"].parse_args(["apply", "--all"])
+    assert args.func(args) == 0
+    assert seen["all"] is True and seen["ids"] is None
+
+
+def test_apply_reports_errors_returns_1(cli_env, monkeypatch, capsys):
+    mc = cli_env["mc"]
+    monkeypatch.setattr(
+        mc, "apply_proposals",
+        lambda ids=None, *, apply_all=False: {
+            "applied": [], "skipped": [], "errors": ["p1: over cap"]},
+    )
+    args = cli_env["parser"].parse_args(["apply", "p1"])
+    assert args.func(args) == 1
+    assert "over cap" in capsys.readouterr().out
+
+
+def test_revert_success_and_failure(cli_env, monkeypatch, capsys):
+    mc = cli_env["mc"]
+    monkeypatch.setattr(mc, "revert_last", lambda: {"reverted": "p1", "target": "user"})
+    args = cli_env["parser"].parse_args(["revert"])
+    assert args.func(args) == 0
+    assert "reverted p1" in capsys.readouterr().out
+
+    monkeypatch.setattr(mc, "revert_last", lambda: {"reverted": None, "error": "empty"})
+    args = cli_env["parser"].parse_args(["revert"])
+    assert args.func(args) == 1
