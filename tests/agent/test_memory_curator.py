@@ -616,3 +616,73 @@ def test_digest_no_autoapply_when_not_graduated(mc_env, monkeypatch):
     now = _digest_env(mc, monkeypatch, auto_apply=True)    # on, but no graduation
     res = mc.run_memory_digest(now=now, force=True)
     assert res["auto_applied"] == []
+
+
+# ---------------------------------------------------------------------------
+# Telegram notification (Option A)
+# ---------------------------------------------------------------------------
+
+def test_notify_telegram_off_without_config(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    calls = []
+    monkeypatch.setattr(mc, "_http_post_json", lambda *a, **k: calls.append(a) or 200)
+    # no token, no chat_id → no send
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    assert mc._notify_telegram("hi") is False
+    assert calls == []
+
+
+def test_notify_telegram_needs_both_token_and_chat(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    calls = []
+    monkeypatch.setattr(mc, "_http_post_json", lambda url, payload, **k: calls.append(payload) or 200)
+    # token but no chat_id
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "T")
+    monkeypatch.setattr(mc, "_load_config", lambda: {"enabled": True})
+    assert mc._notify_telegram("hi") is False and calls == []
+    # token + chat_id → sends
+    monkeypatch.setattr(mc, "_load_config",
+                        lambda: {"enabled": True, "telegram_chat_id": "-100123",
+                                 "telegram_thread_id": "1904"})
+    assert mc._notify_telegram("hi") is True
+    assert calls and calls[0]["chat_id"] == "-100123"
+    assert calls[0]["message_thread_id"] == "1904"
+    assert calls[0]["text"] == "hi"
+
+
+def test_build_telegram_message(mc_env):
+    mc = mc_env["mc"]
+    props = [
+        {"id": "p1", "action": "add", "title": "Lesson A", "entry": "a"},
+        {"id": "p2", "action": "evict", "title": "Stale B", "entry": "b"},
+    ]
+    msg = mc._build_telegram_message(props, ["p1"], "digest")
+    assert "2 propuesta" in msg
+    assert "[p1] Lesson A ✅auto" in msg
+    assert "🗑 [p2] Stale B" in msg
+    assert "hermes memory-curator show" in msg
+
+
+def test_digest_notify_only_when_flag_and_proposals(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    sent = []
+    monkeypatch.setattr(mc, "_notify_telegram", lambda text: sent.append(text) or True)
+    now = datetime.now(timezone.utc)
+    _install_fake_db(monkeypatch,
+                     [{"id": "s1", "title": "T", "last_active": now.isoformat()}],
+                     {"s1": [{"role": "user", "content": "x"}]})
+    # notify=False (CLI default) → no send even with a proposal
+    mc.run_memory_digest(now=now, force=True, notify=False)
+    assert sent == []
+    # notify=True (tick path) → send
+    mc.run_memory_digest(now=now, force=True, notify=True)
+    assert len(sent) == 1 and "propuesta" in sent[0]
+
+
+def test_digest_notify_silent_when_no_proposals(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    sent = []
+    monkeypatch.setattr(mc, "_notify_telegram", lambda text: sent.append(text) or True)
+    _install_fake_db(monkeypatch, [], {})   # no sessions → no proposals
+    mc.run_memory_digest(now=datetime.now(timezone.utc), force=True, notify=True)
+    assert sent == []

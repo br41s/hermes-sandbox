@@ -63,6 +63,8 @@ def _cmd_status(args) -> int:
             graduated = n >= k and act in mc.get_graduatable_actions()
             tag = " ✅ graduated" if graduated else ""
             print(f"    {cls:16s} {n}/{k}{tag}")
+    chat = mc.get_telegram_chat_id()
+    print(f"  telegram:       {('→ ' + chat) if chat else 'off (set telegram_chat_id)'}")
     return 0
 
 
@@ -78,7 +80,10 @@ def _cmd_run(args) -> int:
               "Use --force to run a one-off digest anyway.")
         return 1
     print("Running memory digest (read-only)…")
-    res = mc.run_memory_digest(on_digest=lambda m: print(f"  {m}"), force=True)
+    res = mc.run_memory_digest(
+        on_digest=lambda m: print(f"  {m}"), force=True,
+        notify=bool(getattr(args, "notify", False)),
+    )
     if not res:
         print("Nothing to do (no eligible sessions).")
         return 0
@@ -164,6 +169,10 @@ def register_cli(parent: argparse.ArgumentParser) -> None:
     p_run.add_argument(
         "--force", dest="force", action="store_true",
         help="Run even when the curator is disabled (memory_curator.enabled=false)",
+    )
+    p_run.add_argument(
+        "--notify", dest="notify", action="store_true",
+        help="Also send the Telegram heads-up (needs telegram_chat_id configured)",
     )
     p_run.set_defaults(func=_cmd_run)
 
