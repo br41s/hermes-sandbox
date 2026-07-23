@@ -76,6 +76,21 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_consolidate(args) -> int:
+    from agent import memory_curator as mc
+    if not bool(getattr(args, "force", False)) and not mc.is_enabled():
+        print("Memory curator is disabled (memory_curator.enabled=false). "
+              "Use --force to run a one-off consolidation anyway.")
+        return 1
+    print("Scanning memory for evictions (read-only)…")
+    res = mc.run_consolidation(on_digest=lambda m: print(f"  {m}"))
+    if res.get("digest_path"):
+        print(f"\nDigest written to: {res['digest_path']}")
+        print("Review:  hermes memory-curator show")
+        print("Apply:   hermes memory-curator apply --all   (reversible via revert)")
+    return 0
+
+
 def _cmd_show(args) -> int:
     from agent.memory_curator import _digest_dir
     latest = _digest_dir() / "latest.md"
@@ -138,6 +153,15 @@ def register_cli(parent: argparse.ArgumentParser) -> None:
         help="Run even when the curator is disabled (memory_curator.enabled=false)",
     )
     p_run.set_defaults(func=_cmd_run)
+
+    p_cons = subs.add_parser(
+        "consolidate", help="Propose evictions to keep the bounded store lean"
+    )
+    p_cons.add_argument(
+        "--force", dest="force", action="store_true",
+        help="Run even when the curator is disabled (memory_curator.enabled=false)",
+    )
+    p_cons.set_defaults(func=_cmd_consolidate)
 
     subs.add_parser("show", help="Print the latest digest") \
         .set_defaults(func=_cmd_show)

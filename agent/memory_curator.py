@@ -298,6 +298,23 @@ def _read_current_memory() -> str:
     return ""
 
 
+def _current_entries(target: str) -> List[str]:
+    """Return the individual entries of a memory store (split on the § delimiter)."""
+    try:
+        from tools.memory_tool import get_memory_dir, ENTRY_DELIMITER
+        fname = "USER.md" if target == "user" else "MEMORY.md"
+        path = get_memory_dir() / fname
+        if not path.exists():
+            return []
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return []
+        return [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
+    except Exception as e:
+        logger.debug("memory-curator: could not read %s entries: %s", target, e)
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Extraction prompt + aux-model fork
 # ---------------------------------------------------------------------------
@@ -341,6 +358,55 @@ def _build_extraction_prompt(current_memory: str, transcripts: List[Dict[str, st
         parts.append(f"\n----- session {t['session_id']} — {t.get('title') or 'untitled'} -----\n")
         parts.append(t["text"])
     parts.append("\n\n===== END. Produce the digest now. =====\n")
+    return "".join(parts)
+
+
+_CONSOLIDATION_INSTRUCTIONS = (
+    "You are the MEMORY CONSOLIDATOR for an autonomous agent. Its persistent "
+    "memory is a BOUNDED store — when it fills, the agent stops learning. Your "
+    "job is to propose entries to REMOVE so it stays high-signal.\n\n"
+    "Two kinds of proposal:\n\n"
+    "A) EVICT — remove ONE entry that is clearly:\n"
+    "  1. TRANSIENT: task progress or one-off state, not a durable fact "
+    "(e.g. 'PR #241 status', 'waiting for confirmation').\n"
+    "  2. DUPLICATE: it repeats another entry — keep the fullest, evict the rest.\n"
+    "  3. OBSOLETE: clearly superseded or no longer true.\n\n"
+    "B) MERGE — fold TWO OR MORE overlapping entries into one tighter entry. "
+    "List the exact existing entries in \"sources\" and the replacement in "
+    "\"entry\". The merged entry MUST preserve every distinct fact from the "
+    "sources — losing information is worse than leaving them unmerged.\n\n"
+    "HARD RULES:\n"
+    "  - NEVER evict/merge away a durable preference, rule, credential, path, or "
+    "convention unless it is fully preserved elsewhere (or in the merged entry).\n"
+    "  - When in doubt, KEEP it. Prefer proposing nothing over a risky change.\n"
+    "  - Every \"entry\" (evict) and every string in \"sources\" (merge) MUST be "
+    "the exact full text of an existing entry.\n"
+    "  - Do NOT call any tools. This is a proposal only.\n\n"
+    "OUTPUT — a SINGLE json fenced block and nothing else:\n"
+    "```json\n"
+    "{\"proposals\": [\n"
+    "  {\"action\": \"evict\", \"target\": \"user\", \"title\": \"<label>\",\n"
+    "   \"reason\": \"<transient | duplicate of ... | obsolete: why>\",\n"
+    "   \"entry\": \"<exact full text of the entry to remove>\"},\n"
+    "  {\"action\": \"merge\", \"target\": \"user\", \"title\": \"<label>\",\n"
+    "   \"reason\": \"<why these overlap>\",\n"
+    "   \"sources\": [\"<exact entry 1>\", \"<exact entry 2>\"],\n"
+    "   \"entry\": \"<the merged replacement, preserving all facts, <=200 chars>\"}\n"
+    "]}\n"
+    "```\n"
+    "If nothing should change, return {\"proposals\": []}.\n"
+)
+
+
+def _build_consolidation_prompt(mem_entries: List[str], user_entries: List[str]) -> str:
+    parts = [_CONSOLIDATION_INSTRUCTIONS]
+    for target, entries in (("memory", mem_entries), ("user", user_entries)):
+        parts.append(f"\n===== CURRENT {target.upper()} ENTRIES (target: {target}) =====\n")
+        if not entries:
+            parts.append("(none)\n")
+        for e in entries:
+            parts.append(f"\n--- entry ---\n{e}\n")
+    parts.append("\n\n===== END. Produce the eviction proposals now. =====\n")
     return "".join(parts)
 
 
@@ -480,12 +546,22 @@ def _parse_proposals(text: str) -> List[Dict[str, Any]]:
         target = str(it.get("target", "memory")).strip().lower()
         if target not in ("memory", "user"):
             target = "memory"
+        action = str(it.get("action", "add")).strip().lower()
+        if action not in ("add", "evict", "merge"):
+            action = "add"
+        sources = it.get("sources", [])
+        if not isinstance(sources, list):
+            sources = []
+        sources = [str(s).strip() for s in sources if str(s).strip()]
         out.append({
             "id": f"p{len(out) + 1}",
+            "action": action,
             "target": target,
             "title": str(it.get("title", "")).strip(),
             "lesson": str(it.get("lesson", "")).strip(),
             "evidence": str(it.get("evidence", "")).strip(),
+            "reason": str(it.get("reason", "")).strip(),
+            "sources": sources,
             "entry": entry,
             "applied": False,
         })
@@ -507,32 +583,49 @@ def load_proposals() -> Dict[str, Any]:
 
 
 def _render_digest_md(proposals: List[Dict[str, Any]], meta: Dict[str, Any], ts: str) -> str:
+    consolidation = meta.get("mode") == "consolidation"
+    title = "Memory consolidation" if consolidation else "Memory digest"
+    scope = (f"- entries scanned: {meta.get('entries', 0)}" if consolidation
+             else f"- sessions scanned: {meta.get('sessions', 0)}")
     lines = [
-        f"# Memory digest — {ts}",
+        f"# {title} — {ts}",
         "",
-        f"- sessions scanned: {meta.get('sessions', 0)}",
+        scope,
         f"- model: {meta.get('provider', '?')}/{meta.get('model', '?')}",
         f"- proposals: {len(proposals)}",
         "",
         "> Proposals only. Apply with `hermes memory-curator apply <id>` "
         "(or `apply --all`); undo the last write with `revert`. "
-        "Nothing is written until you apply.",
+        "Nothing is changed until you apply.",
         "",
         "---",
         "",
     ]
     if not proposals:
-        lines.append("NOTHING NEW — no unsaved lessons found.")
+        lines.append(
+            "NOTHING TO EVICT — memory looks lean." if consolidation
+            else "NOTHING NEW — no unsaved lessons found."
+        )
         return "\n".join(lines) + "\n"
     for p in proposals:
         mark = " ✅ applied" if p.get("applied") else ""
-        lines.append(f"### [{p['id']}] {p.get('title') or p['entry'][:60]}{mark}")
+        action = p.get("action", "add")
+        tag = {"evict": "🗑 EVICT ", "merge": "🔀 MERGE "}.get(action, "")
+        lines.append(f"### [{p['id']}] {tag}{p.get('title') or p['entry'][:60]}{mark}")
         if p.get("lesson"):
             lines.append(f"- **Lesson:** {p['lesson']}")
+        if p.get("reason"):
+            lines.append(f"- **Reason:** {p['reason']}")
         if p.get("evidence"):
             lines.append(f"- **Evidence:** {p['evidence']}")
         lines.append(f"- **Target:** `{p['target']}`")
-        lines.append(f"- **Entry:** {p['entry']}")
+        if action == "merge":
+            for s in p.get("sources", []):
+                lines.append(f"- **Merge source:** {s}")
+            lines.append(f"- **Into:** {p['entry']}")
+        else:
+            verb = "Remove" if action == "evict" else "Entry"
+            lines.append(f"- **{verb}:** {p['entry']}")
         lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -608,13 +701,44 @@ def _append_ledger(entry: Dict[str, Any]) -> None:
         logger.debug("memory-curator: ledger append failed: %s", e)
 
 
-def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False) -> Dict[str, Any]:
-    """Write approved proposals to memory via the memory tool. Never raises.
+def _apply_merge(store, target: str, sources: List[str], merged: str) -> tuple[bool, str, List[str]]:
+    """Remove all sources then add the merged entry, rolling back on failure.
 
-    Each write goes through ``MemoryStore.add``, which enforces dedup, the
-    char-limit cap, and the injection scanner — so a bad or oversized entry is
-    rejected, not silently written. Applied entries are recorded in a JSONL
-    ledger so ``revert_last`` can undo them.
+    Returns (success, error, removed_sources). Pre-validates that every source
+    matches an existing entry before mutating, so a bad merge is rejected rather
+    than half-applied. If any step fails, already-removed sources are re-added.
+    """
+    if not sources:
+        return False, "merge has no sources", []
+    existing = _current_entries(target)
+    for s in sources:
+        if not any(s in e or e in s for e in existing):
+            return False, f"source not found: {s[:50]}", []
+    removed: List[str] = []
+    for s in sources:
+        r = store.remove(target, s)
+        if r.get("success"):
+            removed.append(s)
+        else:
+            for rs in removed:
+                store.add(target, rs)
+            return False, f"remove failed ({r.get('error', '?')}), rolled back", []
+    r = store.add(target, merged)
+    if not r.get("success"):
+        for rs in removed:
+            store.add(target, rs)
+        return False, f"merged-entry add failed ({r.get('error', '?')}), rolled back", []
+    return True, "", removed
+
+
+def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False) -> Dict[str, Any]:
+    """Apply approved proposals to memory via the memory tool. Never raises.
+
+    ``add`` → ``MemoryStore.add`` (dedup/cap/scan-guarded); ``evict`` →
+    ``MemoryStore.remove``; ``merge`` → remove sources then add the replacement
+    (with rollback). A bad, oversized, or unmatched op is reported, not silently
+    applied. Each applied op is recorded in a JSONL ledger with its action (and,
+    for merge, its sources) so ``revert_last`` can invert it.
     """
     data = load_proposals()
     proposals = data.get("proposals", [])
@@ -640,17 +764,35 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
         if p.get("applied"):
             skipped.append(f"{p['id']} (already applied)")
             continue
-        res = store.add(p["target"], p["entry"])
-        if res.get("success"):
-            p["applied"] = True
-            applied.append(p["id"])
+        action = p.get("action", "add")
+        ledger_rec = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "id": p["id"], "action": action,
+            "target": p["target"], "entry": p["entry"],
+        }
+        if action == "merge":
+            ok, err, removed = _apply_merge(store, p["target"], p.get("sources", []), p["entry"])
+            if not ok:
+                errors.append(f"{p['id']}: {err}")
+                continue
+            ledger_rec["sources"] = removed
+        elif action == "evict":
+            res = store.remove(p["target"], p["entry"])
+            if not res.get("success"):
+                errors.append(f"{p['id']}: {res.get('error', 'apply failed')}")
+                continue
+        else:  # add
+            res = store.add(p["target"], p["entry"])
+            if not res.get("success"):
+                errors.append(f"{p['id']}: {res.get('error', 'apply failed')}")
+                continue
+            # Count adds only — the graduation signal (slice 4) is about
+            # lessons written, not evictions or merges.
             counts[p["target"]] = int(counts.get(p["target"], 0)) + 1
-            _append_ledger({
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "id": p["id"], "target": p["target"], "entry": p["entry"],
-            })
-        else:
-            errors.append(f"{p['id']}: {res.get('error', 'write failed')}")
+
+        p["applied"] = True
+        applied.append(p["id"])
+        _append_ledger(ledger_rec)
 
     if not apply_all and wanted:
         missing = wanted - {p["id"] for p in proposals}
@@ -664,7 +806,12 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
 
 
 def revert_last() -> Dict[str, Any]:
-    """Remove the most recently applied entry from memory. Never raises."""
+    """Invert the most recently applied op. Never raises.
+
+    Undo an ``add`` by removing the entry, an ``evict`` by re-adding it, and a
+    ``merge`` by removing the merged entry and re-adding its sources. Ledger
+    records without an ``action`` (pre-eviction) default to ``add``.
+    """
     path = _ledger_path()
     if not path.exists():
         return {"reverted": None, "error": "no applied entries to revert"}
@@ -680,9 +827,23 @@ def revert_last() -> Dict[str, Any]:
             continue
         if rec.get("reverted"):
             continue
-        res = _memory_store().remove(rec["target"], rec["entry"])
-        if not res.get("success"):
-            return {"reverted": None, "error": res.get("error", "remove failed")}
+        action = rec.get("action", "add")
+        store = _memory_store()
+        if action == "merge":
+            # undo merge = remove the merged entry, re-add the sources
+            res = store.remove(rec["target"], rec["entry"])
+            if not res.get("success"):
+                return {"reverted": None, "error": res.get("error", "revert failed")}
+            for s in rec.get("sources", []):
+                store.add(rec["target"], s)
+        elif action == "evict":
+            res = store.add(rec["target"], rec["entry"])       # undo evict = re-add
+            if not res.get("success"):
+                return {"reverted": None, "error": res.get("error", "revert failed")}
+        else:
+            res = store.remove(rec["target"], rec["entry"])    # undo add = remove
+            if not res.get("success"):
+                return {"reverted": None, "error": res.get("error", "revert failed")}
         rec["reverted"] = True
         lines[i] = json.dumps(rec, ensure_ascii=False)
         try:
@@ -707,7 +868,8 @@ def revert_last() -> Dict[str, Any]:
         if not isinstance(counts, dict):
             counts = {}
         tgt = rec.get("target")
-        if tgt and int(counts.get(tgt, 0)) > 0:
+        # Only adds bump the count on apply, so only adds decrement it here.
+        if action == "add" and tgt and int(counts.get(tgt, 0)) > 0:
             counts[tgt] = int(counts[tgt]) - 1
         st["applied_by_target"] = counts
         save_state(st)
@@ -786,6 +948,73 @@ def run_memory_digest(
 
     return {"summary": summary, "digest_path": digest_path,
             "sessions": len(transcripts), "proposals": len(proposals)}
+
+
+def run_consolidation(*, on_digest: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    """Propose evictions to keep the bounded store high-signal (slice 3).
+
+    Read-only: reads the current entries, asks the aux fork which are transient,
+    duplicate, or obsolete, and persists eviction proposals. Nothing is removed
+    until ``apply``. On-demand only (not scheduled). Never raises.
+    """
+    now = datetime.now(timezone.utc)
+    mem_entries = _current_entries("memory")
+    user_entries = _current_entries("user")
+    existing = mem_entries + user_entries
+
+    if not existing:
+        meta = {"mode": "consolidation", "entries": 0}
+        digest_path = _persist_run([], meta)
+        summary = "memory is empty — nothing to consolidate"
+        proposals: List[Dict[str, Any]] = []
+    else:
+        prompt = _build_consolidation_prompt(mem_entries, user_entries)
+        res = _run_extraction(prompt)
+        parsed = _parse_proposals(res.get("final") or "")
+
+        # Never let the model invent a removal target: an evict's entry, and
+        # every source of a merge, must match an existing entry. Merges need
+        # >=2 sources and a replacement. Reindex ids after filtering.
+        def _matches(text: str) -> bool:
+            return any(text in e or e in text for e in existing)
+
+        proposals = []
+        for p in parsed:
+            if p.get("action") == "merge":
+                srcs = p.get("sources", [])
+                if len(srcs) >= 2 and p.get("entry") and all(_matches(s) for s in srcs):
+                    proposals.append(p)
+            else:
+                p["action"] = "evict"  # consolidation non-merge = evict
+                if _matches(p["entry"]):
+                    proposals.append(p)
+        for i, p in enumerate(proposals, 1):
+            p["id"] = f"p{i}"
+        meta = {"mode": "consolidation", "entries": len(existing),
+                "model": res.get("model"), "provider": res.get("provider")}
+        digest_path = _persist_run(proposals, meta)
+        n = len(proposals)
+        summary = (
+            f"scanned {len(existing)} entr(ies) — "
+            + (f"{n} change(s) proposed — review: hermes memory-curator show"
+               if n else "nothing to consolidate")
+        )
+
+    state = load_state()
+    state["last_run_at"] = now.isoformat()
+    state["last_run_summary"] = summary
+    state["last_digest_path"] = digest_path
+    state["pending_proposals"] = len(proposals)
+    state["run_count"] = int(state.get("run_count", 0)) + 1
+    save_state(state)
+
+    if on_digest:
+        try:
+            on_digest(summary)
+        except Exception as e:
+            logger.debug("memory-curator on_digest callback failed: %s", e)
+
+    return {"summary": summary, "digest_path": digest_path, "proposals": len(proposals)}
 
 
 def maybe_run_memory_curator(
