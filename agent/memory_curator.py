@@ -1002,10 +1002,13 @@ def _notify_telegram(text: str) -> bool:
         return False
     payload: Dict[str, Any] = {"chat_id": chat_id, "text": text,
                                "disable_web_page_preview": True}
-    thread_id = get_telegram_thread_id()
-    if thread_id:
-        payload["message_thread_id"] = thread_id
     try:
+        thread_id = get_telegram_thread_id()
+        if thread_id:
+            # Bot API types message_thread_id as Integer (unlike chat_id, which
+            # may be a string). int() inside the try so a non-numeric config
+            # fails gracefully instead of raising out of a "never raises" fn.
+            payload["message_thread_id"] = int(thread_id)
         status = _http_post_json(
             f"https://api.telegram.org/bot{token}/sendMessage", payload
         )

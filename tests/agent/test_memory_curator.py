@@ -646,8 +646,23 @@ def test_notify_telegram_needs_both_token_and_chat(mc_env, monkeypatch):
                                  "telegram_thread_id": "1904"})
     assert mc._notify_telegram("hi") is True
     assert calls and calls[0]["chat_id"] == "-100123"
-    assert calls[0]["message_thread_id"] == "1904"
+    # Bot API requires message_thread_id as an integer, not a string.
+    assert calls[0]["message_thread_id"] == 1904
+    assert isinstance(calls[0]["message_thread_id"], int)
     assert calls[0]["text"] == "hi"
+
+
+def test_notify_telegram_nonnumeric_thread_fails_gracefully(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    sent = []
+    monkeypatch.setattr(mc, "_http_post_json", lambda url, payload, **k: sent.append(payload) or 200)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "T")
+    monkeypatch.setattr(mc, "_load_config",
+                        lambda: {"enabled": True, "telegram_chat_id": "-100123",
+                                 "telegram_thread_id": "not-a-number"})
+    # int() raises inside the try → returns False, never propagates, no send.
+    assert mc._notify_telegram("hi") is False
+    assert sent == []
 
 
 def test_build_telegram_message(mc_env):
