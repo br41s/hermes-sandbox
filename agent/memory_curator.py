@@ -208,6 +208,16 @@ def get_graduatable_actions() -> List[str]:
     return [str(a).strip().lower() for a in cfg if str(a).strip()]
 
 
+def get_telegram_chat_id() -> str:
+    """Telegram chat to notify about pending memory decisions. Empty = no notify."""
+    return str(_load_config().get("telegram_chat_id", "") or "").strip()
+
+
+def get_telegram_thread_id() -> str:
+    """Optional Telegram topic/thread id within the chat. Empty = no thread."""
+    return str(_load_config().get("telegram_thread_id", "") or "").strip()
+
+
 def _class_key(action: str, target: str) -> str:
     return f"{action}:{target}"
 
@@ -943,6 +953,74 @@ def revert_last() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Telegram notification — a heads-up that memory decisions are waiting
+# ---------------------------------------------------------------------------
+
+def _http_post_json(url: str, payload: Dict[str, Any], timeout: float = 15.0) -> int:
+    """POST JSON and return the HTTP status. Stdlib only; monkeypatched in tests."""
+    import urllib.request
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 (https api)
+        return int(getattr(resp, "status", 0) or resp.getcode())
+
+
+def _build_telegram_message(proposals: List[Dict[str, Any]], auto_applied: List[str],
+                            mode: str) -> str:
+    """Compose the notification body. ``mode`` is 'digest' or 'consolidation'."""
+    kind = "consolidación" if mode == "consolidation" else "aprendizaje"
+    n = len(proposals)
+    lines = [f"🧠 Memory curator — {n} propuesta(s) de {kind}"]
+    for p in proposals[:8]:
+        tag = {"evict": "🗑", "merge": "🔀"}.get(p.get("action", "add"), "➕")
+        title = p.get("title") or (p.get("entry", "")[:60])
+        mark = " ✅auto" if p.get("id") in auto_applied else ""
+        lines.append(f"{tag} [{p.get('id')}] {title}{mark}")
+    if n > 8:
+        lines.append(f"…y {n - 8} más")
+    if auto_applied:
+        lines.append(f"\n{len(auto_applied)} auto-aplicada(s) — deshacer: hermes memory-curator revert")
+    lines.append("\nRevisa: hermes memory-curator show")
+    if len(auto_applied) < n:
+        lines.append("Aplica:  hermes memory-curator apply --all")
+    return "\n".join(lines)
+
+
+def _notify_telegram(text: str) -> bool:
+    """Send ``text`` to the configured Telegram chat/thread. Never raises.
+
+    No-op (returns False) unless both a bot token (``TELEGRAM_BOT_TOKEN``) and a
+    ``memory_curator.telegram_chat_id`` are configured — so it stays silent until
+    the user opts in. The explicit chat/thread config sidesteps the per-profile
+    delivery-routing hazard.
+    """
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat_id = get_telegram_chat_id()
+    if not token or not chat_id:
+        return False
+    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text,
+                               "disable_web_page_preview": True}
+    try:
+        thread_id = get_telegram_thread_id()
+        if thread_id:
+            # Bot API types message_thread_id as Integer (unlike chat_id, which
+            # may be a string). int() inside the try so a non-numeric config
+            # fails gracefully instead of raising out of a "never raises" fn.
+            payload["message_thread_id"] = int(thread_id)
+        status = _http_post_json(
+            f"https://api.telegram.org/bot{token}/sendMessage", payload
+        )
+        if status != 200:
+            logger.debug("memory-curator telegram notify HTTP %s", status)
+        return status == 200
+    except Exception as e:
+        logger.debug("memory-curator telegram notify failed: %s", e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -951,9 +1029,14 @@ def run_memory_digest(
     on_digest: Optional[Callable[[str], None]] = None,
     now: Optional[datetime] = None,
     force: bool = False,
+    notify: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Run one read-only digest pass. Returns a result dict, or None if nothing
     to do. Never raises. ``force=True`` bypasses the interval gate (CLI/tests).
+
+    ``notify=True`` sends a Telegram heads-up when there are proposals (the
+    scheduled tick sets this; manual CLI runs don't, to avoid spam). Silent
+    unless a bot token + ``telegram_chat_id`` are configured.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -1021,6 +1104,9 @@ def run_memory_digest(
                 st["last_run_summary"] = summary
                 st["pending_proposals"] = pend
                 save_state(st)
+
+    if notify and proposals:
+        _notify_telegram(_build_telegram_message(proposals, auto_applied, "digest"))
 
     if on_digest:
         try:
@@ -1120,13 +1206,14 @@ def maybe_run_memory_curator(
                 return None
         if background:
             t = threading.Thread(
-                target=lambda: run_memory_digest(on_digest=on_digest, force=True),
+                target=lambda: run_memory_digest(
+                    on_digest=on_digest, force=True, notify=True),
                 name="memory-curator",
                 daemon=True,
             )
             t.start()
             return {"summary": "memory-curator started", "background": True}
-        return run_memory_digest(on_digest=on_digest, force=True)
+        return run_memory_digest(on_digest=on_digest, force=True, notify=True)
     except Exception as e:
         logger.debug("maybe_run_memory_curator failed: %s", e, exc_info=True)
         return None

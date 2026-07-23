@@ -62,7 +62,7 @@ def test_run_disabled_without_force_returns_1(cli_env, capsys):
 
 
 def _stub_engine(mc, monkeypatch, home, called):
-    def fake_run(*, on_digest=None, force=False):
+    def fake_run(*, on_digest=None, force=False, notify=False):
         called["force"] = force
         if on_digest:
             on_digest("scanned 3 session(s) — new lessons proposed")

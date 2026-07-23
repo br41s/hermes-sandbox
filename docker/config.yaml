@@ -153,6 +153,11 @@ memory_curator:
   auto_apply: false
   graduation_k: 5
   graduatable_actions: ["add"]
+  # Telegram heads-up when the weekly digest has proposals (needs TELEGRAM_BOT_TOKEN).
+  # Empty chat id = no notification. Set the chat id (and optional topic thread id)
+  # to get pinged instead of having to check `hermes memory-curator show` manually.
+  telegram_chat_id: ''
+  telegram_thread_id: ''
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 60
