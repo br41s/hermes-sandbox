@@ -57,6 +57,8 @@ DEFAULT_MIN_IDLE_HOURS = 2
 DEFAULT_LOOKBACK_DAYS = 7          # only mine sessions active within this window
 DEFAULT_MAX_SESSIONS = 20         # cap transcripts fed to the extractor
 DEFAULT_PER_SESSION_CHARS = 6000  # per-session transcript budget (chars)
+DEFAULT_GRADUATION_K = 5          # clean approvals before a class may auto-apply
+DEFAULT_GRADUATABLE_ACTIONS = ("add",)  # only adds auto-apply; evict/merge never
 
 # Session sources that are noise for lesson mining (mirror session_search).
 _HIDDEN_SESSION_SOURCES = ("cron", "curator", "memory_curator", "flush", "compression")
@@ -77,6 +79,7 @@ def _default_state() -> Dict[str, Any]:
         "last_digest_path": None,
         "pending_proposals": 0,
         "applied_by_target": {},
+        "graduation": {},
         "paused": False,
         "run_count": 0,
     }
@@ -177,6 +180,46 @@ def get_lookback_days() -> int:
 
 def get_max_sessions() -> int:
     return _int_cfg("max_sessions", DEFAULT_MAX_SESSIONS)
+
+
+# -- Auto-graduation (slice 4) -------------------------------------------------
+
+def is_auto_apply_enabled() -> bool:
+    """Master switch for auto-applying graduated classes. Default OFF.
+
+    Even when a class has graduated, nothing is auto-written unless this is on —
+    graduation is computed and surfaced regardless, but auto-apply stays a
+    deliberate, separate opt-in because it writes with no human in the loop.
+    """
+    return bool(_load_config().get("auto_apply", False))
+
+
+def get_graduation_k() -> int:
+    """Clean human approvals a class needs before it may auto-apply."""
+    return _int_cfg("graduation_k", DEFAULT_GRADUATION_K)
+
+
+def get_graduatable_actions() -> List[str]:
+    """Actions eligible for auto-apply. Default: adds only — auto-evicting or
+    auto-merging (deleting existing memory) stays human-gated."""
+    cfg = _load_config().get("graduatable_actions", DEFAULT_GRADUATABLE_ACTIONS)
+    if not isinstance(cfg, list):
+        return list(DEFAULT_GRADUATABLE_ACTIONS)
+    return [str(a).strip().lower() for a in cfg if str(a).strip()]
+
+
+def _class_key(action: str, target: str) -> str:
+    return f"{action}:{target}"
+
+
+def is_graduated(action: str, target: str) -> bool:
+    """True if this class has enough clean approvals AND is auto-apply eligible."""
+    if action not in get_graduatable_actions():
+        return False
+    grad = load_state().get("graduation") or {}
+    if not isinstance(grad, dict):
+        return False
+    return int(grad.get(_class_key(action, target), 0)) >= get_graduation_k()
 
 
 # ---------------------------------------------------------------------------
@@ -731,7 +774,8 @@ def _apply_merge(store, target: str, sources: List[str], merged: str) -> tuple[b
     return True, "", removed
 
 
-def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False) -> Dict[str, Any]:
+def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False,
+                    auto: bool = False) -> Dict[str, Any]:
     """Apply approved proposals to memory via the memory tool. Never raises.
 
     ``add`` → ``MemoryStore.add`` (dedup/cap/scan-guarded); ``evict`` →
@@ -739,6 +783,10 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
     (with rollback). A bad, oversized, or unmatched op is reported, not silently
     applied. Each applied op is recorded in a JSONL ledger with its action (and,
     for merge, its sources) so ``revert_last`` can invert it.
+
+    Every successful apply bumps the per-class (``action:target``) graduation
+    count. ``auto=True`` marks the ledger record as machine-applied (used by the
+    slice-4 auto-apply path); it does not change what is written.
     """
     data = load_proposals()
     proposals = data.get("proposals", [])
@@ -754,6 +802,9 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
     counts = state.get("applied_by_target") or {}
     if not isinstance(counts, dict):
         counts = {}
+    grad = state.get("graduation") or {}
+    if not isinstance(grad, dict):
+        grad = {}
 
     applied: List[str] = []
     skipped: List[str] = []
@@ -770,6 +821,8 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
             "id": p["id"], "action": action,
             "target": p["target"], "entry": p["entry"],
         }
+        if auto:
+            ledger_rec["auto"] = True
         if action == "merge":
             ok, err, removed = _apply_merge(store, p["target"], p.get("sources", []), p["entry"])
             if not ok:
@@ -793,6 +846,9 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
         p["applied"] = True
         applied.append(p["id"])
         _append_ledger(ledger_rec)
+        # Build trust for this class — clean approvals graduate it (slice 4).
+        ck = _class_key(action, p["target"])
+        grad[ck] = int(grad.get(ck, 0)) + 1
 
     if not apply_all and wanted:
         missing = wanted - {p["id"] for p in proposals}
@@ -801,6 +857,7 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False)
 
     _save_proposals(data)
     state["applied_by_target"] = counts
+    state["graduation"] = grad
     save_state(state)
     return {"applied": applied, "skipped": skipped, "errors": errors}
 
@@ -872,6 +929,13 @@ def revert_last() -> Dict[str, Any]:
         if action == "add" and tgt and int(counts.get(tgt, 0)) > 0:
             counts[tgt] = int(counts[tgt]) - 1
         st["applied_by_target"] = counts
+        # Withdraw trust: a revert resets the class's graduation to 0, demoting
+        # it back to human-gated. Auto-apply of this class stops until it earns
+        # K clean approvals again.
+        grad = st.get("graduation") or {}
+        if isinstance(grad, dict) and tgt:
+            grad[_class_key(action, tgt)] = 0
+            st["graduation"] = grad
         save_state(st)
 
         return {"reverted": rec.get("id"), "target": rec.get("target")}
@@ -940,6 +1004,24 @@ def run_memory_digest(
     state["run_count"] = int(state.get("run_count", 0)) + 1
     save_state(state)
 
+    # Auto-apply graduated classes (slice 4). Off unless the master switch is on;
+    # only classes with K clean approvals and a graduatable action qualify. The
+    # rest stay proposed for human review. A later revert demotes the class.
+    auto_applied: List[str] = []
+    if proposals and is_auto_apply_enabled():
+        auto_ids = [p["id"] for p in proposals
+                    if is_graduated(p.get("action", "add"), p["target"])]
+        if auto_ids:
+            rep = apply_proposals(auto_ids, auto=True)
+            auto_applied = rep.get("applied", [])
+            if auto_applied:
+                pend = max(0, len(proposals) - len(auto_applied))
+                summary += f" ({len(auto_applied)} auto-applied, {pend} pending)"
+                st = load_state()
+                st["last_run_summary"] = summary
+                st["pending_proposals"] = pend
+                save_state(st)
+
     if on_digest:
         try:
             on_digest(summary)
@@ -947,7 +1029,8 @@ def run_memory_digest(
             logger.debug("memory-curator on_digest callback failed: %s", e)
 
     return {"summary": summary, "digest_path": digest_path,
-            "sessions": len(transcripts), "proposals": len(proposals)}
+            "sessions": len(transcripts), "proposals": len(proposals),
+            "auto_applied": auto_applied}
 
 
 def run_consolidation(*, on_digest: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
