@@ -321,6 +321,71 @@ def test_revert_without_ledger(mc_env):
     assert mc.revert_last()["reverted"] is None
 
 
+# ---------------------------------------------------------------------------
+# Consolidation / eviction (slice 3)
+# ---------------------------------------------------------------------------
+
+def _seed_memory(mc, target, entries):
+    """Seed store entries through MemoryStore so format/drift stay consistent."""
+    store = mc._memory_store()
+    for e in entries:
+        store.add(target, e)
+
+
+def test_run_consolidation_proposes_evictions(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    _seed_memory(mc, "user", ["Keep this durable preference", "PR 241 status waiting"])
+    monkeypatch.setattr(mc, "_run_extraction", lambda prompt: {
+        "final": '```json\n{"proposals":[{"action":"evict","target":"user",'
+                 '"title":"transient","reason":"transient task state",'
+                 '"entry":"PR 241 status waiting"}]}\n```',
+        "model": "m", "provider": "p", "error": None})
+    res = mc.run_consolidation()
+    assert res["proposals"] == 1
+    data = mc.load_proposals()
+    assert data["proposals"][0]["action"] == "evict"
+    assert data["meta"]["mode"] == "consolidation"
+    assert "consolidation" in Path(res["digest_path"]).read_text().lower()
+
+
+def test_consolidation_drops_invented_targets(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    _seed_memory(mc, "user", ["Real entry A"])
+    monkeypatch.setattr(mc, "_run_extraction", lambda prompt: {
+        "final": '{"proposals":[{"action":"evict","target":"user",'
+                 '"entry":"Ghost entry not in the store"}]}',
+        "model": "m", "provider": "p", "error": None})
+    res = mc.run_consolidation()
+    assert res["proposals"] == 0  # invented eviction target filtered out
+
+
+def test_consolidation_empty_memory(mc_env):
+    mc = mc_env["mc"]
+    res = mc.run_consolidation()
+    assert res["proposals"] == 0 and "empty" in res["summary"]
+
+
+def test_apply_evict_removes_then_revert_readds(mc_env):
+    mc = mc_env["mc"]
+    from tools.memory_tool import get_memory_dir
+    _seed_memory(mc, "user", ["Durable pref", "Transient PR status"])
+    props = [{"id": "p1", "action": "evict", "target": "user", "title": "t",
+              "lesson": "", "evidence": "", "reason": "transient",
+              "entry": "Transient PR status", "applied": False}]
+    mc._persist_run(props, {"mode": "consolidation", "entries": 2})
+
+    rep = mc.apply_proposals(["p1"])
+    assert rep["applied"] == ["p1"] and not rep["errors"]
+    assert "Transient PR status" not in (get_memory_dir() / "USER.md").read_text()
+    # evictions never bump the add-count
+    assert mc.load_state()["applied_by_target"].get("user", 0) == 0
+
+    # revert re-adds the evicted entry
+    r = mc.revert_last()
+    assert r["reverted"] == "p1"
+    assert "Transient PR status" in (get_memory_dir() / "USER.md").read_text()
+
+
 def test_apply_revert_reapply_roundtrip(mc_env):
     """revert is a true inverse: the proposal can be applied again afterwards."""
     mc, home = mc_env["mc"], mc_env["home"]

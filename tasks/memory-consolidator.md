@@ -58,8 +58,15 @@ and never reach the bounded `memory` store. Do it by reusing the existing
    in `applied.jsonl`; `revert` undoes the last write. Per-target apply counts
    in state (`applied_by_target`) seed slice 4's graduation. Human-gated: the
    digest pass never writes on its own.
-3. **Consolidation/eviction pass.** When store > threshold, aux-fork proposes
-   merges/evictions (umbrella pattern, same as skills curator).
+3. **Consolidation/eviction pass.**
+   - 3a **Eviction** ✅ DONE (this PR). `run_consolidation` reads current
+     entries and the aux-fork proposes evictions (transient / duplicate /
+     obsolete) as `action:"evict"` proposals. `apply` routes evict →
+     `MemoryStore.remove`; `revert` re-adds. Invented removal targets are
+     filtered (entry must match an existing entry). CLI: `hermes
+     memory-curator consolidate`. On-demand only (not scheduled).
+   - 3b **Merge** (TODO): compose N entries → 1 umbrella entry, restoring all N
+     on revert. Deferred — higher blast radius than eviction.
 4. **Auto graduation.** Classes with K clean approvals flip to auto-apply
    (still logged + reversible), per profile.
 

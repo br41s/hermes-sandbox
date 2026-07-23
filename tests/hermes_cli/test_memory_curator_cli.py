@@ -154,6 +154,30 @@ def test_apply_reports_errors_returns_1(cli_env, monkeypatch, capsys):
     assert "over cap" in capsys.readouterr().out
 
 
+def test_consolidate_disabled_without_force_returns_1(cli_env, capsys):
+    args = cli_env["parser"].parse_args(["consolidate"])
+    assert args.func(args) == 1
+    assert "disabled" in capsys.readouterr().out
+
+
+def test_consolidate_force_invokes_engine(cli_env, monkeypatch, capsys):
+    mc = cli_env["mc"]
+    called = {}
+
+    def fake_cons(*, on_digest=None):
+        called["ran"] = True
+        if on_digest:
+            on_digest("scanned 3 entr(ies) — 1 eviction(s) proposed")
+        return {"summary": "ok", "digest_path": str(cli_env["home"] / "d.md"),
+                "proposals": 1}
+
+    monkeypatch.setattr(mc, "run_consolidation", fake_cons)
+    args = cli_env["parser"].parse_args(["consolidate", "--force"])
+    assert args.func(args) == 0
+    assert called.get("ran") is True
+    assert "eviction" in capsys.readouterr().out
+
+
 def test_revert_success_and_failure(cli_env, monkeypatch, capsys):
     mc = cli_env["mc"]
     monkeypatch.setattr(mc, "revert_last", lambda: {"reverted": "p1", "target": "user"})
