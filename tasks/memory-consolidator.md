@@ -65,8 +65,12 @@ and never reach the bounded `memory` store. Do it by reusing the existing
      `MemoryStore.remove`; `revert` re-adds. Invented removal targets are
      filtered (entry must match an existing entry). CLI: `hermes
      memory-curator consolidate`. On-demand only (not scheduled).
-   - 3b **Merge** (TODO): compose N entries → 1 umbrella entry, restoring all N
-     on revert. Deferred — higher blast radius than eviction.
+   - 3b **Merge** ✅ DONE (same PR). `action:"merge"` proposals carry
+     `sources` (>=2 existing entries) + `entry` (the replacement). `apply`
+     pre-validates all sources exist, removes them, then adds the merged entry,
+     rolling back the removals if the add fails. `revert` removes the merged
+     entry and re-adds every source. The consolidation prompt proposes both
+     evict and merge; merges with a missing/insufficient source are filtered.
 4. **Auto graduation.** Classes with K clean approvals flip to auto-apply
    (still logged + reversible), per profile.
 

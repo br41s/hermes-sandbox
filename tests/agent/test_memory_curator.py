@@ -408,3 +408,119 @@ def test_apply_revert_reapply_roundtrip(mc_env):
     assert again["applied"] == ["p1"] and not again["errors"]
     assert "Use a feature branch per change" in (get_memory_dir() / "USER.md").read_text()
     assert mc.load_state()["applied_by_target"]["user"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Merge (slice 3b) — compose N entries into 1, restore N on revert
+# ---------------------------------------------------------------------------
+
+def test_parse_merge_reads_sources(mc_env):
+    mc = mc_env["mc"]
+    props = mc._parse_proposals(
+        '{"proposals":[{"action":"merge","target":"user",'
+        '"sources":["a","b"],"entry":"ab merged"}]}'
+    )
+    assert len(props) == 1
+    assert props[0]["action"] == "merge"
+    assert props[0]["sources"] == ["a", "b"]
+
+
+def test_consolidation_proposes_merge(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    _seed_memory(mc, "user",
+                 ["User is direct and Spanish", "User prefers Spanish, direct style"])
+    monkeypatch.setattr(mc, "_run_extraction", lambda prompt: {"final":
+        '```json\n{"proposals":[{"action":"merge","target":"user","title":"profile",'
+        '"reason":"overlap",'
+        '"sources":["User is direct and Spanish","User prefers Spanish, direct style"],'
+        '"entry":"User: direct, Spanish"}]}\n```',
+        "model": "m", "provider": "p", "error": None})
+    res = mc.run_consolidation()
+    assert res["proposals"] == 1
+    assert mc.load_proposals()["proposals"][0]["action"] == "merge"
+
+
+def test_consolidation_drops_merge_with_missing_source(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    _seed_memory(mc, "user", ["Real A", "Real B"])
+    monkeypatch.setattr(mc, "_run_extraction", lambda prompt: {"final":
+        '{"proposals":[{"action":"merge","target":"user",'
+        '"sources":["Real A","Ghost C"],"entry":"merged"}]}',
+        "model": "m", "provider": "p", "error": None})
+    assert mc.run_consolidation()["proposals"] == 0
+
+
+def test_consolidation_drops_merge_single_source(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    _seed_memory(mc, "user", ["Real A"])
+    monkeypatch.setattr(mc, "_run_extraction", lambda prompt: {"final":
+        '{"proposals":[{"action":"merge","target":"user",'
+        '"sources":["Real A"],"entry":"merged"}]}',
+        "model": "m", "provider": "p", "error": None})
+    assert mc.run_consolidation()["proposals"] == 0  # needs >=2 sources
+
+
+def test_apply_merge_then_revert_roundtrip(mc_env):
+    mc = mc_env["mc"]
+    from tools.memory_tool import get_memory_dir
+    _seed_memory(mc, "user", [
+        "User is direct and Spanish",
+        "User prefers Spanish, direct style",
+        "Keep me untouched",
+    ])
+    props = [{"id": "p1", "action": "merge", "target": "user", "title": "profile",
+              "lesson": "", "evidence": "", "reason": "overlap",
+              "sources": ["User is direct and Spanish",
+                          "User prefers Spanish, direct style"],
+              "entry": "User: direct, Spanish", "applied": False}]
+    mc._persist_run(props, {"mode": "consolidation", "entries": 3})
+
+    rep = mc.apply_proposals(["p1"])
+    assert rep["applied"] == ["p1"] and not rep["errors"]
+    txt = (get_memory_dir() / "USER.md").read_text()
+    assert "User: direct, Spanish" in txt
+    assert "User is direct and Spanish" not in txt
+    assert "Keep me untouched" in txt            # untouched
+    assert mc.load_state()["applied_by_target"].get("user", 0) == 0  # merge != add
+
+    r = mc.revert_last()
+    assert r["reverted"] == "p1"
+    txt2 = (get_memory_dir() / "USER.md").read_text()
+    assert "User: direct, Spanish" not in txt2
+    assert "User is direct and Spanish" in txt2
+    assert "User prefers Spanish, direct style" in txt2
+
+
+def test_apply_merge_missing_source_no_mutation(mc_env):
+    mc = mc_env["mc"]
+    from tools.memory_tool import get_memory_dir
+    _seed_memory(mc, "user", ["Real A", "Real B"])
+    props = [{"id": "p1", "action": "merge", "target": "user", "title": "t",
+              "lesson": "", "evidence": "", "reason": "",
+              "sources": ["Real A", "Ghost"], "entry": "merged", "applied": False}]
+    mc._persist_run(props, {"mode": "consolidation", "entries": 2})
+    rep = mc.apply_proposals(["p1"])
+    assert rep["applied"] == []
+    assert any("source not found" in e for e in rep["errors"])
+    txt = (get_memory_dir() / "USER.md").read_text()
+    assert "Real A" in txt and "Real B" in txt and "merged" not in txt
+
+
+def test_apply_merge_rollback_on_cap(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    from tools.memory_tool import get_memory_dir, MemoryStore
+    _seed_memory(mc, "user", ["aaaa", "bbbb"])
+    # Tiny store so the merged entry blows the cap → add fails → rollback.
+    monkeypatch.setattr(
+        mc, "_memory_store",
+        lambda: MemoryStore(memory_char_limit=50, user_char_limit=12),
+    )
+    props = [{"id": "p1", "action": "merge", "target": "user", "title": "t",
+              "lesson": "", "evidence": "", "reason": "",
+              "sources": ["aaaa", "bbbb"], "entry": "x" * 100, "applied": False}]
+    mc._persist_run(props, {"mode": "consolidation", "entries": 2})
+    rep = mc.apply_proposals(["p1"])
+    assert rep["applied"] == []
+    assert any("rolled back" in e for e in rep["errors"])
+    txt = (get_memory_dir() / "USER.md").read_text()
+    assert "aaaa" in txt and "bbbb" in txt        # restored by rollback
