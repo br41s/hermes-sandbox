@@ -50,6 +50,19 @@ def _cmd_status(args) -> int:
     print(f"  applied:        {st.get('applied_by_target') or '{}'}")
     print(f"  last summary:   {st.get('last_run_summary') or '—'}")
     print(f"  last digest:    {st.get('last_digest_path') or '—'}")
+
+    # Auto-graduation (slice 4)
+    k = mc.get_graduation_k()
+    auto_on = mc.is_auto_apply_enabled()
+    grad = st.get("graduation") or {}
+    print(f"  auto-apply:     {'ON' if auto_on else 'off'}  (needs {k} clean "
+          f"approvals; graduatable: {', '.join(mc.get_graduatable_actions())})")
+    if grad:
+        for cls, n in sorted(grad.items()):
+            act = cls.split(':', 1)[0]
+            graduated = n >= k and act in mc.get_graduatable_actions()
+            tag = " ✅ graduated" if graduated else ""
+            print(f"    {cls:16s} {n}/{k}{tag}")
     return 0
 
 

@@ -71,8 +71,15 @@ and never reach the bounded `memory` store. Do it by reusing the existing
      rolling back the removals if the add fails. `revert` removes the merged
      entry and re-adds every source. The consolidation prompt proposes both
      evict and merge; merges with a missing/insufficient source are filtered.
-4. **Auto graduation.** Classes with K clean approvals flip to auto-apply
-   (still logged + reversible), per profile.
+4. **Auto graduation.** ✅ DONE. Each successful apply bumps a per-class
+   (`action:target`) graduation count in state; a revert of that class resets it
+   to 0 (trust withdrawn → demoted to gated). A class is graduated at
+   `graduation_k` (default 5) clean approvals AND only for graduatable actions
+   (default `["add"]` — evict/merge never auto-apply). When the master switch
+   `auto_apply` is on (default OFF), `run_memory_digest` auto-applies graduated
+   proposals (ledger-marked `auto`, still reversible); everything else stays
+   proposed. Closes the continuous-learning loop: after K clean approvals the
+   weekly digest auto-adds lessons with no human in the loop.
 
 ## Verification
 - Unit tests mirroring tests/agent/test_curator.py (idle gate, disabled gate,

@@ -37,6 +37,16 @@ def test_status_runs_clean(cli_env, capsys):
     assert args.func(args) == 0
     out = capsys.readouterr().out
     assert "enabled:" in out and "interval:" in out
+    assert "auto-apply:" in out
+
+
+def test_status_shows_graduation(cli_env, capsys):
+    mc = cli_env["mc"]
+    st = mc.load_state(); st["graduation"] = {"add:user": 5}; mc.save_state(st)
+    args = cli_env["parser"].parse_args(["status"])
+    assert args.func(args) == 0
+    out = capsys.readouterr().out
+    assert "add:user" in out and "graduated" in out
 
 
 def test_show_without_digest_returns_1(cli_env, capsys):

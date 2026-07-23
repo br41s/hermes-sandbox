@@ -524,3 +524,95 @@ def test_apply_merge_rollback_on_cap(mc_env, monkeypatch):
     assert any("rolled back" in e for e in rep["errors"])
     txt = (get_memory_dir() / "USER.md").read_text()
     assert "aaaa" in txt and "bbbb" in txt        # restored by rollback
+
+
+# ---------------------------------------------------------------------------
+# Auto-graduation (slice 4)
+# ---------------------------------------------------------------------------
+
+def _add_prop(entry, target="user"):
+    return [{"id": "p1", "action": "add", "target": target, "title": "", "lesson": "",
+             "evidence": "", "reason": "", "sources": [], "entry": entry, "applied": False}]
+
+
+def test_graduation_config_defaults(mc_env):
+    mc = mc_env["mc"]
+    assert mc.get_graduation_k() == 5
+    assert mc.is_auto_apply_enabled() is False
+    assert mc.get_graduatable_actions() == ["add"]
+
+
+def test_graduation_counts_and_is_graduated(mc_env):
+    mc = mc_env["mc"]
+    for i in range(5):
+        mc._persist_run(_add_prop(f"lesson number {i}"), {"sessions": 1})
+        assert mc.apply_proposals(["p1"])["applied"] == ["p1"]
+    assert mc.load_state()["graduation"]["add:user"] == 5
+    assert mc.is_graduated("add", "user") is True
+    assert mc.is_graduated("add", "memory") is False  # separate class, no approvals
+
+
+def test_below_k_not_graduated(mc_env):
+    mc = mc_env["mc"]
+    for i in range(3):
+        mc._persist_run(_add_prop(f"lesson {i}"), {"sessions": 1})
+        mc.apply_proposals(["p1"])
+    assert mc.is_graduated("add", "user") is False  # 3 < K(5)
+
+
+def test_evict_and_merge_never_graduate(mc_env):
+    mc = mc_env["mc"]
+    st = mc.load_state()
+    st["graduation"] = {"evict:user": 99, "merge:user": 99}
+    mc.save_state(st)
+    assert mc.is_graduated("evict", "user") is False
+    assert mc.is_graduated("merge", "user") is False
+
+
+def test_revert_resets_graduation(mc_env):
+    mc = mc_env["mc"]
+    for i in range(5):
+        mc._persist_run(_add_prop(f"lesson {i}"), {"sessions": 1})
+        mc.apply_proposals(["p1"])
+    assert mc.is_graduated("add", "user") is True
+    mc.revert_last()  # revert the last add → trust withdrawn
+    assert mc.load_state()["graduation"]["add:user"] == 0
+    assert mc.is_graduated("add", "user") is False
+
+
+def _digest_env(mc, monkeypatch, auto_apply):
+    cfg = {"enabled": True}
+    if auto_apply:
+        cfg["auto_apply"] = True
+    monkeypatch.setattr(mc, "_load_config", lambda: cfg)
+    now = datetime.now(timezone.utc)
+    _install_fake_db(monkeypatch,
+                     [{"id": "s1", "title": "T", "last_active": now.isoformat()}],
+                     {"s1": [{"role": "user", "content": "x"}]})
+    return now
+
+
+def test_digest_auto_applies_graduated_class(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    from tools.memory_tool import get_memory_dir
+    now = _digest_env(mc, monkeypatch, auto_apply=True)
+    st = mc.load_state(); st["graduation"] = {"add:user": 5}; mc.save_state(st)
+    res = mc.run_memory_digest(now=now, force=True)  # fixture stub → add:user proposal
+    assert res["auto_applied"] == ["p1"]
+    assert "Use a feature branch per change" in (get_memory_dir() / "USER.md").read_text()
+    assert "auto-applied" in mc.load_state()["last_run_summary"]
+
+
+def test_digest_no_autoapply_when_switch_off(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    now = _digest_env(mc, monkeypatch, auto_apply=False)   # default off
+    st = mc.load_state(); st["graduation"] = {"add:user": 5}; mc.save_state(st)
+    res = mc.run_memory_digest(now=now, force=True)
+    assert res["auto_applied"] == []
+
+
+def test_digest_no_autoapply_when_not_graduated(mc_env, monkeypatch):
+    mc = mc_env["mc"]
+    now = _digest_env(mc, monkeypatch, auto_apply=True)    # on, but no graduation
+    res = mc.run_memory_digest(now=now, force=True)
+    assert res["auto_applied"] == []

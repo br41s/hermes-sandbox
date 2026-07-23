@@ -145,6 +145,14 @@ memory_curator:
   min_idle_hours: 2
   lookback_days: 7
   max_sessions: 20
+  # Auto-graduation (slice 4): once an add:<target> class has `graduation_k`
+  # clean human approvals, the weekly digest may auto-apply it — but ONLY when
+  # auto_apply is true. Off by default: auto-apply writes with no human in the
+  # loop. Only "add" graduates; evict/merge stay human-gated. A revert of a
+  # class resets its count and demotes it back to gated.
+  auto_apply: false
+  graduation_k: 5
+  graduatable_actions: ["add"]
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 60
