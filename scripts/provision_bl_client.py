@@ -3,12 +3,13 @@
 deterministic version of the manual runbook in AGENT_RENTAL_SETUP.md.
 
 Replaces the CEO-via-Telegram + Hermes-follows-a-markdown-runbook flow with
-one call: creates the client's isolated profile, writes its SOUL.md and .env
-(BL_SITE_URL / BL_SITE_PANEL_PASSWORD / their own OPENROUTER_API_KEY — BYOK,
-never BigLobster's own key), and registers one cron job per agent they
-ordered, each pointed at the *shared* prompt template for that agent
-(gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client prompt
-file is ever created.
+one call: creates the client's isolated profile, writes its SOUL.md, config.yaml
+(the base/orchestrator model — without it the profile has no model and every
+cron run 400s), and .env (BL_SITE_URL / BL_SITE_PANEL_PASSWORD / their own
+OPENROUTER_API_KEY — BYOK, never BigLobster's own key), and registers one cron
+job per agent they ordered, each pointed at the *shared* prompt template for
+that agent (gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client
+prompt file is ever created.
 
 This does NOT wire up an automatic trigger from bl-site-package's customer
 panel — that panel has no payment gate yet (see AGENT_RENTAL_SETUP.md), so
@@ -88,6 +89,14 @@ AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
 # the profile/.env writes below are certainly flushed to disk first.
 ONBOARDING_CONTENT_DELAY = "5m"
 
+# Base/orchestrator model for the rented profile. Billed to the CLIENT's own
+# BYOK OpenRouter key (profile .env OPENROUTER_API_KEY), so the default is the
+# cheap orchestrator the auditor already uses. A profile with no config.yaml
+# has NO base model, and the orchestrator loop then calls OpenRouter with no
+# model → RuntimeError: 400 "No models provided" and the agent silently does
+# nothing (confirmed on bl-shoroban, 2026-07-24). Override with --model.
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+
 SOUL_TEMPLATE = """# {client_name} — Hermes Agent (rented, bl-site-package)
 
 You are Hermes Agent, an intelligent AI assistant created by Nous Research.
@@ -120,6 +129,61 @@ def _validate_openrouter_key(key: str) -> None:
         raise ValueError(f"OpenRouter key rejected: HTTP {exc.code} — {exc.read().decode(errors='replace')}")
     except urllib.error.URLError as exc:
         raise ValueError(f"Could not reach OpenRouter to validate the key: {exc.reason}")
+
+
+def _validate_model_call(key: str, model: str) -> None:
+    """Prove the profile can actually make a model call before it goes live.
+
+    The key check above only proves the key is *valid*; it says nothing about
+    whether the chosen model is callable on this client's account (typo'd id,
+    model retired, no credits for it). Because the one-shot onboarding-content
+    job auto-removes itself after its single run, a first run that 400s can't
+    be re-run by id — so we validate the model here, BEFORE the profile and its
+    jobs are created, and fail loudly instead of every cron run failing
+    silently. Costs one 1-token completion, billed to the client's own key.
+    """
+    body = json.dumps(
+        {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
+    ).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status != 200:
+                raise ValueError(f"Model check for '{model}' returned HTTP {resp.status}")
+    except urllib.error.HTTPError as exc:
+        raise ValueError(
+            f"Model '{model}' is not callable on this key: HTTP {exc.code} — "
+            f"{exc.read().decode(errors='replace')}"
+        )
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Could not reach OpenRouter to validate the model: {exc.reason}")
+
+
+def _write_config(profile_dir: Path, model: str) -> Path:
+    """Write the profile's config.yaml with a base/orchestrator model.
+
+    Only the model block is written — everything else is deep-merged from
+    DEFAULT_CONFIG at runtime (see hermes_cli.config.load_config), so this
+    mirrors exactly what `hermes -p <slug> config set model.default …` produces.
+    Without this file the profile has no base model at all (the Shoroban bug).
+    """
+    import yaml
+
+    config_path = profile_dir / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"model": {"default": model, "provider": "openrouter"}},
+            sort_keys=False,
+            default_flow_style=False,
+        ),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _write_env(
@@ -173,6 +237,7 @@ def provision(
     deliver: str = "local",
     skip_key_check: bool = False,
     old_site_url: str | None = None,
+    model: str = DEFAULT_MODEL,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -196,13 +261,20 @@ def provision(
             "the client has no existing site to draw from."
         )
 
+    # Validate the key AND that the chosen model is callable BEFORE creating
+    # the profile/jobs — a broken model must never reach the point where a
+    # one-shot job auto-removes itself on a silent 400.
     if not skip_key_check:
         _validate_openrouter_key(openrouter_key)
+        _validate_model_call(openrouter_key, model)
 
     profile_dir = create_profile(canon, no_skills=True, description=f"bl-site-package rental: {client_name}")
     (profile_dir / "SOUL.md").write_text(
         SOUL_TEMPLATE.format(client_name=client_name), encoding="utf-8"
     )
+    # Write config.yaml so the profile has a base/orchestrator model. Without
+    # it the profile has none → orchestrator 400 "No models provided".
+    config_path = _write_config(profile_dir, model)
     env_path = _write_env(profile_dir, site_url, panel_password, openrouter_key, old_site_url)
 
     created_jobs = []
@@ -226,6 +298,8 @@ def provision(
     return {
         "profile": canon,
         "profile_dir": str(profile_dir),
+        "config_path": str(config_path),
+        "model": model,
         "env_path": str(env_path),
         "jobs": created_jobs,
     }
@@ -240,7 +314,12 @@ def main() -> int:
     parser.add_argument("--openrouter-key", required=True)
     parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
-    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key validation call")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Base/orchestrator model for the profile, billed to the client's own OpenRouter key (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key + model validation calls")
     parser.add_argument(
         "--old-site-url",
         default=None,
@@ -261,13 +340,17 @@ def main() -> int:
             deliver=args.deliver,
             skip_key_check=args.skip_key_check,
             old_site_url=args.old_site_url,
+            model=args.model,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)
         return 1
 
     print(json.dumps(result, indent=2))
-    print(f"\nProfile '{result['profile']}' ready with {len(result['jobs'])} job(s).")
+    print(
+        f"\nProfile '{result['profile']}' ready on model '{result['model']}' "
+        f"with {len(result['jobs'])} job(s)."
+    )
     return 0
 
 
