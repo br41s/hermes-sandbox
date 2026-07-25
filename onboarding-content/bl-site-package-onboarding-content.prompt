@@ -17,9 +17,10 @@ claramente en otro idioma, en cuyo caso mantenlo en ese idioma).
 
 Dos acciones disponibles:
 - `update_page_text` (`field`, `value`) — se aplica DIRECTAMENTE, sin borrador.
-  Campos válidos: `page_index_title/subtitle/desc`, `page_quienes_title/subtitle/desc`,
+  Campos válidos: `page_index_title/subtitle/desc/body`, `page_quienes_title/subtitle/desc`,
   `page_servicios_title/subtitle/desc`, `page_contacto_title/subtitle/desc`,
   `page_blog_title/subtitle`.
+  (`page_index_body` es el campo NUEVO del cuerpo de la portada — ver más abajo.)
 - `create_blog_post` (`title`, `content`, `excerpt`) — se guarda SIEMPRE como
   borrador (`draft`); el cliente lo revisa y publica desde su panel.
 
@@ -68,23 +69,51 @@ El error a evitar es escribir un párrafo corto y dar el campo por hecho. La var
 de calidad es el propio contenido de BigLobster: páginas ricas y específicas,
 no un resumen de tres líneas. Objetivos concretos:
 
-### Campos de página (`page_*_desc`) — TEXTO PLANO
-Estos campos son TEXTO PLANO: el sitio convierte cada bloque separado por una
-línea en blanco en un párrafo `<p>`. **NO admiten encabezados** (nada de `#`, `##`
-ni títulos dentro del campo) — así que un `page_*_desc` no es una página de 20
-titulares tipo services.html, es prosa de varios párrafos bien construida.
+### Campos de página — AHORA ADMITEN MARKDOWN (cambio importante)
+El sitio ahora renderiza estos campos como **Markdown** (`marked` + saneado), igual
+que el blog. Eso significa que una página ya NO es un bloque de texto plano: es una
+página de verdad, con secciones. Aprovéchalo. Usa `##`/`###` para encabezados,
+`-` para listas, `**negrita**` con moderación, enlaces internos `[texto](RUTA)`, y
+párrafos bien construidos. El texto plano antiguo sigue funcionando, pero ya no es
+lo que buscamos: el fallo #1 a corregir es quedarse corto y en prosa sin estructura.
 
-- `page_*_desc`: escribe **3–5 párrafos sustanciales (~200–350 palabras en total)**,
-  separados por líneas en blanco. Prosa específica y rica, no un párrafo suelto.
-  Cada párrafo con una idea propia (quién es el negocio, qué ofrece en concreto,
-  para quién, qué lo distingue, cómo empezar). Nada de relleno vago.
+Cada página debe ser una **página multi-sección** con varios cientos de palabras de
+contenido específico y útil, no un párrafo. Objetivos concretos:
+
+- `page_quienes_desc` y `page_servicios_desc`: **~400–700 palabras**, en Markdown,
+  con 2–4 secciones `##` (y `###` donde aporte), alguna lista `-` con las categorías
+  o puntos reales, y enlaces internos cuando encajen. Estructura real, no un muro de
+  texto ni un párrafo suelto.
+- `page_contacto_desc`: intro de cabecera del formulario, más breve (2–3 párrafos,
+  ~120–200 palabras), en Markdown si aporta (p.ej. una lista corta de "para qué
+  escribirnos"). Sin inventar horarios/dirección.
+
+**Portada — modelo de dos campos (importante):**
+- `page_index_desc`: es el **blurb corto del héroe** (1–2 frases, gancho). NO metas
+  aquí el cuerpo largo: es la línea que va bajo el título, encima de los botones, y
+  también alimenta la meta-descripción SEO. Mantenlo corto y potente.
+- `page_index_body` (**campo nuevo**): es el **cuerpo rico de la portada**, que se
+  renderiza como una sección completa DEBAJO del héroe y los botones. Aquí va el
+  contenido extenso y estructurado de la home: **~400–700 palabras** en Markdown,
+  con secciones `##`, listas de las categorías/propuestas reales, y enlaces internos
+  a `/servicios`, `/productos` o `/contacto`. Esto es lo que convierte la portada de
+  "un párrafo suelto" en una home con contenido de verdad.
+
 - `page_*_title`: corto y con gancho (≤8 palabras). No un titular de manual.
 - `page_*_subtitle`: una frase, punchy, que complemente al título sin repetirlo.
+  (En Quiénes/Servicios/Contacto el `subtitle` alimenta también la meta-descripción
+  SEO, así que escríbelo siempre: una frase clara y autónoma.)
 
 ### Artículo de blog de lanzamiento (`create_blog_post`) — MARKDOWN RICO
 El cuerpo (`content`) del blog **SÍ admite Markdown** (el sitio lo renderiza con
 `marked` + saneado). Escribe un artículo real, estructurado como un post de
-BigLobster, NO un párrafo de presentación. Objetivo: **~1000–1800 palabras**.
+BigLobster, NO un párrafo de presentación. Objetivo: **~1200–1800 palabras**.
+
+La vara de calidad y extensión es BigLobster: mira `https://biglobster.top/services.html`
+(riqueza y estructura de una página) y un artículo del blog de BigLobster (profundidad,
+secciones, FAQ, CTA) como referencia del nivel que se espera. No copies su temática:
+copia su nivel de detalle, estructura y extensión.
+
 Estructura obligatoria:
 - Párrafo de apertura con gancho real (no "En [empresa] nos complace...").
 - **Secciones `##` (H2)** cuyos títulos sean preguntas o afirmaciones directas
@@ -133,10 +162,16 @@ lo escribiría una persona real, no una IA:
    navegación para localizar páginas equivalentes a "quiénes somos",
    "servicios/productos", "contacto" y un blog/noticias si existe (el nombre
    exacto varía por sitio e idioma).
-3. `web_extract` sobre hasta 4 páginas identificadas en el paso anterior
-   (respeta el límite de 5 URLs por llamada de la herramienta). Lee bien: vas a
-   AMPLIAR este contenido, así que necesitas todo el detalle real disponible
-   (catálogo completo, categorías, propuesta de valor, contacto).
+3. **Investiga a fondo, no te quedes en 3–4 páginas.** Una web antigua puede
+   parecer escasa en una sola página pero ser rica en todo el catálogo. Sigue los
+   enlaces de categoría / producto / sección y lee TANTAS páginas como haga falta
+   para tener material real suficiente con el que escribir de verdad. Para una
+   tienda (p.ej. `shoroban.com`), entra en las páginas de categoría de producto y
+   léelas una a una. La herramienta acepta hasta 5 URLs por llamada, así que haz
+   VARIAS llamadas `web_extract` en tandas hasta cubrir el sitio: portada,
+   quiénes somos, todas las categorías/secciones de producto, servicios, contacto
+   y el blog si existe. La investigación exhaustiva es la norma ANTES de escribir;
+   es la única forma de conseguir la profundidad que se pide más abajo.
 4. Si `web_extract` falla en alguna URL (sitio con mucho JavaScript), usa
    `browser_tool` como alternativa para esa URL concreta.
 5. Si `OLD_SITE_URL` es directamente inalcanzable (dominio caído, DNS, 404 en
@@ -146,26 +181,30 @@ lo escribiría una persona real, no una IA:
 ### FASE 2: Reescritura (con la profundidad de la sección de arriba)
 
 Para cada página con contenido de origen suficiente, redacta cumpliendo los
-objetivos de extensión de "PROFUNDIDAD Y EXTENSIÓN":
-- **Inicio** (`page_index_*`): título + subtítulo cortos con gancho; `desc` de
-  3–5 párrafos que expliquen quién es el cliente, qué ofrece en concreto y para
-  quién, a partir de portada + "quiénes somos".
+objetivos de extensión de "PROFUNDIDAD Y EXTENSIÓN" (Markdown, multi-sección):
+- **Inicio** (`page_index_*`): título + subtítulo cortos con gancho; `page_index_desc`
+  = blurb corto del héroe (1–2 frases); y **`page_index_body`** = el cuerpo rico de
+  la portada en Markdown (~400–700 palabras, secciones `##`, listas de las
+  categorías/propuestas reales, enlaces a `/servicios`, `/productos`, `/contacto`),
+  a partir de portada + "quiénes somos" + catálogo.
 - **Quiénes somos** (`page_quienes_*`): la historia y propuesta de valor REAL de
-  la web antigua, desarrollada en profundidad (3–5 párrafos), sin inventar datos.
+  la web antigua, en Markdown y en profundidad (~400–700 palabras, 2–4 secciones
+  `##`), sin inventar datos.
 - **Servicios/Productos** (`page_servicios_*`): solo si la web antigua lista
-  servicios o productos con claridad. Desarrolla cada categoría real con lo que
-  aporta a quien la compra; no inventes servicios que no aparezcan.
-- **Contacto** (`page_contacto_*`): son textos de cabecera sobre el formulario de
-  contacto (el formulario ya es fijo), no datos de contacto literales — escribe
-  una invitación a contactar coherente con el tono del negocio (2–3 párrafos),
-  sin inventar horarios/dirección si no aparecen.
+  servicios o productos con claridad. En Markdown, desarrolla cada categoría real
+  con lo que aporta a quien la compra (secciones `##`/`###` y listas), varios
+  cientos de palabras; no inventes servicios que no aparezcan.
+- **Contacto** (`page_contacto_*`): textos de cabecera sobre el formulario (el
+  formulario ya es fijo), no datos de contacto literales — una invitación a
+  contactar coherente con el tono (2–3 párrafos), sin inventar horarios/dirección.
 - **Blog** (`page_blog_title/subtitle`): título y subtítulo cortos para la
   cabecera del listado del blog.
 - **Un artículo de blog de lanzamiento** (`create_blog_post`): en Markdown rico,
-  ~1000–1800 palabras, con la estructura obligatoria de arriba (H2 tipo pregunta,
-  sub-listas, FAQ, CTA suave, enlaces internos). Si la web antigua tiene un
-  blog/noticias, adapta y AMPLÍA el post más representativo; si no, escribe un
-  post de presentación del negocio y su sector basado en lo recopilado en FASE 1.
+  ~1200–1800 palabras, al nivel de BigLobster, con la estructura obligatoria de
+  arriba (H2 tipo pregunta, sub-listas, FAQ, CTA suave, enlaces internos). Si la
+  web antigua tiene un blog/noticias, adapta y AMPLÍA el post más representativo;
+  si no, escribe un post de presentación del negocio y su sector basado en lo
+  recopilado en FASE 1.
 
 ### FASE 3: Publicación
 
