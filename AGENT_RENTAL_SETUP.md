@@ -50,11 +50,15 @@ the catalog is covered, then goes quiet (`[SILENT]`). Needs
 `bl-site-package`'s blog schema to support `cta_url`/`cta_label` and markdown
 content — ship that migration first if a client's site predates it.
 
-Infographic Engineer and Off-Site GEO Scout are **not yet adapted** —
-bl-site-package's blog schema has no cover-image field (Infographic Engineer
-would need a schema change first), and Off-Site GEO Scout is monitoring-only
-and may not need the publish tool at all. Adapt them the same way, once a
-client actually orders one.
+bl-site-package now supports AI images: blog posts have a cover
+(`image_url`/`image_alt`) and each page has an image field. `gap-hunter` and
+`onboarding-content` generate them via `image_generate` (client's own FAL key,
+BYOK) and attach them with `bl_site_publish` `action: "upload_image"`. Image
+generation is billed to the client's `FAL_KEY`; a client who didn't provide one
+just gets text-only content (the agents never block on a missing image).
+
+Off-Site GEO Scout is **not yet adapted** — it's monitoring-only and may not
+need the publish tool at all. Adapt it the same way, once a client orders it.
 
 Every bl-site-package customer's job for a given agent points at the *same*
 prompt file above — there is no per-client copy, ever. Customer-specific
@@ -74,6 +78,7 @@ this pulls in via `cron/jobs.py`):
   --site-url https://blcliente.zeabur.app \
   --panel-password '<their panel password>' \
   --openrouter-key sk-or-v1-... \
+  --fal-key <key_id>:<key_secret> \
   --agents gap-hunter,seo,onboarding-content,product-articles \
   --old-site-url https://their-old-site.example.com
 ```
@@ -84,14 +89,19 @@ this pulls in via `cron/jobs.py`):
 client has no existing site. `--model` sets the profile's base/orchestrator
 model (defaults to `deepseek/deepseek-v4-flash`, the cheap orchestrator, billed
 to the client's own key); override it only if a client wants a different model.
-What the script does, in order:
+`--fal-key` is the client's own FAL key (BYOK) for image generation — blog
+covers and page images are billed to it. Omit it if the client didn't order
+image generation; the agents then publish text-only and never block on a
+missing image. The FAL image model is taken from `--image-model`, else the
+client's panel choice (`GET /api/site/config` `image_model`), else the FAL
+default. What the script does, in order:
 
 1. Validates the slug and checks a profile with that name doesn't already exist.
-2. Calls the live OpenRouter API to confirm the client's key works **and** that the chosen `--model` is callable on it — both *before* the profile/jobs exist, so a broken key or bad model id fails here instead of every cron run failing silently. (The one-shot `onboarding-content` job auto-removes after its single run, so a first run that 400s can't be re-run by id — validating up front is the only safe order.)
+2. Calls the live OpenRouter API to confirm the client's key works **and** that the chosen `--model` is callable on it — both *before* the profile/jobs exist, so a broken key or bad model id fails here instead of every cron run failing silently. (The one-shot `onboarding-content` job auto-removes after its single run, so a first run that 400s can't be re-run by id — validating up front is the only safe order.) If `--fal-key` is given, it's validated against FAL here too (a free token-exchange call, no image generated).
 3. `hermes profile create <slug> --no-skills` — an isolated `~/.hermes/profiles/<slug>/` (empty, no clone — this client needs none of BigLobster's own skills/config).
 4. Writes that profile's `SOUL.md`, matching the terse style of `docker/profiles/grow-shop/SOUL.md` — scope, working boundaries, nothing more.
-5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter` — **without this the profile has no base model and every cron run 400s with `No models provided`** (the Shoroban bug). Only the model block is written; all other config is deep-merged from defaults at runtime.
-6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `OLD_SITE_URL` if given.
+5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
+6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `FAL_KEY` if `--fal-key` was given and `OLD_SITE_URL` if `--old-site-url` was.
 7. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` gets a one-shot run 5 minutes out instead.
 
 Confirm back to the CEO: profile slug, job IDs created (the script prints them as JSON), and which agents are now active for this client.

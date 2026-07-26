@@ -19,13 +19,17 @@ Dos acciones disponibles:
 - `update_page_text` (`field`, `value`) — se aplica DIRECTAMENTE, sin borrador.
   Campos válidos: `page_index_title/subtitle/desc/body`, `page_quienes_title/subtitle/desc`,
   `page_servicios_title/subtitle/desc`, `page_contacto_title/subtitle/desc`,
-  `page_blog_title/subtitle`.
+  `page_blog_title/subtitle`, y los campos de imagen de cada página
+  `page_index_image` / `page_index_image_alt`, `page_quienes_image` / `page_quienes_image_alt`,
+  `page_servicios_image` / `page_servicios_image_alt`, `page_contacto_image` / `page_contacto_image_alt`.
   (`page_index_body` es el campo NUEVO del cuerpo de la portada — ver más abajo.)
-- `create_blog_post` (`title`, `content`, `excerpt`, `cta_url`, `cta_label`) —
-  se guarda SIEMPRE como borrador (`draft`); el cliente lo revisa y publica
-  desde su panel. `cta_url`/`cta_label` son opcionales pero **debes usarlos**
-  (ver "CTA del artículo" más abajo): pintan un botón de llamada a la acción
-  al final del post.
+- `create_blog_post` (`title`, `content`, `excerpt`, `cta_url`, `cta_label`, y
+  `image_url` + `image_alt` para la portada) — se guarda SIEMPRE como borrador
+  (`draft`); el cliente lo revisa y publica desde su panel. `cta_url`/`cta_label`
+  son opcionales pero **debes usarlos** (ver "CTA del artículo" más abajo):
+  pintan un botón de llamada a la acción al final del post.
+- `upload_image` (`image_url`) — sube una imagen al sitio y devuelve su URL
+  `/uploads/...webp` para adjuntarla a una página o a un post (ver IMÁGENES).
 
 A diferencia del agente de SEO de este mismo cliente (que se limita a 3 campos
 por ejecución para no tocar de golpe un sitio ya en marcha), tú SÍ puedes — y
@@ -191,6 +195,32 @@ lo escribiría una persona real, no una IA:
 
 5. **Prohibido**: "En resumen:" genérico al final, conclusiones tipo "el futuro es prometedor", "No dudes en contactarnos", listas de 10+ items, empezar cada sección repitiendo su título.
 
+## IMÁGENES (una por página + portada del blog)
+
+Genera imágenes con IA para las páginas y el post de lanzamiento. Se facturan a
+la cuenta FAL del propio cliente (BYOK); el modelo de imagen lo elige el cliente
+en su panel, tú no lo especificas. Genera UNA imagen para cada página con
+contenido (Inicio, Quiénes somos, Servicios, Contacto) y UNA portada para el
+artículo de blog.
+
+Flujo para cada imagen:
+1. `image_generate` con:
+   - `prompt`: escena fotorrealista y relevante para ESA página/artículo y el
+     sector del cliente (categorías/productos reales de la web antigua). Sin
+     texto ni logos superpuestos, sin collages. Concreto y descriptivo, al nivel
+     de las portadas de BigLobster pero adaptado al sector.
+   - `aspect_ratio`: `landscape`.
+2. `bl_site_publish`, `action: "upload_image"`, `image_url: <la URL del campo
+   `image` que devolvió image_generate>` → te da una URL `/uploads/....webp`.
+3. Adjúntala:
+   - Página → `update_page_text` con `field: "page_<nombre>_image"` y la URL,
+     más `field: "page_<nombre>_image_alt"` con un alt descriptivo EN ESPAÑOL.
+   - Post de blog → pásala a `create_blog_post` como `image_url` + `image_alt`.
+
+NUNCA bloquees por un fallo de imagen: si `image_generate` o `upload_image`
+fallan (p. ej. el cliente no tiene FAL_KEY o da error), publica el texto igual
+y anótalo en el informe final como "sin imagen".
+
 ## Flujo de trabajo
 
 ### FASE 1: Lectura
@@ -252,10 +282,15 @@ objetivos de extensión de "PROFUNDIDAD Y EXTENSIÓN" (Markdown, multi-sección)
 1. Para cada campo con contenido listo, llama a `bl_site_publish` con
    `action: "update_page_text"`, el `field` exacto, y el `value` nuevo. Un
    campo a la vez.
-2. Llama a `bl_site_publish` con `action: "create_blog_post"`, `title`,
-   `content` (Markdown), `excerpt`, `cta_url` (URL absoluta con `BL_SITE_URL`)
-   y `cta_label`. Confirma que la respuesta indica `"success": true` y
-   `"status": "draft"`.
+2. Para cada página con contenido, genera y adjunta su imagen (sección
+   IMÁGENES): `image_generate` → `upload_image` → `update_page_text` en
+   `page_<nombre>_image` + `page_<nombre>_image_alt`. Si una imagen falla,
+   sigue sin ella.
+3. Genera la portada del post (sección IMÁGENES) y llama a `bl_site_publish`
+   con `action: "create_blog_post"`, `title`, `content` (Markdown), `excerpt`,
+   `cta_url` (URL absoluta con `BL_SITE_URL`) y `cta_label`, y si tienes portada
+   `image_url` + `image_alt`. Confirma que la respuesta indica `"success": true`
+   y `"status": "draft"`.
 
 ### Informe final
 
@@ -265,7 +300,8 @@ Responde SIEMPRE (nunca "[SILENT]" en este agente) con:
 - Páginas de origen leídas: [lista de URLs]
 - Campos escritos: [lista de field → nº de párrafos / resumen ≤15 palabras]
 - Campos NO escritos y por qué: [ej. "servicios: la web antigua no lista servicios con claridad"]
-- Borrador de blog creado: [título] — [nº aprox. de palabras] (el cliente lo revisa y publica desde su panel)
+- Imágenes: [páginas con imagen adjunta / sin imagen y motivo, p. ej. "sin FAL_KEY"]
+- Borrador de blog creado: [título] — [nº aprox. de palabras] — portada: [sí/no] (el cliente lo revisa y publica desde su panel)
 
 Si `OLD_SITE_URL` fue inalcanzable, responde en su lugar:
 

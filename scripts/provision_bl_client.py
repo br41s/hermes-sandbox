@@ -4,9 +4,10 @@ deterministic version of the manual runbook in AGENT_RENTAL_SETUP.md.
 
 Replaces the CEO-via-Telegram + Hermes-follows-a-markdown-runbook flow with
 one call: creates the client's isolated profile, writes its SOUL.md, config.yaml
-(the base/orchestrator model — without it the profile has no model and every
-cron run 400s), and .env (BL_SITE_URL / BL_SITE_PANEL_PASSWORD / their own
-OPENROUTER_API_KEY — BYOK, never BigLobster's own key), and registers one cron
+(the base/orchestrator model + the client's chosen FAL image model — without it
+the profile has no model and every cron run 400s), and .env (BL_SITE_URL /
+BL_SITE_PANEL_PASSWORD / their own OPENROUTER_API_KEY and FAL_KEY — BYOK, never
+BigLobster's own keys), and registers one cron
 job per agent they ordered, each pointed at the *shared* prompt template for
 that agent (gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client
 prompt file is ever created.
@@ -28,8 +29,17 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --site-url https://blcliente.zeabur.app \\
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
+        --fal-key <key_id>:<key_secret> \\
         --agents gap-hunter,seo,onboarding-content,product-articles \\
         --old-site-url https://their-old-site.example.com
+
+`--fal-key` is the client's own FAL key (BYOK) for image generation — blog
+covers and page images are billed to it, never BigLobster's. It's validated
+against FAL at provision time and written to the profile .env as FAL_KEY. Omit
+it if the client didn't order image generation; agents then publish text-only
+(they never block on a missing image). The FAL image model is taken from
+`--image-model`, else the client's panel choice (GET /api/site/config
+`image_model`), else the FAL default.
 
 `--old-site-url` is required when `onboarding-content` and/or
 `product-articles` is ordered. `onboarding-content` is a one-shot agent that
@@ -131,6 +141,62 @@ def _validate_openrouter_key(key: str) -> None:
         raise ValueError(f"Could not reach OpenRouter to validate the key: {exc.reason}")
 
 
+def _validate_fal_key(key: str) -> None:
+    """Prove the client's FAL image key is valid BEFORE the profile goes live.
+
+    Mirrors _validate_openrouter_key. FAL has no free "check key" endpoint like
+    OpenRouter's /auth/key, so we use FAL's short-lived-token exchange
+    (rest.alpha.fal.ai/tokens/ — the same call fal's own browser SDK makes).
+    It does NOT generate an image, so it costs nothing. A valid key authenticates
+    (200, or 422 if the request body shape drifts — still past auth); an invalid
+    key is rejected at auth (401/403). Any other status / unreachable is treated
+    as "couldn't verify" rather than a hard fail, so a FAL API change never bricks
+    provisioning after the format check already passed.
+    """
+    if ":" not in key or len(key.strip()) < 16:
+        raise ValueError("FAL key doesn't look valid (expected '<key_id>:<key_secret>').")
+    body = json.dumps({"allowed_apps": ["fal-ai/flux-2/klein/9b"], "token_expiration": 300}).encode()
+    req = urllib.request.Request(
+        "https://rest.alpha.fal.ai/tokens/",
+        data=body,
+        headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError(f"FAL key rejected: HTTP {exc.code} — check the key is correct.")
+        # Other status (422/404/5xx): got past auth or endpoint drifted — accept.
+    except urllib.error.URLError as exc:
+        # Unreachable — don't block provisioning; the format check already ran.
+        print(f"Warning: could not reach FAL to validate the key ({exc.reason}); continuing.", file=sys.stderr)
+
+
+def _read_panel_image_model(site_url: str) -> str | None:
+    """Best-effort read of the client's chosen image_model from their panel.
+
+    The client picks their FAL image model in the site panel; it's exposed at
+    GET /api/site/config. We snapshot it here and pin it into the profile
+    config.yaml (image_gen.model) so generation uses the client's choice.
+    Returns None on any error or if unset — the caller then leaves the model
+    unset and _resolve_fal_model() falls back to the FAL default.
+    """
+    try:
+        result = _http_json("GET", f"{site_url}/api/site/config")
+        value = result.get("image_model")
+        return value.strip() if isinstance(value, str) and value.strip() else None
+    except Exception:
+        return None
+
+
+def _http_json(method: str, url: str) -> dict:
+    req = urllib.request.Request(url, method=method)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def _validate_model_call(key: str, model: str) -> None:
     """Prove the profile can actually make a model call before it goes live.
 
@@ -164,23 +230,28 @@ def _validate_model_call(key: str, model: str) -> None:
         raise ValueError(f"Could not reach OpenRouter to validate the model: {exc.reason}")
 
 
-def _write_config(profile_dir: Path, model: str) -> Path:
+def _write_config(profile_dir: Path, model: str, image_model: str | None = None) -> Path:
     """Write the profile's config.yaml with a base/orchestrator model.
 
     Only the model block is written — everything else is deep-merged from
     DEFAULT_CONFIG at runtime (see hermes_cli.config.load_config), so this
     mirrors exactly what `hermes -p <slug> config set model.default …` produces.
     Without this file the profile has no base model at all (the Shoroban bug).
+
+    When ``image_model`` is given (the client's panel choice), pin it as
+    ``image_gen.model`` so the shared image_generate tool's _resolve_fal_model()
+    picks it up per-profile — the client's FAL image model, billed to their own
+    FAL_KEY. Omitted → _resolve_fal_model() falls back to the FAL default.
     """
     import yaml
 
+    data: dict = {"model": {"default": model, "provider": "openrouter"}}
+    if image_model:
+        data["image_gen"] = {"model": image_model}
+
     config_path = profile_dir / "config.yaml"
     config_path.write_text(
-        yaml.safe_dump(
-            {"model": {"default": model, "provider": "openrouter"}},
-            sort_keys=False,
-            default_flow_style=False,
-        ),
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
         encoding="utf-8",
     )
     return config_path
@@ -192,6 +263,7 @@ def _write_env(
     panel_password: str,
     openrouter_key: str,
     old_site_url: str | None = None,
+    fal_key: str | None = None,
 ) -> Path:
     env_path = profile_dir / ".env"
     contents = (
@@ -201,6 +273,11 @@ def _write_env(
     )
     if old_site_url:
         contents += f"OLD_SITE_URL={old_site_url}\n"
+    # Client's own FAL key (BYOK) — image generation is billed to it, never
+    # BigLobster's. Same per-profile resolution as OPENROUTER_API_KEY, so the
+    # shared image_generate tool picks it up when a job runs under this profile.
+    if fal_key:
+        contents += f"FAL_KEY={fal_key}\n"
     env_path.write_text(contents, encoding="utf-8")
     os.chmod(env_path, 0o600)
     return env_path
@@ -238,6 +315,8 @@ def provision(
     skip_key_check: bool = False,
     old_site_url: str | None = None,
     model: str = DEFAULT_MODEL,
+    fal_key: str | None = None,
+    image_model: str | None = None,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -267,6 +346,13 @@ def provision(
     if not skip_key_check:
         _validate_openrouter_key(openrouter_key)
         _validate_model_call(openrouter_key, model)
+        if fal_key:
+            _validate_fal_key(fal_key)
+
+    # Resolve the FAL image model to pin per-profile: explicit flag wins,
+    # otherwise snapshot the client's panel choice (image_model in the site
+    # config). None → _resolve_fal_model() uses the FAL default.
+    resolved_image_model = image_model or _read_panel_image_model(site_url)
 
     profile_dir = create_profile(canon, no_skills=True, description=f"bl-site-package rental: {client_name}")
     (profile_dir / "SOUL.md").write_text(
@@ -274,8 +360,10 @@ def provision(
     )
     # Write config.yaml so the profile has a base/orchestrator model. Without
     # it the profile has none → orchestrator 400 "No models provided".
-    config_path = _write_config(profile_dir, model)
-    env_path = _write_env(profile_dir, site_url, panel_password, openrouter_key, old_site_url)
+    config_path = _write_config(profile_dir, model, image_model=resolved_image_model)
+    env_path = _write_env(
+        profile_dir, site_url, panel_password, openrouter_key, old_site_url, fal_key=fal_key
+    )
 
     created_jobs = []
     for agent_key in agents:
@@ -300,6 +388,8 @@ def provision(
         "profile_dir": str(profile_dir),
         "config_path": str(config_path),
         "model": model,
+        "image_model": resolved_image_model or "(FAL default)",
+        "fal_key": "set" if fal_key else "not set (image generation disabled)",
         "env_path": str(env_path),
         "jobs": created_jobs,
     }
@@ -319,7 +409,20 @@ def main() -> int:
         default=DEFAULT_MODEL,
         help=f"Base/orchestrator model for the profile, billed to the client's own OpenRouter key (default: {DEFAULT_MODEL})",
     )
-    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key + model validation calls")
+    parser.add_argument(
+        "--fal-key",
+        default=None,
+        help="Client's own FAL image key (BYOK). Written to the profile .env as FAL_KEY and "
+        "validated against FAL. Required for image generation (blog covers / page images); "
+        "omit if the client didn't order image generation.",
+    )
+    parser.add_argument(
+        "--image-model",
+        default=None,
+        help="FAL image model id to pin for this client (e.g. fal-ai/flux-2-pro). Defaults to "
+        "the client's panel choice (GET /api/site/config image_model), else the FAL default.",
+    )
+    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter/FAL key + model validation calls")
     parser.add_argument(
         "--old-site-url",
         default=None,
@@ -341,6 +444,8 @@ def main() -> int:
             skip_key_check=args.skip_key_check,
             old_site_url=args.old_site_url,
             model=args.model,
+            fal_key=args.fal_key,
+            image_model=args.image_model,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)
