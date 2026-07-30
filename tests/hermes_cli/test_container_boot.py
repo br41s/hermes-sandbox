@@ -71,15 +71,12 @@ def _make_profile(
         # SOUL.md is what the reconciler keys on — it's always seeded by
         # `hermes profile create`. See container_boot._render_run_script.
         (p / "SOUL.md").write_text("# fake profile\n")
-    if state is not None:
-        record: dict = {"gateway_state": state, "timestamp": 1234567890}
-        if involuntary_exit is not None:
-            record["involuntary_exit"] = involuntary_exit
-        (p / "gateway_state.json").write_text(json.dumps(record))
     if state is not None or desired_state is not None:
         payload: dict[str, object] = {"timestamp": 1234567890}
         if state is not None:
             payload["gateway_state"] = state
+        if involuntary_exit is not None:
+            payload["involuntary_exit"] = involuntary_exit
         if desired_state is not None:
             payload["desired_state"] = desired_state
         (p / "gateway_state.json").write_text(json.dumps(payload))

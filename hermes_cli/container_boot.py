@@ -53,16 +53,6 @@ _AUTOSTART_STATES = frozenset({"running"})
 # flagged involuntary (container recycle of a healthy gateway). A deliberate
 # user stop lands in the same states but without the flag, so it stays down.
 _INVOLUNTARY_AUTOSTART_STATES = frozenset({"stopped", "draining"})
-#
-# Only this desired state triggers automatic restart. Everything else
-# (startup_failed, starting, stopped, missing) registers the slot in
-# the down state and waits for explicit user action — this avoids the
-# crash-loop where a broken gateway keeps being restarted across
-# `docker restart` cycles. Older installs only have gateway_state;
-# newer lifecycle commands persist desired_state separately so a transient
-# runtime state (draining/startup_failed) does not erase the operator's
-# durable start/stop intent across pod/container recreation.
-_AUTOSTART_STATES = frozenset({"running"})
 
 # Transient runtime sub-states of a RUNNING gateway. A gateway only ever
 # reaches these while it is up and serving, so they are NOT an operator stop
