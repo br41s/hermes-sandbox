@@ -78,6 +78,20 @@ Reproduce the conflict count (writes nothing):
 > NEVER boot the image with its real entrypoint (`/init`) + prod env — it starts a
 > SECOND Telegram poller and steals updates from prod. Always `--entrypoint` override.
 
+> **THE GATE NOW NEEDS A MOUNT (changed by this merge).** Upstream added `tests/` to
+> `.dockerignore` (line 77); we had no such rule and it **auto-merged silently — the file
+> never conflicted**. The image therefore ships ZERO test files, and `scripts/run_tests.sh`
+> exits **0** with `No test files to run`. That is a PASSING exit code for a suite that
+> never ran — gotcha #1 from [[hermes-test-suite-gotchas]] arriving by a new route.
+> Decision (CEO, 2026-07-30): KEEP upstream's exclusion (lean prod image) and mount the
+> tests for gate runs:
+> ```
+> docker run --rm --entrypoint /bin/bash -v "$PWD/tests:/opt/hermes/tests:ro" \
+>   <image> -c 'cd /opt/hermes && scripts/run_tests.sh'
+> ```
+> ALWAYS check the pass COUNT, never just the exit code or the failure count: 18 failing
+> files dropping to 0 is an absence, not an improvement.
+
 ## Phase 3 — Pin behaviour before merging
 
 Characterization tests for Tier C/D so a silent regression fails loudly:
@@ -129,6 +143,51 @@ Branch: `chore/upstream-merge-v2026.7.20`
         place where a careless merge silently widens the unauthenticated attack surface.
 - [ ] Decide `tests/cron/test_cron_profile.py` (deleted upstream, modified by us)
 - [ ] **CEO:** review Tier D diffs, dashboard auth especially
+
+## ⛔ RESUME HERE — merge built, NOT verified (2026-07-30)
+
+Branch `chore/upstream-merge-v2026.7.20`, **[PR #144](https://github.com/br41s/hermes-sandbox/pull/144) (DRAFT)**.
+All 44 conflicts resolved; image BUILDS; dashboard lockdown suite (9 tests) passes.
+**The gate run is RED with real bugs from the resolutions.** Do not merge or deploy.
+
+### Do these in order
+
+1. **Fix undefined names — the resolutions kept a *use* and dropped its *assignment*.**
+   `py_compile` and the AST duplicate-sweep both PASS on these; only F821 catches them:
+   ```
+   ruff check --select F821 cron/ hermes_cli/ tools/ agent/ gateway/
+   ```
+   Known instances (counts = failing tests):
+   - `normalized_profile` (166) — `cron/jobs.py:1309` uses it in the job dict; **no assignment
+     exists anywhere in the file**. Restore it from our pre-merge `cron/jobs.py`.
+   - `mirror_enabled` (42) — `cron/scheduler.py:1631`. Defined in upstream's H4
+     `mirror_delivery` setup block, which was dropped when our side of that hunk was taken.
+   - `config` (67) — same class, scheduler delivery path.
+   - `SKILLS_DIR` (1) — skills module.
+
+2. **Restore `pytest-asyncio` to the image** — it is MISSING from the merged image (baseline
+   has 1.3.0), which alone accounts for **321 of 419** failing files. It is still listed in the
+   `dev` *extra* in `pyproject.toml`, but the Dockerfile's `uv sync` extras don't include `dev`.
+   Add it to `[dependency-groups] dev` (alongside `pytest` / `pytest-timeout`, which ARE picked
+   up), then `uv lock`.
+
+3. **Rebuild + re-run the gate WITH THE MOUNT** (see the Phase 2 note — `tests/` is
+   `.dockerignore`d now), and compare the **pass count**:
+   ```
+   docker run --rm --entrypoint /bin/bash -v "$PWD/tests:/opt/hermes/tests:ro" \
+     hermes-merged:v2026.7.20 -c 'cd /opt/hermes && scripts/run_tests.sh'
+   ```
+   Target: **28,720 ✓ / 55 ✗ across 18 files**. A new failing filename = regression.
+
+### Last measured (invalid — both causes above active)
+419 failing files: 321 asyncio-plugin, 13 pre-existing, **~85 real regressions**, concentrated
+in `tests/cron/` — exactly the heaviest resolution area (`scheduler.py`, `jobs.py`,
+`cronjob_tools.py`).
+
+### Lesson for the rest of this merge
+Run **`ruff --select F821` after every resolution**, not `py_compile`. Taking one side's
+consumer while dropping the other side's producer is invisible to syntax checks, and is the
+mirror image of the duplicate-definition trap that `ast.parse` caught three times.
 
 ## Phase 5 — Verify + deploy
 
