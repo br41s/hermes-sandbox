@@ -48,11 +48,22 @@ def test_clones_the_biglobster_site_repo(boot_text: str) -> None:
     assert 'BIGLOBSTER_SITE_REPO="br41s/biglobster"' in s
 
 
-def test_two_isolated_checkouts_one_per_job(boot_text: str) -> None:
-    """Exactly the SEO and Gap Hunter checkouts, under checkouts/."""
+def test_isolated_checkout_per_consuming_job(boot_text: str) -> None:
+    """One checkout per consuming cron job, all under checkouts/.
+
+    Asserted per-name against the loop line rather than as one exact string:
+    the previous version pinned the whole `for ckdir in ...; do` line, so
+    adding the Infographic Engineer checkout (db554111b, #61) silently rotted
+    this test instead of failing the invariant it actually guards.
+    """
     s = _section6b(boot_text)
     assert 'checkouts_root="$HERMES_HOME/checkouts"' in s
-    assert "for ckdir in biglobster-seo biglobster-gaphunter; do" in s
+    loop = next(
+        (ln for ln in s.splitlines() if ln.lstrip().startswith("for ckdir in")), ""
+    )
+    assert loop, "section 6b has no `for ckdir in ...` checkout loop"
+    for job in ("biglobster-seo", "biglobster-gaphunter", "biglobster-infographic"):
+        assert job in loop, f"{job} has no isolated checkout in section 6b"
 
 
 def test_identity_pinned_locally_per_checkout(boot_text: str) -> None:

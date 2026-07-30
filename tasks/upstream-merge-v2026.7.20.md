@@ -67,7 +67,13 @@ Reproduce the conflict count (writes nothing):
       `test_run_tests_parallel` `tools/test_local_background_child_hang`
       `tools/test_windows_native_support` `tools/test_mcp_stability`
       `tools/test_voice_mode`(3) `tools/test_web_providers` `tools/test_web_tools_config`
-- [ ] Triage `tests/test_biglobster_site_checkouts.py` — the only failure in OUR custom code
+- [x] Triage `tests/test_biglobster_site_checkouts.py` — the only failure in OUR custom
+      code. **Stale test, correct code:** `db554111b` (#61) added a THIRD checkout
+      (`biglobster-infographic`) to the section-6b loop but never updated the test,
+      which pinned the entire `for ckdir in ...; do` line as an exact string. Red ever
+      since. Fixed by asserting per-checkout-name against the loop line, so a fourth
+      cron fails on the real invariant instead of silently rotting the test.
+      **Gate is therefore 28,720 ✓ / 55 ✗ across 18 files.**
 
 > NEVER boot the image with its real entrypoint (`/init`) + prod env — it starts a
 > SECOND Telegram poller and steals updates from prod. Always `--entrypoint` override.
