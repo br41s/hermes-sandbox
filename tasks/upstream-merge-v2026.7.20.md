@@ -1,8 +1,9 @@
 # Upstream merge → NousResearch/hermes-agent `v2026.7.20`
 
 **Status:** merge done on `chore/upstream-merge-v2026.7.20` (PR #144, DRAFT). All 44
-conflicts resolved, image builds, CLI works, gate at 31 failing files / 122 tests.
-**15 failing files still unclassified — not mergeable yet.** See RESUME HERE below.
+conflicts resolved, image builds, CLI works. Gate: **44,028 passed / 121 failed across 31
+files — every one classified, none a live regression.** 9 real regressions were found and
+fixed. Remaining work is Phase 1 (Cloud Build proof) + Phase 5 (CEO review & deploy).
 **Target:** tag `v2026.7.20` (2026-07-20), NOT `upstream/main`.
 **Base:** `origin/main` = `a986f905f` — verified identical to what prod runs.
 
@@ -111,12 +112,14 @@ Characterization tests for Tier C/D so a silent regression fails loudly:
       `/api/cron/fire` trips no `SENSITIVE_MARKERS` entry, so only the "unexpected" rule
       applies. This red test is the DESIGNED behaviour: "any drift must be a conscious
       change here." Do not silence it — update it deliberately.
-- [ ] cron profile-scoped delivery routing + fail-closed profile resolution — existing
-      coverage in `tests/cron/test_scheduler.py` + `tests/tools/test_cronjob_tools.py`;
-      BOTH are in the 44-conflict set, so verify our assertions survive the merge
-- [ ] `container_boot` GITHUB_TOKEN / git-cred reconciliation + auditor identity tripwires —
-      existing `tests/hermes_cli/test_container_boot.py` (also a conflict file) +
-      `tests/cron/test_cron_profile.py` (**deleted upstream** — decide before resolving)
+- [x] cron profile-scoped delivery routing + fail-closed profile resolution — VERIFIED:
+      `tests/cron/` is 789 passed and `tests/tools/test_cronjob_tools.py` 88 passed. Both
+      needed repair first (the `profile` plumbing was dropped wholesale; test_cronjob_tools
+      had a merge-splice fusing two classes) — see the fix list below.
+- [x] `container_boot` GITHUB_TOKEN / git-cred reconciliation + auditor identity tripwires —
+      VERIFIED: `tests/hermes_cli/test_container_boot.py` 58 passed (one helper needed
+      un-splicing first). `tests/cron/test_cron_profile.py` KEPT (upstream deleted it) and
+      is green.
 
 ## Phase 4 — The merge
 
@@ -151,14 +154,18 @@ Branch: `chore/upstream-merge-v2026.7.20`
       unauthenticated surface is exactly what was designed, not widened.
 - [ ] **CEO:** review Tier D diffs, dashboard auth especially
 
-## ⛔ RESUME HERE — gate at 31 files / 122 tests failed; 15 still unclassified (2026-07-30)
+## ⛔ RESUME HERE — triage COMPLETE; ready for CEO review + deploy (2026-07-30)
 
-Branch `chore/upstream-merge-v2026.7.20`, **[PR #144](https://github.com/br41s/hermes-sandbox/pull/144) (DRAFT)**.
-All 44 conflicts resolved; image builds; CLI works. **Do not merge or deploy yet** —
-15 failing files have not been individually classified.
+Branch `chore/upstream-merge-v2026.7.20`, **[PR #144](https://github.com/br41s/hermes-sandbox/pull/144) (DRAFT)**, pushed.
+All 44 conflicts resolved; image builds; CLI works; **all 31 remaining failing files are
+classified and none is a live regression** (14 pre-merge baseline, 15 container/root/network
+artifacts of running the suite inside the prod image, 1 upstream's own bug, 1 flaky).
 
-**Gate progression this session:** 83 failing files → 47 → 35 → **31**, with
-**zero newly-broken files at any step**. Final: **2,151 files, 44,027 passed, 122 failed.**
+**Gate progression:** 83 failing files → 47 → 35 → 31, **zero newly-broken files at any
+step**. Final: **2,151 files, 44,028 passed, 121 failed.**
+
+Next: Phase 1 (commit `cloudbuild.yaml`, prove the `:sha-` tag) → Phase 5 (CEO reviews the
+Tier D diffs, then Cloud Build + Zeabur redeploy with the rollback anchor to hand).
 
 ### THE GATE COMMAND (changed twice — use exactly this)
 
@@ -196,7 +203,7 @@ invents ~16 files of failures that are not bugs**:
 ALWAYS compare **filenames**, never raw counts: the corpus grew ~50% (28,917 →
 44,149 tests) vs the pre-merge baseline, so totals are not comparable.
 
-### Real regressions found and fixed this session (8 commits)
+### Real regressions found and fixed this session (9)
 
 Every one was invisible to ruff/`py_compile` — all are semantically-fused or
 half-dropped merge output that parses fine.
@@ -278,44 +285,84 @@ half-dropped merge output that parses fine.
   but that env var MUST be set on Zeabur first or BigLobster images silently switch
   to `openai/gpt-5.4-image-2`.
 
-### Remaining 31 failing files
+### Remaining failures — ALL 31 CLASSIFIED (2026-07-30)
 
-**14 are pre-merge baseline** (were already red before the merge — not regressions):
-`gateway/test_restart_drain` `gateway/test_restart_notification`
-`hermes_cli/test_cmd_update` `hermes_cli/test_gateway` `hermes_cli/test_gateway_service`
-`hermes_cli/test_gateway_wsl` `hermes_cli/test_startup_plugin_gating`
-`hermes_cli/test_update_yes_flag` `plugins/image_gen/test_huggingface_provider`
-`test_live_system_guard_self_test` `test_run_tests_parallel` `tools/test_mcp_stability`
-`tools/test_voice_mode` `tools/test_windows_native_support`
+Nothing is unexplained. One was a real regression (fixed, last entry below); everything else
+is pre-merge baseline, a container/root artifact of running the suite inside the prod image,
+upstream's own breakage, or flake. **14 + 6 + 3 + 3 + 1 + 1 + 1 + 1 + 1 = 31.**
 
-**5 baseline files are now GREEN** (better than pre-merge): `test_biglobster_site_checkouts`,
-`test_lint_config`, `tools/test_local_background_child_hang`, `tools/test_web_providers`,
-`tools/test_web_tools_config`.
+**1 — FLAKY, not a regression.** `tools/test_local_interrupt_cleanup` appears and disappears
+between otherwise-identical gate runs (present in run 5, absent in run 6, present in run 7).
+Passes 3/3 in isolation; it is timing-sensitive under the 20-worker parallel load. Ignore a
+single occurrence; only investigate if it becomes consistent.
 
-**2 explained:** `test_openrouter_compat_provider` (CEO-deferred, above);
-`test_setup_temporary_outputs` (imports `setuptools`, which the lean prod image does
-not ship — environmental, unfixable in-container).
+**1 — CEO-deferred:** `plugins/image_gen/test_openrouter_compat_provider` (see above).
 
-**15 NOT YET CLASSIFIED — this is the remaining work.** None has been confirmed as
-either a regression or pre-existing noise:
-`agent/test_copilot_acp_client` `gateway/test_restart_service_detection`
-`gateway/test_update_command` `gateway/test_update_streaming`
-`gateway/test_whatsapp_bridge_pidfile` `hermes_cli/test_auth_provider_gate`
-`hermes_cli/test_migrate_xai` `hermes_cli/test_opencode_go_validation_fallback`
-`hermes_cli/test_pip_install_detection` `hermes_cli/test_update_check`
-`hermes_cli/test_update_concurrent_quarantine` `hermes_cli/test_web_server`
-`tools/test_cron_approval_mode` `tools/test_lazy_deps_durable_target`
-`tools/test_search_error_guard`
+**1 — environmental, unfixable in-container:** `test_setup_temporary_outputs` imports
+`setuptools`, which the lean prod image does not ship.
 
-Triage method that worked (keep using it):
-1. Run the file alone. Passing alone but failing in a set = **test-order pollution**
-   (module-level caches, identical fixtures), not a merge bug.
-2. `git show origin/main:<file>` vs `git show v2026.7.20:<file>` to establish
-   **provenance** — whose code and whose test. A test from one side paired with the
-   other side's implementation is the single most common failure here.
-3. Grep the merged file for **duplicated definitions**. Five of the eight fixes above
-   were "both sides' blocks kept", and the second one silently wins.
-4. Only then read the diff.
+**14 pre-merge baseline** — already red before the merge, not regressions:
+`gateway/test_restart_drain` `gateway/test_restart_notification` `hermes_cli/test_cmd_update`
+`hermes_cli/test_gateway` `hermes_cli/test_gateway_service` `hermes_cli/test_gateway_wsl`
+`hermes_cli/test_startup_plugin_gating` `hermes_cli/test_update_yes_flag`
+`plugins/image_gen/test_huggingface_provider` `test_live_system_guard_self_test`
+`test_run_tests_parallel` `tools/test_mcp_stability` `tools/test_voice_mode`
+`tools/test_windows_native_support`
+
+**5 baseline files are now GREEN** — the merge is a net improvement on the suite:
+`test_biglobster_site_checkouts` `test_lint_config` `tools/test_local_background_child_hang`
+`tools/test_web_providers` `tools/test_web_tools_config`
+
+**6 — "this is a docker install, so `hermes update` is inert" (BY DESIGN).**
+`banner.py:325` returns `None` when `detect_install_method() == "docker"`, and
+`web_server.py` short-circuits `/api/status`'s `can_update_hermes` the same way. The image
+bakes a `docker` stamp into `/opt/hermes/.install_method`, so every update test no-ops.
+`gateway/test_update_command` `gateway/test_update_streaming` `hermes_cli/test_update_check`
+`hermes_cli/test_update_concurrent_quarantine` `hermes_cli/test_pip_install_detection`
+`hermes_cli/test_web_server`
+PROVEN: mount a file containing `git` over `/opt/hermes/.install_method` and all six pass
+(plus the three baseline update files drop from ~48 failures to 29).
+```bash
+printf 'git' > /tmp/install_method_git
+docker run ... -v /tmp/install_method_git:/opt/hermes/.install_method:ro ...
+```
+
+**3 — root-user artifacts.** The suite runs as root, which ignores the permissions these
+tests rely on: `hermes_cli/test_migrate_xai` (reads an "unreadable" config),
+`tools/test_search_error_guard` (`chmod 000` still readable, so the "Permission denied"
+diagnostic never appears), `tools/test_lazy_deps_durable_target` (writes a read-only dir).
+PROVEN: all pass under `--user 10000:10000` (the image's `hermes` user) with
+`--tmpfs /opt/hermes/.pytest-cache --tmpfs /opt/hermes/.pytest_cache`.
+
+**3 — container-shape artifacts** (the test's premise is a host install):
+- `agent/test_copilot_acp_client` — `hermes_constants.get_subprocess_home()` line 818:
+  `if profile_home and is_container(): return profile_home`. In a container HOME is
+  deliberately the profile home, so "preserves real HOME" cannot hold. Documented behaviour
+  of `terminal.home_mode: auto`.
+- `gateway/test_restart_service_detection` — expects the detached path when no external
+  supervisor marker is set, but the image genuinely ships s6 (`/etc/s6-overlay`), so
+  `via_service=True` is CORRECT here. Related to [[hermes-orphan-gateway-rootfix]].
+- `gateway/test_whatsapp_bridge_pidfile` — needs to kill a real stale listener; the
+  `_live_system_guard` autouse fixture blocks real `os.kill`/subprocess and this upstream
+  test carries no bypass marker. The guard exists on BOTH sides, so not a divergence.
+
+**1 — network guard.** `hermes_cli/test_auth_provider_gate::test_provider_not_in_registry_but_in_models_dev`
+is a NEW upstream test needing the live models.dev catalog. Offline, `get_provider("openrouter")`
+degrades to a stub with EMPTY `api_key_env_vars`, so the env-var check finds nothing.
+Verified: identical call returns True with network, False under `--network none`.
+
+**1 — UPSTREAM'S OWN BUG, red in upstream too, nothing for us to fix.**
+`hermes_cli/test_opencode_go_validation_fallback::test_opencode_zen_known_model_accepted`
+asserts `kimi-k2` is in the opencode-zen catalog. Upstream v2026.7.20 RETIRED that id
+(its catalog now has `kimi-k2.5`, `kimi-k2.6`, `kimi-k2.7-code`) but never updated the
+test. Confirmed directly against the tag: catalog lacks `kimi-k2`, test still asserts it.
+Our `models.py` correctly took upstream's newer catalog.
+
+**1 — REAL REGRESSION, FIXED:** `tools/test_cron_approval_mode` — see commit
+`fix(approval): close cron-deny fail-open on content-level threats` in the list above.
+This is the one that mattered: **every one of our agents runs as a cron**, and
+`check_all_command_guards` was returning `approved=True` for a tirith "block", and
+approving on ImportError even with `security.tirith_fail_open: false`.
 
 ### Lesson (carried forward and confirmed again)
 Ruff F821 catches undefined *names* only. It does NOT catch: a dropped *parameter*
