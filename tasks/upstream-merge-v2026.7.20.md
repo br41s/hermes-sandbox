@@ -1,6 +1,8 @@
 # Upstream merge → NousResearch/hermes-agent `v2026.7.20`
 
-**Status:** planning complete, Phase 0 done, Phase 1 in progress. Nothing committed.
+**Status:** merge done on `chore/upstream-merge-v2026.7.20` (PR #144, DRAFT). All 44
+conflicts resolved, image builds, CLI works, gate at 31 failing files / 122 tests.
+**15 failing files still unclassified — not mergeable yet.** See RESUME HERE below.
 **Target:** tag `v2026.7.20` (2026-07-20), NOT `upstream/main`.
 **Base:** `origin/main` = `a986f905f` — verified identical to what prod runs.
 
@@ -85,10 +87,10 @@ Reproduce the conflict count (writes nothing):
 > never ran — gotcha #1 from [[hermes-test-suite-gotchas]] arriving by a new route.
 > Decision (CEO, 2026-07-30): KEEP upstream's exclusion (lean prod image) and mount the
 > tests for gate runs:
-> ```
-> docker run --rm --entrypoint /bin/bash -v "$PWD/tests:/opt/hermes/tests:ro" \
->   <image> -c 'cd /opt/hermes && scripts/run_tests.sh'
-> ```
+> ⚠️ **SUPERSEDED — the tests-only mount shown here is no longer enough.** `tests/` was
+> just the first of several excluded dirs the suite reads, and the root `HOME` matters
+> too. Use the full command in **RESUME HERE** below; it clears ~16 files of phantom
+> failures this one leaves in.
 > ALWAYS check the pass COUNT, never just the exit code or the failure count: 18 failing
 > files dropping to 0 is an absence, not an improvement.
 
@@ -120,14 +122,14 @@ Characterization tests for Tier C/D so a silent regression fails loudly:
 
 Branch: `chore/upstream-merge-v2026.7.20`
 
-- [ ] **Tier A** take upstream blind — 13× `web/src/i18n/*`, `website/docs/…/cron.md`, `model-catalog.json`
-- [ ] **Tier B** mechanical — `.env.example .gitignore Dockerfile pyproject.toml hermes_constants.py models.py service_manager.py`; **regenerate** `uv.lock`, don't merge it
-- [ ] **Tier C** careful, our logic — `cron/scheduler.py` `cron/jobs.py` `tools/cronjob_tools.py` `hermes_cli/cron.py` `container_boot.py` `skills_hub.py` `skills_tool.py` `skill_manager_tool.py` `approval.py` `auxiliary_client.py` telegram adapter, `image_gen/openrouter` (add/add)
-- [ ] **Tier D** re-apply intent onto upstream's rewritten code (CEO decision — do NOT hunk-resolve):
-  - [ ] `hermes_cli/web_server.py` (upstream +16,446/−4,756 over 312 commits)
-  - [ ] `hermes_cli/main.py` (+5,872/−5,540)
-  - [ ] `hermes_cli/dashboard_auth/middleware.py` — **security-critical**
-  - [ ] `hermes_cli/dashboard_auth/public_paths.py` — **RESOLUTION ALREADY DETERMINED (verified
+- [x] **Tier A** take upstream blind — 13× `web/src/i18n/*`, `website/docs/…/cron.md`, `model-catalog.json`
+- [x] **Tier B** mechanical — `.env.example .gitignore Dockerfile pyproject.toml hermes_constants.py models.py service_manager.py`; **regenerate** `uv.lock`, don't merge it
+- [x] **Tier C** careful, our logic — `cron/scheduler.py` `cron/jobs.py` `tools/cronjob_tools.py` `hermes_cli/cron.py` `container_boot.py` `skills_hub.py` `skills_tool.py` `skill_manager_tool.py` `approval.py` `auxiliary_client.py` telegram adapter, `image_gen/openrouter` (add/add)
+- [x] **Tier D** re-apply intent onto upstream's rewritten code (CEO decision — do NOT hunk-resolve):
+  - [x] `hermes_cli/web_server.py` (upstream +16,446/−4,756 over 312 commits)
+  - [x] `hermes_cli/main.py` (+5,872/−5,540)
+  - [x] `hermes_cli/dashboard_auth/middleware.py` — **security-critical**
+  - [x] `hermes_cli/dashboard_auth/public_paths.py` — **RESOLUTION ALREADY DETERMINED (verified
         2026-07-30): UNION both 7th entries, do NOT take upstream wholesale.**
         Both sides share 6 read-only paths, then diverge:
         - upstream adds `"/api/cron/fire"` (Chronos managed-cron webhook)
@@ -141,92 +143,187 @@ Branch: `chore/upstream-merge-v2026.7.20`
         public cron trigger.
         **Add a characterization test asserting the exact allowlist** — this file is the one
         place where a careless merge silently widens the unauthenticated attack surface.
-- [ ] Decide `tests/cron/test_cron_profile.py` (deleted upstream, modified by us)
+- [x] Decide `tests/cron/test_cron_profile.py` (deleted upstream, modified by us) — KEPT
+      ours; it still guards per-job profile routing and is green.
+- [x] `public_paths.py` union VERIFIED in the built image: exactly 8 entries, both
+      `/api/delegate` (ours) and `/api/cron/fire` (upstream) present, and
+      `tests/test_dashboard_lockdown_regression.py` passes 9/9 — so the
+      unauthenticated surface is exactly what was designed, not widened.
 - [ ] **CEO:** review Tier D diffs, dashboard auth especially
 
-## ⛔ RESUME HERE — gate down to 63 files / 216 tests failed, NOT fully triaged (2026-07-30)
+## ⛔ RESUME HERE — gate at 31 files / 122 tests failed; 15 still unclassified (2026-07-30)
 
 Branch `chore/upstream-merge-v2026.7.20`, **[PR #144](https://github.com/br41s/hermes-sandbox/pull/144) (DRAFT)**.
-All 44 conflicts resolved; image BUILDS. The three RESUME-HERE punch-list items below are
-DONE, plus several additional real regressions found and fixed via the same process. Gate
-went from an invalid 419-failing-files run down to **63 files / 216 tests failed** (of
-2,151 files / ~44,039 tests — the corpus itself grew ~50% vs the 28,917 pre-merge baseline,
-so raw totals aren't directly comparable; compare **filenames**, not counts). **Still not
-fully triaged against the baseline-18 list — do not merge or deploy.**
+All 44 conflicts resolved; image builds; CLI works. **Do not merge or deploy yet** —
+15 failing files have not been individually classified.
 
-### Punch-list items — ALL DONE
-1. ✅ **F821 undefined names fixed.** `mirror_enabled`/`mirror_text` (cron/scheduler.py —
-   threaded through `_send_to_targets` as new params, computed in `_deliver_result`),
-   `normalized_profile`/`_normalize_profile` (cron/jobs.py — the whole function had been
-   dropped, not just the call), `SKILLS_DIR` (tools/skills_sync.py → `_skills_dir()`, a
-   security-critical rmtree scope guard that was raising NameError on every call). The
-   remaining 5 ruff F821 hits (`RateLimitState`, `Path` in whatsapp_common.py,
-   `DashboardOAuthFlow`, `uvicorn`, `PatchResult`) are all pre-existing quoted-string forward
-   references never evaluated at runtime (confirmed no `TYPE_CHECKING` needed) — harmless,
-   left alone.
-2. ✅ **pytest-asyncio restored** — added to `[dependency-groups] dev` in pyproject.toml +
-   `uv lock`. This alone fixed 321 of the original 419 failing files.
-3. ✅ **Rebuilt + re-gated repeatedly** with the tests/ mount, comparing failing filenames
-   each round.
+**Gate progression this session:** 83 failing files → 47 → 35 → **31**, with
+**zero newly-broken files at any step**. Final: **2,151 files, 44,027 passed, 122 failed.**
 
-### Additional regressions found and fixed along the way (same "kept a use, dropped a
-producer" failure mode, surfaced by running the actual test suite rather than just ruff)
-- **`profile` cron parameter dropped wholesale** — not just `_normalize_profile`, but the
-  entire per-job profile plumbing: `create_job`'s parameter, `update_job`'s validation block,
-  and in `tools/cronjob_tools.py` the `cronjob()` param + create/update call sites + JSON
-  schema entry + registry lambda passthrough, and in `hermes_cli/cron.py` the CLI
-  create/edit/list plumbing. Restored all of it from pre-merge; verified against
-  `tests/cron/test_cron_profile.py`.
-- **`tests/tools/test_cronjob_tools.py` had a genuine merge-splice corruption** — two
-  unrelated test classes' bodies got fused: `TestProfileRoutingGapWarning`'s 5 tests + fixture
-  were misplaced into `TestLocalDeliveryNotice`, and the tail of one test got concatenated
-  with the *body* of upstream's separate session-reset fixture (a stray top-level `yield` that
-  made the whole file fail to collect — pytest doesn't allow `yield` in a plain test). Rebuilt
-  both classes to their correct, complete forms.
-- **`cron/scheduler.py` `_deliver_result` was missing upstream's #43014 fix** — `deliver=origin`
-  (or auto-detect) with no resolvable origin/home-channel used to hard-error on every run for
-  CLI-created jobs; upstream fixed this to treat it as local (no error). The merge resolution
-  kept our old unconditional-error version. Restored upstream's version verbatim.
-  (`tests/cron/test_scheduler.py::TestDeliverOriginUnresolvableIsLocal`, now fully green.)
-- **`tick()`'s sequential-vs-parallel job partition only checked `workdir`, not `profile`** —
-  profile jobs were running on the parallel pool again, exactly the race the sequential pool
-  exists to prevent. Restored the `workdir OR profile` partition from pre-merge.
-- **`tests/hermes_cli/test_dashboard_auth_session_cache.py`** — stale test predates a new
-  upstream feature (provider-hint cookie tagged onto `call_next`'s response); the test's
-  `_call_next` stub returned a bare string, which doesn't have `.set_cookie`. Fixed by making
-  the sentinel a `str` subclass with a no-op `set_cookie` (preserves every existing
-  `out == "PASS:..."` assertion unchanged).
-- **`tests/cron/test_cron_profile.py`** — two more stale-test issues unrelated to the profile
-  regression above: (a) `dotenv.load_dotenv` patch target was wrong (`env_loader.py` does
-  `from dotenv import load_dotenv` at module-import time, so patching the `dotenv` package
-  attribute never touches it — classic "patch where it's used" trap; repointed both tests at
-  `env_loader._load_dotenv_with_fallback` and made sure the profile's `.env` file actually
-  exists so the loader's `.exists()` guard fires); (b) `fake_run_job` stub didn't accept the
-  new `defer_agent_teardown` kwarg `tick()` now always passes; (c) the "sequential" assertion
-  hard-coded `== MainThread`, which broke when upstream's dispatch rewrite moved sequential
-  jobs off the calling thread onto a persistent single-worker `cron-seq` pool (still strictly
-  serialized — just not inline). Rewrote to assert on pool identity (`cron-seq` vs
-  `cron-parallel` thread-name prefixes), which is the actual invariant.
+### THE GATE COMMAND (changed twice — use exactly this)
 
-### NOT yet triaged — 63 failing files, ~35–40 of which are NOT on the pre-merge baseline-18
-list and haven't been individually checked. Sampled a few (`test_container_boot.py`,
-`test_dashboard_auth_401_reauth.py::test_valid_legacy_session_is_migrated_with_provider_hint`)
-and found at least one more real, unresolved issue: a legacy session (valid AT cookie, no
-provider-hint cookie yet) should get the provider-hint cookie set on response but doesn't —
-not yet root-caused. The rest of the 63 have not been individually classified as
-"pre-existing/environmental" vs "new regression." `docs/relay-connector-contract.md` also
-appears to be missing from the built image (`test_contract_doc_conformance.py`) — separate
-from conflict-resolution quality, likely a `.dockerignore`/COPY scoping issue, not investigated.
+```bash
+docker build -t hermes-merged:v2026.7.20-final -f Dockerfile .
+docker run --rm --entrypoint /bin/bash \
+  -v "$PWD/tests:/opt/hermes/tests:ro"   -v "$PWD/docs:/opt/hermes/docs:ro" \
+  -v "$PWD/website:/opt/hermes/website:ro" -v "$PWD/acp_registry:/opt/hermes/acp_registry:ro" \
+  -v "$PWD/assets:/opt/hermes/assets:ro" -v "$PWD/.github:/opt/hermes/.github:ro" \
+  -v "$PWD/.gitignore:/opt/hermes/.gitignore:ro" \
+  hermes-merged:v2026.7.20-final \
+  -c 'mkdir -p /home/tester && export HOME=/home/tester && cd /opt/hermes && scripts/run_tests.sh'
+```
 
-### Lesson for the rest of this merge
-Ruff F821 only catches undefined *names* — it does NOT catch a dropped *parameter* whose
-call sites still pass it by keyword into `**kwargs`-free functions (the `profile` regression),
-nor a stale test whose assumptions no longer match legitimate upstream behavior changes, nor
-a line-level merge splice that produces syntactically valid but semantically fused code (the
-`test_cronjob_tools.py` corruption — `ast.parse`/`py_compile` both passed on it, and it wasn't
-even F821-flagged; only "does the file collect" caught it). Running the real test suite after
-every batch of resolutions in a Tier C/D file remains the only reliable check — plan time for
-it, don't rely on static analysis alone.
+Two harness requirements, both discovered the hard way — **without them the gate
+invents ~16 files of failures that are not bugs**:
+
+1. **Mount every dir upstream's `.dockerignore` excludes** but tests read:
+   `tests/ docs/ website/ acp_registry/ assets/ .github .gitignore`. Cleared 7 files
+   (`test_extract_skills`, `test_generate_skill_docs`, `test_blueprint_catalog`,
+   `test_xurl_article_ingestion_docs`, `test_contract_doc_conformance`,
+   `test_registry_manifest`, `test_lint_config` — the last was even on the pre-merge
+   baseline-18, so the mounted gate is **stricter** than the old one).
+2. **`HOME` must have ≥2 path components.** The image runs as root (`HOME=/root`), and
+   `approval.py`'s `_home_prefix_fold_regex` deliberately refuses to fold a
+   single-component home (anti-clobber guard: `/home/alice` folds, `/home` does not).
+   As root, absolute-path writes to `/root/.bashrc` and `/root/.ssh/authorized_keys`
+   are NOT flagged dangerous. Setting `HOME=/home/tester` took `test_approval.py`
+   from 3 failed to **312 passed**, and also cleared `test_lazy_deps_durable_target`
+   (root can write "read-only" dirs).
+   > **Follow-up, not a merge regression (upstream design):** if any agent actually
+   > runs as root in prod, that guard has a hole — `~/…` and `$HOME/…` forms are still
+   > caught, only the literal `/root/…` form slips. Worth a separate look.
+
+ALWAYS compare **filenames**, never raw counts: the corpus grew ~50% (28,917 →
+44,149 tests) vs the pre-merge baseline, so totals are not comparable.
+
+### Real regressions found and fixed this session (8 commits)
+
+Every one was invisible to ruff/`py_compile` — all are semantically-fused or
+half-dropped merge output that parses fine.
+
+1. **`hermes` CLI was completely broken** (`fix(cli): drop duplicate cron parser`) —
+   the merge kept BOTH our inline `cron` parser block in `main.py` and upstream's
+   extracted `build_cron_parser()` call, so argparse raised
+   `conflicting subparser: cron` on import; even `hermes --help` exited non-zero.
+   173 mentions in the gate log; `argparse.ArgumentError` was the #1 signature.
+   Our block had also been spliced into the middle of upstream's *status* section.
+   Fixed by making upstream's module the single source and porting the five things
+   it lacked: `create --profile`, `edit --profile`, `edit --prompt-source`, the
+   `edit --progress-ping/--no-progress-ping` group, and `sync-prompt` (#113).
+   Kept upstream's new `runs`/`history`. `hermes_cli/cron.py` already dispatched
+   all of them — only the parser layer was duplicated.
+2. **`tests/conftest.py` splice** (`test(conftest): un-splice pytest_configure`) —
+   upstream's Windows `--timeout-method` fallback was fused onto the tail of our
+   `_lazy_install_guard` fixture, where `config` is out of scope. The autouse
+   fixture raised `NameError: name 'config' is not defined` on teardown: **70
+   occurrences across many otherwise-healthy files.**
+3. **`.dockerignore` dropped a live cron prompt** (`fix(docker): keep the infographic
+   cron prompt`) — upstream excludes `infographic/` as README assets; **we have a
+   directory of the same name** holding `infographic-engineer.prompt`. The file
+   auto-merged (never conflicted), so it silently vanished from the image.
+   `incidents.sweep` resolves `prompt_source` against `/opt/hermes`, so the
+   prompt-drift watcher would post a false "prompt source missing" incident to the
+   alert thread **every sweep**, and `hermes cron sync-prompt` would fail for that job.
+   No test could catch it — `tests/` is excluded from the image too. Re-included via
+   `!infographic/*.prompt`; verified the dir ships exactly one file. The other six
+   `.prompt` dirs (gap-hunter, onsite-seo, offsite-geo, product-articles,
+   onboarding-content, auditor) hit no upstream exclusion.
+4. **Skill tools lost dynamic profile resolution** (`fix(skills): restore dynamic
+   profile resolution`) — **the regression that once looped the biglobster SEO cron
+   on "skill not found in active profile 'default'"** ([[hermes-profile-cron-skill-resolution]]).
+   The merge took upstream's `_skills_dir()` (module-level `SKILLS_DIR` frozen at
+   import) but dropped our PEP 562 `__getattr__` in `skills_tool.py` and
+   `skill_manager_tool.py`; `skills_hub.py`/`skills_sync.py` kept theirs, so only
+   two of four regressed. Worse, upstream's `Path(SKILLS_DIR)` body survived while
+   our design never assigns that name, so **every** `_skills_dir()` call raised
+   `NameError` — `skill_view` and `skill_manage(action="edit")` returned
+   `success=False` for every profile. Restored our trio in both.
+   Gotcha now documented in the hook: **PEP 562 `__getattr__` fires only for
+   attribute access on the module object, never for a global lookup inside the
+   module's own functions.**
+5. **Cron cwd writer-lock leak** (`fix(cron): drop pre-lock TERMINAL_CWD block`) —
+   the merge kept both placements of the workdir env override. The stale copy runs
+   *before* `_terminal_cwd_lock.acquire_write()` and outside the protective `try`,
+   re-introducing the exact deadlock the regression test guards: an exception in
+   that window leaks the writer and **every later cron job blocks forever**. It also
+   ran before the `_prior_terminal_cwd` snapshot, so the `finally` restored
+   `TERMINAL_CWD` to the job's own workdir — a cross-job cwd leak of the same class
+   the isolated-checkout work closed. `tests/cron/` 786→**789 passed**.
+6. **Dashboard auth: provider cookie skipped on the cache path**
+   (`fix(dashboard-auth): migrate provider cookie on the verified-cache path`) —
+   our `_VERIFIED_CACHE` fast path returns before upstream's new legacy-session
+   migration, so a cached token never got the provider-hint cookie. The cache must
+   skip the JWKS fetch, not change the response. Extracted `_migrate_provider_cookie()`
+   and called it from both paths.
+7. **`container_boot` test helper clobbered its own fixture**
+   (`fix(container-boot): stop the test helper clobbering involuntary_exit`) —
+   `_make_profile` kept both sides' `gateway_state.json` writes; upstream's second
+   write dropped `involuntary_exit`, so the involuntary-SIGTERM autostart test saw a
+   deliberate stop. **Production code was never wrong.** Also removed a duplicate
+   `_AUTOSTART_STATES` (identical value, both comment blocks fused).
+8. **`model-catalog.json` was stale** (`chore(models): regenerate model-catalog.json`) —
+   it is **generated** from `_PROVIDER_MODELS`/`OPENROUTER_MODELS`, the same class as
+   `uv.lock` which the plan already said to regenerate. Tier A took upstream's copy
+   blind, so it described upstream's lists (`tencent/hy3` lost its `recommended` mark).
+   Regenerate with `python scripts/build_model_catalog.py`.
+
+### CEO decision taken (2026-07-30)
+- **`plugins/image_gen/openrouter` add/add → KEEP OURS, DEFER.** We wrote that provider
+  ourselves (7 commits, added for the Zeabur HF-egress block); upstream independently
+  wrote `OpenRouterCompatImageProvider` (526 lines, model chains, aspect ratios,
+  reference images, plus a second `nous` provider). Upstream's 37-test file rode in
+  with the merge and fails wholesale on imports. **Left as a documented known-red
+  bucket; revisit after the merge is deployed and stable.** If it is ever taken,
+  upstream honours `OPENROUTER_IMAGE_MODEL`, so our grok pin becomes config not code —
+  but that env var MUST be set on Zeabur first or BigLobster images silently switch
+  to `openai/gpt-5.4-image-2`.
+
+### Remaining 31 failing files
+
+**14 are pre-merge baseline** (were already red before the merge — not regressions):
+`gateway/test_restart_drain` `gateway/test_restart_notification`
+`hermes_cli/test_cmd_update` `hermes_cli/test_gateway` `hermes_cli/test_gateway_service`
+`hermes_cli/test_gateway_wsl` `hermes_cli/test_startup_plugin_gating`
+`hermes_cli/test_update_yes_flag` `plugins/image_gen/test_huggingface_provider`
+`test_live_system_guard_self_test` `test_run_tests_parallel` `tools/test_mcp_stability`
+`tools/test_voice_mode` `tools/test_windows_native_support`
+
+**5 baseline files are now GREEN** (better than pre-merge): `test_biglobster_site_checkouts`,
+`test_lint_config`, `tools/test_local_background_child_hang`, `tools/test_web_providers`,
+`tools/test_web_tools_config`.
+
+**2 explained:** `test_openrouter_compat_provider` (CEO-deferred, above);
+`test_setup_temporary_outputs` (imports `setuptools`, which the lean prod image does
+not ship — environmental, unfixable in-container).
+
+**15 NOT YET CLASSIFIED — this is the remaining work.** None has been confirmed as
+either a regression or pre-existing noise:
+`agent/test_copilot_acp_client` `gateway/test_restart_service_detection`
+`gateway/test_update_command` `gateway/test_update_streaming`
+`gateway/test_whatsapp_bridge_pidfile` `hermes_cli/test_auth_provider_gate`
+`hermes_cli/test_migrate_xai` `hermes_cli/test_opencode_go_validation_fallback`
+`hermes_cli/test_pip_install_detection` `hermes_cli/test_update_check`
+`hermes_cli/test_update_concurrent_quarantine` `hermes_cli/test_web_server`
+`tools/test_cron_approval_mode` `tools/test_lazy_deps_durable_target`
+`tools/test_search_error_guard`
+
+Triage method that worked (keep using it):
+1. Run the file alone. Passing alone but failing in a set = **test-order pollution**
+   (module-level caches, identical fixtures), not a merge bug.
+2. `git show origin/main:<file>` vs `git show v2026.7.20:<file>` to establish
+   **provenance** — whose code and whose test. A test from one side paired with the
+   other side's implementation is the single most common failure here.
+3. Grep the merged file for **duplicated definitions**. Five of the eight fixes above
+   were "both sides' blocks kept", and the second one silently wins.
+4. Only then read the diff.
+
+### Lesson (carried forward and confirmed again)
+Ruff F821 catches undefined *names* only. It does NOT catch: a dropped *parameter*
+still passed by keyword; a stale test whose assumptions no longer match legitimate
+upstream behaviour; a line-level splice producing valid-but-fused code; a *duplicated*
+definition where the later one wins; or a file silently dropped from the image by an
+auto-merged `.dockerignore`. **Only running the real suite finds these — budget time
+for a full gate after every batch of Tier C/D resolutions.**
 
 ## Phase 5 — Verify + deploy
 
