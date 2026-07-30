@@ -559,6 +559,14 @@ def pytest_configure(config):  # noqa: D401 — pytest hook
         "(only for tests of dep_ensure's install-script resolution itself).",
     )
 
+    # The pyproject addopts pin ``--timeout-method=signal`` relies on
+    # ``signal.SIGALRM``, which does not exist on Windows — pytest-timeout
+    # raises AttributeError at timer setup and the whole run aborts before any
+    # test executes. Fall back to the thread-based timer on Windows so the
+    # suite runs natively there (POSIX keeps the more reliable signal method).
+    if sys.platform == "win32" and getattr(config.option, "timeout_method", None) == "signal":
+        config.option.timeout_method = "thread"
+
 
 # ── Outbound-network guard ─────────────────────────────────────────────────
 #
@@ -666,14 +674,6 @@ def _lazy_install_guard(request, monkeypatch):
         _dep_ensure, "_find_install_script", lambda *a, **k: (None, None)
     )
     yield
-
-    # The pyproject addopts pin ``--timeout-method=signal`` relies on
-    # ``signal.SIGALRM``, which does not exist on Windows — pytest-timeout
-    # raises AttributeError at timer setup and the whole run aborts before any
-    # test executes. Fall back to the thread-based timer on Windows so the
-    # suite runs natively there (POSIX keeps the more reliable signal method).
-    if sys.platform == "win32" and getattr(config.option, "timeout_method", None) == "signal":
-        config.option.timeout_method = "thread"
 
 
 @pytest.fixture(autouse=True)
