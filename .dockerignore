@@ -83,6 +83,12 @@ docs/
 # Assets only used by the GitHub README
 assets/
 infographic/
+# ...except our Infographic Engineer cron's canonical prompt, which lives in
+# this directory purely by name collision with upstream's README assets. It IS
+# read at runtime: incidents.sweep's prompt-drift watcher and
+# `hermes cron sync-prompt` both resolve prompt_source against /opt/hermes, so
+# dropping it makes the watcher alert "prompt source missing" on every sweep.
+!infographic/*.prompt
 
 # Plugin-level docs (hermes-achievements ships docs/ but the runtime doesn't read them)
 plugins/hermes-achievements/docs/
