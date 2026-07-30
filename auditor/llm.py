@@ -83,7 +83,7 @@ def _build_request(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             # OpenRouter attribution headers (optional but polite / recommended).
-            "HTTP-Referer": "https://github.com/braisntext/hermes-sandbox",
+            "HTTP-Referer": "https://github.com/br41s/hermes-sandbox",
             "X-Title": "hermes-auditor",
         },
         method="POST",

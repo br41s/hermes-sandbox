@@ -45,7 +45,7 @@ def test_section_6b_present(boot_text: str) -> None:
 
 def test_clones_the_biglobster_site_repo(boot_text: str) -> None:
     s = _section6b(boot_text)
-    assert 'BIGLOBSTER_SITE_REPO="braisntext/biglobster"' in s
+    assert 'BIGLOBSTER_SITE_REPO="br41s/biglobster"' in s
 
 
 def test_two_isolated_checkouts_one_per_job(boot_text: str) -> None:

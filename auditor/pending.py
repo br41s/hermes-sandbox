@@ -45,7 +45,7 @@ _PR_FIELDS = "number,title,headRefName,headRefOid,author,isDraft,files,url"
 HEARTBEAT_HOURS = 24
 
 
-ENGINE_REPO = "braisntext/hermes-sandbox"
+ENGINE_REPO = "br41s/hermes-sandbox"
 
 
 def _state_path() -> Path:

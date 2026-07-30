@@ -137,7 +137,7 @@ def _is_content(path: str) -> bool:
 # intentionally tighter than the hermes ruleset: on a site repo, ``web/`` holds
 # core pages + the build, so only the real publish dirs (not all of ``web/``)
 # count as content.
-_HERMES_REPO = "braisntext/hermes-sandbox"
+_HERMES_REPO = "br41s/hermes-sandbox"
 
 _PROFILE_CONTENT_DIR_PREFIXES = (
     "docs/",
@@ -159,7 +159,7 @@ _PROFILE_CONTENT_SUFFIXES = (
 # pre-migration workflow and must be flagged, not merged) and site/_includes/ /
 # site/_data/ (layouts and brand data are template/build changes).
 _REPO_EXTRA_CONTENT_DIRS = {
-    "braisntext/biglobster": ("site/blog/", "web/blog/images/", "web/assets/"),
+    "br41s/biglobster": ("site/blog/", "web/blog/images/", "web/assets/"),
 }
 # Per-repo exact files that are safe content despite living outside the publish
 # dirs above. biglobster no longer needs any: blog.html, sitemap.xml and
