@@ -842,8 +842,7 @@ export default function CronPage() {
     return () => {
       setEnd(null);
     };
-  }, [setEnd, t.common.create, t.cron.exportBackup, handleExport, loading]);
-  }, [setEnd, t.common.create, loading, selectedProfile]);
+  }, [setEnd, t.common.create, t.cron.exportBackup, handleExport, loading, selectedProfile]);
 
   if (loading) {
     return (
