@@ -31,14 +31,19 @@ Reproduce the conflict count (writes nothing):
 - [x] `cloudbuild.yaml` login + image refs on `br41s`
 - [x] Confirmed old GHCR namespace **denies** — the old config was genuinely broken
 
-## Phase 1 — Rollback insurance (IN PROGRESS)
+## Phase 1 — Rollback insurance ✅ DONE (PR #142, merged `db9493234`)
 
 - [x] Capture current prod digest as rollback anchor
-- [x] `cloudbuild.yaml`: add immutable `:sha-<commit>` tag alongside `:latest` — **uncommitted**
+- [x] `cloudbuild.yaml`: immutable `:sha-<commit>` tag alongside `:latest`, pushed FIRST
 - [x] Fail-loud guard if `_COMMIT_SHA` missing (no `:sha-unknown` placeholder)
-- [ ] **CEO:** review + commit `cloudbuild.yaml`
-- [ ] **CEO:** run one Cloud Build to prove the new substitution works and the `:sha-` tag lands
-- [ ] Verify both tags exist in GHCR
+- [x] Proven live: `:latest` and `:sha-db9493234` both resolve to
+      `sha256:bfc2dffdeecd524f57e1ac3c985646be9d73f56d4e16af38b1ba321e4c3128fa`
+- [x] `cloudbuild.yaml` is byte-identical on this branch — the merge did not touch it
+
+Deploy command (the `_COMMIT_SHA` substitution is REQUIRED — the build aborts without it):
+```bash
+gcloud builds submit --substitutions=_COMMIT_SHA="$(git rev-parse --short HEAD)",_GITHUB_TOKEN=<token>
+```
 
 > **ORDERING TRAP (hit 2026-07-30).** `gcloud builds submit` uploads the CURRENT
 > DIRECTORY, not a git ref. The edit lives in the worktree and is uncommitted, so
