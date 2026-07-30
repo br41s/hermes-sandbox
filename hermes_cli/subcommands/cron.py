@@ -70,6 +70,10 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         "--workdir",
         help="Absolute path for the job to run from. Injects AGENTS.md / CLAUDE.md / .cursorrules from that directory and uses it as the cwd for terminal/file/code_exec tools. Omit to preserve old behaviour (no project context files).",
     )
+    cron_create.add_argument(
+        "--profile",
+        help="Hermes profile name to run the job under. Use 'default' for the root profile. Named profiles must already exist. Omit to preserve the scheduler's existing profile.",
+    )
 
     # cron edit
     cron_edit = cron_subparsers.add_parser(
@@ -134,6 +138,35 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         "--workdir",
         help="Absolute path for the job to run from (injects AGENTS.md etc. and sets terminal cwd). Pass empty string to clear.",
     )
+    cron_edit.add_argument(
+        "--profile",
+        help="Hermes profile name to run the job under. Use 'default' for the root profile. Pass empty string to clear.",
+    )
+    cron_edit.add_argument(
+        "--prompt-source",
+        help=(
+            "Repo-relative path to this job's canonical .prompt file (e.g. "
+            "'gap-hunter/biglobster-gap-hunter.prompt'). Opts the job into "
+            "incidents.sweep's prompt-drift watch, which alerts when the live "
+            "prompt diverges from this file. Pass empty string to clear."
+        ),
+    )
+    cron_edit_ping = cron_edit.add_mutually_exclusive_group()
+    cron_edit_ping.add_argument(
+        "--no-progress-ping",
+        dest="progress_ping",
+        action="store_const",
+        const=False,
+        default=None,
+        help="Silence this job's '🔄 Started' kickoff ping (for monitor crons that must stay quiet on start).",
+    )
+    cron_edit_ping.add_argument(
+        "--progress-ping",
+        dest="progress_ping",
+        action="store_const",
+        const=True,
+        help="Force this job's kickoff ping on, regardless of the global cron.progress_pings default.",
+    )
 
     # lifecycle actions
     cron_pause = cron_subparsers.add_parser("pause", help="Pause a scheduled job")
@@ -152,6 +185,20 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
         "remove", aliases=["rm", "delete"], help="Remove a scheduled job"
     )
     cron_remove.add_argument("job_id", help="Job ID to remove")
+
+    cron_sync_prompt = cron_subparsers.add_parser(
+        "sync-prompt",
+        aliases=["sync_prompt"],
+        help="Push a job's repo .prompt file into its live prompt",
+    )
+    cron_sync_prompt.add_argument("job_id", help="Job ID to sync")
+    cron_sync_prompt.add_argument(
+        "--prompt-source",
+        help=(
+            "Repo-relative path to the .prompt file to sync from. Defaults to "
+            "the job's existing prompt_source field if omitted."
+        ),
+    )
 
     # cron status
     cron_subparsers.add_parser("status", help="Check if cron scheduler is running")
