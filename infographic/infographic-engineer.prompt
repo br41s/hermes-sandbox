@@ -7,7 +7,7 @@ Your tool-iteration budget is finite; do not attempt to sweep the whole repo.
 
 ──────────────────────────────────────────────
 CONFIG  (the only project-specific block — change these to retarget)
-  REPO              : braisntext/biglobster
+  REPO              : br41s/biglobster
   CONTENT_GLOB      : site/blog/*.html — Eleventy source: a `---json … ---`
                       frontmatter block followed by the article body only (NO
                       <html>/<head>/nav/footer — the layout adds those at build

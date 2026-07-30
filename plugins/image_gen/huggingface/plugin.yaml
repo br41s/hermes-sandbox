@@ -1,7 +1,7 @@
 name: huggingface
 version: 1.0.0
 description: "HuggingFace Inference API image generation backend. Uses FLUX.1-schnell by default — free tier, no FAL account needed."
-author: braisntext
+author: br41s
 kind: backend
 requires_env:
   - HUGGINGFACE_API_KEY

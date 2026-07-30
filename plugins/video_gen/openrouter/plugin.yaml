@@ -1,7 +1,7 @@
 name: openrouter
 version: 1.0.0
 description: "OpenRouter video generation backend. Uses alibaba/happyhorse-1.1 via chat completions + modalities:[video]."
-author: braisntext
+author: br41s
 kind: backend
 requires_env:
   - OPENROUTER_API_KEY

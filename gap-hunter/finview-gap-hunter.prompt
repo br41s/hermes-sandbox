@@ -21,7 +21,7 @@ Los artículos se listan en `frontend/src/app/blog/page.tsx` en el array `POSTS`
 ## WORKFLOW
 
 ### 0. Preparar workspace (clon efímero — SIEMPRE lo primero)
-cd /tmp && rm -rf finview-gap-hunter && git clone --depth 1 --single-branch https://github.com/braisntext/FinView.git finview-gap-hunter && cd finview-gap-hunter
+cd /tmp && rm -rf finview-gap-hunter && git clone --depth 1 --single-branch https://github.com/br41s/FinView.git finview-gap-hunter && cd finview-gap-hunter
 # Clon nuevo en cada ejecución: nunca reutilices un workspace persistente ni
 # uses `git reset --hard` / `git clean -fd` — están bloqueados en modo cron
 # (requieren aprobación humana que no existe en un job desatendido).
@@ -136,7 +136,7 @@ git commit -m "blog(articles): nuevo artículo sobre [tema]"
 git push origin blog/SLUG-YYYYMMDD
 La autenticación de git ya está configurada (credential helper con $GITHUB_TOKEN). NO incluyas tokens en comandos ni en archivos.
 Crea el PR con: gh pr create --base main --head blog/SLUG-YYYYMMDD --title "…" --body "…" (gh ya está autenticado). No uses curl ni la API cruda.
-Si gh falla: reporta URL manual https://github.com/braisntext/FinView/pull/new/blog/SLUG-YYYYMMDD
+Si gh falla: reporta URL manual https://github.com/br41s/FinView/pull/new/blog/SLUG-YYYYMMDD
 
 OUTPUT
 Si creaste artículo:

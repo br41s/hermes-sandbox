@@ -1,7 +1,7 @@
 name: openrouter
 version: 1.0.0
 description: "OpenRouter image generation backend. Uses x-ai/grok-imagine-image-quality via chat completions + modalities:[image]."
-author: braisntext
+author: br41s
 kind: backend
 requires_env:
   - OPENROUTER_API_KEY
