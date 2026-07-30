@@ -85,6 +85,34 @@ def _verified_cache_put(access_token: str, session: Session) -> None:
     _VERIFIED_CACHE[access_token] = (session, int(session.expires_at))
 
 
+def _migrate_provider_cookie(request: Request, response, session, provider_hint) -> None:
+    """Tag a legacy session with the provider cookie that identified it.
+
+    Sessions minted before the provider cookie existed carry an access token
+    but no hint, so every request re-scans all providers. Once verification
+    names the owner we write the hint back, and the next request goes straight
+    to it.
+
+    This MUST run on the verified-cache fast path too. The cache exists only to
+    skip the JWKS fetch + RS256 verify; it must not change what the response
+    looks like. Otherwise a legacy session whose token is already cached never
+    gets migrated, and the scan-every-provider cost the hint removes is paid
+    for the life of the token. Imported locally to avoid a cookies → middleware
+    import cycle at module load.
+    """
+    if provider_hint or not session or not getattr(session, "provider", None):
+        return
+    from hermes_cli.dashboard_auth.cookies import detect_https
+    from hermes_cli.dashboard_auth.prefix import prefix_from_request
+
+    set_session_provider_cookie(
+        response,
+        provider=session.provider,
+        use_https=detect_https(request),
+        prefix=prefix_from_request(request),
+    )
+
+
 # Prefixes that bypass the auth gate. Match via ``path == prefix`` or
 # ``path.startswith(prefix)`` — so ``/assets/`` (with trailing slash)
 # matches ``/assets/foo.css`` but not ``/assetsleak``. Auth-bootstrap
@@ -363,7 +391,9 @@ async def gated_auth_middleware(
     cached_session = _verified_cache_get(at, now)
     if cached_session is not None:
         request.state.session = cached_session
-        return await call_next(request)
+        response = await call_next(request)
+        _migrate_provider_cookie(request, response, cached_session, provider_hint)
+        return response
 
     # Try every registered provider's verify_session in turn. Providers
     # MUST return None for tokens they don't recognise (not raise). This
@@ -499,16 +529,7 @@ async def gated_auth_middleware(
     request.state.session = session
     _verified_cache_put(at, session)
     response = await call_next(request)
-    if not provider_hint and session.provider:
-        from hermes_cli.dashboard_auth.cookies import detect_https
-        from hermes_cli.dashboard_auth.prefix import prefix_from_request
-
-        set_session_provider_cookie(
-            response,
-            provider=session.provider,
-            use_https=detect_https(request),
-            prefix=prefix_from_request(request),
-        )
+    _migrate_provider_cookie(request, response, session, provider_hint)
     return response
 
 
