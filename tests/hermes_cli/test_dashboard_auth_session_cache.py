@@ -90,10 +90,24 @@ def _request(token: str | None, path: str = "/api/sessions"):
     return Request(scope)
 
 
+class _SentinelResponse(str):
+    """String sentinel that also tolerates ``response.set_cookie(...)``.
+
+    ``gated_auth_middleware`` tags the ``call_next`` response with a
+    provider-hint cookie when the session came from a fresh verify rather
+    than a request cookie; a bare string return breaks that with
+    ``AttributeError``. Subclassing ``str`` keeps every existing
+    ``out == "PASS:..."`` assertion working unchanged.
+    """
+
+    def set_cookie(self, *_a, **_kw):
+        pass
+
+
 async def _call_next(request):
     # Sentinel that proves the request was let through and which session
     # got attached.
-    return f"PASS:{getattr(request.state, 'session').user_id}"
+    return _SentinelResponse(f"PASS:{getattr(request.state, 'session').user_id}")
 
 
 @pytest.fixture(autouse=True)

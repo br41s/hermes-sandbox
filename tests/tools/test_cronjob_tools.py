@@ -610,60 +610,6 @@ class TestProfileRoutingGapWarning:
     routing override, since that job will silently ride the scheduler's
     global home channel/thread instead of the profile's own (the 2026-07-08
     BigLobster/FinView/Infographic thread-misroute pattern)."""
-# =========================================================================
-# Per-job model/provider override resolution
-# =========================================================================
-
-from tools.cronjob_tools import _resolve_model_override  # noqa: E402
-
-
-class TestResolveModelOverride:
-    """`_resolve_model_override` must not silently hijack a job that meant to
-    use a configured custom endpoint (e.g. ``providers.custom`` → cliproxy).
-    Regression for cron jobs with ``provider: "custom"`` falling back to codex.
-    """
-
-    def test_keeps_bare_custom_when_a_named_entry_exists(self, monkeypatch):
-        import hermes_cli.runtime_provider as rp_mod
-
-        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: True)
-        provider, model = _resolve_model_override(
-            {"provider": "custom", "model": "gpt-5.4"}
-        )
-        assert provider == "custom"
-        assert model == "gpt-5.4"
-
-    def test_pins_main_provider_when_bare_custom_unresolvable(self, monkeypatch):
-        import hermes_cli.config as cfg_mod
-        import hermes_cli.runtime_provider as rp_mod
-
-        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: False)
-        monkeypatch.setattr(
-            cfg_mod, "load_config", lambda: {"model": {"provider": "openai-codex"}}
-        )
-        provider, model = _resolve_model_override(
-            {"provider": "custom", "model": "gpt-5.4"}
-        )
-        # No matching custom entry → fall back to pinning the main provider.
-        assert provider == "openai-codex"
-        assert model == "gpt-5.4"
-
-    def test_keeps_explicit_custom_name_unchanged(self, monkeypatch):
-        import hermes_cli.runtime_provider as rp_mod
-
-        # Even if the resolver claims no entry, the canonical "custom:<name>"
-        # form is never stripped or pinned.
-        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: False)
-        provider, model = _resolve_model_override(
-            {"provider": "custom:cliproxy", "model": "gpt-5.4"}
-        )
-        assert provider == "custom:cliproxy"
-        assert model == "gpt-5.4"
-
-
-class TestLocalDeliveryNotice:
-    """#51568 — TUI/CLI cron jobs are local-only; surface that at create time
-    so the agent doesn't promise a delivery that never happens."""
 
     @pytest.fixture(autouse=True)
     def _setup_cron_dir(self, tmp_path, monkeypatch):
@@ -740,6 +686,68 @@ class TestLocalDeliveryNotice:
         assert result["success"] is True
         assert "warning" in result
         assert "biglobster" in result["warning"]
+
+
+# =========================================================================
+# Per-job model/provider override resolution
+# =========================================================================
+
+from tools.cronjob_tools import _resolve_model_override  # noqa: E402
+
+
+class TestResolveModelOverride:
+    """`_resolve_model_override` must not silently hijack a job that meant to
+    use a configured custom endpoint (e.g. ``providers.custom`` → cliproxy).
+    Regression for cron jobs with ``provider: "custom"`` falling back to codex.
+    """
+
+    def test_keeps_bare_custom_when_a_named_entry_exists(self, monkeypatch):
+        import hermes_cli.runtime_provider as rp_mod
+
+        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: True)
+        provider, model = _resolve_model_override(
+            {"provider": "custom", "model": "gpt-5.4"}
+        )
+        assert provider == "custom"
+        assert model == "gpt-5.4"
+
+    def test_pins_main_provider_when_bare_custom_unresolvable(self, monkeypatch):
+        import hermes_cli.config as cfg_mod
+        import hermes_cli.runtime_provider as rp_mod
+
+        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: False)
+        monkeypatch.setattr(
+            cfg_mod, "load_config", lambda: {"model": {"provider": "openai-codex"}}
+        )
+        provider, model = _resolve_model_override(
+            {"provider": "custom", "model": "gpt-5.4"}
+        )
+        # No matching custom entry → fall back to pinning the main provider.
+        assert provider == "openai-codex"
+        assert model == "gpt-5.4"
+
+    def test_keeps_explicit_custom_name_unchanged(self, monkeypatch):
+        import hermes_cli.runtime_provider as rp_mod
+
+        # Even if the resolver claims no entry, the canonical "custom:<name>"
+        # form is never stripped or pinned.
+        monkeypatch.setattr(rp_mod, "has_named_custom_provider", lambda name: False)
+        provider, model = _resolve_model_override(
+            {"provider": "custom:cliproxy", "model": "gpt-5.4"}
+        )
+        assert provider == "custom:cliproxy"
+        assert model == "gpt-5.4"
+
+
+class TestLocalDeliveryNotice:
+    """#51568 — TUI/CLI cron jobs are local-only; surface that at create time
+    so the agent doesn't promise a delivery that never happens."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_cron_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("cron.jobs.CRON_DIR", tmp_path / "cron")
+        monkeypatch.setattr("cron.jobs.JOBS_FILE", tmp_path / "cron" / "jobs.json")
+        monkeypatch.setattr("cron.jobs.OUTPUT_DIR", tmp_path / "cron" / "output")
         # Default: no session origin (the TUI/CLI condition).
         for var in (
             "HERMES_SESSION_PLATFORM",
