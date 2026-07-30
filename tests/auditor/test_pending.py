@@ -10,7 +10,7 @@ import json
 
 import auditor.pending as pending
 
-TEST_REPO = "braisntext/hermes-sandbox"
+TEST_REPO = "br41s/hermes-sandbox"
 
 
 def _pr(number, head, login="claude-code", draft=False, files=("hermes/x.py",)):
@@ -116,15 +116,15 @@ def test_review_repos_reads_profile_union(tmp_path, monkeypatch):
     prof = tmp_path / "docker" / "profiles"
     (prof / "p1").mkdir(parents=True)
     (prof / "p2").mkdir(parents=True)
-    (prof / "p1" / "repos.txt").write_text("# comment\nbraisntext/biglobster\n\n")
-    (prof / "p2" / "repos.txt").write_text("braisntext/FinView\nbraisntext/biglobster\n")
+    (prof / "p1" / "repos.txt").write_text("# comment\nbr41s/biglobster\n\n")
+    (prof / "p2" / "repos.txt").write_text("br41s/FinView\nbr41s/biglobster\n")
     monkeypatch.setattr(pending, "_repo_root", lambda: tmp_path)
     assert pending.review_repos() == sorted(
-        {"braisntext/hermes-sandbox", "braisntext/biglobster", "braisntext/FinView"}
+        {"br41s/hermes-sandbox", "br41s/biglobster", "br41s/FinView"}
     )
 
 
 def test_review_repos_always_includes_engine(tmp_path, monkeypatch):
     # No profiles dir at all -> still returns the engine repo.
     monkeypatch.setattr(pending, "_repo_root", lambda: tmp_path)
-    assert pending.review_repos() == ["braisntext/hermes-sandbox"]
+    assert pending.review_repos() == ["br41s/hermes-sandbox"]

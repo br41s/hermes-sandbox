@@ -1,7 +1,7 @@
 name: huggingface
 version: 1.0.0
 description: "HuggingFace Inference API video generation backend. Uses damo-vilab/text-to-video-ms-1.7b — free tier text-to-video."
-author: braisntext
+author: br41s
 kind: backend
 requires_env:
   - HUGGINGFACE_API_KEY

@@ -1,5 +1,5 @@
 # Repos cloned into workspace/ at every container boot.
 # Format: one "owner/repo" per line. Blank lines and # comments are ignored.
 # Requires GITHUB_TOKEN to be set (configured automatically by 03-biglobster-config).
-braisntext/grow-shop-api
-braisntext/grow-shop-landing
+br41s/grow-shop-api
+br41s/grow-shop-landing

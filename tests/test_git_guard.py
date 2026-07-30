@@ -1,7 +1,7 @@
 """Regression lock for the agent git guard (scripts/git-guard/ + sweep source).
 
 Why this exists: on 2026-06-22 a blind `git add -A && git commit` (commit
-dd0e1f5) captured the deletion of 48 referenced images in braisntext/biglobster
+dd0e1f5) captured the deletion of 48 referenced images in br41s/biglobster
 and was pushed straight to main — the blog 404'd for ~22h. The account is GitHub
 Free + private (no Actions / branch protection / server hooks), so a client-side
 pre-commit hook installed via core.hooksPath is the WHOLE enforcement path.

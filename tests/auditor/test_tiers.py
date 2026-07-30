@@ -81,10 +81,10 @@ def test_unknown_paths_surfaced():
 
 
 # --- Phase 4: per-repo tiering ----------------------------------------------
-BIG = "braisntext/biglobster"
-FIN = "braisntext/FinView"
-GS = "braisntext/grow-shop-api"
-ENGINE = "braisntext/hermes-sandbox"
+BIG = "br41s/biglobster"
+FIN = "br41s/FinView"
+GS = "br41s/grow-shop-api"
+ENGINE = "br41s/hermes-sandbox"
 
 
 def test_engine_slug_matches_no_repo():
@@ -160,4 +160,4 @@ def test_profile_code_repo_defaults_to_system():
 
 def test_profile_unknown_path_fails_safe():
     assert classify(["frontend/App.tsx"], FIN) == "system"
-    assert classify(["wsgi.py"], "braisntext/SocialAgenda") == "system"
+    assert classify(["wsgi.py"], "br41s/SocialAgenda") == "system"

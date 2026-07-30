@@ -43,7 +43,7 @@ def source_repo(tmp_path):
     _git(["init", "-q", "-b", "main"], repo)
     _git(["config", "user.email", "hermes@agent.local"], repo)
     _git(["config", "user.name", "hermes"], repo)
-    _git(["remote", "add", "origin", "https://github.com/braisntext/biglobster.git"], repo)
+    _git(["remote", "add", "origin", "https://github.com/br41s/biglobster.git"], repo)
     (repo / "web").mkdir()
     (repo / "web" / "article.html").write_text("<h1>v1</h1>\n", encoding="utf-8")
     _git(["add", "."], repo)
@@ -130,7 +130,7 @@ class TestProvisionClone:
                 ["git", "remote", "get-url", "origin"],
                 cwd=eff, capture_output=True, text=True, check=True,
             ).stdout.strip()
-            assert url == "https://github.com/braisntext/biglobster.git"
+            assert url == "https://github.com/br41s/biglobster.git"
         finally:
             _cleanup_isolated_checkout(cleanup)
 
@@ -141,7 +141,7 @@ class TestProvisionClone:
 
         _git(
             ["remote", "set-url", "origin",
-             "https://x-access-token:github_pat_SECRET123@github.com/braisntext/biglobster.git"],
+             "https://x-access-token:github_pat_SECRET123@github.com/br41s/biglobster.git"],
             source_repo,
         )
         eff, cleanup = _provision_isolated_checkout("jobA", "bl", str(source_repo))
@@ -150,7 +150,7 @@ class TestProvisionClone:
                 ["git", "remote", "get-url", "origin"],
                 cwd=eff, capture_output=True, text=True, check=True,
             ).stdout.strip()
-            assert url == "https://github.com/braisntext/biglobster.git"
+            assert url == "https://github.com/br41s/biglobster.git"
             assert "github_pat_SECRET123" not in (Path(eff) / ".git" / "config").read_text()
         finally:
             _cleanup_isolated_checkout(cleanup)
