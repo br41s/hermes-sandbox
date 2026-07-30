@@ -51,4 +51,10 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # authentication (HERMES_CALLBACK_SECRET); listed here so BOTH the
     # session-token middleware and the OAuth gate honour it in lockstep.
     "/api/delegate",
+    # Chronos managed-cron fire webhook (NAS -> agent). NOT cookie-gated: it
+    # carries its own short-lived NAS-minted JWT (purpose=cron_fire), which the
+    # handler verifies as the real auth. Must bypass the dashboard auth gate so
+    # the NAS relay's bearer-only callback reaches the verifier instead of a
+    # 401 no_cookie. The JWT — not this allowlist — is the security boundary.
+    "/api/cron/fire",
 })

@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 import agent.runtime_cwd as rt
-from agent.runtime_cwd import resolve_agent_cwd, resolve_context_cwd
+from agent.runtime_cwd import (
+    clear_session_cwd,
+    resolve_agent_cwd,
+    resolve_context_cwd,
+    set_session_cwd,
+)
 
 
 def _raise_oserror(*args, **kwargs):
@@ -61,12 +66,21 @@ class TestResolveContextCwd:
         monkeypatch.delenv("TERMINAL_CWD", raising=False)
         assert resolve_context_cwd() is None
 
-    def test_returns_nonexistent_dir_unguarded(self, monkeypatch, tmp_path):
-        # Deliberate asymmetry vs resolve_agent_cwd: context discovery has no isdir
-        # guard, so a missing dir is returned (not None) — discovery just finds nothing.
+    def test_returns_none_for_nonexistent_dir(self, monkeypatch, tmp_path):
+        # A configured but missing dir must not be returned. It previously was,
+        # which diverged from resolve_agent_cwd and let an invalid cwd steer
+        # context discovery. Now it is validated and drops to None.
         missing = tmp_path / "gone"
         monkeypatch.setenv("TERMINAL_CWD", str(missing))
-        assert resolve_context_cwd() == missing
+        assert resolve_context_cwd() is None
+
+    def test_returns_install_tree_when_explicitly_configured(self, monkeypatch):
+        # An EXPLICITLY configured install-tree cwd is honored verbatim — the
+        # Hermes source tree is a legitimate workspace when the user is
+        # developing Hermes. Only the fallback path (cwd=None → os.getcwd())
+        # is policed, in build_context_files_prompt (#64590).
+        monkeypatch.setenv("TERMINAL_CWD", str(rt._PACKAGE_ROOT))
+        assert resolve_context_cwd() == rt._PACKAGE_ROOT
 
     def test_expands_leading_tilde(self, monkeypatch):
         monkeypatch.setenv("TERMINAL_CWD", "~")
@@ -77,3 +91,48 @@ class TestResolveContextCwd:
         # than building Path("   ") and resolving garbage under the launch dir.
         monkeypatch.setenv("TERMINAL_CWD", "   ")
         assert resolve_context_cwd() is None
+
+
+class TestSessionCwdOverride:
+    """The #29531 per-session arm: a contextvar cwd wins over TERMINAL_CWD so a
+    multi-session gateway can pin each session to its own folder."""
+
+    def test_session_cwd_overrides_terminal_cwd(self, monkeypatch, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
+        token = set_session_cwd(str(other))
+        try:
+            assert resolve_agent_cwd() == other
+            assert resolve_context_cwd() == other
+        finally:
+            rt._SESSION_CWD.reset(token)
+
+    def test_empty_session_cwd_falls_back_to_terminal_cwd(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
+        token = set_session_cwd("")
+        try:
+            assert resolve_agent_cwd() == tmp_path
+            assert resolve_context_cwd() == tmp_path
+        finally:
+            rt._SESSION_CWD.reset(token)
+
+    def test_clear_session_cwd_restores_terminal_cwd(self, monkeypatch, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
+        token = set_session_cwd(str(other))
+        try:
+            clear_session_cwd()
+            assert resolve_agent_cwd() == tmp_path
+        finally:
+            rt._SESSION_CWD.reset(token)
+
+    def test_nonexistent_session_cwd_falls_back(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
+        token = set_session_cwd(str(tmp_path / "gone"))
+        try:
+            # resolve_agent_cwd guards on isdir; a missing session cwd must not win.
+            assert resolve_agent_cwd() == tmp_path
+        finally:
+            rt._SESSION_CWD.reset(token)

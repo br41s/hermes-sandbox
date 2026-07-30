@@ -1,22 +1,28 @@
 'use client'
 
-import { TextMessagePartProvider, useAuiState, useMessagePartText } from '@assistant-ui/react'
+import { TextMessagePartProvider, useMessagePartText } from '@assistant-ui/react'
 import {
   type StreamdownTextComponents,
   StreamdownTextPrimitive,
-  type SyntaxHighlighterProps
+  type SyntaxHighlighterProps,
+  tailBoundedRemend
 } from '@assistant-ui/react-streamdown'
 import { code } from '@streamdown/code'
-import { type ComponentProps, memo, type ReactNode, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { type ComponentProps, memo, useEffect, useMemo, useState } from 'react'
 
+import { ExpandableBlock } from '@/components/chat/expandable-block'
 import { PreviewAttachment } from '@/components/chat/preview-attachment'
-import { SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
+import { chunkByLines, SyntaxHighlighter } from '@/components/chat/shiki-highlighter'
 import { ZoomableImage } from '@/components/chat/zoomable-image'
 import { normalizeExternalUrl, openExternalLink, PrettyLink } from '@/lib/external-link'
 import { createMemoizedMathPlugin } from '@/lib/katex-memo'
+import { parseMarkdownIntoBlocksCached } from '@/lib/markdown-blocks'
 import { preprocessMarkdown } from '@/lib/markdown-preprocess'
 import {
+  downloadGatewayMediaFile,
   filePathFromMediaPath,
+  gatewayMediaDataUrl,
+  isRemoteGateway,
   mediaExternalUrl,
   mediaKind,
   mediaName,
@@ -25,6 +31,8 @@ import {
 } from '@/lib/media'
 import { previewTargetFromMarkdownHref } from '@/lib/preview-targets'
 import { cn } from '@/lib/utils'
+
+import { detectEmbed, extractAlert, MarkdownAlert, RichCodeBlock, UrlEmbed } from './embeds'
 
 // Math rendering plugin (KaTeX). Configured once at module scope — the
 // plugin is stateless beyond its internal cache so re-creating per-render
@@ -40,6 +48,17 @@ import { cn } from '@/lib/utils'
 // LLM convention). The default false-setting only accepts `$$...$$`.
 const mathPlugin = createMemoizedMathPlugin({ singleDollarTextMath: true })
 
+// Replaces Streamdown's `parseIncompleteMarkdown` (full-text remend per
+// flush) with a tail-bounded repair. Must stay module-scope so the prop
+// identity is stable across renders.
+function preprocessWithTailRepair(text: string): string {
+  try {
+    return tailBoundedRemend(preprocessMarkdown(text))
+  } catch {
+    return text
+  }
+}
+
 async function mediaSrc(path: string): Promise<string> {
   if (/^(?:https?|data):/i.test(path)) {
     return path
@@ -51,6 +70,12 @@ async function mediaSrc(path: string): Promise<string> {
     return mediaStreamUrl(path)
   }
 
+  // Remote gateway: the image lives on the gateway machine, so read it over the
+  // authenticated API rather than this machine's disk.
+  if (window.hermesDesktop && isRemoteGateway()) {
+    return gatewayMediaDataUrl(path)
+  }
+
   if (!window.hermesDesktop?.readFileDataUrl) {
     return mediaExternalUrl(path)
   }
@@ -58,21 +83,50 @@ async function mediaSrc(path: string): Promise<string> {
   return window.hermesDesktop.readFileDataUrl(filePathFromMediaPath(path))
 }
 
-function OpenMediaButton({ kind, path }: { kind: 'audio' | 'video'; path: string }) {
+function useOpenMediaFile(path: string) {
+  const [openFailed, setOpenFailed] = useState(false)
+
+  const open = () => {
+    if (window.hermesDesktop && isRemoteGateway()) {
+      setOpenFailed(false)
+      void downloadGatewayMediaFile(path).catch(() => setOpenFailed(true))
+    } else {
+      openExternalLink(mediaExternalUrl(path))
+    }
+  }
+
+  return { open, openFailed }
+}
+
+function OpenMediaFailedNote({ name }: { name: string }) {
   return (
-    <button
-      className="mt-2 bg-transparent text-xs font-medium text-muted-foreground underline underline-offset-4 decoration-current/20 hover:text-foreground"
-      onClick={() => void window.hermesDesktop?.openExternal(mediaExternalUrl(path))}
-      type="button"
-    >
-      Open {kind} file
-    </button>
+    <span className="mt-1 block text-xs text-muted-foreground">
+      Couldn&apos;t fetch {name} from the gateway (missing, unreadable, or too large).
+    </span>
+  )
+}
+
+function OpenMediaButton({ kind, path }: { kind: 'audio' | 'video'; path: string }) {
+  const { open, openFailed } = useOpenMediaFile(path)
+
+  return (
+    <span className="block">
+      <button
+        className="mt-2 bg-transparent text-xs font-medium text-muted-foreground underline underline-offset-4 decoration-current/20 hover:text-foreground"
+        onClick={open}
+        type="button"
+      >
+        Open {kind} file
+      </button>
+      {openFailed && <OpenMediaFailedNote name={mediaName(path)} />}
+    </span>
   )
 }
 
 function MediaAttachment({ path }: { path: string }) {
   const [src, setSrc] = useState('')
   const [failed, setFailed] = useState(false)
+  const { open, openFailed } = useOpenMediaFile(path)
   const kind = mediaKind(path)
   const name = mediaName(path)
 
@@ -82,6 +136,15 @@ function MediaAttachment({ path }: { path: string }) {
 
     setFailed(false)
     setSrc('')
+
+    if (kind === 'file') {
+      setFailed(true)
+
+      return () => {
+        cancelled = true
+      }
+    }
+
     void mediaSrc(path)
       .then(value => {
         if (value.startsWith('blob:')) {
@@ -107,7 +170,7 @@ function MediaAttachment({ path }: { path: string }) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [path])
+  }, [kind, path])
 
   if (kind === 'image' && src) {
     return (
@@ -143,16 +206,19 @@ function MediaAttachment({ path }: { path: string }) {
   }
 
   return (
-    <a
-      className="font-semibold text-foreground underline underline-offset-4 decoration-current/20 wrap-anywhere"
-      href="#"
-      onClick={event => {
-        event.preventDefault()
-        openExternalLink(mediaExternalUrl(path))
-      }}
-    >
-      {failed ? `Open ${name}` : `Loading ${name}...`}
-    </a>
+    <span className="wrap-anywhere">
+      <a
+        className="font-semibold text-foreground underline underline-offset-4 decoration-current/20 wrap-anywhere"
+        href="#"
+        onClick={event => {
+          event.preventDefault()
+          open()
+        }}
+      >
+        {failed ? `Open ${name}` : `Loading ${name}...`}
+      </a>
+      {openFailed && <OpenMediaFailedNote name={name} />}
+    </span>
   )
 }
 
@@ -201,6 +267,17 @@ function MarkdownLink({ children, className, href, ...props }: ComponentProps<'a
   }
 
   const text = childrenToText(children)
+
+  // Bare autolink → inline rich embed when a provider matches. Labeled links
+  // (`[watch](url)`) stay plain. Desktop only (webview / iframe renderers).
+  if (window.hermesDesktop && text && normalizeExternalUrl(text) === target) {
+    const embed = detectEmbed(target)
+
+    if (embed) {
+      return <UrlEmbed descriptor={embed} />
+    }
+  }
+
   const fallbackLabel = text && normalizeExternalUrl(text) !== target ? text : undefined
 
   return (
@@ -224,39 +301,10 @@ function MarkdownImage({ className, src, alt, ...props }: ComponentProps<'img'>)
   )
 }
 
-/**
- * Re-publish the active message-part context with React's `useDeferredValue`
- * applied to the streaming text and status. The outer wrapper still re-renders
- * on every token, but the work it does is trivial (one hook, one provider).
- *
- * The expensive subtree (Streamdown → micromark → mdast → hast → React) lives
- * inside `<TextMessagePartProvider>` and reads the deferred text via the
- * normal `useMessagePartText` hook. React's concurrent scheduler then has
- * permission to:
- *   - skip intermediate token states when the next token arrives mid-render
- *     (it abandons the in-flight deferred render and starts over)
- *   - deprioritize the markdown render when the main thread is busy with an
- *     urgent task (typing, scrolling, layout work elsewhere)
- *
- * Net effect: per-token CPU is unchanged but the *blocking* part of that work
- * goes away — typing-while-streaming stays a single-frame paint, scroll
- * stutter disappears, and the longtask histogram tightens because long
- * commits can be interrupted and discarded.
- *
- * Industry standard (Streamdown's own block-array setState already uses
- * `useTransition`); this just lifts the deferral up to the consumer text
- * boundary so it covers the whole pipeline, not just the inner setState.
- */
-function DeferStreamingText({ children }: { children: ReactNode }) {
-  const { text, status } = useMessagePartText()
-  const deferredText = useDeferredValue(text)
-  const isRunning = status.type === 'running'
-
-  return (
-    <TextMessagePartProvider isRunning={isRunning} text={deferredText}>
-      {children}
-    </TextMessagePartProvider>
-  )
+interface MarkdownTextSurfaceProps {
+  containerClassName?: string
+  containerProps?: ComponentProps<'div'>
+  defer?: boolean
 }
 
 // Headings shrink to chat scale rather than the prose default (h1≈xl). Kept
@@ -268,15 +316,51 @@ const HEADING_SIZES: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
   h4: 'text-[0.8125rem]'
 }
 
-const MarkdownTextImpl = () => {
-  const isStreaming = useAuiState(s => s.message.status?.type === 'running')
+const MARKDOWN_CONTAINER_CLASS_NAME = cn(
+  'aui-md prose w-full max-w-none overflow-hidden text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground',
+  'prose-p:leading-(--dt-line-height) prose-li:leading-(--dt-line-height)',
+  'prose-headings:text-foreground prose-strong:text-foreground',
+  'prose-a:break-words prose-p:[overflow-wrap:anywhere]',
+  'prose-li:marker:text-muted-foreground/70',
+  'prose-code:rounded-[0.25rem] prose-code:px-[0.1875rem] prose-code:py-px prose-code:font-mono prose-code:text-[0.9em] prose-code:font-normal prose-code:before:content-none prose-code:after:content-none',
+  '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&>*+*]:mt-(--paragraph-gap)'
+)
 
-  // Stable per-state plugin object. The previous inline `{ math: mathPlugin,
-  // ...(isStreaming ? {} : { code }) }` created a new object identity on every
-  // render, which churns Streamdown's outer memo + propagates new prop
-  // identities into every Block. The plugin set really only varies on
-  // `isStreaming`, so memoize on that.
-  const plugins = useMemo(() => (isStreaming ? { math: mathPlugin } : { math: mathPlugin, code }), [isStreaming])
+const MAX_MARKDOWN_CHARS = 200_000
+
+function HugeTextFallback({ containerClassName, text }: { containerClassName?: string; text: string }) {
+  const chunks = useMemo(() => chunkByLines(text, 200), [text])
+
+  return (
+    <div
+      className={cn(
+        'aui-md w-full max-w-none overflow-hidden rounded-[0.625rem] border border-border font-mono text-[0.7rem] leading-relaxed text-foreground/90',
+        containerClassName
+      )}
+    >
+      <ExpandableBlock className="p-2">
+        {chunks.map((chunk, index) => (
+          <div
+            className="[content-visibility:auto]"
+            key={index}
+            style={{ containIntrinsicSize: `auto ${chunk.lines * 16}px` }}
+          >
+            {chunk.text}
+          </div>
+        ))}
+      </ExpandableBlock>
+    </div>
+  )
+}
+
+function MarkdownTextSurface({ containerClassName, containerProps, defer }: MarkdownTextSurfaceProps) {
+  const { status, text } = useMessagePartText()
+  const isStreaming = status.type === 'running'
+
+  // Keep code parsing enabled while streaming so incomplete fenced blocks still
+  // render as code cards. The expensive Shiki pass is deferred by
+  // `SyntaxHighlighter` below when `isStreaming` is true.
+  const plugins = useMemo(() => ({ math: mathPlugin, code }), [])
 
   const components = useMemo(
     () =>
@@ -294,23 +378,55 @@ const MarkdownTextImpl = () => {
           <h4 className={cn('my-1 font-semibold', HEADING_SIZES.h4, className)} {...props} />
         ),
         p: ({ className, ...props }: ComponentProps<'p'>) => (
-          <p className={cn('my-1 wrap-anywhere leading-(--dt-line-height)', className)} {...props} />
+          // Vertical rhythm is owned by styles.css (`--paragraph-gap`), which
+          // must out-specify Tailwind Typography's `prose` margins — so no
+          // `my-*` here on purpose.
+          <p className={cn('wrap-anywhere leading-(--dt-line-height)', className)} {...props} />
         ),
         a: MarkdownLink,
-        hr: ({ className, ...props }: ComponentProps<'hr'>) => (
-          <hr className={cn('border-border', className)} {...props} />
+        // Inline code must not vote when an ancestor resolves `dir="auto"`
+        // (HTML's algorithm skips descendants that carry their own dir),
+        // mirroring the CSS isolate that already keeps it out of the
+        // plaintext scan. Fenced code never reaches this override; it goes
+        // through the code plugin's CodeCard path.
+        inlineCode: ({ className, ...props }: ComponentProps<'code'>) => (
+          <code className={className} dir="ltr" {...props} />
         ),
-        blockquote: ({ className, ...props }: ComponentProps<'blockquote'>) => (
-          <blockquote
-            className={cn('border-l-2 border-border pl-3 text-muted-foreground italic', className)}
-            {...props}
-          />
-        ),
+        // `---` as quiet spacing, not a heavy full-width rule.
+        hr: (_props: ComponentProps<'hr'>) => <div aria-hidden className="my-3" />,
+        // Lists and blockquotes have chrome that sits *beside* the text
+        // (markers, the quote border), and that side is driven by the CSS
+        // `direction` of the box, which `unicode-bidi: plaintext` never
+        // touches — an RTL list otherwise renders its numbers stranded at
+        // the far left. `dir="auto"` lets the browser resolve the box
+        // direction from content; the plaintext rules in styles.css keep
+        // owning per-line text direction. Inline code carries `dir="ltr"`
+        // (see the `code` override) so it doesn't vote here either, same
+        // contract as the CSS isolate.
+        // A `> [!NOTE]`/`[!WARNING]`/... blockquote renders as a GFM alert
+        // callout; everything else stays a plain quote.
+        blockquote: ({ children, className, ...props }: ComponentProps<'blockquote'>) => {
+          const alert = extractAlert(children)
+
+          if (alert) {
+            return <MarkdownAlert type={alert.type}>{alert.body}</MarkdownAlert>
+          }
+
+          return (
+            <blockquote
+              className={cn('border-s-2 border-border ps-3 text-muted-foreground italic', className)}
+              dir="auto"
+              {...props}
+            >
+              {children}
+            </blockquote>
+          )
+        },
         ul: ({ className, ...props }: ComponentProps<'ul'>) => (
-          <ul className={cn('my-1 gap-0', className)} {...props} />
+          <ul className={cn('my-1 gap-0', className)} dir="auto" {...props} />
         ),
         ol: ({ className, ...props }: ComponentProps<'ol'>) => (
-          <ol className={cn('my-1 gap-0', className)} {...props} />
+          <ol className={cn('my-1 gap-0', className)} dir="auto" {...props} />
         ),
         li: ({ className, ...props }: ComponentProps<'li'>) => (
           <li className={cn('leading-(--dt-line-height)', className)} {...props} />
@@ -319,7 +435,7 @@ const MarkdownTextImpl = () => {
           <div className="aui-md-table my-2 max-w-full overflow-x-auto rounded-[0.375rem] border border-border">
             <table
               className={cn(
-                'm-0 w-full border-collapse text-[0.8125rem] [&_tr]:border-b [&_tr]:border-border last:[&_tr]:border-0',
+                'm-0 w-full min-w-[18rem] border-collapse text-[0.8125rem] [&_tr]:border-b [&_tr]:border-border last:[&_tr]:border-0',
                 className
               )}
               {...props}
@@ -332,7 +448,7 @@ const MarkdownTextImpl = () => {
         th: ({ className, ...props }: ComponentProps<'th'>) => (
           <th
             className={cn(
-              'px-2.5 py-1.5 text-left align-middle text-[0.75rem] font-medium text-muted-foreground',
+              'whitespace-nowrap px-2.5 py-1.5 text-left align-middle text-[0.75rem] font-medium text-muted-foreground',
               className
             )}
             {...props}
@@ -342,40 +458,66 @@ const MarkdownTextImpl = () => {
           <td className={cn('px-2.5 py-1.5 align-top text-[0.8125rem] leading-snug', className)} {...props} />
         ),
         img: MarkdownImage,
-        SyntaxHighlighter: (props: SyntaxHighlighterProps) => <SyntaxHighlighter {...props} defer={isStreaming} />
+        // ```mermaid / ```svg fences route to their lazy renderers; every other
+        // language falls back to the Shiki-highlighted code block.
+        SyntaxHighlighter: (props: SyntaxHighlighterProps) => (
+          <RichCodeBlock
+            code={props.code}
+            fallback={<SyntaxHighlighter {...props} defer={isStreaming} />}
+            language={props.language}
+            streaming={isStreaming}
+          />
+        )
       }) as StreamdownTextComponents,
     [isStreaming]
   )
 
+  if (text.length > MAX_MARKDOWN_CHARS) {
+    return <HugeTextFallback containerClassName={containerClassName} text={text} />
+  }
+
   return (
-    <DeferStreamingText>
-      <StreamdownTextPrimitive
-        components={components}
-        containerClassName={cn(
-          'aui-md prose w-full max-w-none overflow-hidden text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground',
-          'prose-p:leading-(--dt-line-height) prose-li:leading-(--dt-line-height)',
-          'prose-headings:text-foreground prose-strong:text-foreground',
-          'prose-a:break-words prose-p:[overflow-wrap:anywhere]',
-          'prose-li:marker:text-muted-foreground/70',
-          'prose-code:rounded-[0.25rem] prose-code:px-[0.1875rem] prose-code:py-px prose-code:font-mono prose-code:text-[0.9em] prose-code:font-normal prose-code:before:content-none prose-code:after:content-none',
-          '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&>*+*]:mt-1'
-        )}
-        lineNumbers={false}
-        mode="streaming"
-        // Always auto-close incomplete fences — even during streaming.
-        // Without this, an unclosed ```python ... ``` whose body contains
-        // `$` (very common: shell snippets, JS template strings, dollar
-        // amounts) leaks those dollars out to the math parser and they
-        // get rendered as broken inline math until the closing fence
-        // arrives. Shiki is independently deferred via `defer={isStreaming}`
-        // on the SyntaxHighlighter component, so we don't pay code-block
-        // tokenization on every token even with this set.
-        parseIncompleteMarkdown
-        plugins={plugins}
-        preprocess={preprocessMarkdown}
-      />
-    </DeferStreamingText>
+    <StreamdownTextPrimitive
+      components={components}
+      containerClassName={cn(MARKDOWN_CONTAINER_CLASS_NAME, containerClassName)}
+      containerProps={containerProps}
+      defer={defer}
+      lineNumbers={false}
+      mode="streaming"
+      // Incomplete-markdown repair runs in preprocessWithTailRepair on the
+      // full accumulated text; the built-in tail-bounded remend is disabled
+      // because a custom parseMarkdownIntoBlocksFn is supplied, and
+      // parseIncompleteMarkdown stays false to avoid a second full-text
+      // remend pass.
+      parseIncompleteMarkdown={false}
+      parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocksCached}
+      plugins={plugins}
+      preprocess={preprocessWithTailRepair}
+    />
   )
+}
+
+interface MarkdownTextContentProps extends MarkdownTextSurfaceProps {
+  isRunning: boolean
+  text: string
+}
+
+export function MarkdownTextContent({ isRunning, text, ...surfaceProps }: MarkdownTextContentProps) {
+  // No `smooth` on purpose — same as the assistant answer. `TextMessagePartProvider`
+  // mints a fresh part object on every `text` change, and useSmooth resets its
+  // reveal to empty whenever the part identity changes, so a smoothed reasoning
+  // stream re-types from the first character on every delta (the flash). Token-
+  // streaming reasoners (R1/Qwen/GLM/Claude thinking) hit it hardest; GPT-5's
+  // coarse summary updates too rarely to notice. Plain append matches the answer.
+  return (
+    <TextMessagePartProvider isRunning={isRunning} text={text}>
+      <MarkdownTextSurface defer {...surfaceProps} />
+    </TextMessagePartProvider>
+  )
+}
+
+const MarkdownTextImpl = () => {
+  return <MarkdownTextSurface defer />
 }
 
 export const MarkdownText = memo(MarkdownTextImpl)
