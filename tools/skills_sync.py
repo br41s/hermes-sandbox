@@ -772,7 +772,7 @@ def _rmtree_writable(path: Path) -> None:
     # ``shutil.rmtree(~/.hermes)`` into a loud, recoverable ``ValueError``
     # instead of silently destroying the user's install.
     target = Path(path).resolve()
-    skills_root = SKILLS_DIR.resolve()
+    skills_root = _skills_dir().resolve()
     # Every legitimate caller passes a skill directory or its ``.bak``
     # sibling — always a strict child of the skills root. The skills root
     # itself must never be removed: a ``dest`` that collapses to

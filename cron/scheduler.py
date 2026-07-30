@@ -1589,6 +1589,8 @@ def _send_to_targets(
     config,
     adapters=None,
     loop=None,
+    mirror_enabled: bool = False,
+    mirror_text: str = "",
 ) -> List[str]:
     """Low-level multi-target sender: live-adapter-first then standalone fallback.
 
@@ -1597,6 +1599,10 @@ def _send_to_targets(
     thread routing, the live-adapter/standalone fallback, and native media
     attachments.  Does NOT wrap content or extract MEDIA tags — callers prepare
     ``text`` and ``media_files`` first.
+
+    ``mirror_enabled``/``mirror_text`` gate the delivery-mirror feature (see
+    :func:`_cron_mirror_delivery_enabled`) — the kickoff ping never mirrors
+    (it is not the job's real output), so it relies on the defaults here.
 
     Returns a list of delivery error strings (empty on full success).
     """
@@ -2159,11 +2165,25 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     """
     targets = _resolve_delivery_targets(job)
     if not targets:
-        if job.get("deliver", "local") != "local":
-            msg = f"no delivery target resolved for deliver={job.get('deliver', 'local')}"
-            logger.warning("Job '%s': %s", job["id"], msg)
-            return msg
-        return None  # local-only jobs don't deliver — not a failure
+        deliver_value = _normalize_deliver_value(job.get("deliver", "local"))
+        if deliver_value == "local":
+            return None  # local-only jobs don't deliver — not a failure
+        # deliver=origin with no resolvable origin and no configured home
+        # channels: treat as local rather than reporting an error.  CLI-created
+        # jobs never capture a {platform, chat_id} origin, so failing here would
+        # make every CLI `deliver=origin` (or auto-detect) job emit a spurious
+        # "no delivery target resolved" error on every run (#43014).  The output
+        # is still persisted in last_output for `cron list`/resume.
+        if deliver_value == "origin":
+            logger.info(
+                "Job '%s': deliver=origin but no origin or home channels — "
+                "skipping delivery (output saved in last_output)",
+                job.get("name", job.get("id", "?")),
+            )
+            return None
+        msg = f"no delivery target resolved for deliver={deliver_value}"
+        logger.warning("Job '%s': %s", job["id"], msg)
+        return msg
 
     from gateway.config import load_gateway_config
 
@@ -2171,6 +2191,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     # is a cron delivery.  Wrapping is on by default; set cron.wrap_response: false
     # in config.yaml for clean output.
     wrap_response = True
+    user_cfg = None
     try:
         user_cfg = load_config()
         wrap_response = user_cfg.get("cron", {}).get("wrap_response", True)
@@ -2195,6 +2216,19 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     media_files, cleaned_delivery_content = BasePlatformAdapter.extract_media(delivery_content)
     media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
 
+    # Resolve the delivery-mirror gate ONCE (default off). When on, each
+    # successful delivery is also appended to the target chat's gateway session
+    # transcript so a user reply in that chat sees the cron output in context.
+    # Mirror the CLEAN, unwrapped output (not the cron header/footer).
+    try:
+        mirror_enabled = _cron_mirror_delivery_enabled(job, user_cfg)
+    except Exception:
+        mirror_enabled = False
+    mirror_text = ""
+    if mirror_enabled:
+        _, mirror_text = BasePlatformAdapter.extract_media(content)
+        mirror_text = (mirror_text or "").strip()
+
     try:
         config = load_gateway_config()
     except Exception as e:
@@ -2204,6 +2238,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
 
     delivery_errors = _send_to_targets(
         job, targets, cleaned_delivery_content, media_files, config, adapters=adapters, loop=loop,
+        mirror_enabled=mirror_enabled, mirror_text=mirror_text,
     )
 
     if delivery_errors:
@@ -4437,14 +4472,25 @@ def tick(
             body."""
             return run_one_job(job, adapters=adapters, loop=loop, verbose=verbose)
 
-        # Partition due jobs: those with a per-job workdir mutate
-        # os.environ["TERMINAL_CWD"] inside run_job, which is process-global, so
-        # they queue on the single-thread sequential pool to run one at a time.
-        # That alone only keeps workdir jobs from overlapping EACH OTHER;
-        # run_job's _terminal_cwd_lock is what additionally stops a concurrently
-        # firing workdir-less parallel-pool job from observing the override.
-        sequential_jobs = [j for j in due_jobs if (j.get("workdir") or "").strip()]
-        parallel_jobs = [j for j in due_jobs if not (j.get("workdir") or "").strip()]
+        # Partition due jobs: those with a per-job workdir and/or profile mutate
+        # process-global runtime state inside run_job. Workdir jobs temporarily
+        # set os.environ["TERMINAL_CWD"]; profile jobs use a context-local
+        # Hermes home override, scheduler _hermes_home hook, and temporary
+        # profile .env load into os.environ with snapshot/restore. They queue on
+        # the single-thread sequential pool to run one at a time so they can't
+        # corrupt each other. That alone only keeps sequential jobs from
+        # overlapping EACH OTHER; run_job's _terminal_cwd_lock is what
+        # additionally stops a concurrently firing workdir-less parallel-pool
+        # job from observing the override. Jobs with neither field stay
+        # parallel-safe.
+        sequential_jobs = [
+            j for j in due_jobs
+            if (j.get("workdir") or "").strip() or (j.get("profile") or "").strip()
+        ]
+        parallel_jobs = [
+            j for j in due_jobs
+            if not ((j.get("workdir") or "").strip() or (j.get("profile") or "").strip())
+        ]
 
         _results: list = []
         _all_futures: list = []
