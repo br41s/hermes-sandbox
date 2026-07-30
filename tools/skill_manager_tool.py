@@ -148,24 +148,37 @@ import yaml
 
 
 # All skills live in ~/.hermes/skills/ (single source of truth)
-HERMES_HOME = get_hermes_home()
-SKILLS_DIR = HERMES_HOME / "skills"
-_SKILLS_DIR_AT_IMPORT = SKILLS_DIR
+#
+# ``HERMES_HOME`` / ``SKILLS_DIR`` are deliberately NOT assigned at import.
+# Long-lived multi-profile runtimes (Dashboard/TUI/Desktop backend, cron,
+# kanban workers) import this module once under the launch HERMES_HOME and
+# later bind a different profile per session (#40677); a value frozen at import
+# would pin every lookup to the launch profile. Resolved per access by the
+# PEP 562 hook below instead.
+
+
+def _hermes_home() -> Path:
+    """Active Hermes home, honoring a test patch of ``HERMES_HOME`` if present."""
+    patched = globals().get("HERMES_HOME")
+    return patched if patched is not None else get_hermes_home()
 
 
 def _skills_dir() -> Path:
-    """Return the active profile's skills directory at call time.
+    """Active skills dir, honoring a test patch of ``SKILLS_DIR`` if present."""
+    patched = globals().get("SKILLS_DIR")
+    return patched if patched is not None else _hermes_home() / "skills"
 
-    Long-lived multi-profile runtimes (Dashboard/TUI/Desktop backend, cron,
-    kanban workers) import this module once under the launch HERMES_HOME and
-    later bind a different profile per session (#40677). Honor an explicitly
-    patched module-level ``SKILLS_DIR`` (tests), otherwise resolve from the
-    live profile-scoped HERMES_HOME on every call.
-    """
-    configured = Path(SKILLS_DIR)
-    if configured != _SKILLS_DIR_AT_IMPORT:
-        return configured
-    return get_hermes_home() / "skills"
+
+def __getattr__(name: str):
+    # PEP 562 module-level attribute hook: resolve these dynamically when they
+    # are not shadowed by a real module attribute (e.g. a test ``patch()``).
+    # Note this fires only for attribute access on the module object — code
+    # inside this module must call ``_skills_dir()``, never the bare name.
+    if name == "HERMES_HOME":
+        return get_hermes_home()
+    if name == "SKILLS_DIR":
+        return get_hermes_home() / "skills"
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
