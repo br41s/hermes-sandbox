@@ -823,21 +823,18 @@ export default function CronPage() {
         <Button
           className="uppercase"
           size="sm"
-          onClick={() => setCreateModalOpen(true)}
+          onClick={() => {
+            // Upstream's profile-aware create: seed the modal with the
+            // currently-selected profile (falling back to `default` when the
+            // "all profiles" view is active) instead of always creating
+            // against the active one.
+            setCreateProfile(selectedProfile === "all" ? "default" : selectedProfile);
+            setCreateModalOpen(true);
+          }}
         >
           {t.common.create}
         </Button>
       </div>,
-      <Button
-        className="uppercase"
-        size="sm"
-        onClick={() => {
-          setCreateProfile(selectedProfile === "all" ? "default" : selectedProfile);
-          setCreateModalOpen(true);
-        }}
-      >
-        {t.common.create}
-      </Button>,
     );
     return () => {
       setEnd(null);
