@@ -220,13 +220,24 @@ RUN cd web && npm run build && \
 
 # ---------- Source code ----------
 # .dockerignore excludes node_modules, so the installs above survive.
-# --link decouples this layer from parents for cache purposes; --chmod bakes
-# the final read-only permissions at copy time so we skip the separate
-# `chmod -R` pass that previously walked ~30k files across the venv +
+# --chmod bakes the final read-only permissions at copy time so we skip the
+# separate `chmod -R` pass that previously walked ~30k files across the venv +
 # node_modules + source (21s amd64 / 222s arm64 — #49113).  `a+rX,go-w`
 # gives the non-root hermes user read + traverse but no write; root retains
 # write so the build steps below don't need chmod u+w dances.
-COPY --link --chmod=a+rX,go-w . .
+#
+# DELIBERATE DIVERGENCE FROM UPSTREAM — do NOT restore `--link` on the next
+# merge.  Upstream writes `COPY --link --chmod=...`, but our production build
+# runs on Cloud Build's `gcr.io/cloud-builders/docker`, whose built-in
+# `dockerfile.v0` frontend predates that flag and fails the whole build with
+# `dockerfile parse error line 229: Unknown flag: link` (build 305ad4d2,
+# 2026-07-30).  `--chmod` IS supported there and is the part that carries the
+# perf win; `--link` only decouples this layer from its parents for cache
+# purposes, so dropping it changes nothing about the image contents.  The
+# alternative — a `# syntax=docker/dockerfile:1.x` directive — would make every
+# production build pull a frontend image from Docker Hub, adding a network
+# failure mode to the deploy path for a cache optimisation we do not need.
+COPY --chmod=a+rX,go-w . .
 
 # ---------- Permissions ----------
 # Link hermes-agent itself (editable). Deps are already installed in the
