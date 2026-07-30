@@ -3468,11 +3468,6 @@ def _run_job_impl(
             logger.error("Job '%s': %s — aborting run (fail-closed)", job_id, err)
             return False, "", "", err
 
-    _prior_terminal_cwd = os.environ.get("TERMINAL_CWD", "_UNSET_")
-    if _job_workdir:
-        os.environ["TERMINAL_CWD"] = _job_workdir
-        logger.info("Job '%s': using workdir %s", job_id, _job_workdir)
-
     # Snapshot the current env value BEFORE acquiring the lock so the finally
     # below can always restore it, even if an exception fires before we set the
     # override inside the try.  This read can't leak the lock (it precedes the
