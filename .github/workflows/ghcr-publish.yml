@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
 
-# Only run on this fork, not if someone forks braisntext/hermes-sandbox further.
+# Only run on this fork, not if someone forks br41s/hermes-sandbox further.
 # Remove or update this condition if you rename the repo.
 jobs:
   build-and-push:
-    if: github.repository == 'braisntext/hermes-sandbox'
+    if: github.repository == 'br41s/hermes-sandbox'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

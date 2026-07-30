@@ -5,7 +5,7 @@ steps:
     args:
       - '-c'
       - |
-        echo "$_GITHUB_TOKEN" | docker login ghcr.io -u braisntext --password-stdin
+        echo "$_GITHUB_TOKEN" | docker login ghcr.io -u br41s --password-stdin
 
   # Paso 2: Compilar la imagen (¡CON BUILDKIT ACTIVO!)
   - name: 'gcr.io/cloud-builders/docker'
@@ -13,10 +13,10 @@ steps:
       - 'DOCKER_BUILDKIT=1' # <--- ESTO ACTIVA EL MOTOR MODERNO
     args: [
       'build',
-      '-t', 'ghcr.io/braisntext/hermes-sandbox:latest',
+      '-t', 'ghcr.io/br41s/hermes-sandbox:latest',
       '.'
     ]
 
   # Paso 3: Hacer el push a GitHub
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'ghcr.io/braisntext/hermes-sandbox:latest']
+    args: ['push', 'ghcr.io/br41s/hermes-sandbox:latest']

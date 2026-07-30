@@ -23,7 +23,7 @@ BigLobster sentinel.js
 | Internal URL | `http://hermes-sandbox.zeabur.internal:9119` |
 | Public URL | `https://blhermes.zeabur.app` |
 | Repo | `github.com/br41s/hermes-sandbox` |
-| Docker image | `ghcr.io/braisntext/hermes-sandbox:latest` |
+| Docker image | `ghcr.io/br41s/hermes-sandbox:latest` |
 | Deploy method | **Docker image from GHCR** (not git autodeploy — see Deploy section) |
 
 ---
@@ -43,7 +43,7 @@ Zeabur's build timeout is too short for the 2.7GB image (Playwright + Chromium +
    cd /Users/brais/VSCODE/hermes-sandbox
    gcloud builds submit --config=cloudbuild.yaml --substitutions=_GITHUB_TOKEN="<ghcr_pat>"
    ```
-   Cloud Build builds the image and pushes it to `ghcr.io/braisntext/hermes-sandbox:latest`.
+   Cloud Build builds the image and pushes it to `ghcr.io/br41s/hermes-sandbox:latest`.
    - **First pull `main` in this checkout** (`git checkout main && git pull`) — `gcloud builds submit` packages the *working tree*, not GitHub. If you merge a PR on GitHub but don't pull, the build ships stale code. Verify with `grep ENTRYPOINT Dockerfile` → it should show `/init`.
 3. Restart Hermes service in Zeabur dashboard
 
