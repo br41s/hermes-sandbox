@@ -80,10 +80,27 @@ Reproduce the conflict count (writes nothing):
 
 ## Phase 3 — Pin behaviour before merging
 
-- [ ] Characterization tests for Tier C/D so a silent regression fails loudly:
-  - [ ] cron profile-scoped delivery routing + fail-closed profile resolution
-  - [ ] `container_boot` GITHUB_TOKEN / git-cred reconciliation + auditor identity tripwires
-  - [ ] dashboard auth gate (the cryptominer lockdown) — unauth request must 401/redirect
+Characterization tests for Tier C/D so a silent regression fails loudly:
+
+- [x] **dashboard auth gate — ALREADY COVERED, write nothing new.**
+      `tests/test_dashboard_lockdown_regression.py:53` asserts
+      `frozenset(PUBLIC_API_PATHS) == EXPECTED_PUBLIC` — **exact set equality**, so any
+      widening OR narrowing fails. Plus `audit_public_allowlist()` flags unexpected paths
+      and `SENSITIVE_MARKERS` substrings, and `gate_decision()` tests pin `/api/mcp/*`,
+      `/api/exec`, `/api/secrets`, `/api/config`, `/` as GATED.
+      **MERGE ACTION — two files must be updated IN LOCKSTEP** or the suite goes red:
+      1. `hermes_cli/dashboard_auth/public_paths.py` → union to 8 entries
+      2. `evals/checks/dashboard_gate.py:23` `EXPECTED_PUBLIC` → add `"/api/cron/fire"`
+      (`evals/` has NO upstream conflict, so git will not prompt — this is a manual step.)
+      `/api/cron/fire` trips no `SENSITIVE_MARKERS` entry, so only the "unexpected" rule
+      applies. This red test is the DESIGNED behaviour: "any drift must be a conscious
+      change here." Do not silence it — update it deliberately.
+- [ ] cron profile-scoped delivery routing + fail-closed profile resolution — existing
+      coverage in `tests/cron/test_scheduler.py` + `tests/tools/test_cronjob_tools.py`;
+      BOTH are in the 44-conflict set, so verify our assertions survive the merge
+- [ ] `container_boot` GITHUB_TOKEN / git-cred reconciliation + auditor identity tripwires —
+      existing `tests/hermes_cli/test_container_boot.py` (also a conflict file) +
+      `tests/cron/test_cron_profile.py` (**deleted upstream** — decide before resolving)
 
 ## Phase 4 — The merge
 
@@ -95,7 +112,21 @@ Branch: `chore/upstream-merge-v2026.7.20`
 - [ ] **Tier D** re-apply intent onto upstream's rewritten code (CEO decision — do NOT hunk-resolve):
   - [ ] `hermes_cli/web_server.py` (upstream +16,446/−4,756 over 312 commits)
   - [ ] `hermes_cli/main.py` (+5,872/−5,540)
-  - [ ] `hermes_cli/dashboard_auth/middleware.py` + `public_paths.py` — **security-critical**
+  - [ ] `hermes_cli/dashboard_auth/middleware.py` — **security-critical**
+  - [ ] `hermes_cli/dashboard_auth/public_paths.py` — **RESOLUTION ALREADY DETERMINED (verified
+        2026-07-30): UNION both 7th entries, do NOT take upstream wholesale.**
+        Both sides share 6 read-only paths, then diverge:
+        - upstream adds `"/api/cron/fire"` (Chronos managed-cron webhook)
+        - we add `"/api/delegate"` (BigLobster COO → Hermes, auth'd by `HERMES_CALLBACK_SECRET`)
+        Taking upstream wholesale DROPS `/api/delegate` → the BigLobster orchestrator starts
+        getting 302/401 with no error on our side. Silent breakage.
+        Taking upstream's entry is SAFE — verified `plugins/cron_providers/chronos/verify.py`
+        `verify_nas_fire_token()` fails CLOSED: `if not token or not expected_audience: return None`
+        and `if not jwks_or_key: ... refusing token; return None`. We set no `cron.chronos.*`
+        config, so `expected_audience` is `""` → every request 401s. Inert endpoint, not a
+        public cron trigger.
+        **Add a characterization test asserting the exact allowlist** — this file is the one
+        place where a careless merge silently widens the unauthenticated attack surface.
 - [ ] Decide `tests/cron/test_cron_profile.py` (deleted upstream, modified by us)
 - [ ] **CEO:** review Tier D diffs, dashboard auth especially
 
