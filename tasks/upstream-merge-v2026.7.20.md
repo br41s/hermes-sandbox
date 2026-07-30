@@ -144,50 +144,89 @@ Branch: `chore/upstream-merge-v2026.7.20`
 - [ ] Decide `tests/cron/test_cron_profile.py` (deleted upstream, modified by us)
 - [ ] **CEO:** review Tier D diffs, dashboard auth especially
 
-## ⛔ RESUME HERE — merge built, NOT verified (2026-07-30)
+## ⛔ RESUME HERE — gate down to 63 files / 216 tests failed, NOT fully triaged (2026-07-30)
 
 Branch `chore/upstream-merge-v2026.7.20`, **[PR #144](https://github.com/br41s/hermes-sandbox/pull/144) (DRAFT)**.
-All 44 conflicts resolved; image BUILDS; dashboard lockdown suite (9 tests) passes.
-**The gate run is RED with real bugs from the resolutions.** Do not merge or deploy.
+All 44 conflicts resolved; image BUILDS. The three RESUME-HERE punch-list items below are
+DONE, plus several additional real regressions found and fixed via the same process. Gate
+went from an invalid 419-failing-files run down to **63 files / 216 tests failed** (of
+2,151 files / ~44,039 tests — the corpus itself grew ~50% vs the 28,917 pre-merge baseline,
+so raw totals aren't directly comparable; compare **filenames**, not counts). **Still not
+fully triaged against the baseline-18 list — do not merge or deploy.**
 
-### Do these in order
+### Punch-list items — ALL DONE
+1. ✅ **F821 undefined names fixed.** `mirror_enabled`/`mirror_text` (cron/scheduler.py —
+   threaded through `_send_to_targets` as new params, computed in `_deliver_result`),
+   `normalized_profile`/`_normalize_profile` (cron/jobs.py — the whole function had been
+   dropped, not just the call), `SKILLS_DIR` (tools/skills_sync.py → `_skills_dir()`, a
+   security-critical rmtree scope guard that was raising NameError on every call). The
+   remaining 5 ruff F821 hits (`RateLimitState`, `Path` in whatsapp_common.py,
+   `DashboardOAuthFlow`, `uvicorn`, `PatchResult`) are all pre-existing quoted-string forward
+   references never evaluated at runtime (confirmed no `TYPE_CHECKING` needed) — harmless,
+   left alone.
+2. ✅ **pytest-asyncio restored** — added to `[dependency-groups] dev` in pyproject.toml +
+   `uv lock`. This alone fixed 321 of the original 419 failing files.
+3. ✅ **Rebuilt + re-gated repeatedly** with the tests/ mount, comparing failing filenames
+   each round.
 
-1. **Fix undefined names — the resolutions kept a *use* and dropped its *assignment*.**
-   `py_compile` and the AST duplicate-sweep both PASS on these; only F821 catches them:
-   ```
-   ruff check --select F821 cron/ hermes_cli/ tools/ agent/ gateway/
-   ```
-   Known instances (counts = failing tests):
-   - `normalized_profile` (166) — `cron/jobs.py:1309` uses it in the job dict; **no assignment
-     exists anywhere in the file**. Restore it from our pre-merge `cron/jobs.py`.
-   - `mirror_enabled` (42) — `cron/scheduler.py:1631`. Defined in upstream's H4
-     `mirror_delivery` setup block, which was dropped when our side of that hunk was taken.
-   - `config` (67) — same class, scheduler delivery path.
-   - `SKILLS_DIR` (1) — skills module.
+### Additional regressions found and fixed along the way (same "kept a use, dropped a
+producer" failure mode, surfaced by running the actual test suite rather than just ruff)
+- **`profile` cron parameter dropped wholesale** — not just `_normalize_profile`, but the
+  entire per-job profile plumbing: `create_job`'s parameter, `update_job`'s validation block,
+  and in `tools/cronjob_tools.py` the `cronjob()` param + create/update call sites + JSON
+  schema entry + registry lambda passthrough, and in `hermes_cli/cron.py` the CLI
+  create/edit/list plumbing. Restored all of it from pre-merge; verified against
+  `tests/cron/test_cron_profile.py`.
+- **`tests/tools/test_cronjob_tools.py` had a genuine merge-splice corruption** — two
+  unrelated test classes' bodies got fused: `TestProfileRoutingGapWarning`'s 5 tests + fixture
+  were misplaced into `TestLocalDeliveryNotice`, and the tail of one test got concatenated
+  with the *body* of upstream's separate session-reset fixture (a stray top-level `yield` that
+  made the whole file fail to collect — pytest doesn't allow `yield` in a plain test). Rebuilt
+  both classes to their correct, complete forms.
+- **`cron/scheduler.py` `_deliver_result` was missing upstream's #43014 fix** — `deliver=origin`
+  (or auto-detect) with no resolvable origin/home-channel used to hard-error on every run for
+  CLI-created jobs; upstream fixed this to treat it as local (no error). The merge resolution
+  kept our old unconditional-error version. Restored upstream's version verbatim.
+  (`tests/cron/test_scheduler.py::TestDeliverOriginUnresolvableIsLocal`, now fully green.)
+- **`tick()`'s sequential-vs-parallel job partition only checked `workdir`, not `profile`** —
+  profile jobs were running on the parallel pool again, exactly the race the sequential pool
+  exists to prevent. Restored the `workdir OR profile` partition from pre-merge.
+- **`tests/hermes_cli/test_dashboard_auth_session_cache.py`** — stale test predates a new
+  upstream feature (provider-hint cookie tagged onto `call_next`'s response); the test's
+  `_call_next` stub returned a bare string, which doesn't have `.set_cookie`. Fixed by making
+  the sentinel a `str` subclass with a no-op `set_cookie` (preserves every existing
+  `out == "PASS:..."` assertion unchanged).
+- **`tests/cron/test_cron_profile.py`** — two more stale-test issues unrelated to the profile
+  regression above: (a) `dotenv.load_dotenv` patch target was wrong (`env_loader.py` does
+  `from dotenv import load_dotenv` at module-import time, so patching the `dotenv` package
+  attribute never touches it — classic "patch where it's used" trap; repointed both tests at
+  `env_loader._load_dotenv_with_fallback` and made sure the profile's `.env` file actually
+  exists so the loader's `.exists()` guard fires); (b) `fake_run_job` stub didn't accept the
+  new `defer_agent_teardown` kwarg `tick()` now always passes; (c) the "sequential" assertion
+  hard-coded `== MainThread`, which broke when upstream's dispatch rewrite moved sequential
+  jobs off the calling thread onto a persistent single-worker `cron-seq` pool (still strictly
+  serialized — just not inline). Rewrote to assert on pool identity (`cron-seq` vs
+  `cron-parallel` thread-name prefixes), which is the actual invariant.
 
-2. **Restore `pytest-asyncio` to the image** — it is MISSING from the merged image (baseline
-   has 1.3.0), which alone accounts for **321 of 419** failing files. It is still listed in the
-   `dev` *extra* in `pyproject.toml`, but the Dockerfile's `uv sync` extras don't include `dev`.
-   Add it to `[dependency-groups] dev` (alongside `pytest` / `pytest-timeout`, which ARE picked
-   up), then `uv lock`.
-
-3. **Rebuild + re-run the gate WITH THE MOUNT** (see the Phase 2 note — `tests/` is
-   `.dockerignore`d now), and compare the **pass count**:
-   ```
-   docker run --rm --entrypoint /bin/bash -v "$PWD/tests:/opt/hermes/tests:ro" \
-     hermes-merged:v2026.7.20 -c 'cd /opt/hermes && scripts/run_tests.sh'
-   ```
-   Target: **28,720 ✓ / 55 ✗ across 18 files**. A new failing filename = regression.
-
-### Last measured (invalid — both causes above active)
-419 failing files: 321 asyncio-plugin, 13 pre-existing, **~85 real regressions**, concentrated
-in `tests/cron/` — exactly the heaviest resolution area (`scheduler.py`, `jobs.py`,
-`cronjob_tools.py`).
+### NOT yet triaged — 63 failing files, ~35–40 of which are NOT on the pre-merge baseline-18
+list and haven't been individually checked. Sampled a few (`test_container_boot.py`,
+`test_dashboard_auth_401_reauth.py::test_valid_legacy_session_is_migrated_with_provider_hint`)
+and found at least one more real, unresolved issue: a legacy session (valid AT cookie, no
+provider-hint cookie yet) should get the provider-hint cookie set on response but doesn't —
+not yet root-caused. The rest of the 63 have not been individually classified as
+"pre-existing/environmental" vs "new regression." `docs/relay-connector-contract.md` also
+appears to be missing from the built image (`test_contract_doc_conformance.py`) — separate
+from conflict-resolution quality, likely a `.dockerignore`/COPY scoping issue, not investigated.
 
 ### Lesson for the rest of this merge
-Run **`ruff --select F821` after every resolution**, not `py_compile`. Taking one side's
-consumer while dropping the other side's producer is invisible to syntax checks, and is the
-mirror image of the duplicate-definition trap that `ast.parse` caught three times.
+Ruff F821 only catches undefined *names* — it does NOT catch a dropped *parameter* whose
+call sites still pass it by keyword into `**kwargs`-free functions (the `profile` regression),
+nor a stale test whose assumptions no longer match legitimate upstream behavior changes, nor
+a line-level merge splice that produces syntactically valid but semantically fused code (the
+`test_cronjob_tools.py` corruption — `ast.parse`/`py_compile` both passed on it, and it wasn't
+even F821-flagged; only "does the file collect" caught it). Running the real test suite after
+every batch of resolutions in a Tier C/D file remains the only reliable check — plan time for
+it, don't rely on static analysis alone.
 
 ## Phase 5 — Verify + deploy
 
