@@ -222,13 +222,12 @@ class TestRunJobProfileContext:
         monkeypatch.setattr(sched, "_hermes_home", None)
         monkeypatch.setenv("HERMES_CRON_TIMEOUT", "0")
 
-        import dotenv
+        from hermes_cli import env_loader
 
-        def fake_load_dotenv(path, *_a, **_kw):
+        def fake_load_dotenv_with_fallback(path, *, override):
             observed.setdefault("dotenv_paths", []).append(str(path))
-            return True
 
-        monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
+        monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
 
     def test_run_job_sets_and_restores_profile_home(
         self, isolated_cron_profile_home, monkeypatch
@@ -236,6 +235,7 @@ class TestRunJobProfileContext:
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
+        (profile_home / ".env").write_text("", encoding="utf-8")
         observed: dict = {}
         self._install_agent_stubs(monkeypatch, observed)
 
@@ -263,23 +263,23 @@ class TestRunJobProfileContext:
     def test_profile_dotenv_environment_is_restored(
         self, isolated_cron_profile_home, monkeypatch
     ):
-        import dotenv
+        from hermes_cli import env_loader
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
+        (profile_home / ".env").write_text("", encoding="utf-8")
         observed: dict = {}
         self._install_agent_stubs(monkeypatch, observed)
         monkeypatch.setenv("HERMES_PROFILE_TEST_SHARED", "outer")
         monkeypatch.delenv("HERMES_PROFILE_TEST_ONLY", raising=False)
 
-        def fake_load_dotenv(path, *_a, **_kw):
+        def fake_load_dotenv_with_fallback(path, *, override):
             observed.setdefault("dotenv_paths", []).append(str(path))
             os.environ["HERMES_PROFILE_TEST_SHARED"] = "profile-value"
             os.environ["HERMES_PROFILE_TEST_ONLY"] = "profile-only"
             os.environ["HERMES_CRON_TIMEOUT"] = "123"
-            return True
 
-        monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
+        monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
 
         job = {
             "id": "env-profile",
@@ -426,7 +426,7 @@ class TestTickProfilePartition:
 
         calls: list[tuple[str, str]] = []
 
-        def fake_run_job(job):
+        def fake_run_job(job, **_kw):
             calls.append((job["id"], threading.current_thread().name))
             return True, "output", "response", None
 
@@ -440,6 +440,12 @@ class TestTickProfilePartition:
         assert n == 2
         ids = [job_id for job_id, _thread_name in calls]
         assert ids.index("a") < ids.index("b")
-        main_thread_name = threading.current_thread().name
+        # Profile jobs dispatch to the persistent single-worker "cron-seq" pool
+        # (never inline on the caller's thread — that pool exists precisely so
+        # a slow profile job can't block the ticker) while profile-less jobs go
+        # to the separate "cron-parallel" pool. The invariant under test is
+        # that they land on DIFFERENT pools, not on any specific thread name.
         profile_thread_name = next(thread for job_id, thread in calls if job_id == "a")
-        assert profile_thread_name == main_thread_name
+        parallel_thread_name = next(thread for job_id, thread in calls if job_id == "b")
+        assert profile_thread_name.startswith("cron-seq")
+        assert parallel_thread_name.startswith("cron-parallel")

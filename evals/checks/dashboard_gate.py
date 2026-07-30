@@ -28,6 +28,13 @@ EXPECTED_PUBLIC: frozenset[str] = frozenset({
     "/api/dashboard/themes",  # read-only skin manifests
     "/api/dashboard/plugins",
     "/api/delegate",          # external orchestrator; own auth (callback secret)
+    # Chronos managed-cron fire webhook (upstream v2026.7.20). Bypasses the
+    # cookie gate because it carries its own short-lived NAS-minted JWT
+    # (purpose=cron_fire) which the handler verifies — the JWT, not this
+    # allowlist, is the boundary. Inert on this deployment: no cron.chronos.*
+    # config is set, so verify_nas_fire_token() fails closed on an empty
+    # expected_audience and every request 401s.
+    "/api/cron/fire",
 })
 
 # Substrings that must NEVER appear in any public path. These mark write /
