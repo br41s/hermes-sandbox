@@ -30,7 +30,7 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
         --fal-key <key_id>:<key_secret> \\
-        --agents gap-hunter,seo,onboarding-content,product-articles \\
+        --agents gap-hunter,seo,onboarding-content,product-articles,infographic \\
         --old-site-url https://their-old-site.example.com
 
 `--fal-key` is the client's own FAL key (BYOK) for image generation — blog
@@ -88,6 +88,15 @@ AGENT_SOURCES = {
     "product-articles": (
         "product-articles/bl-site-package-product-articles.prompt",
         "Product Article Agent",
+        "daily",
+    ),
+    # Adds ONE inline-SVG infographic to ONE existing blog post per run, editing
+    # it in place. Needs no --old-site-url: it only ever reads the client's own
+    # blog. Goes quiet ([SILENT]) once every post already carries one, so it's
+    # safe to leave scheduled daily on a small blog.
+    "infographic": (
+        "infographic/bl-site-package-infographic.prompt",
+        "Infographic Engineer",
         "daily",
     ),
 }
@@ -402,7 +411,7 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
     parser.add_argument(
         "--model",
