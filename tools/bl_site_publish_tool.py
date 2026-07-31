@@ -97,6 +97,7 @@ def bl_site_publish(
     image_url: Optional[str] = None,
     image_alt: Optional[str] = None,
     image_base64: Optional[str] = None,
+    post_id: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
 
@@ -193,9 +194,57 @@ def bl_site_publish(
                 ],
             })
 
+        if action == "get_post":
+            # Full row for ONE post, including `content` — which list_posts
+            # deliberately omits to keep its listing small. The infographic
+            # agent needs the real body to find its insertion anchor and to
+            # check whether it already carries the sentinel.
+            if not post_id:
+                return tool_error("get_post requires 'post_id' (the id or slug of the post).")
+            result = _http_json("GET", f"{site_url}/api/blog/posts/{post_id}", token=token)
+            return json.dumps({
+                "success": True,
+                "id": result.get("id"),
+                "title": result.get("title"),
+                "slug": result.get("slug"),
+                "status": result.get("status"),
+                "content": result.get("content"),
+            })
+
+        if action == "update_blog_post":
+            # Edits an EXISTING post in place. `status` is never sent: the API
+            # COALESCEs omitted fields, so a published post STAYS published
+            # (CEO decision — an infographic must never pull a live article
+            # down for re-review) and a draft stays a draft.
+            if not post_id:
+                return tool_error("update_blog_post requires 'post_id'.")
+            payload = {}
+            for key, val in (
+                ("title", title), ("content", content), ("excerpt", excerpt),
+                ("cta_url", cta_url), ("cta_label", cta_label),
+                ("image_url", image_url), ("image_alt", image_alt),
+            ):
+                if val is not None:
+                    payload[key] = val
+            if not payload:
+                return tool_error("update_blog_post needs at least one field to change.")
+            result = _http_json(
+                "PUT",
+                f"{site_url}/api/blog/posts/{post_id}",
+                payload,
+                token=token,
+            )
+            return json.dumps({
+                "success": bool(result.get("success")),
+                "id": result.get("id"),
+                "slug": result.get("slug"),
+                "status": result.get("status"),
+                "fields_changed": sorted(payload.keys()),
+            })
+
         return tool_error(
-            f"Unknown action '{action}'. Use 'create_blog_post', 'update_page_text', "
-            "'list_posts', or 'upload_image'."
+            f"Unknown action '{action}'. Use 'create_blog_post', 'update_blog_post', "
+            "'update_page_text', 'get_post', 'list_posts', or 'upload_image'."
         )
     except RuntimeError as e:
         return tool_error(str(e))
@@ -214,6 +263,11 @@ BL_SITE_PUBLISH_SCHEMA = {
         "check what's already been created before writing new ones, so you don't duplicate "
         "a post the client hasn't published yet (a plain unauthenticated GET only returns "
         "published posts and will miss your own prior drafts). "
+        "Use action='get_post' with 'post_id' to read ONE post in full, including its 'content' "
+        "body (list_posts omits the body). "
+        "Use action='update_blog_post' with 'post_id' to edit an EXISTING post in place, passing "
+        "only the fields you want to change. It never changes publication status: a published post "
+        "stays published and a draft stays a draft. "
         "Use action='upload_image' to store an image on the site and get back its public URL. "
         "Pass the 'image_url' that image_generate returned; this tool fetches and uploads it "
         "(the site re-encodes to optimized WebP). Attach the returned URL as a blog cover "
@@ -226,8 +280,18 @@ BL_SITE_PUBLISH_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create_blog_post", "update_page_text", "list_posts", "upload_image"],
+                "enum": [
+                    "create_blog_post", "update_blog_post", "update_page_text",
+                    "get_post", "list_posts", "upload_image",
+                ],
                 "description": "Which operation to perform.",
+            },
+            "post_id": {
+                "type": "string",
+                "description": (
+                    "Id or slug of an existing post. Required for get_post and update_blog_post. "
+                    "Take it from a prior list_posts call."
+                ),
             },
             "title": {"type": "string", "description": "Blog post title. Required for create_blog_post."},
             "content": {"type": "string", "description": "Blog post body text. Required for create_blog_post."},
@@ -287,5 +351,6 @@ registry.register(
         image_url=args.get("image_url"),
         image_alt=args.get("image_alt"),
         image_base64=args.get("image_base64"),
+        post_id=args.get("post_id"),
     ),
 )
