@@ -3484,7 +3484,19 @@ def _run_job_impl(
     # acquire) and is a no-op for workdir-less jobs (they never mutate the env).
     _prior_terminal_cwd = os.environ.get("TERMINAL_CWD", "_UNSET_")
 
-    _holds_cwd_write = _job_workdir is not None
+    # Profile jobs are writers too, even without a workdir. `load_hermes_dotenv`
+    # below mutates the PROCESS environment with that profile's .env, and
+    # `_job_profile_context` only restores it on exit — so while a profile job
+    # runs, every concurrently running job reads its keys. Taking the writer
+    # lock excludes them for the duration, which is what makes the snapshot /
+    # restore pair sound.
+    #
+    # This used to be true for free: profile jobs ran inline on the tick thread,
+    # so nothing else was running. Upstream's dispatch rewrite moved them onto a
+    # `cron-seq` pool that runs alongside `cron-parallel`, which is the same
+    # change that turned the `_hermes_home` global into a live leak (see
+    # `_job_profile_context`). The env is that bug's twin; this closes it.
+    _holds_cwd_write = _job_workdir is not None or bool(str(job.get("profile") or "").strip())
     if _holds_cwd_write:
         _terminal_cwd_lock.acquire_write()
     else:
