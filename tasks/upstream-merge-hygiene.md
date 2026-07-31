@@ -68,7 +68,21 @@ the anchor the whole check hangs off.
 5. `python scripts/check_fork_collisions.py --ref <tag>`.
 6. `scripts/gate.sh` — compare failing **filenames** against the baseline in
    `upstream-merge-v2026.7.20.md`, never the raw count.
-7. Update `UPSTREAM_VERSION`, then deploy.
+7. Update `UPSTREAM_VERSION` — **derive it, never type it**. The newest tag is
+   the one on screen while you merge, and it is exactly the WRONG value: it is
+   what you are merging *toward*, not what is merged. Recording an unmerged tag
+   silences the drift watcher until upstream's next release.
+
+   ```bash
+   for t in $(git tag -l --sort=-v:refname); do \
+     git merge-base --is-ancestor $t HEAD 2>/dev/null && { echo $t > UPSTREAM_VERSION; break; }; done
+   cat UPSTREAM_VERSION
+   python3 scripts/upstream_drift.py   # must be silent, exit 0
+   ```
+
+   `upstream_drift.py` now refuses to run if the recorded tag is not an ancestor
+   of HEAD, so this is caught rather than silently believed.
+8. Deploy.
 
 ## The failure mode that actually bites
 
@@ -120,11 +134,14 @@ Three things static analysis cannot see, so **the suite is the only real gate**:
 * **Move our features out of upstream files.** `agent/memory_curator.py` is
   1,219 lines of *ours* inside *upstream's* directory. Wired through the
   plugin/hook system in our own tree, it stops being conflict surface forever.
-* **Prefer config to code.** Our OpenRouter image provider diverges by 659
-  lines, but upstream's honours `OPENROUTER_IMAGE_MODEL` — the whole divergence
-  could become one env var. (Deferred by the CEO 2026-07-30; revisit once the
-  merge is stable. If taken, that env var MUST be set on Zeabur first or
-  BigLobster images silently switch model.)
+* **Prefer config to code — DONE, and it worked.** Our OpenRouter image provider
+  was a 659-line divergence that conflicted every merge. Upstream's honours
+  `OPENROUTER_IMAGE_MODEL`, so on 2026-07-31 we adopted theirs and the whole
+  divergence became one env var. It also gained 37 tests, model-chain fallback,
+  aspect ratios and reference images. Use this as the template for the rest.
+  NOTE: leaving that env var unset silently selects upstream's default
+  (`openai/gpt-5.4-image-2`), the most expensive image model on OpenRouter —
+  config-driven means the config must actually be set.
 * **Accept the irreducible core.** `cron/scheduler.py`, `approval.py`,
   `container_boot.py` encode genuinely custom behaviour. They will keep
   conflicting — that is fine, and a much smaller surface.

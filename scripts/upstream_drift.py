@@ -137,6 +137,28 @@ def _full_report(threshold: int) -> int:
         return 2
     newest, current = tags[0], _recorded_version()
 
+    # UPSTREAM_VERSION must name a tag actually merged into HEAD. Recording a
+    # tag we have NOT merged silences this watchdog until upstream's next
+    # release — the same class of failure as the string-sort bug, and just as
+    # invisible, because a broken watchdog and a happy one both say nothing.
+    # It is an easy slip: the newest tag is the one on screen while you are
+    # doing the merge, and it is exactly the wrong value to write.
+    if current:
+        merged = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", current, "HEAD"],
+            capture_output=True, cwd=_REPO_ROOT,
+        ).returncode == 0
+        if not merged:
+            print(f"❌ UPSTREAM_VERSION says {current}, but that tag is NOT merged "
+                  f"into HEAD.")
+            print("    The drift check is meaningless until this is corrected — it "
+                  "would stay silent\n    through real drift. Set it to the newest "
+                  "tag that IS an ancestor of HEAD:")
+            print("      for t in $(git tag -l --sort=-v:refname); do "
+                  "git merge-base --is-ancestor $t HEAD 2>/dev/null && "
+                  "{ echo $t; break; }; done")
+            return 1
+
     if current == newest:
         return 0  # silent: nothing to do
 
