@@ -201,6 +201,20 @@ if not auditor_token and (home / ".env").exists():
                    (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
     auditor_token = _m.group(1).strip() if _m else ""
 
+def _is_rented_tenant(env_path):
+    """True for a bl-site-package rental — a profile that pays its own way.
+
+    BL_SITE_URL is the marker rather than a slug prefix like "bl-": the slug is
+    chosen by whoever runs provision_bl_client.py and a client named without
+    that prefix would silently fall back to being billed to us. BL_SITE_URL is
+    written by the provisioner for every rental and by nothing else.
+    """
+    if not env_path.exists():
+        return False
+    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8"),
+                          flags=re.MULTILINE))
+
+
 # Per-profile .env files — keeps tenant gateways on current keys after a
 # rotation. SOUL.md is the "real profile" marker (same as the s6 reconciler).
 profiles_root = home / "profiles"
@@ -208,11 +222,34 @@ if profiles_root.is_dir():
     for prof in sorted(p for p in profiles_root.iterdir() if p.is_dir()):
         if not (prof / "SOUL.md").exists():
             continue
+        _prof_env = prof / ".env"
         # Never let the auditor profile's .env receive the shared token via
         # the generic path — §1b below is its ONLY source for these two keys.
-        _exclude = ("GITHUB_TOKEN", "GH_TOKEN") if prof.name == "auditor" else ()
-        _sync_env_file(prof / ".env", exclude=_exclude)
-        print(f"[03-biglobster] Synced env vars into {prof / '.env'}")
+        if prof.name == "auditor":
+            _exclude = ("GITHUB_TOKEN", "GH_TOKEN")
+            _why = ""
+        elif _is_rented_tenant(_prof_env):
+            # BYOK: a rented bl-site-package client brings their OWN OpenRouter
+            # key and their model usage bills to them. Injecting ours here
+            # silently defeated that — every boot overwrote the client key
+            # written by provision_bl_client.py, so tenant agent runs billed to
+            # BigLobster (found on bl-shoroban 2026-07-31). This is exactly the
+            # "per-tenant billing with a DISTINCT OPENROUTER_API_KEY" case the
+            # note above anticipated.
+            #
+            # Trade-off, accepted deliberately: rental profiles no longer get
+            # the rotation repair that §1's injection exists to provide (the
+            # 2026-06-05 grow-shop incident). That repair is the wrong thing
+            # for a key we do not own and must not rotate. A tenant whose own
+            # key dies now fails visibly on their own jobs instead of silently
+            # spending our credit.
+            _exclude = ("OPENROUTER_API_KEY",)
+            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY)"
+        else:
+            _exclude = ()
+            _why = ""
+        _sync_env_file(_prof_env, exclude=_exclude)
+        print(f"[03-biglobster] Synced env vars into {_prof_env}{_why}")
 
 _auditor_env = profiles_root / "auditor" / ".env"
 if (profiles_root / "auditor" / "SOUL.md").exists():
