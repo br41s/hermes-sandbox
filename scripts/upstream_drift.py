@@ -41,7 +41,20 @@ from pathlib import Path
 
 UPSTREAM_REPO = "NousResearch/hermes-agent"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_TAG_RE = re.compile(r"^v\d{4}\.\d+\.\d+$")
+_TAG_RE = re.compile(r"^v(\d{4})\.(\d+)\.(\d+)$")
+
+
+def _version_key(tag: str) -> tuple[int, int, int]:
+    """Sort key for a vYYYY.M.D tag.
+
+    MUST be numeric. Sorting these as strings puts v2026.7.7 above v2026.7.30
+    because '7' > '3' character-wise — which is exactly what this script got
+    wrong on its first run in the container, reporting a tag three weeks stale
+    as the newest. ``git tag --sort=-v:refname`` (full mode) already does this
+    correctly; only the GitHub API path needed it.
+    """
+    m = _TAG_RE.match(tag)
+    return tuple(int(g) for g in m.groups()) if m else (0, 0, 0)
 
 
 def _run(*args: str, check: bool = True) -> str:
@@ -81,7 +94,10 @@ def _api_latest_tag() -> tuple[str, str] | None:
         print(f"upstream-drift: could not reach the GitHub API: {exc}", file=sys.stderr)
         return None
 
-    names = sorted((t["name"] for t in tags if _TAG_RE.match(t.get("name", ""))), reverse=True)
+    names = sorted(
+        (t["name"] for t in tags if _TAG_RE.match(t.get("name", ""))),
+        key=_version_key, reverse=True,
+    )
     if not names:
         return None
     newest = names[0]

@@ -822,6 +822,32 @@ chmod +x "$HERMES_HOME/scripts/incident_sweep.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/incident_sweep.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/incident_sweep.sh"
 
+# --- 5d: seed the upstream-drift cron script (overwrite every boot to stay current) ---
+# Weekly watchdog: warns when our fork falls behind upstream NousResearch's
+# newest release tag. Merge cost is superlinear in ELAPSED TIME (10 days of
+# drift measured ~23 conflicted files; 2 months measured 44), so the point is to
+# nag before a merge turns into a rewrite-reapplication exercise. Prints nothing
+# under the threshold, so delivery stays silent until it matters.
+#
+# In here it runs in REMOTE mode: the image excludes .git, so it asks the GitHub
+# API for the newest tag and compares against the UPSTREAM_VERSION file. Run it
+# on a clone for the real conflict count. Runbook: tasks/upstream-merge-hygiene.md
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "0 9 * * 1" --no-agent --script upstream_drift.sh \
+#     --deliver "telegram:<chat_id>:1904" --name upstream-drift
+cat > "$HERMES_HOME/scripts/upstream_drift.sh" <<'DRIFT'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+# Exit 1 means "drift over threshold", which is a REPORT, not a failure — the
+# cron runner would otherwise mark the job errored every week it has something
+# to say. Its stdout is the message; empty stdout stays silent.
+.venv/bin/python scripts/upstream_drift.py || true
+DRIFT
+chmod +x "$HERMES_HOME/scripts/upstream_drift.sh"
+chown hermes:hermes "$HERMES_HOME/scripts/upstream_drift.sh" 2>/dev/null || true
+echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
+
 # --- 6: per-profile repo sync (clone on first boot, pull on subsequent boots) ---
 # Any profile with a repos.txt gets its listed GitHub repos cloned into
 # <profile>/workspace/<repo-name>/. Format: one "owner/repo" per line;
