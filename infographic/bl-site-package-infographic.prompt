@@ -138,6 +138,13 @@ dilo. Mejor ninguna que una decorativa.
    (o justo después de esa sección, si encaja mejor). **Nunca** al principio del
    todo, ni dentro de `## Preguntas frecuentes`, ni después de la FAQ, ni al
    final del artículo.
+
+   Lo de la FAQ no es una preferencia de estilo: el sitio lee ese bloque para
+   generar el marcado FAQPage de Google, y todo lo que va bajo un `### pregunta`
+   se toma como parte de la RESPUESTA. Si metes la figura ahí dentro, el SVG
+   entra como texto en la respuesta que ve Google — y no falla de forma visible,
+   simplemente publica una respuesta con markup basura. Comprobado. Coloca la
+   figura siempre en una sección normal, por encima de `## Preguntas frecuentes`.
 3. Reléelo: el resto del texto debe estar intacto, carácter por carácter.
 4. `bl_site_publish` con `action: "update_blog_post"`, el `post_id` y el
    `content` completo ya modificado. **No envíes `title`, `excerpt`, `cta_*` ni
