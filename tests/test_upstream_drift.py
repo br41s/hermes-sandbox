@@ -86,3 +86,26 @@ class TestSilenceContract:
         assert drift._remote_report(30) == 1
         out = capsys.readouterr().out
         assert "v2026.7.20" in out and "v2026.7.30" in out and "45 days ago" in out
+
+
+class TestRecordedVersionMustBeMerged:
+    """UPSTREAM_VERSION must name a tag that is an ancestor of HEAD.
+
+    Recording a tag we have not merged makes the watchdog silent until
+    upstream's next release. It is the easiest slip in the whole runbook: the
+    newest tag is on screen throughout the merge, and it is precisely the wrong
+    value — it is what you are merging TOWARD, not what is merged. Nearly
+    written for real on 2026-07-31, which is why the check exists.
+    """
+
+    def test_unmerged_recorded_tag_is_reported_not_silent(self, drift, monkeypatch, capsys):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2099.1.1")
+        monkeypatch.setattr(drift, "_run", lambda *a, **k: "v2099.1.1\nv2026.7.20")
+
+        class _NotAncestor:
+            returncode = 1
+
+        monkeypatch.setattr(drift.subprocess, "run", lambda *a, **k: _NotAncestor())
+        assert drift._full_report(30) == 1
+        out = capsys.readouterr().out
+        assert "NOT merged" in out and "v2099.1.1" in out
