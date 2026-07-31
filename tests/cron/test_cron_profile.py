@@ -449,3 +449,84 @@ class TestTickProfilePartition:
         parallel_thread_name = next(thread for job_id, thread in calls if job_id == "b")
         assert profile_thread_name.startswith("cron-seq")
         assert parallel_thread_name.startswith("cron-parallel")
+
+
+class TestProfileHomeDoesNotLeakAcrossThreads:
+    """A profile job must not change HERMES_HOME for jobs on other threads.
+
+    Regression for the 2026-07-31 production incident: ``_job_profile_context``
+    also assigned the module-global ``cron.scheduler._hermes_home``, which
+    ``_get_hermes_home()`` prefers over ``get_hermes_home()``. The global is
+    process-wide, so while a profile job ran, EVERY concurrent job resolved its
+    home — and therefore its ``scripts/`` dir — under that profile.
+
+    It stayed latent while sequential (profile) jobs ran inline on the tick
+    thread. Upstream's dispatch rewrite moved them onto a ``cron-seq`` pool that
+    runs alongside ``cron-parallel``, making the race real: the hourly
+    incident-watcher (no profile) started failing with
+    ``Script not found: /opt/data/profiles/biglobster/scripts/incident_sweep.sh``
+    — the leaked profile tracking whichever profile job overlapped it.
+
+    The fix relies on ``set_hermes_home_override`` being a ContextVar, which is
+    per-thread and takes precedence in ``get_hermes_home()``.
+    """
+
+    def test_concurrent_profileless_job_keeps_the_default_home(
+        self, isolated_cron_profile_home, monkeypatch
+    ):
+        import threading
+
+        from cron import scheduler
+
+        root, profile_home = isolated_cron_profile_home
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
+        )
+
+        inside_profile = threading.Event()
+        release_profile = threading.Event()
+        observed: dict[str, object] = {}
+
+        def _profile_job():
+            # Hold the profile context open so the other thread is guaranteed
+            # to observe the process state while it is active.
+            with scheduler._job_profile_context("job-profile", "support"):
+                inside_profile.set()
+                release_profile.wait(timeout=5)
+
+        def _profileless_job():
+            inside_profile.wait(timeout=5)
+            with scheduler._job_profile_context("job-plain", None):
+                observed["home"] = scheduler._get_hermes_home()
+            release_profile.set()
+
+        threads = [
+            threading.Thread(target=_profile_job),
+            threading.Thread(target=_profileless_job),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert observed["home"] == root, (
+            "a profile-less job resolved its Hermes home under the concurrently "
+            f"running profile: {observed['home']}"
+        )
+        # The concrete symptom: script lookups land in the wrong profile.
+        assert observed["home"] / "scripts" == root / "scripts"
+
+    def test_profile_job_still_scopes_its_own_home(
+        self, isolated_cron_profile_home, monkeypatch
+    ):
+        """Guard the fix didn't over-reach — scoping must still work in-thread."""
+        from cron import scheduler
+
+        root, profile_home = isolated_cron_profile_home
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
+        )
+
+        with scheduler._job_profile_context("job-profile", "support"):
+            assert scheduler._get_hermes_home() == profile_home.resolve()
+        assert scheduler._get_hermes_home() == root

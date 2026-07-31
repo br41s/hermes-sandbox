@@ -640,8 +640,20 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
         yield None
         return
 
-    global _hermes_home
-    prior_override = _hermes_home
+    # NOTE: deliberately does NOT assign the module-global ``_hermes_home``.
+    # That global is a process-wide test monkeypatch hook, so setting it here
+    # leaked this job's profile into every OTHER job running concurrently —
+    # `_get_hermes_home()` prefers it over `get_hermes_home()`. Upstream's
+    # dispatch rewrite made that latent bug live: sequential (profile) jobs
+    # moved off the tick thread onto the `cron-seq` pool, so they now run
+    # genuinely concurrently with the `cron-parallel` pool instead of blocking
+    # it. A profile-less job then resolved its scripts/ dir under whichever
+    # profile happened to be mid-run (observed 2026-07-31: incident-watcher
+    # failing hourly with "Script not found:
+    # /opt/data/profiles/{biglobster,auditor}/scripts/incident_sweep.sh").
+    # `set_hermes_home_override` below is a ContextVar — per-thread, and first
+    # in `get_hermes_home()`'s resolution order — so it already scopes this
+    # correctly without the global.
     env_snapshot = os.environ.copy()
 
     from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
@@ -664,7 +676,6 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
     override_token = None
     try:
         override_token = set_hermes_home_override(profile_home)
-        _hermes_home = profile_home
         logger.info(
             "Job '%s': using Hermes profile '%s' (%s)",
             job_id,
@@ -673,7 +684,6 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
         )
         yield normalized_profile
     finally:
-        _hermes_home = prior_override
         if override_token is not None:
             reset_hermes_home_override(override_token)
         # Delta-based restore: remove added keys, restore changed keys.
