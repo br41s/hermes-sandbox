@@ -270,6 +270,12 @@ from hermes_cli.memory_oauth import router as _memory_oauth_router  # noqa: E402
 
 app.include_router(_memory_oauth_router)
 
+# Payment-confirmed rental provisioning (BigLobster Stripe side → Hermes).
+# Carries its own HMAC auth; see hermes_cli/bl_rental_webhook.py.
+from hermes_cli.bl_rental_webhook import router as _bl_rental_router  # noqa: E402
+
+app.include_router(_bl_rental_router)
+
 # ---------------------------------------------------------------------------
 # Shared SessionDB for read-only dashboard queries
 # ---------------------------------------------------------------------------

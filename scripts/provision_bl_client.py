@@ -12,14 +12,21 @@ job per agent they ordered, each pointed at the *shared* prompt template for
 that agent (gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client
 prompt file is ever created.
 
-This does NOT wire up an automatic trigger from bl-site-package's customer
-panel — that panel has no payment gate yet (see AGENT_RENTAL_SETUP.md), so
-an unauthenticated auto-trigger would let anyone spin up profiles and cron
-jobs for free. Until that gate exists, this script is meant to be run
-explicitly (by the CEO or by Hermes acting on the CEO's explicit request),
-the same trust boundary the manual runbook has today — it just removes the
-chance of an LLM skipping a runbook step (e.g. forgetting to validate the
-key before the job goes live).
+Two callers, one code path:
+
+* the CEO (or Hermes acting on the CEO's explicit request) running it by hand
+  for a rental ordered through the manual flow, and
+* ``hermes_cli/bl_rental_webhook.py`` — the authenticated, payment-confirmed
+  webhook BigLobster's Stripe side calls, which provisions with no human in
+  the per-order loop. See AGENT_RENTAL_SETUP.md for that contract.
+
+Both go through ``provision()`` so an LLM can never skip a runbook step (e.g.
+forgetting to validate the key before the job goes live).
+
+The ``site-setup`` agent is the *Site Launch* checkout product. Ordering it
+requires ``--questionnaire`` — the buyer's structured form answers — and
+applies bl-site-package's fixed five-page template deterministically
+(``scripts/bl_site_setup.py``) before scheduling the one-shot copywriting job.
 
 Usage (must run with the repo's venv Python — the bare `python3` on PATH
 won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
@@ -73,6 +80,7 @@ from hermes_cli.profiles import (  # noqa: E402
     validate_profile_name,
 )
 from cron.jobs import create_job  # noqa: E402
+from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa: E402
 
 # agent key -> (prompt_source relative to repo root, display name, schedule kind)
 # schedule kind "daily" = recurring via pick_stagger_schedule(); "once" = single
@@ -99,10 +107,25 @@ AGENT_SOURCES = {
         "Infographic Engineer",
         "daily",
     ),
+    # The "Site Launch" checkout product. One-shot, like onboarding-content,
+    # but it is the *whole* create-your-website job: the deterministic half
+    # (setup wizard, identity/legal fields, logo) runs in-process here via
+    # scripts/bl_site_setup.py BEFORE the job is scheduled, and this prompt
+    # only writes copy into the same fixed five-page field list. Needs no
+    # --old-site-url: a buyer with no previous site is the normal case.
+    "site-setup": (
+        "site-setup/bl-site-package-site-setup.prompt",
+        "Site Launch",
+        "once",
+    ),
 }
 
 # Agents that need --old-site-url (the client's existing site to migrate/read from).
 AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
+
+# site-setup and onboarding-content both do the initial page fill. Ordering
+# both would have two one-shot jobs racing to write the same fields.
+MUTUALLY_EXCLUSIVE_AGENTS = ("site-setup", "onboarding-content")
 
 # Delay before the one-shot onboarding-content job fires — long enough that
 # the profile/.env writes below are certainly flushed to disk first.
@@ -135,6 +158,16 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research.
 """
 
 
+class KeyValidationError(ValueError):
+    """The client's own BYOK credentials are bad — not an infrastructure fault.
+
+    Kept distinct from the generic ValueError so the payment-confirmed webhook
+    can answer "the key the buyer gave us is rejected, ask them for a new one"
+    (400, don't retry) instead of "something broke, retry" (502). It stays a
+    ValueError so the CLI's existing handler keeps catching it.
+    """
+
+
 def _validate_openrouter_key(key: str) -> None:
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/auth/key",
@@ -143,9 +176,9 @@ def _validate_openrouter_key(key: str) -> None:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status != 200:
-                raise ValueError(f"OpenRouter key check returned HTTP {resp.status}")
+                raise KeyValidationError(f"OpenRouter key check returned HTTP {resp.status}")
     except urllib.error.HTTPError as exc:
-        raise ValueError(f"OpenRouter key rejected: HTTP {exc.code} — {exc.read().decode(errors='replace')}")
+        raise KeyValidationError(f"OpenRouter key rejected: HTTP {exc.code} — {exc.read().decode(errors='replace')}")
     except urllib.error.URLError as exc:
         raise ValueError(f"Could not reach OpenRouter to validate the key: {exc.reason}")
 
@@ -163,7 +196,7 @@ def _validate_fal_key(key: str) -> None:
     provisioning after the format check already passed.
     """
     if ":" not in key or len(key.strip()) < 16:
-        raise ValueError("FAL key doesn't look valid (expected '<key_id>:<key_secret>').")
+        raise KeyValidationError("FAL key doesn't look valid (expected '<key_id>:<key_secret>').")
     body = json.dumps({"allowed_apps": ["fal-ai/flux-2/klein/9b"], "token_expiration": 300}).encode()
     req = urllib.request.Request(
         "https://rest.alpha.fal.ai/tokens/",
@@ -175,7 +208,7 @@ def _validate_fal_key(key: str) -> None:
         urllib.request.urlopen(req, timeout=15).close()
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
-            raise ValueError(f"FAL key rejected: HTTP {exc.code} — check the key is correct.")
+            raise KeyValidationError(f"FAL key rejected: HTTP {exc.code} — check the key is correct.")
         # Other status (422/404/5xx): got past auth or endpoint drifted — accept.
     except urllib.error.URLError as exc:
         # Unreachable — don't block provisioning; the format check already ran.
@@ -229,9 +262,9 @@ def _validate_model_call(key: str, model: str) -> None:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             if resp.status != 200:
-                raise ValueError(f"Model check for '{model}' returned HTTP {resp.status}")
+                raise KeyValidationError(f"Model check for '{model}' returned HTTP {resp.status}")
     except urllib.error.HTTPError as exc:
-        raise ValueError(
+        raise KeyValidationError(
             f"Model '{model}' is not callable on this key: HTTP {exc.code} — "
             f"{exc.read().decode(errors='replace')}"
         )
@@ -326,6 +359,7 @@ def provision(
     model: str = DEFAULT_MODEL,
     fal_key: str | None = None,
     image_model: str | None = None,
+    questionnaire: dict | None = None,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -348,6 +382,23 @@ def provision(
             "existing site to read/migrate content from) — omit the agent(s) if "
             "the client has no existing site to draw from."
         )
+    if set(MUTUALLY_EXCLUSIVE_AGENTS) <= set(agents):
+        raise ValueError(
+            f"{list(MUTUALLY_EXCLUSIVE_AGENTS)} both do the initial page fill and "
+            "would race each other. Order site-setup (the Site Launch product) or "
+            "onboarding-content, not both."
+        )
+    if "site-setup" in agents and not questionnaire:
+        raise ValueError(
+            "site-setup needs --questionnaire (the buyer's structured form "
+            "answers) — it is what the template is applied from."
+        )
+
+    # Validate the questionnaire against the fixed schema BEFORE anything is
+    # created or any key is spent: a drifted BigLobster form must fail here,
+    # not halfway through a paid order.
+    if questionnaire is not None:
+        questionnaire = validate_answers(questionnaire)
 
     # Validate the key AND that the chosen model is callable BEFORE creating
     # the profile/jobs — a broken model must never reach the point where a
@@ -357,6 +408,21 @@ def provision(
         _validate_model_call(openrouter_key, model)
         if fal_key:
             _validate_fal_key(fal_key)
+
+    # Apply the fixed site template from the questionnaire BEFORE creating the
+    # profile: it's the step most likely to fail on a fresh instance
+    # (unreachable, already claimed under another password, bad logo), and
+    # failing here leaves no half-built profile behind. It is idempotent, so a
+    # retried provision after a later failure re-converges rather than 409ing.
+    site_setup_report = None
+    if "site-setup" in agents:
+        site_setup_report = apply_site_template(
+            site_url,
+            panel_password,
+            questionnaire,
+            openrouter_key,
+            image_model=image_model,
+        )
 
     # Resolve the FAL image model to pin per-profile: explicit flag wins,
     # otherwise snapshot the client's panel choice (image_model in the site
@@ -400,6 +466,7 @@ def provision(
         "image_model": resolved_image_model or "(FAL default)",
         "fal_key": "set" if fal_key else "not set (image generation disabled)",
         "env_path": str(env_path),
+        "site_setup": site_setup_report,
         "jobs": created_jobs,
     }
 
@@ -431,6 +498,13 @@ def main() -> int:
         help="FAL image model id to pin for this client (e.g. fal-ai/flux-2-pro). Defaults to "
         "the client's panel choice (GET /api/site/config image_model), else the FAL default.",
     )
+    parser.add_argument(
+        "--questionnaire",
+        default=None,
+        help="Path to the buyer's structured form answers (JSON). Required when "
+        "--agents includes site-setup — it is what the fixed site template is "
+        "applied from. Schema: scripts/bl_site_setup.py.",
+    )
     parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter/FAL key + model validation calls")
     parser.add_argument(
         "--old-site-url",
@@ -440,6 +514,15 @@ def main() -> int:
     args = parser.parse_args()
 
     agents = [a.strip() for a in args.agents.split(",") if a.strip()]
+
+    questionnaire = None
+    if args.questionnaire:
+        try:
+            with open(args.questionnaire, encoding="utf-8") as fh:
+                questionnaire = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Provisioning failed: could not read --questionnaire: {exc}", file=sys.stderr)
+            return 1
 
     try:
         result = provision(
@@ -455,6 +538,7 @@ def main() -> int:
             model=args.model,
             fal_key=args.fal_key,
             image_model=args.image_model,
+            questionnaire=questionnaire,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)

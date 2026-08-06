@@ -5,16 +5,21 @@ This is reference material for Hermes' own agent to follow when the CEO asks
 "set up agent rental for Francisco Nieto, gap-hunter + seo, site
 https://blcliente.zeabur.app, panel password X, their OpenRouter key Y".
 
-This is a **semi-automated** process: the CEO is always the trigger (no
-biglobster.top wizard submission ever provisions anything by itself — there is
-no payment gate on that wizard yet). Hermes runs `scripts/provision_bl_client.py`
-once told; nothing calls it on its own.
+There are now **two triggers**, both landing on the same
+`scripts/provision_bl_client.py` code path:
 
-Prerequisite for each order: the CEO has already confirmed the client actually
-signed up (per `bl-site-package`'s own `ONBOARDING-INTERNO.md`/`FORMULARIO-CLIENTE.md`
-flow) and has their site URL, panel password, and their own model API key
-in hand. If the client ordered `onboarding-content` (below), the CEO also
-needs their existing/old site URL — `FORMULARIO-CLIENTE.md` asks for this.
+1. **CEO-triggered (semi-automated).** For rentals sold through the manual
+   flow. The CEO has already confirmed the client signed up (per
+   `bl-site-package`'s own `ONBOARDING-INTERNO.md`/`FORMULARIO-CLIENTE.md`) and
+   has their site URL, panel password and their own model API key in hand. If
+   the client ordered `onboarding-content` or `product-articles`, the CEO also
+   needs their existing/old site URL.
+2. **Payment-confirmed webhook (fully automatic).** For the *Site Launch*
+   checkout product. BigLobster's Stripe side POSTs a confirmed order to
+   `POST /api/bl/rental/provision` on this engine and provisioning runs with
+   no human in the per-order loop. Contract in
+   [Payment-confirmed provisioning webhook](#payment-confirmed-provisioning-webhook)
+   below.
 
 ## What each rented agent needs, and what it doesn't
 
@@ -30,6 +35,7 @@ repo to check out, so unlike biglobster's own agents these jobs need no
 | SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
 | Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (draft, with CTA) | daily |
+| Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
 
 Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
 recurring daily job like the other two. It runs once, scans the client's old
@@ -65,6 +71,80 @@ prompt file above — there is no per-client copy, ever. Customer-specific
 behavior (which site, which credentials) lives entirely in that customer's
 Hermes profile, never in the prompt.
 
+## Site Launch — the bounded product
+
+`site-setup` is the agent behind BigLobster's *"crea o moderniza tu web"*
+one-shot checkout SKU. It exists because a fixed-price checkout item may not be
+custom-scoped project work — a merchant-of-record can only be seller-of-record
+for a **product delivered without a human negotiating scope**. The old
+"Proyecto puntual" SKU was pulled for exactly that reason. So the boundary has
+to be real, not a relabel of manual work. Where it is drawn:
+
+**What the buyer chooses:** the values in a fixed questionnaire. Nothing else.
+The schema is `scripts/bl_site_setup.py` — `company_name`, `sector` (one of
+seven enum options, never free text), `notify_email`, optional `logo_url`,
+`whatsapp_number`, the `legal_*` and `biz_*` identity fields, and an optional
+`old_site_url` to draw source material from. An unknown key is a hard failure,
+not a silent drop: an extra field means BigLobster's form and this schema
+drifted, and the buyer paid for data that would otherwise be discarded.
+
+**What the buyer does not choose:** everything else. bl-site-package has a
+**fixed five-page structure** (inicio, quiénes somos, servicios, contacto,
+blog), a fixed theme, fixed typography, and — checked in the source — no brand
+colour tokens at all. There is no page menu to pick from, because there is no
+mechanism for a sixth page. Two buyers get byte-identical structure; only the
+values differ. That is what makes it a template product rather than a brief.
+
+**Where the human would have been, and what replaced them:**
+
+| Step | Who does it | How it stays judgment-free |
+|---|---|---|
+| Deploy a blank instance | nobody, per order | claimed from a pre-deployed pool — see below |
+| Complete `/setup` | `scripts/bl_site_setup.py` | form field → config key, deterministic code |
+| Identity / legal / business data | `scripts/bl_site_setup.py` | copied **verbatim**; no model in the path |
+| Logo | `scripts/bl_site_setup.py` | fetched from the buyer's URL, signature-checked |
+| Page copy + one launch post | the `site-setup` cron job | may write **only** the fixed `page_*` field list |
+
+The split matters: the site *build* is 100% deterministic code, and the model
+is confined to prose inside a field list it cannot extend. The prompt states
+that explicitly — if source material implies a new page, a custom section or a
+design change, the agent must refuse and log it as "fuera del alcance del
+producto" in its report, so an out-of-scope request surfaces as a line in the
+CEO's report instead of quietly becoming bespoke work.
+
+`site-setup` and `onboarding-content` are **mutually exclusive** — both do the
+initial page fill and ordering both would have two one-shot jobs racing to
+write the same fields. `site-setup` needs no `--old-site-url`: a buyer with no
+previous site is the normal case, and the prompt covers it by writing from the
+buyer's real data plus sector context, never invented facts.
+
+### The blank-instance pool
+
+A paid checkout cannot wait for someone to click through Zeabur, so blank
+bl-site-package instances are deployed **ahead of demand** and claimed per
+order. The inventory lives in `~/.hermes/bl_site_instances.json`:
+
+```json
+{"instances": [
+  {"site_url": "https://bl-blank-01.zeabur.app", "status": "free"},
+  {"site_url": "https://bl-blank-02.zeabur.app", "status": "free"}
+]}
+```
+
+The webhook claims the first `free` entry, marks it `claimed` with the order
+id, and releases it again if provisioning fails (so a transient failure cannot
+drain the pool one retry at a time). An empty pool bounces the order with
+`503 no_instance_available` and pings the CEO — the buyer has paid, so this
+must never be silent. The CEO also gets a low-stock warning at ≤2 free.
+
+This is the honest shape of the remaining human work: keeping the pool
+stocked. It is **not per-order and not per-customer** — it's restocking
+inventory, the same category as a SaaS adding capacity — which is why it
+doesn't reintroduce the "human negotiates scope per sale" problem. Custom
+domain setup (the buyer pointing their own DNS at the instance) also stays
+manual and remains **outside** the SKU: the product delivers a working site on
+its own URL.
+
 ## Onboarding a client
 
 Run `scripts/provision_bl_client.py` from the repo root, using the repo's
@@ -84,7 +164,12 @@ this pulls in via `cron/jobs.py`):
 ```
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
-`onboarding-content`, `product-articles`. `--old-site-url` is required if
+`onboarding-content`, `product-articles`, `infographic`, `site-setup`.
+`site-setup` (the Site Launch product) additionally requires
+`--questionnaire path/to/answers.json` — the buyer's structured form answers,
+schema in `scripts/bl_site_setup.py` — and applies the fixed site template
+deterministically before any job is scheduled. It cannot be combined with
+`onboarding-content`. `--old-site-url` is required if
 `onboarding-content` and/or `product-articles` is ordered — omit both if the
 client has no existing site. `--model` sets the profile's base/orchestrator
 model (defaults to `deepseek/deepseek-v4-flash`, the cheap orchestrator, billed
@@ -98,11 +183,12 @@ default. What the script does, in order:
 
 1. Validates the slug and checks a profile with that name doesn't already exist.
 2. Calls the live OpenRouter API to confirm the client's key works **and** that the chosen `--model` is callable on it — both *before* the profile/jobs exist, so a broken key or bad model id fails here instead of every cron run failing silently. (The one-shot `onboarding-content` job auto-removes after its single run, so a first run that 400s can't be re-run by id — validating up front is the only safe order.) If `--fal-key` is given, it's validated against FAL here too (a free token-exchange call, no image generated).
+2b. If `site-setup` was ordered: validates the questionnaire against the fixed schema, then applies the site template to the instance (`scripts/bl_site_setup.py`) — completes `/setup`, writes the identity/legal/business fields verbatim, uploads the logo. This runs *before* the profile is created so a failure here (unreachable instance, instance already claimed under another password) leaves no half-built profile behind; it is idempotent, so a retry converges.
 3. `hermes profile create <slug> --no-skills` — an isolated `~/.hermes/profiles/<slug>/` (empty, no clone — this client needs none of BigLobster's own skills/config).
 4. Writes that profile's `SOUL.md`, matching the terse style of `docker/profiles/grow-shop/SOUL.md` — scope, working boundaries, nothing more.
 5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
 6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `FAL_KEY` if `--fal-key` was given and `OLD_SITE_URL` if `--old-site-url` was.
-7. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` gets a one-shot run 5 minutes out instead.
+7. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead.
 
 Confirm back to the CEO: profile slug, job IDs created (the script prints them as JSON), and which agents are now active for this client.
 
@@ -130,11 +216,144 @@ cronjob(action="remove", job_id=...)   # for each of the client's jobs
 hermes profile delete <slug>
 ```
 
-## No auto-trigger from the panel (yet)
+## Payment-confirmed provisioning webhook
 
-Nothing calls `provision_bl_client.py` automatically. The biglobster.top
-wizard has no payment gate, so wiring an unauthenticated trigger to it would
-let anyone provision a profile and cron jobs for free. Once a payment gate
-exists, that's the point to wire an actual trigger (webhook on "order
-confirmed" → `provision_bl_client.py`) instead of the CEO running the command
-by hand.
+`hermes_cli/bl_rental_webhook.py`, mounted on the Hermes dashboard server
+(`blhermes.zeabur.app`). This is the trigger this document used to defer until
+a payment gate existed.
+
+**BigLobster owns the Stripe integration.** Stripe never calls this endpoint;
+BigLobster's own Node side does, after it has confirmed the order. So the auth
+here is a shared secret, not a Stripe signature.
+
+### Endpoint
+
+```
+POST https://blhermes.zeabur.app/api/bl/rental/provision
+Content-Type: application/json
+X-BL-Timestamp: <unix seconds>
+X-BL-Signature: sha256=<hex>
+```
+
+`X-BL-Signature` is `HMAC-SHA256(BL_RENTAL_WEBHOOK_SECRET, "<X-BL-Timestamp>." + <raw request body>)`,
+hex-encoded. Sign the **raw bytes you send** — re-serialising the JSON on
+either side changes the digest. Requests more than **300 s** away from the
+signed timestamp are rejected, so the signature cannot be replayed later.
+
+The secret is a credential: it lives in the Hermes `.env` as
+`BL_RENTAL_WEBHOOK_SECRET`, and in BigLobster's own env. **With no secret set
+the endpoint refuses every request** rather than running open — it can never
+fail into an unauthenticated provisioning API.
+
+Node reference for the caller:
+
+```js
+const raw = JSON.stringify(order);
+const ts = Math.floor(Date.now() / 1000).toString();
+const sig = crypto.createHmac("sha256", process.env.BL_RENTAL_WEBHOOK_SECRET)
+                  .update(ts + "." + raw).digest("hex");
+await fetch(url, { method: "POST", body: raw, headers: {
+  "Content-Type": "application/json",
+  "X-BL-Timestamp": ts,
+  "X-BL-Signature": `sha256=${sig}`,
+}});
+```
+
+### Request body
+
+```json
+{
+  "order_id": "cs_live_a1b2c3",
+  "slug": "bl-cliente-garcia",
+  "client_name": "Fontanería García",
+  "openrouter_key": "sk-or-v1-...",
+  "agents": ["site-setup", "gap-hunter"],
+  "questionnaire": {
+    "company_name": "Fontanería García",
+    "sector": "Instalaciones",
+    "notify_email": "hola@garcia.example",
+    "logo_url": "https://.../logo.png",
+    "legal_name": "García e Hijos SL",
+    "legal_id": "B12345678",
+    "biz_city": "Vigo"
+  },
+  "site_url": null,
+  "panel_password": null,
+  "fal_key": "<key_id>:<key_secret>",
+  "old_site_url": null,
+  "image_model": null
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `order_id` | yes | The idempotency key. Use the Stripe checkout session id. |
+| `slug` | yes | Hermes profile name. Must be unused. |
+| `client_name` | yes | Display name only. |
+| `openrouter_key` | yes | The buyer's own key (BYOK). Validated live before anything is created. |
+| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`. `site-setup` and `onboarding-content` are mutually exclusive. |
+| `questionnaire` | with `site-setup` | Fixed schema — see `scripts/bl_site_setup.py`. Unknown keys are rejected. |
+| `site_url` | no | Omit to claim a blank instance from the pool. Pass one only when BigLobster already knows the instance. |
+| `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |
+| `fal_key` | no | The buyer's own FAL key for image generation. Omit → text-only content. |
+| `old_site_url` | required for `onboarding-content` / `product-articles` | The buyer's existing site. |
+| `image_model` | no | Pins the FAL image model. |
+
+### Responses
+
+`200` — provisioned:
+
+```json
+{
+  "status": "provisioned",
+  "order_id": "cs_live_a1b2c3",
+  "profile": "bl-cliente-garcia",
+  "site_url": "https://bl-blank-01.zeabur.app",
+  "panel_url": "https://bl-blank-01.zeabur.app/panel",
+  "panel_password": "generated-or-echoed",
+  "jobs": [{"job_id": "...", "name": "...", "schedule": "...", "source": "..."}],
+  "site_setup": {"setup_completed": true, "fields_written": ["..."], "logo": "/uploads/logo.png"}
+}
+```
+
+A **retried webhook for an already-provisioned `order_id` returns the exact
+same body** with `"idempotent_replay": true` — same profile, same panel
+password (a fresh one would lock out a buyer who was already emailed the
+first). Nothing is created twice.
+
+Failures are `{"status": "failed", "code": ..., "detail": ..., "order_id": ...}`.
+The status code tells the caller whether to retry:
+
+| Code | HTTP | Meaning | Retry? |
+|---|---|---|---|
+| `unauthorized` | 401 | Bad/missing/stale signature | no — fix the signing |
+| `not_configured` | 503 | `BL_RENTAL_WEBHOOK_SECRET` unset on the engine | after the CEO sets it |
+| `invalid_order` | 400 | Malformed payload, unknown agent, missing `old_site_url` | no |
+| `invalid_questionnaire` | 400 | Schema violation — unknown field, free-text sector, missing required | no |
+| `invalid_api_key` | 400 | The buyer's OpenRouter/FAL key is rejected, or the model isn't callable on it | after the buyer supplies a new key |
+| `slug_collision` | 409 | A profile with that slug already exists (different order) | no — pick another slug |
+| `site_already_claimed` | 409 | The instance is already configured under a different password | no |
+| `no_instance_available` | 503 | The blank-instance pool is empty | yes, once restocked |
+| `site_unreachable` / `site_setup_failed` | 502 | The instance didn't answer, or a write failed | yes |
+| `internal` | 500 | Unexpected | yes, then check the CEO's Telegram |
+| *(in flight)* | 409 | `{"status": "in_progress"}` — a concurrent duplicate of the same order | yes, later |
+
+**Every terminal outcome pings the CEO on Telegram** (success, failure, and a
+low-stock warning at ≤2 free instances). A paid order that fails must never be
+silent, and the HTTP response alone doesn't reach a human.
+
+Order state is durable at `~/.hermes/bl_rental_orders.json` (mode `0600` — it
+holds panel passwords). A previously *failed* order is allowed to retry from
+scratch; a *provisioned* one never re-runs.
+
+### Wiring checklist for the BigLobster side
+
+1. Generate a secret, set `BL_RENTAL_WEBHOOK_SECRET` in **both** the Hermes
+   Zeabur env and BigLobster's.
+2. Deploy blank bl-site-package instances and register them in
+   `~/.hermes/bl_site_instances.json`.
+3. On `checkout.session.completed` for the Site Launch SKU, POST the body
+   above with the buyer's questionnaire answers.
+4. On `200`, email the buyer `panel_url` + `panel_password`.
+5. On a `4xx`, do **not** retry the same body — the code says what to fix.
+6. On a `5xx`, retry with the same `order_id`; idempotency makes that safe.
