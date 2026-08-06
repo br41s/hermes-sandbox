@@ -19071,8 +19071,63 @@ class _DelegateRequest(BaseModel):
     profile: Optional[str] = None  # target Hermes profile (customer); None = default profile
 
 
+# Shared secret with the BigLobster COO. ``/api/delegate`` sits on the
+# dashboard-auth public allowlist (``dashboard_auth/public_paths.py``) so
+# BigLobster's server-to-server call is not bounced by the OAuth gate — this
+# header check, not the allowlist, is the actual security boundary. It is
+# mandatory: with no secret configured the route refuses every request
+# rather than letting anyone on the public host run arbitrary prompts.
+_DELEGATE_SECRET_ENV_VAR = "HERMES_CALLBACK_SECRET"
+_DELEGATE_SECRET_HEADER = "x-hermes-secret"
+
+
+def _verify_delegate_secret(request: Request) -> Optional[Tuple[int, str]]:
+    """Return ``(status_code, detail)`` when the request should be rejected, else ``None``."""
+    secret = os.environ.get(_DELEGATE_SECRET_ENV_VAR, "").strip()
+    if not secret:
+        _log.error(
+            "%s is not set — refusing /api/delegate requests", _DELEGATE_SECRET_ENV_VAR
+        )
+        return 503, "Delegate endpoint is not configured"
+    provided = request.headers.get(_DELEGATE_SECRET_HEADER, "")
+    if not provided or not hmac.compare_digest(provided.encode(), secret.encode()):
+        return 401, "Unauthorized"
+    return None
+
+
+def _validate_delegate_webhook_url(url: str) -> Optional[str]:
+    """Return a rejection reason when ``url`` is unsafe to POST results to, else ``None``.
+
+    The secret check above proves the *caller* is trusted; it says nothing about
+    where the caller wants the agent's output (and the callback secret itself)
+    delivered. A full domain allowlist isn't practical — different customer
+    profiles legitimately callback to different domains — so this only blocks
+    the shapes that would point the callback at the engine's own network:
+    non-https schemes and loopback/private/link-local/internal hosts.
+    """
+    import ipaddress
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https":
+        return "webhook_url must use https"
+    host = parsed.hostname
+    if not host:
+        return "webhook_url is missing a host"
+    if host == "localhost" or host.endswith(".internal") or host.endswith(".local"):
+        return "webhook_url may not target an internal host"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and (
+        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast
+    ):
+        return "webhook_url may not target a loopback/private/link-local address"
+    return None
+
+
 @app.post("/api/delegate", status_code=202)
-async def post_delegate(body: _DelegateRequest):
+async def post_delegate(request: Request, body: _DelegateRequest):
     """Accept a task from an external orchestrator and execute it asynchronously.
 
     Returns 202 immediately. When the agent finishes, POSTs the result to
@@ -19081,7 +19136,23 @@ async def post_delegate(body: _DelegateRequest):
     When ``profile`` is set, the task runs in that profile's ``HERMES_HOME``
     (own workspace, memory, sessions). When omitted, it runs in-process in the
     default profile (unchanged behavior).
+
+    Requires the ``x-hermes-secret`` header to match ``HERMES_CALLBACK_SECRET`` —
+    see ``_verify_delegate_secret`` for why that, not the dashboard-auth
+    allowlist, is the real gate on this endpoint.
     """
+    rejection = _verify_delegate_secret(request)
+    if rejection is not None:
+        status_code, detail = rejection
+        _log.warning(
+            "Rejected /api/delegate request for task_id=%s: %s", body.task_id, detail
+        )
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    webhook_reason = _validate_delegate_webhook_url(body.webhook_url)
+    if webhook_reason:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook_url: {webhook_reason}")
+
     asyncio.create_task(
         _delegate_background(body.task_id, body.prompt, body.webhook_url, body.profile)
     )
