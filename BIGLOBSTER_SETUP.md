@@ -318,8 +318,13 @@ curl https://blhermes.zeabur.app/health
 curl https://blhermes.zeabur.app/api/status
 
 # Manual delegate (from BigLobster or any service in same Zeabur project)
+# Requires x-hermes-secret to match the HERMES_CALLBACK_SECRET Zeabur env var —
+# /api/delegate is on the public dashboard-auth allowlist (reachable from
+# blhermes.zeabur.app, not just the internal network), so this header is the
+# ONLY thing gating it. Missing/wrong header -> 401; secret unset -> 503.
 curl -X POST http://hermes-sandbox.zeabur.internal:9119/api/delegate \
   -H "Content-Type: application/json" \
+  -H "x-hermes-secret: $HERMES_CALLBACK_SECRET" \
   -d '{
     "task_id": "test-001",
     "prompt": "List files in /opt/data/workspace/biglobster and return a summary.",
