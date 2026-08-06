@@ -35,6 +35,15 @@ EXPECTED_PUBLIC: frozenset[str] = frozenset({
     # config is set, so verify_nas_fire_token() fails closed on an empty
     # expected_audience and every request 401s.
     "/api/cron/fire",
+    # BigLobster payment-confirmed rental provisioning (fork-specific; see
+    # AGENT_RENTAL_SETUP.md). This one DOES mutate — it creates a Hermes
+    # profile and cron jobs — so it is on this list only because it fails
+    # closed: hermes_cli/bl_rental_webhook.py refuses every request unless
+    # BL_RENTAL_WEBHOOK_SECRET is set, and then requires an HMAC-SHA256
+    # signature over "<timestamp>.<raw body>" inside a 300 s replay window.
+    # The signature, not this allowlist, is the boundary. If that handler ever
+    # grows an unauthenticated path, remove this entry with it.
+    "/api/bl/rental/provision",
 })
 
 # Substrings that must NEVER appear in any public path. These mark write /

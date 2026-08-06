@@ -57,4 +57,11 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # the NAS relay's bearer-only callback reaches the verifier instead of a
     # 401 no_cookie. The JWT — not this allowlist — is the security boundary.
     "/api/cron/fire",
+    # Payment-confirmed rental provisioning (BigLobster Stripe side → Hermes).
+    # NOT cookie-gated: it carries an HMAC-SHA256 signature over
+    # "<timestamp>.<raw body>" keyed on BL_RENTAL_WEBHOOK_SECRET, which the
+    # handler verifies and which — not this allowlist — is the security
+    # boundary. With no secret configured the route refuses every request, so
+    # listing it here can never leave provisioning open by default.
+    "/api/bl/rental/provision",
 })
