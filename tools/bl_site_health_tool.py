@@ -8,9 +8,14 @@ every measurement below is code, and the model that consumes the result only
 decides which of a fixed list of mechanical fixes to apply and how to word the
 monthly report.
 
-It is deliberately read-only. Everything it finds is written back through
-``bl_site_publish`` (page fields, post bodies) by the agent, so there is exactly
-one write path to a client's site and it is already audited.
+It is read-only with respect to the client's *content*: everything it finds is
+written back through ``bl_site_publish`` (page fields, post bodies) by the
+agent, so there is exactly one write path to a client's site and it is already
+audited. The single exception is the monthly contact-form probe, which posts
+one synthetic message to the public ``POST /api/contact`` endpoint — the same
+call any visitor makes. It touches no config, no page and no post, it is gated
+to once per calendar month, and the attempt is stamped in history before the
+send so a retried run can never submit twice.
 
 Credentials resolve from the *profile* the cron job runs under, via
 ``bl_site_publish_tool``'s own helpers — imported rather than copied so a
@@ -25,6 +30,7 @@ required for it.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import socket
@@ -83,6 +89,66 @@ HISTORY_KEEP = 120  # ~4 months of daily runs; enough for a 30-day rollup.
 LINK_CHECK_CAP = 120  # Bound the sweep so one link-happy blog can't run forever.
 REQUEST_TIMEOUT = 20
 
+# --- Social / contact reachability -----------------------------------------
+# The client's social and contact endpoints are config fields, not free text,
+# so "is this a well-formed WhatsApp number / e-mail / profile URL" is a format
+# question with one answer. bl-site-package exposes exactly these two social
+# fields (PUBLIC_CONFIG_KEYS in src/db/database.js); they feed the
+# LocalBusiness `sameAs` array, so a dead one degrades structured data
+# silently — which is why this is its own finding category and not a line item
+# inside the generic outbound-link sweep.
+SOCIAL_CONFIG_FIELDS = ("biz_facebook", "biz_instagram")
+SOCIAL_CHECK_CAP = 10
+# Only these three statuses count as "this profile is gone". Facebook,
+# Instagram and LinkedIn routinely answer 403/429/999 to a datacenter IP that
+# is not a browser; treating those as dead would hand the client a monthly
+# false positive on a profile that works fine for humans.
+DEAD_SOCIAL_STATUSES = (0, 404, 410)
+# E.164: 8 digits is the shortest plausible national number, 15 the hard
+# maximum. Anything outside cannot dial and cannot be a valid `wa.me` target.
+PHONE_MIN_DIGITS = 8
+PHONE_MAX_DIGITS = 15
+
+# --- Duplicate / thin content ----------------------------------------------
+# String similarity, not meaning. Two titles at >=0.90 character similarity are
+# duplicates by any reading; below that the tool says nothing rather than
+# guessing. Reported only — rewriting a client's copy is not this product.
+DUPLICATE_RATIO = 0.90
+THIN_META_MIN_CHARS = 50
+
+# --- Structured data --------------------------------------------------------
+# Required properties per schema.org type, from what bl-site-package's own
+# builders emit (src/content/structured-data.js). A block missing one of these
+# is invalid to Google's Rich Results test — a mechanical fact, not taste.
+JSONLD_REQUIRED = {
+    "BlogPosting": ("headline", "author", "datePublished"),
+    "Article": ("headline", "author", "datePublished"),
+    "FAQPage": ("mainEntity",),
+    "Product": ("name",),
+    "WebPage": ("name",),
+}
+# LocalBusiness has ~80 schema.org subtypes and the site sanitizes @type into
+# any of them, so unknown types fall back to the one property they all require.
+JSONLD_DEFAULT_REQUIRED = ("name",)
+# Types whose `url` must be the page it is embedded in. LocalBusiness is
+# excluded on purpose: it carries the site root URL on every page by design.
+JSONLD_SELF_URL_TYPES = ("BlogPosting", "Article")
+
+# --- Old-site redirect sweep -----------------------------------------------
+# Only runs when the profile carries OLD_SITE_URL (same optional flag the
+# onboarding-content and product-articles agents use). Bounded: the old URL
+# list comes from the old sitemap, or failing that one level of homepage links.
+OLD_SITE_PATH_CAP = 40
+# Paths worth sweeping. Assets are excluded — a missing old .jpg is not a lost
+# page and would drown the finding that matters.
+SWEEPABLE_SUFFIXES = ("", ".html", ".htm", ".php", ".asp", ".aspx", ".shtml")
+
+# --- Monthly contact-form probe --------------------------------------------
+# Sends one real message through the client's public form, so the volume is
+# capped at one per calendar month and stamped in history *before* the send.
+FORM_TEST_NAME = "BigLobster · prueba de mantenimiento"
+FORM_TEST_EMAIL = "no-reply@biglobster.top"
+
 _HREF_RE = re.compile(r"""<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 _IMG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 _IMG_SRC_RE = re.compile(r"""\bsrc\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
@@ -93,6 +159,19 @@ _META_DESC_RE = re.compile(
 )
 _META_CONTENT_RE = re.compile(r"""\bcontent\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
 _LOC_RE = re.compile(r"<loc>", re.IGNORECASE)
+_LOC_VALUE_RE = re.compile(r"<loc>\s*([^<]+?)\s*</loc>", re.IGNORECASE)
+_JSONLD_RE = re.compile(
+    r"""<script\b[^>]*\btype\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script>""",
+    re.IGNORECASE | re.DOTALL,
+)
+# Deliberately permissive: this catches "no @", "no dot in the domain" and
+# whitespace — the failure modes a config field actually has — without trying
+# to out-parse RFC 5322.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+_WA_LINK_RE = re.compile(
+    r"""^https?://(?:api\.whatsapp\.com/send\?[^"']*?phone=|wa\.me/)(\+?[\d\s\-().]+)""",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -185,12 +264,29 @@ def _images_in(html: str) -> list[dict]:
     return out
 
 
-def _has_meta_description(html: str) -> bool:
+def _meta_description(html: str) -> str:
     tag = _META_DESC_RE.search(html)
     if not tag:
-        return False
+        return ""
     content = _META_CONTENT_RE.search(tag.group(0))
-    return bool(content and content.group(1).strip())
+    return content.group(1).strip() if content else ""
+
+
+def _has_meta_description(html: str) -> bool:
+    return bool(_meta_description(html))
+
+
+def _title_text(html: str) -> str:
+    match = _TITLE_RE.search(html)
+    return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
+
+
+def _digits(value: Optional[str]) -> str:
+    return re.sub(r"\D", "", value or "")
+
+
+def _normalized(text: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
 def _normalize(href: str, site_url: str) -> Optional[str]:
@@ -208,6 +304,360 @@ def _normalize(href: str, site_url: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Social and contact endpoints
+# ---------------------------------------------------------------------------
+
+def _bad_phone(raw: str) -> Optional[str]:
+    """Reason this string cannot be dialled, or None. Pure format arithmetic."""
+    digits = _digits(raw)
+    if not digits:
+        return "no digits"
+    if len(digits) < PHONE_MIN_DIGITS:
+        return f"only {len(digits)} digits"
+    if len(digits) > PHONE_MAX_DIGITS:
+        return f"{len(digits)} digits, E.164 allows at most {PHONE_MAX_DIGITS}"
+    return None
+
+
+def _check_social_contact(config: dict, site_url: str, page_html: dict[str, str]) -> list[dict]:
+    """Format-check every contact endpoint, and fetch the social profiles.
+
+    Split out from ``broken_links`` on purpose: a dead Instagram profile and a
+    dead link inside a blog post are the same HTTP fact but a different problem
+    for the client, and "2 dead social links" has to be readable as such in the
+    monthly report. `mailto:`/`tel:`/WhatsApp hrefs are skipped by
+    ``_normalize`` — nothing checked them until now.
+    """
+    issues: list[dict] = []
+
+    wa = (config.get("whatsapp_number") or "").strip()
+    if wa:
+        reason = _bad_phone(wa)
+        if reason:
+            issues.append({
+                "kind": "whatsapp", "source": "config:whatsapp_number",
+                "value": wa, "issue": "invalid_format", "detail": reason,
+            })
+
+    phone = (config.get("biz_phone") or "").strip()
+    if phone:
+        reason = _bad_phone(phone)
+        if reason:
+            issues.append({
+                "kind": "phone", "source": "config:biz_phone",
+                "value": phone, "issue": "invalid_format", "detail": reason,
+            })
+
+    email = (config.get("legal_email") or "").strip()
+    if email and not _EMAIL_RE.match(email):
+        issues.append({
+            "kind": "email", "source": "config:legal_email",
+            "value": email, "issue": "invalid_format",
+            "detail": "not a syntactically valid address",
+        })
+
+    # Endpoints as they are actually rendered, which can drift from config if a
+    # page body carries a hand-written mailto:/tel:/wa.me link.
+    seen: set[tuple[str, str]] = set()
+    for path, html in page_html.items():
+        for href in _links_in(html):
+            low = href.lower()
+            if low.startswith("mailto:"):
+                addr = href[7:].split("?", 1)[0].strip()
+                if addr and not _EMAIL_RE.match(addr) and ("email", addr) not in seen:
+                    seen.add(("email", addr))
+                    issues.append({
+                        "kind": "email", "source": path, "value": addr,
+                        "issue": "invalid_format",
+                        "detail": "not a syntactically valid address",
+                    })
+            elif low.startswith("tel:"):
+                num = href[4:].strip()
+                reason = _bad_phone(num)
+                if reason and ("phone", num) not in seen:
+                    seen.add(("phone", num))
+                    issues.append({
+                        "kind": "phone", "source": path, "value": num,
+                        "issue": "invalid_format", "detail": reason,
+                    })
+            else:
+                match = _WA_LINK_RE.match(href)
+                if match:
+                    num = match.group(1).strip()
+                    reason = _bad_phone(num)
+                    if reason and ("whatsapp", num) not in seen:
+                        seen.add(("whatsapp", num))
+                        issues.append({
+                            "kind": "whatsapp", "source": path, "value": num,
+                            "issue": "invalid_format", "detail": reason,
+                        })
+
+    checked = 0
+    for field in SOCIAL_CONFIG_FIELDS:
+        value = (config.get(field) or "").strip()
+        if not value:
+            continue
+        if not value.startswith(("http://", "https://")):
+            issues.append({
+                "kind": "social", "source": f"config:{field}", "value": value,
+                "issue": "invalid_url",
+                "detail": "must be a full https:// profile URL; it is emitted "
+                          "into the LocalBusiness sameAs array as-is",
+            })
+            continue
+        if checked >= SOCIAL_CHECK_CAP:
+            continue
+        checked += 1
+        res = _fetch(value, method="HEAD")
+        if res["status"] in (405, 501, 0):
+            res = _fetch(value)
+        if res["status"] in DEAD_SOCIAL_STATUSES:
+            issues.append({
+                "kind": "social", "source": f"config:{field}", "value": value,
+                "issue": "dead_profile", "status": res["status"],
+                "detail": res.get("error") or "profile did not resolve",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Duplicate / thin content
+# ---------------------------------------------------------------------------
+
+def _duplicate_pairs(values: dict[str, str]) -> list[dict]:
+    """Every pair of pages whose text is >= DUPLICATE_RATIO similar.
+
+    ``difflib`` on normalized strings — a character-level ratio against a fixed
+    threshold, so the same two pages are flagged on every run or on none. It is
+    not a semantic judgment and is never auto-fixed.
+    """
+    items = [(path, text) for path, text in sorted(values.items()) if text]
+    out: list[dict] = []
+    for i, (path_a, text_a) in enumerate(items):
+        for path_b, text_b in items[i + 1:]:
+            ratio = difflib.SequenceMatcher(None, text_a, text_b).ratio()
+            if ratio >= DUPLICATE_RATIO:
+                out.append({
+                    "pages": [path_a, path_b],
+                    "ratio": round(ratio, 2),
+                    "value": text_a[:140],
+                })
+    return out
+
+
+def _check_duplicate_content(titles: dict[str, str], descriptions: dict[str, str]) -> dict:
+    thin = [
+        {"page": path, "chars": len(text)}
+        for path, text in sorted(descriptions.items())
+        if len(text) < THIN_META_MIN_CHARS
+    ]
+    return {
+        "duplicate_titles": _duplicate_pairs({p: _normalized(t) for p, t in titles.items()}),
+        "duplicate_descriptions": _duplicate_pairs(
+            {p: _normalized(d) for p, d in descriptions.items()}
+        ),
+        "missing_titles": sorted(p for p, t in titles.items() if not t.strip()),
+        "thin_descriptions": thin,
+        "similarity_threshold": DUPLICATE_RATIO,
+        "thin_below_chars": THIN_META_MIN_CHARS,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Structured data (JSON-LD)
+# ---------------------------------------------------------------------------
+
+def _validate_jsonld_block(block: dict, page: str, index: int, page_url: str) -> list[dict]:
+    def issue(kind: str, **extra) -> dict:
+        return {"page": page, "block": index, "issue": kind, **extra}
+
+    out: list[dict] = []
+    context = block.get("@context")
+    if not (isinstance(context, str) and "schema.org" in context):
+        out.append(issue("missing_context", value=str(context)[:60]))
+
+    # schema.org allows @type to be a list ("this is both a Store and a
+    # Plumber"). bl-site-package never emits one, but reporting a legal
+    # construct as missing would be a lie, so take the first named type.
+    ld_type = block.get("@type")
+    if isinstance(ld_type, list):
+        ld_type = next((t for t in ld_type if isinstance(t, str) and t.strip()), None)
+    if not isinstance(ld_type, str) or not ld_type.strip():
+        out.append(issue("missing_type"))
+        return out
+    ld_type = ld_type.strip()
+
+    required = JSONLD_REQUIRED.get(ld_type, JSONLD_DEFAULT_REQUIRED)
+    for field in required:
+        value = block.get(field)
+        if value is None or (isinstance(value, (str, list, dict)) and not value):
+            out.append(issue("missing_required_field", type=ld_type, field=field))
+
+    # Type shape. Only the properties whose *type* is unambiguous in
+    # schema.org and which bl-site-package actually emits.
+    if "address" in block and not isinstance(block["address"], dict):
+        out.append(issue("wrong_type", type=ld_type, field="address", expected="object"))
+    if "geo" in block:
+        geo = block["geo"]
+        if not isinstance(geo, dict):
+            out.append(issue("wrong_type", type=ld_type, field="geo", expected="object"))
+        else:
+            for coord in ("latitude", "longitude"):
+                if coord in geo and not isinstance(geo[coord], (int, float)):
+                    out.append(issue(
+                        "wrong_type", type=ld_type, field=f"geo.{coord}", expected="number",
+                    ))
+    for field in ("openingHours", "sameAs"):
+        if field in block and not isinstance(block[field], list):
+            out.append(issue("wrong_type", type=ld_type, field=field, expected="array"))
+
+    if ld_type == "FAQPage":
+        entities = block.get("mainEntity")
+        if entities is not None and not isinstance(entities, list):
+            out.append(issue("wrong_type", type=ld_type, field="mainEntity", expected="array"))
+        elif isinstance(entities, list):
+            for n, item in enumerate(entities):
+                if not isinstance(item, dict) or item.get("@type") != "Question":
+                    out.append(issue("faq_item_not_question", type=ld_type, item=n))
+                    continue
+                if not str(item.get("name") or "").strip():
+                    out.append(issue("faq_question_empty", type=ld_type, item=n))
+                answer = item.get("acceptedAnswer")
+                if not isinstance(answer, dict) or not str(answer.get("text") or "").strip():
+                    out.append(issue("faq_answer_empty", type=ld_type, item=n))
+
+    # The drift that has bitten BigLobster's own site: structured data pointing
+    # somewhere other than the page carrying it, which is what a blank or stale
+    # `site_url` config key produces.
+    if ld_type in JSONLD_SELF_URL_TYPES:
+        raw_url = block.get("url")
+        declared = raw_url.strip() if isinstance(raw_url, str) else ""
+        if declared and declared.rstrip("/") != page_url.rstrip("/"):
+            out.append(issue(
+                "url_mismatch", type=ld_type, field="url",
+                declared=declared, expected=page_url,
+            ))
+    return out
+
+
+def _check_structured_data(page_html: dict[str, str], site_url: str) -> dict:
+    issues: list[dict] = []
+    without: list[str] = []
+    blocks_checked = 0
+
+    for path, html in sorted(page_html.items()):
+        raw_blocks = _JSONLD_RE.findall(html)
+        if not raw_blocks:
+            without.append(path)
+            continue
+        page_url = site_url + ("" if path == "/" else path)
+        for index, raw in enumerate(raw_blocks):
+            blocks_checked += 1
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                issues.append({
+                    "page": path, "block": index, "issue": "invalid_json",
+                    "detail": str(exc)[:120],
+                })
+                continue
+            # A @graph or a bare array is legal JSON-LD; validate each member.
+            if isinstance(parsed, dict) and isinstance(parsed.get("@graph"), list):
+                members = parsed["@graph"]
+            elif isinstance(parsed, list):
+                members = parsed
+            else:
+                members = [parsed]
+            for member in members:
+                if not isinstance(member, dict):
+                    issues.append({
+                        "page": path, "block": index, "issue": "not_an_object",
+                    })
+                    continue
+                issues.extend(_validate_jsonld_block(member, path, index, page_url))
+
+    return {
+        "blocks_checked": blocks_checked,
+        "pages_without_jsonld": without,
+        "issues": issues,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Old-site redirect sweep
+# ---------------------------------------------------------------------------
+
+def _sweepable(path: str) -> bool:
+    tail = path.rsplit("/", 1)[-1]
+    if "." not in tail:
+        return True
+    return ("." + tail.rsplit(".", 1)[-1]).lower() in SWEEPABLE_SUFFIXES
+
+
+def _old_site_paths(old_site_url: str) -> tuple[list[str], str]:
+    """Paths the old site publishes, and where the list came from.
+
+    Sitemap first because it is the site's own statement of what it publishes;
+    homepage links are the fallback when there is no sitemap. Both are exact
+    reads of what the old host serves — no crawling heuristics, no depth
+    beyond one level, and hard-capped.
+    """
+    sitemap = _fetch(old_site_url + "/sitemap.xml")
+    paths: list[str] = []
+    source = "sitemap"
+    if sitemap["status"] == 200 and _LOC_RE.search(sitemap["body"]):
+        for loc in _LOC_VALUE_RE.findall(sitemap["body"]):
+            parsed = urllib.parse.urlparse(loc)
+            if parsed.path:
+                paths.append(parsed.path)
+    else:
+        source = "homepage_links"
+        home = _fetch(old_site_url + "/")
+        if home["status"] == 200:
+            for href in _links_in(home["body"]):
+                target = _normalize(href, old_site_url)
+                if target and target.startswith(old_site_url):
+                    parsed = urllib.parse.urlparse(target)
+                    if parsed.path:
+                        paths.append(parsed.path)
+
+    unique = sorted({p for p in paths if p not in ("", "/") and _sweepable(p)})
+    return unique[:OLD_SITE_PATH_CAP], source
+
+
+def _old_site_sweep(old_site_url: str, site_url: str) -> dict:
+    """Which of the old site's paths still resolve on the new one.
+
+    urllib follows redirects, so a 200 means "the visitor gets a page" whether
+    that came from a redirect or from the path existing outright — which is the
+    only question a client cares about. Reported, never fixed: a redirect is
+    web-server configuration, not something the panel API can write.
+    """
+    paths, source = _old_site_paths(old_site_url)
+    dead_ends: list[dict] = []
+    resolved = 0
+    for path in paths:
+        res = _fetch(site_url + path)
+        if res["status"] == 200:
+            resolved += 1
+        else:
+            dead_ends.append({
+                "old_url": old_site_url + path,
+                "new_url": site_url + path,
+                "status": res["status"],
+            })
+    return {
+        "old_site_url": old_site_url,
+        "path_source": source,
+        "paths_checked": len(paths),
+        "path_cap": OLD_SITE_PATH_CAP,
+        "list_capped": len(paths) >= OLD_SITE_PATH_CAP,
+        "resolved": resolved,
+        "dead_ends": dead_ends,
+    }
+
+
+# ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
 
@@ -222,17 +672,19 @@ def _load_history() -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"runs": [], "reports": []}
+        return {"runs": [], "reports": [], "form_checks": []}
     if not isinstance(data, dict):
-        return {"runs": [], "reports": []}
+        return {"runs": [], "reports": [], "form_checks": []}
     data.setdefault("runs", [])
     data.setdefault("reports", [])
+    data.setdefault("form_checks", [])
     return data
 
 
 def _save_history(history: dict) -> None:
     history["runs"] = history["runs"][-HISTORY_KEEP:]
     history["reports"] = history["reports"][-24:]
+    history["form_checks"] = history.setdefault("form_checks", [])[-24:]
     path = _history_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, indent=2), encoding="utf-8")
@@ -262,6 +714,98 @@ def _report_due(history: dict, period: str) -> bool:
     return not any(r.get("period") == period for r in history["reports"])
 
 
+def _form_check_due(history: dict, period: str) -> bool:
+    """True when the synthetic contact-form probe has not run this month.
+
+    Same date-comparison gate as the monthly report, and for a stronger reason:
+    the probe sends a real e-mail through the client's SMTP. It must be
+    impossible for a retried cron run to send twice.
+    """
+    return not any(f.get("period") == period for f in history.get("form_checks", []))
+
+
+def _run_form_check(site_url: str, token: str, history: dict, period: str) -> dict:
+    """Post one synthetic message through the public contact form and confirm
+    it landed in the panel inbox.
+
+    What this proves, exactly: ``POST /api/contact`` is reachable, accepts a
+    well-formed submission and persists it — i.e. a real lead is not being
+    dropped on the floor by a 500, a broken rate limiter or a regressed route.
+
+    What it cannot prove: that the notification e-mail arrived. ``src/api/
+    contact.js`` catches every SMTP error into ``console.error`` and answers
+    ``{success: true}`` regardless, so from outside the instance a working
+    mailer and a silently broken one are indistinguishable. Closing that gap
+    needs the ``GET /api/site/status`` endpoint documented as a prerequisite in
+    AGENT_RENTAL_SETUP.md; until it exists this result says so rather than
+    implying a delivery it did not observe.
+
+    The attempt is stamped into history *before* the POST: a crash between
+    sending and verifying then costs one month's result, never a second e-mail
+    into the client's inbox.
+    """
+    marker = f"BL-MAINT-{period}-{int(time.time())}"
+    entry = {
+        "period": period,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "marker": marker,
+    }
+    history.setdefault("form_checks", []).append(entry)
+    _save_history(history)
+
+    result = {
+        "ran": True,
+        "period": period,
+        "marker": marker,
+        # Never true from out here. See the docstring.
+        "email_delivery_verified": False,
+        "email_delivery_blocked_on": "GET /api/site/status (smtp_configured / "
+                                     "notify_email_configured) — prerequisite, "
+                                     "not built in bl-site-package yet",
+    }
+    try:
+        _http_json("POST", f"{site_url}/api/contact", {
+            "name": FORM_TEST_NAME,
+            "email": FORM_TEST_EMAIL,
+            "message": (
+                "Mensaje de prueba automático del servicio de mantenimiento web "
+                "de BigLobster. Comprueba una vez al mes que el formulario de "
+                f"contacto sigue funcionando. No requiere respuesta. [{marker}]"
+            ),
+        })
+    except RuntimeError as exc:
+        entry["result"] = "submit_failed"
+        _save_history(history)
+        result.update({"submitted": False, "persisted": False, "error": str(exc)[:300]})
+        return result
+
+    try:
+        inbox = _http_json("GET", f"{site_url}/api/contact", token=token).get("messages", [])
+    except RuntimeError as exc:
+        entry["result"] = "inbox_unreadable"
+        _save_history(history)
+        result.update({"submitted": True, "persisted": None, "error": str(exc)[:300]})
+        return result
+
+    persisted = any(marker in (m.get("message") or "") for m in inbox)
+    entry["result"] = "persisted" if persisted else "not_persisted"
+    _save_history(history)
+    result.update({"submitted": True, "persisted": persisted})
+    return result
+
+
+def _get_old_site_url() -> Optional[str]:
+    """The client's previous site, if they gave one at provisioning.
+
+    Same per-profile env var the onboarding-content and product-articles agents
+    read (``scripts/provision_bl_client.py`` writes it). Absent for a client
+    with no previous site, and the sweep then does not run at all.
+    """
+    from hermes_cli.config import get_env_value
+
+    return (get_env_value("OLD_SITE_URL") or "").strip().rstrip("/") or None
+
+
 # ---------------------------------------------------------------------------
 # The check
 # ---------------------------------------------------------------------------
@@ -282,6 +826,12 @@ def _run_check(site_url: str, token: str) -> dict:
     seen_links: dict[str, list[str]] = {}
     root_headers: dict = {}
     sitemap_body = ""
+    # HTML of every page that answered 200, kept for the checks that read the
+    # document rather than its status: duplicate titles/descriptions, JSON-LD,
+    # and the mailto:/tel:/wa.me links the link sweep deliberately skips.
+    page_html: dict[str, str] = {}
+    titles: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
 
     for path in routes + post_routes:
         res = _fetch(site_url + path)
@@ -305,8 +855,11 @@ def _run_check(site_url: str, token: str) -> dict:
             if res["bytes"] > HEAVY_PAGE_BYTES:
                 heavy.append(record)
             if is_html:
-                record["title_present"] = bool(_TITLE_RE.search(res["body"]))
-                record["meta_description_present"] = _has_meta_description(res["body"])
+                page_html[path] = res["body"]
+                titles[path] = _title_text(res["body"])
+                descriptions[path] = _meta_description(res["body"])
+                record["title_present"] = bool(titles[path])
+                record["meta_description_present"] = bool(descriptions[path])
                 for img in _images_in(res["body"]):
                     if img["alt"] is None or img["alt"] == "":
                         image_issues.append({"page": path, "src": img["src"], "issue": "missing_alt"})
@@ -367,11 +920,31 @@ def _run_check(site_url: str, token: str) -> dict:
     empty_legal = [f for f in LEGAL_FIELDS if not (config.get(f) or "").strip()]
     empty_biz = [f for f in BIZ_FIELDS if not (config.get(f) or "").strip()]
 
+    social_contact_issues = _check_social_contact(config, site_url, page_html)
+    duplicate_content = _check_duplicate_content(titles, descriptions)
+    structured_data = _check_structured_data(page_html, site_url)
+
+    old_site_url = _get_old_site_url()
+    old_site_redirects = _old_site_sweep(old_site_url, site_url) if old_site_url else None
+
     all_up = not down
     now = datetime.now(timezone.utc)
     period = now.strftime("%Y-%m")
 
     history = _load_history()
+
+    # Monthly, and only when the site is actually up: probing the form during an
+    # outage would just record a failure we already know about, and would burn
+    # the month's single allowed submission on it.
+    if all_up and _form_check_due(history, period):
+        form_check = _run_form_check(site_url, token, history, period)
+    else:
+        form_check = {
+            "ran": False,
+            "period": period,
+            "reason": "already_run_this_month" if all_up else "site_down",
+        }
+
     history["runs"].append({
         "at": now.isoformat(timespec="seconds"),
         "all_up": all_up,
@@ -411,6 +984,12 @@ def _run_check(site_url: str, token: str) -> dict:
             "site_url_config": (config.get("site_url") or "").strip(),
         },
         "image_issues": image_issues,
+        "social_contact_issues": social_contact_issues,
+        "duplicate_content": duplicate_content,
+        "structured_data": structured_data,
+        # None when the client never had a previous site (no OLD_SITE_URL).
+        "old_site_redirects": old_site_redirects,
+        "form_check": form_check,
         "empty_page_fields": empty_page_fields,
         "empty_legal_fields": empty_legal,
         "empty_business_fields": empty_biz,
@@ -456,6 +1035,7 @@ def bl_site_health(action: str = "check", period: Optional[str] = None, summary:
                 "rollup": _rollup(history),
                 "runs": history["runs"][-30:],
                 "reports": [r["period"] for r in history["reports"]],
+                "form_checks": history.get("form_checks", [])[-12:],
             })
 
         return tool_error(f"Unknown action '{action}'. Use 'check', 'history' or 'record_report'.")
@@ -475,6 +1055,14 @@ BL_SITE_HEALTH_SCHEMA = {
         "count, images with no alt text or hotlinked from another host, empty page/legal/business "
         "config fields, a 30-day uptime rollup from previous runs, and 'report_due' — true when no "
         "monthly report has been recorded for the current month yet. "
+        "It also returns 'social_contact_issues' (malformed WhatsApp/phone/e-mail endpoints and "
+        "social profile URLs that no longer resolve), 'duplicate_content' (page titles or meta "
+        "descriptions that are near-identical by string similarity, plus ones that are too short), "
+        "'structured_data' (JSON-LD blocks that fail to parse or are missing required schema.org "
+        "fields), 'old_site_redirects' (only when the profile has OLD_SITE_URL: old paths that now "
+        "dead-end on the new site; null otherwise), and 'form_check' — once per calendar month it "
+        "posts one synthetic message through the public contact form and confirms it reached the "
+        "panel inbox; it can never confirm the notification e-mail was delivered. "
         "action='history' returns the stored run history without checking anything. "
         "action='record_report' stamps the monthly report as delivered for 'period' (YYYY-MM, "
         "defaults to the current month) so it is never produced twice. "

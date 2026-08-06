@@ -99,7 +99,19 @@ then returns one JSON report:
 | Sitemap `<loc>` count vs. the `site_url` config key | Eleventy emits an empty sitemap when `site_url` is blank — silently uncrawlable |
 | Images with no `alt`, or hotlinked from another host | Attribute presence, not taste |
 | Empty page-text / legal / business config fields | Fixed field lists, reported never filled |
+| **Contact endpoints** — WhatsApp/phone digit count, e-mail syntax, `biz_facebook`/`biz_instagram` still resolving | Format arithmetic (E.164 bounds, one regex) plus an HTTP fetch. Only status 0/404/410 counts as dead — Meta and LinkedIn answer 403/429/999 to a datacenter IP, and calling that dead would be a monthly false positive |
+| **Duplicate / thin content** — near-identical `<title>` or meta description across the fixed pages + posts | `difflib` character ratio against a fixed 0.90 threshold, and a fixed 50-char floor for descriptions. String similarity, never meaning |
+| **JSON-LD validity** — parse every block, required schema.org fields present and correctly typed | The required-field table comes from what `src/content/structured-data.js` itself emits; "does this parse / is `datePublished` there / is `acceptedAnswer.text` non-empty" has one answer |
+| **Old-site paths that now dead-end** (only with `OLD_SITE_URL`) | The old site's own sitemap, or one level of homepage links, capped at 40 — then a fetch each. No crawling heuristics, no depth |
+| **Contact form actually accepts and stores a submission** (monthly) | One synthetic POST to the public form, then read the panel inbox back and look for the marker. Boolean, not judgment |
 | 30-day uptime rollup and `report_due` | From `$HERMES_HOME/bl_site_health_history.json`, per profile |
+
+The five checks in bold were added after the first version shipped. All five are
+**report-only**: none of them extends the fix list. That is deliberate in each
+case — the social/contact fields are `biz_*`/`whatsapp_number` (already
+forbidden to the agent), rewriting a duplicate title is content work, hand-
+authoring correct JSON-LD for a broken page is judgment rather than a mechanical
+edit, and a redirect is web-server configuration the panel API cannot write.
 
 **The fix list is closed — five items, max five applications per run:** rewrite
 a broken internal link to a valid route (or unlink it), unlink a dead outbound
@@ -126,9 +138,27 @@ instead of quietly becoming bespoke work — the same boundary Site Launch draws
 report and then calls `action="record_report"` to stamp it. Two jobs would race
 for that state and could double-send.
 
+**The contact-form probe is the tool's one write, and it is gated harder than
+the report.** It posts a single synthetic message to the *public*
+`POST /api/contact` — the same call any visitor makes, touching no config, no
+page and no post — then reads `GET /api/contact` back to confirm it persisted.
+Because that submission sends a real e-mail through the client's SMTP, it runs
+once per calendar month, only when every route answered 200, and the attempt is
+stamped into history **before** the POST rather than after. A crash between
+sending and verifying therefore costs one month's result, never a second e-mail
+in the client's inbox. The prompt forbids the agent from firing it by hand.
+
+What the probe proves is narrower than it looks, and the report must say so:
+`src/api/contact.js` catches every SMTP error into `console.error` and answers
+`{success: true}` regardless, so a working mailer and a silently broken one are
+indistinguishable from outside the instance. The probe therefore confirms the
+form **receives and stores** a lead — catching a 500, a broken rate limiter or a
+regressed route — and returns `email_delivery_verified: false` with the
+prerequisite that would close the gap. Closing it is prerequisite (3) below.
+
 ### Prerequisites in bl-site-package (not built — document only)
 
-Two things the SKU would be better with, both blocked on a bl-site-package
+Four things the SKU would be better with, all blocked on a bl-site-package
 change. Same treatment as the `cta_url`/`cta_label` migration the Product
 Article Agent needs: ship them there first, then the agent can use them.
 
@@ -150,9 +180,55 @@ Article Agent needs: ship them there first, then the agent can use them.
    drift), and a broken contact form (`src/api/contact.js` swallows SMTP
    failures into `console.error`, so lost leads are invisible from outside).
 
-Neither is required to run the SKU as specified above; both make it materially
-better, and (1) is what turns the monthly report into something the client
-receives rather than something the CEO relays.
+3. **Contact-form delivery confirmation.** The monthly probe (above) proves the
+   form persists a lead; it cannot prove the notification e-mail arrived,
+   because `src/api/contact.js` swallows every SMTP error into `console.error`
+   and still answers `{success: true}`. Either of these closes it, cheapest
+   first:
+   - the `smtp_configured` / `notify_email_configured` booleans of
+     `GET /api/site/status` in (2) — turns "we cannot see the mailer" into
+     "the mailer is not configured at all", which is the common failure; or
+   - a `last_contact_email` field on that same endpoint —
+     `{"at": "...", "ok": false, "error": "EAUTH"}`, written by the existing
+     `catch` block. **Presence and an error *class* only, never the SMTP
+     credentials or the recipient.** This is the version that actually answers
+     the question, and it is a four-line change at the `console.error` that is
+     already there.
+
+   Until one of them exists, `form_check.email_delivery_verified` is
+   permanently `false` and the report asks the client to confirm the test
+   message reached their inbox. That is honest, but it is a question the
+   product should not have to ask.
+
+4. **Backup verification — no mechanism exists to verify.** This was scoped as
+   a check and turned out not to be buildable: bl-site-package has **no backup
+   subsystem at all**. There is no scheduled dump, no snapshot API, no
+   `GET /api/site/backup`, and nothing in the schema records a backup ever
+   having run. The only backup that exists anywhere in the product is a manual
+   human step in `RELEASE.md` §2 — *"copy `data/` outside the document root
+   before pulling"* — performed once, by hand, during a Plesk deploy. On Zeabur
+   the DB is a volume whose snapshots (if any) live in Zeabur's control plane,
+   which a client instance cannot query and the maintenance profile has no
+   credentials for.
+
+   So there is nothing to verify and nothing to restore-test, and an agent
+   "confirming backups" today would be reporting on a mechanism that does not
+   exist. What has to ship first, in bl-site-package, is the backup itself:
+   a scheduled dump of `data/app.db` (SQLite `VACUUM INTO`, which is
+   consistent under WAL) plus `data/uploads/` to storage outside the instance,
+   writing a `backups` row — `{at, size_bytes, sha256, destination, ok}` — and
+   exposing the last N through the authenticated `GET /api/site/status` in (2).
+   Only then does the check become the mechanical thing it was scoped as:
+   *did a backup run inside the expected window, is it non-empty, and does its
+   checksum match*. Restore-testing is a further step again and probably never
+   belongs to a per-client agent — restoring into the live instance to prove a
+   backup works is exactly the operation you do not want automated.
+
+None of the four is required to run the SKU as specified above; all four make it
+materially better. (1) is what turns the monthly report into something the
+client receives rather than something the CEO relays, and (3) is the difference
+between "your contact form works" and "your contact form stores messages, and
+we hope the e-mail goes out".
 
 ## Site Launch — the bounded product
 
@@ -248,8 +324,11 @@ this pulls in via `cron/jobs.py`):
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
 `onboarding-content`, `product-articles`, `infographic`, `maintenance`,
-`site-setup`. `maintenance` (the Website Maintenance subscription) needs no
-extra flags — it only ever reads the client's own site.
+`site-setup`. `maintenance` (the Website Maintenance subscription) requires no
+extra flags. It *optionally* uses `--old-site-url`: when the profile carries
+`OLD_SITE_URL`, the daily check also sweeps the old site's published paths and
+reports the ones that now dead-end on the new site. Omit it and that one
+section of the report reads "no aplica"; nothing else changes.
 `site-setup` (the Site Launch product) additionally requires
 `--questionnaire path/to/answers.json` — the buyer's structured form answers,
 schema in `scripts/bl_site_setup.py` — and applies the fixed site template

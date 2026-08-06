@@ -59,8 +59,11 @@ the catalog is exhausted. Omit both flags if the client has no existing site.
 
 `maintenance` is the *Website Maintenance* subscription product: a daily
 deterministic health check (`tools/bl_site_health_tool.py`) plus a closed list
-of mechanical fixes, and one client-facing report per calendar month. It needs
-no extra flags — it only ever reads the client's own site.
+of mechanical fixes, and one client-facing report per calendar month. It
+requires no extra flags, but it *uses* `--old-site-url` when one is given: the
+check then also sweeps the old site's published paths and reports the ones that
+now dead-end. It is not listed in AGENTS_REQUIRING_OLD_SITE because it degrades
+cleanly without one.
 
 Removing a client (unchanged from the runbook — still manual, still
 confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
