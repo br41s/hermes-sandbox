@@ -37,7 +37,7 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
         --fal-key <key_id>:<key_secret> \\
-        --agents gap-hunter,seo,onboarding-content,product-articles,infographic \\
+        --agents gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance \\
         --old-site-url https://their-old-site.example.com
 
 `--fal-key` is the client's own FAL key (BYOK) for image generation — blog
@@ -56,6 +56,11 @@ but scoped to the old site's product catalog: it crawls it for product pages,
 skips ones it's already covered, and writes up to 3 new product blog posts
 per run (draft, with a CTA button back to the original product page) until
 the catalog is exhausted. Omit both flags if the client has no existing site.
+
+`maintenance` is the *Website Maintenance* subscription product: a daily
+deterministic health check (`tools/bl_site_health_tool.py`) plus a closed list
+of mechanical fixes, and one client-facing report per calendar month. It needs
+no extra flags — it only ever reads the client's own site.
 
 Removing a client (unchanged from the runbook — still manual, still
 confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
@@ -105,6 +110,17 @@ AGENT_SOURCES = {
     "infographic": (
         "infographic/bl-site-package-infographic.prompt",
         "Infographic Engineer",
+        "daily",
+    ),
+    # The "Website Maintenance" subscription product. Daily, like gap-hunter:
+    # availability and publish-drift are only meaningful checked often, and a
+    # weekly cadence would let a site sit broken for six days. The monthly
+    # client report is NOT a second job — bl_site_health returns report_due
+    # once per calendar month, so the same daily run produces it exactly once
+    # (two jobs would race for the same "have I reported yet" state).
+    "maintenance": (
+        "maintenance/bl-site-package-maintenance.prompt",
+        "Website Maintenance",
         "daily",
     ),
     # The "Site Launch" checkout product. One-shot, like onboarding-content,
@@ -478,7 +494,7 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance,site-setup")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
     parser.add_argument(
         "--model",

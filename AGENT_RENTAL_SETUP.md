@@ -27,7 +27,10 @@ Both agents below publish through the `bl_site_publish` tool
 (`tools/bl_site_publish_tool.py`) — an authenticated HTTP client for the
 client's own bl-site-package panel API, **not** git. There is no per-client
 repo to check out, so unlike biglobster's own agents these jobs need no
-`workdir`/checkout at all.
+`workdir`/checkout at all. Website Maintenance additionally *reads* through
+`bl_site_health` (`tools/bl_site_health_tool.py`), which is registered into the
+same `bl_site_publish` toolset — read-only, so there is still exactly one write
+path to a client's site.
 
 | Agent | Prompt file | Publishes via | Schedule |
 |---|---|---|---|
@@ -35,6 +38,7 @@ repo to check out, so unlike biglobster's own agents these jobs need no
 | SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
 | Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (draft, with CTA) | daily |
+| Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
 
 Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
@@ -70,6 +74,85 @@ Every bl-site-package customer's job for a given agent points at the *same*
 prompt file above — there is no per-client copy, ever. Customer-specific
 behavior (which site, which credentials) lives entirely in that customer's
 Hermes profile, never in the prompt.
+
+## Website Maintenance — the bounded product
+
+`maintenance` is the agent behind BigLobster's *"mantenimiento web"*
+subscription SKU. It sits at a much higher price point than the single-purpose
+content agents, so the substance has to be real; and, like Site Launch, it has
+to be deliverable **without a human deciding per client what "maintenance"
+means this month**. Both constraints point the same way: the *checking* is
+deterministic code, and the *fixing* is a closed list.
+
+**The check is code, not a prompt.** `tools/bl_site_health_tool.py` —
+`bl_site_health(action="check")` — fetches the fixed five pages, the catalog,
+the three legal pages, `robots.txt`, `sitemap.xml` and every published post,
+then returns one JSON report:
+
+| Measured | Why it is boundable |
+|---|---|
+| HTTP status + response time + byte weight per route | The route list is fixed by the product; a client cannot add a sixth page |
+| Broken links, internal and outbound | Internal targets are a closed set (`valid_internal_routes` + real post slugs); everything else is checked by fetching it |
+| **Publish drift** — posts the API calls `published` that 404 on the built site | Two lists compared; a mismatch means `src/build/rebuild.js` didn't run |
+| TLS certificate days remaining | Socket read, fixed 21-day warning threshold |
+| Security headers vs. the set `src/server.js` sets | Fixed expected list; a missing HSTS means the instance isn't running `NODE_ENV=production` |
+| Sitemap `<loc>` count vs. the `site_url` config key | Eleventy emits an empty sitemap when `site_url` is blank — silently uncrawlable |
+| Images with no `alt`, or hotlinked from another host | Attribute presence, not taste |
+| Empty page-text / legal / business config fields | Fixed field lists, reported never filled |
+| 30-day uptime rollup and `report_due` | From `$HERMES_HOME/bl_site_health_history.json`, per profile |
+
+**The fix list is closed — five items, max five applications per run:** rewrite
+a broken internal link to a valid route (or unlink it), unlink a dead outbound
+link, write missing image `alt` text, re-host a hotlinked image through
+`upload_image` (the site re-encodes to WebP), and set `site_url` when the
+sitemap is empty. Everything else is a *notice*, not a fix. The prompt states
+that explicitly, so "my site should also do X" surfaces as a line in the report
+instead of quietly becoming bespoke work — the same boundary Site Launch draws.
+
+**What it deliberately does not promise**, because it cannot deliver it:
+
+- **Not 24/7 uptime monitoring.** One cron run per day is one sample per day.
+  The report says "availability across the checks performed", never "99.9%
+  uptime". Real minute-level monitoring would be an external pinger, not an
+  LLM job. Sales copy must match this.
+- **Not dependency or security patching.** Every client shares one
+  bl-site-package codebase; updating is a redeploy BigLobster performs, not a
+  per-instance operation. The agent cannot patch and must not claim to.
+- **No image compression work of its own** beyond re-hosting: uploads are
+  already re-encoded to WebP server-side by `optimizeToWebp`.
+
+**The monthly report is not a second cron job.** `bl_site_health` returns
+`report_due: true` once per calendar month; the same daily run produces the
+report and then calls `action="record_report"` to stamp it. Two jobs would race
+for that state and could double-send.
+
+### Prerequisites in bl-site-package (not built — document only)
+
+Two things the SKU would be better with, both blocked on a bl-site-package
+change. Same treatment as the `cta_url`/`cta_label` migration the Product
+Article Agent needs: ship them there first, then the agent can use them.
+
+1. **`POST /api/site/notify`** (authenticated), body
+   `{"subject": "...", "body_markdown": "..."}` → sends through the instance's
+   already-configured SMTP to its `notify_email`, returns
+   `{"success": true}` or `{"error": "smtp_not_configured"}`. **Until this
+   exists the monthly report reaches the CEO through the job's delivery target
+   and the CEO forwards it** — the client does not get it automatically. Must
+   be rate-limited (a handful per day) so a leaked panel password can't turn a
+   client's site into a mailer.
+2. **`GET /api/site/status`** (authenticated), returning
+   `{"version": "1.0.0", "built_at": "...", "last_build_ok": true,
+   "smtp_configured": true, "notify_email_configured": true,
+   "posts": {"published": N, "draft": N}}` — **presence booleans only, never
+   the credentials**. Unlocks three checks that are impossible today:
+   an instance running an old release (`GET /api/site/config` exposes no
+   version), a failed background rebuild (currently only inferable from publish
+   drift), and a broken contact form (`src/api/contact.js` swallows SMTP
+   failures into `console.error`, so lost leads are invisible from outside).
+
+Neither is required to run the SKU as specified above; both make it materially
+better, and (1) is what turns the monthly report into something the client
+receives rather than something the CEO relays.
 
 ## Site Launch — the bounded product
 
@@ -164,7 +247,9 @@ this pulls in via `cron/jobs.py`):
 ```
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
-`onboarding-content`, `product-articles`, `infographic`, `site-setup`.
+`onboarding-content`, `product-articles`, `infographic`, `maintenance`,
+`site-setup`. `maintenance` (the Website Maintenance subscription) needs no
+extra flags — it only ever reads the client's own site.
 `site-setup` (the Site Launch product) additionally requires
 `--questionnaire path/to/answers.json` — the buyer's structured form answers,
 schema in `scripts/bl_site_setup.py` — and applies the fixed site template
@@ -291,7 +376,7 @@ await fetch(url, { method: "POST", body: raw, headers: {
 | `slug` | yes | Hermes profile name. Must be unused. |
 | `client_name` | yes | Display name only. |
 | `openrouter_key` | yes | The buyer's own key (BYOK). Validated live before anything is created. |
-| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`. `site-setup` and `onboarding-content` are mutually exclusive. |
+| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`, `maintenance`. `site-setup` and `onboarding-content` are mutually exclusive. |
 | `questionnaire` | with `site-setup` | Fixed schema — see `scripts/bl_site_setup.py`. Unknown keys are rejected. |
 | `site_url` | no | Omit to claim a blank instance from the pool. Pass one only when BigLobster already knows the instance. |
 | `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |
