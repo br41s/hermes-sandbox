@@ -449,7 +449,20 @@ def _inject_session_context_env(env: dict) -> None:
 
 
 def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = None) -> dict:
-    """Filter Hermes-managed secrets from a subprocess environment."""
+    """Filter Hermes-managed secrets from a subprocess environment.
+
+    Tier-1 (``_ALWAYS_STRIP_KEYS``) is stripped first, unconditionally — same
+    as :func:`hermes_subprocess_env`. This path used to rely solely on
+    ``_HERMES_PROVIDER_ENV_BLOCKLIST`` (which happens to also carry most of
+    these names via the dynamic ``OPTIONAL_ENV_VARS`` registry lookup), with
+    no explicit, name-based guarantee for the terminal spawn surface. That
+    indirection is exactly what let a container-level ``GITHUB_TOKEN`` reach
+    a ``gh`` subprocess and silently override its on-disk identity (``gh``
+    treats ``GH_TOKEN``/``GITHUB_TOKEN`` env vars as taking precedence over
+    ``hosts.yml``) — see the auditor identity leak on biglobster#408. Tier-1
+    is now checked directly here too, so this guarantee no longer depends on
+    a second registry staying in sync.
+    """
     try:
         from tools.env_passthrough import is_env_passthrough as _is_passthrough
     except Exception:
@@ -458,6 +471,8 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
     sanitized: dict[str, str] = {}
 
     for key, value in (base_env or {}).items():
+        if key in _ALWAYS_STRIP_KEYS:
+            continue
         if key.startswith(_HERMES_PROVIDER_ENV_FORCE_PREFIX):
             continue
         if _is_hermes_internal_secret(key):
@@ -468,9 +483,13 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
     for key, value in (extra_env or {}).items():
         if key.startswith(_HERMES_PROVIDER_ENV_FORCE_PREFIX):
             real_key = key[len(_HERMES_PROVIDER_ENV_FORCE_PREFIX):]
+            if real_key in _ALWAYS_STRIP_KEYS:
+                continue
             if _is_hermes_internal_secret(real_key):
                 continue
             sanitized[real_key] = value
+        elif key in _ALWAYS_STRIP_KEYS:
+            continue
         elif _is_hermes_internal_secret(key):
             continue
         elif key not in _HERMES_PROVIDER_ENV_BLOCKLIST or _is_passthrough(key):
@@ -544,9 +563,13 @@ def hermes_subprocess_env(*, inherit_credentials: bool = False) -> dict[str, str
     detached gateway).  Use this instead of copying ``os.environ`` directly
     so strip-by-default is the uniform policy across every spawn site, with a
     single source of truth (``_HERMES_PROVIDER_ENV_BLOCKLIST``).  The terminal
-    / execute_code path keeps using :func:`_sanitize_subprocess_env`, which is
-    skill-aware (``env_passthrough``); this helper is for spawns that have no
-    skill-passthrough concept.
+    / execute_code path keeps using :func:`_sanitize_subprocess_env` (and its
+    foreground twin :func:`_make_run_env`), which is skill-aware
+    (``env_passthrough``); this helper is for spawns that have no
+    skill-passthrough concept. Both terminal-path functions also check
+    ``_ALWAYS_STRIP_KEYS`` directly (unconditionally, same as here) rather
+    than relying solely on ``_HERMES_PROVIDER_ENV_BLOCKLIST`` membership for
+    these — see their docstrings.
 
     Two-tier stripping:
 
@@ -1126,7 +1149,13 @@ def _path_env_key(run_env: dict) -> str | None:
 
 
 def _make_run_env(env: dict) -> dict:
-    """Build a run environment with a sane PATH and provider-var stripping."""
+    """Build a run environment with a sane PATH and provider-var stripping.
+
+    Tier-1 (``_ALWAYS_STRIP_KEYS``) is stripped first, unconditionally — see
+    the matching note on :func:`_sanitize_subprocess_env`. This is the
+    foreground/PTY spawn path every cron ``AIAgent`` run's terminal tool
+    calls go through, so it must carry the same guarantee.
+    """
     try:
         from tools.env_passthrough import is_env_passthrough as _is_passthrough
     except Exception:
@@ -1135,8 +1164,12 @@ def _make_run_env(env: dict) -> dict:
     merged = dict(os.environ | env)
     run_env = {}
     for k, v in merged.items():
+        if k in _ALWAYS_STRIP_KEYS:
+            continue
         if k.startswith(_HERMES_PROVIDER_ENV_FORCE_PREFIX):
             real_key = k[len(_HERMES_PROVIDER_ENV_FORCE_PREFIX):]
+            if real_key in _ALWAYS_STRIP_KEYS:
+                continue
             if _is_hermes_internal_secret(real_key):
                 continue
             run_env[real_key] = v
