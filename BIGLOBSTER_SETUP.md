@@ -207,6 +207,7 @@ To add repos for a new profile: create `docker/profiles/<name>/repos.txt` (one `
 |----------------|------|---------|
 | `/opt/data/checkouts/biglobster-seo` | `br41s/biglobster` | SEO/GEO cron (job `20ec3607f2c6`) |
 | `/opt/data/checkouts/biglobster-gaphunter` | `br41s/biglobster` | Content Gap Hunter cron (job `ce583d11dedd`) |
+| `/opt/data/checkouts/biglobster-translation` | `br41s/biglobster` | Translation Engineer cron (job `e197e33b0f00`) |
 
 Each is an independent clone (separate `.git`, index, `HEAD`, and locally pinned
 `user.email=hermes@agent.local`). Section 6b clones on first boot, then on every
