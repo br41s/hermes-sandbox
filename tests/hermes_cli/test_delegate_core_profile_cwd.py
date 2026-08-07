@@ -353,6 +353,63 @@ def test_delegate_env_does_not_invent_token_when_absent(tmp_path, monkeypatch):
     assert "GH_TOKEN" not in captured["env"]
 
 
+def test_delegate_fails_closed_when_credentials_file_broken(tmp_path, monkeypatch):
+    """Regression: a profile WITH its own .git-credentials file that yields no
+    usable token (empty/garbled/wrong host) must NOT fall back to the ambient
+    identity. Falling back there silently overwrites this profile's hosts.yml
+    with a different account's token — the same class of bug as the auditor
+    identity leak on biglobster#408 (whichever token ends up on disk is what
+    `gh` authenticates as). The profile is left unauthenticated for this run
+    instead (fail-closed), and no hosts.yml is written."""
+    profile_home = tmp_path / "profiles" / "finview"
+    home = profile_home / "home"
+    home.mkdir(parents=True)
+    # Present but broken: no github.com entry parses to a token.
+    (home / ".git-credentials").write_text("https://x-access-token:tok@gitlab.com\n")
+    monkeypatch.setenv("GITHUB_TOKEN", "ceo-ambient-token")
+    monkeypatch.setenv("GH_TOKEN", "ceo-ambient-token")
+
+    captured: dict = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakeCompleted(_ok_stdout())
+
+    with patch("hermes_cli.profiles.resolve_profile_env", return_value=str(profile_home)), \
+            patch("subprocess.run", _fake_run):
+        delegate_core.run_delegate_in_profile("task-1", "do it", "finview")
+
+    assert "GITHUB_TOKEN" not in captured["env"]
+    assert "GH_TOKEN" not in captured["env"]
+    assert not (home / ".config" / "gh" / "hosts.yml").exists()
+
+
+def test_delegate_still_falls_back_when_no_credentials_file_at_all(tmp_path, monkeypatch):
+    """No-regression guard: a profile home that exists but has never had a
+    .git-credentials file at all (not "broken", just absent) keeps the
+    original, intended fallback to the ambient/shared identity — this is how
+    finview/grow-shop are meant to work (PRs #31/#32)."""
+    profile_home = tmp_path / "profiles" / "finview"
+    home = profile_home / "home"
+    home.mkdir(parents=True)  # home/ exists, but no .git-credentials inside it
+    monkeypatch.setenv("GITHUB_TOKEN", "ceo-ambient-token")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+    captured: dict = {}
+
+    def _fake_run(cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakeCompleted(_ok_stdout())
+
+    with patch("hermes_cli.profiles.resolve_profile_env", return_value=str(profile_home)), \
+            patch("subprocess.run", _fake_run):
+        delegate_core.run_delegate_in_profile("task-1", "do it", "finview")
+
+    assert captured["env"]["GITHUB_TOKEN"] == "ceo-ambient-token"
+    assert captured["env"]["GH_TOKEN"] == "ceo-ambient-token"
+    assert (home / ".config" / "gh" / "hosts.yml").is_file()
+
+
 def test_token_from_git_credentials_parses_forms(tmp_path):
     """Parser handles x-access-token, user:token, and user-less token forms; and
     ignores non-github lines."""
