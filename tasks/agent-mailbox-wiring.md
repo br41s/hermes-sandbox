@@ -67,7 +67,7 @@ the CONSUMER path now, manually enqueue one request, then trigger the gap-hunter
 python3 /opt/data/profiles/biglobster/mailbox.py \
   --mailbox /opt/data/profiles/biglobster/agent-mailbox.json \
   enqueue --type expand_thin_content --from onsite-seo --to content \
-  --url https://biglobster.top/blog/<a-real-shortish-article>.html \
+  --url https://biglobster.top/es/blog/<a-real-shortish-article>.html \
   --payload '{"word_count": 320, "reason": "dry-run"}'
 chown hermes:hermes /opt/data/profiles/biglobster/agent-mailbox.json
 ```

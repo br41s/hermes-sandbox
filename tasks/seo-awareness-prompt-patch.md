@@ -29,7 +29,7 @@ Esquema:
   "updated": "ISO timestamp",
   "built_against_commit": "SHA de main contra el que se construyó el grafo",
   "internal_link_graph": {
-    "https://biglobster.top/blog/<slug>": {
+    "https://biglobster.top/es/blog/<slug>": {
       "outbound": ["https://biglobster.top/...", "..."],
       "inbound":  ["https://biglobster.top/..."]
     }
@@ -57,6 +57,7 @@ el tool `terminal`:
          --pillar https://biglobster.top/pricing.html \
          --pillar https://biglobster.top/contact.html \
          --pillar https://biglobster.top/blog.html \
+         --pillar https://biglobster.top/es/blog.html \
          --pillar https://biglobster.top/agents.html \
          --pillar https://biglobster.top/clientes.html \
          --pillar https://biglobster.top/404.html \
