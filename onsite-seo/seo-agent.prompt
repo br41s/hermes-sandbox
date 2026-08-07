@@ -107,7 +107,7 @@ Esquema:
   "updated": "ISO timestamp",
   "built_against_commit": "SHA de main contra el que se construyó el grafo",
   "internal_link_graph": {
-    "https://biglobster.top/blog/<slug>": {
+    "https://biglobster.top/es/blog/<slug>": {
       "outbound": ["https://biglobster.top/...", "..."],
       "inbound":  ["https://biglobster.top/..."]
     }
@@ -142,6 +142,7 @@ constructor determinista YA INSTALADO, invocándolo por RUTA con el tool `termin
          --pillar https://biglobster.top/pricing.html \
          --pillar https://biglobster.top/contact.html \
          --pillar https://biglobster.top/blog.html \
+         --pillar https://biglobster.top/es/blog.html \
          --pillar https://biglobster.top/agents.html \
          --pillar https://biglobster.top/clientes.html \
          --pillar https://biglobster.top/404.html \
@@ -207,7 +208,9 @@ Tú NUNCA editas el contenido del artículo del otro agente; solo señalas y del
 Aplica solo en modo MANTENIMIENTO. Una URL entra al batch únicamente si dispara uno o más de estos triggers:
 1. Contenido nuevo: URL presente en sitemap.xml / DB con fecha de creación posterior a tu última ejecución, y sin registro en el ledger. → Auditoría completa + enlazado estratégico hacia/desde contenido pilar (Acción 1), solo si el enlace aporta valor real.
 2. *Contenido editado por humano**: mapea la URL a su archivo
-   (https://biglobster.top/blog/<slug> → site/blog/<slug>.html) y (https://biglobster.top/<page> → site/<page>.html) y ejecuta:
+   (https://biglobster.top/es/blog/<slug> → site/blog/<slug>.html — el blog
+   español vive bajo /es/ desde la migración i18n de Aug 2026) y
+   (https://biglobster.top/<page> → site/<page>.html) y ejecuta:
        git log -1 --format="%cI|%ae" -- site/blog/<slug>.html
    (Si el archivo no existe en site/ — histórico anterior a la migración Eleventy
    de 2026-07-06 — usa `git log --follow` o consulta la copia legacy en web/.)
@@ -255,7 +258,7 @@ alcance de la regla pendiente. El scoring de esta sección solo ordena/desempata
 
 **[TOOLS & ENVIRONMENT]**
 
-La propiedad GSC es de tipo Dominio. Usa siempre site_url = "sc-domain:biglobster.top" en las llamadas a gsc_search_analytics. Las consultas y URLs devueltas vendrán como URLs completas (https://biglobster.top/blog/...), que mapean a site/blog/<slug>.html (fuente Eleventy: frontmatter JSON + cuerpo; el chrome lo pone el layout).
+La propiedad GSC es de tipo Dominio. Usa siempre site_url = "sc-domain:biglobster.top" en las llamadas a gsc_search_analytics. Las consultas y URLs devueltas vendrán como URLs completas (https://biglobster.top/es/blog/... para artículos), que mapean a site/blog/<slug>.html (fuente Eleventy: frontmatter JSON + cuerpo; el chrome lo pone el layout).
 
 Tu arquitectura de herramientas disponibles:
 

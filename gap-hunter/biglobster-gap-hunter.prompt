@@ -13,7 +13,8 @@ UNA petición si la hay. NO uses execute_code ni python3 -c/-e; invoca el helper
    Si imprime LOCKED (exit 6): otra petición trabaja esa URL — sáltala, prueba la
    siguiente. Si OK: es tuya.
 3. Atiende según `type`:
-   - expand_thin_content: abre payload.url → site/blog/<slug>.html, amplía el contenido
+   - expand_thin_content: abre payload.url (p.ej. https://biglobster.top/es/blog/<slug>.html)
+     → site/blog/<slug>.html, amplía el contenido
      con tu proceso normal (respeta tono y restricciones del sitio).
 4. Abre un PR con tu flujo normal (gh pr create → lo revisa el auditor). NUNCA hagas
    push directo a main para trabajo de buzón.
@@ -49,7 +50,9 @@ chrome (head, nav, footer, WhatsApp, cookie banner). Un artículo = UN archivo
    - Copia su frontmatter `---json … ---` y rellena: `title`, `description`,
      `ogTitle`, `ogDescription`, `date` (YYYY-MM-DD, hoy), `image` (ruta de la
      cover, DEBE existir en el repo), `badges` (3-4 tags), `excerpt`,
-     `readingTime` ("N min"), `permalink` (`"/blog/<slug>.html"`),
+     `readingTime` ("N min"), `permalink` (`"/es/blog/<slug>.html"` — el blog
+     español vive bajo /es/ desde la migración i18n de Aug 2026; /blog/<slug>
+     sin prefijo es ahora el hueco de la versión INGLESA, no lo uses aquí),
      `styles` (`["/style-blog.css"]`), `layout` y `ogType` tal cual.
    - El cuerpo empieza directamente con `<header class="article-hero container">`:
      breadcrumb, article-cover, article-tags, H1, article-summary.
@@ -133,7 +136,7 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
 ### Checklist pre-publish
 - [ ] El archivo NO contiene `<html>`, `<head>`, nav ni footer (solo frontmatter + cuerpo)
 - [ ] Frontmatter completo: title, description, date, image, badges, excerpt, readingTime, permalink
-- [ ] `npm run build` pasa y `_site/blog/<slug>.html` existe con nav/footer correctos
+- [ ] `npm run build` pasa y `_site/es/blog/<slug>.html` existe con nav/footer correctos
 - [ ] NO tocaste blog.html, sitemap.xml, feed.xml, web/*.html ni site/_includes/
 - [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía)
 - [ ] La cover tiene mínimo 2 personas de ambos géneros
@@ -168,7 +171,7 @@ Aplica estas reglas del humanizer. El artículo DEBE sonar como lo escribiría u
    de referencia — NO `infografias/`, esa es la carpeta legacy)
 5. Inserta infografía en el contenido con `<figure class="article-infographic">`
 6. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
-   en `_site/blog.html` (la tarjeta del índice se genera sola del frontmatter —
+   en `_site/es/blog.html` (el índice español — la tarjeta se genera sola del frontmatter —
    NO edites blog.html ni sitemap.xml ni feed.xml)
 
 ### FASE 4: PR en GitHub
@@ -183,7 +186,7 @@ Pasos:
    Comprueba que no queda ningún asset del artículo sin trackear: `git status --porcelain`.
    Si aparece otro binario nuevo del artículo, añádelo también.
 3. Commit atómico (artículo + portada + infografía en el MISMO commit):
-   `git commit -m "blog: [TÍTULO]\n\n- URL: /blog/NOMBRE.html\n- Keyword: [keyword]\n- Gap: [descripción]\n- [lista archivos]"`
+   `git commit -m "blog: [TÍTULO]\n\n- URL: /es/blog/NOMBRE.html\n- Keyword: [keyword]\n- Gap: [descripción]\n- [lista archivos]"`
 4. `git push origin blog/TITULO-CORTO-YYYYMMDD`
 5. Para crear el PR, usa `gh pr create --base main --head <rama> --title "…" --body "…"` (gh ya está autenticado en el contenedor). No uses curl ni incrustes tokens/claves. Usa descripcion y resto de datos acorde a estandares.
 6. Cierre: vuelve a `main` y borra la rama local (ya vive en el remoto vía el PR):
@@ -194,7 +197,7 @@ Pasos:
 ✅ Nuevo artículo creado
 - Título: [TÍTULO]
 - Keyword: [keyword]
-- URL: /blog/NOMBRE.html
+- URL: /es/blog/NOMBRE.html
 - PR: [link]
 - Gap: [descripción]
 - ✅ Humanizado (sin vocabulario IA)

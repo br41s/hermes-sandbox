@@ -99,6 +99,8 @@ def test_profile_verified_publish_dirs_are_content():
     assert classify(["site/blog/post.html"], BIG) == "content"
     assert classify(["web/blog/images/post-cover.jpg"], BIG) == "content"
     assert classify(["web/assets/og-default.avif"], BIG) == "content"
+    # English translations (Aug 2026 i18n migration): same shape, root permalinks.
+    assert classify(["site/en/blog/post.html"], BIG) == "content"
 
 
 def test_profile_core_pages_and_build_are_system():
