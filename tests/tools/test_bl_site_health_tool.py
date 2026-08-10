@@ -83,6 +83,18 @@ POSTS = {"posts": [
     {"id": 2, "slug": "post-borrador", "title": "Borrador", "status": "draft"},
 ]}
 
+# What a current instance's GET /api/site/status answers (bl-site-package
+# PR #32). The default fetcher serves the same version from main's
+# package.json, so the healthy fixture is "up to date".
+STATUS = {
+    "version": "1.3.0",
+    "built_at": "2026-08-01T00:00:00Z",
+    "last_build_ok": True,
+    "smtp_configured": True,
+    "notify_email_configured": True,
+    "posts": {"published": 1, "draft": 1},
+}
+
 ALL_GOOD_HEADERS = {h: "x" for h in health.EXPECTED_HEADERS}
 
 
@@ -105,10 +117,17 @@ class FakeApi:
         self.posts: list[dict] = []
         self.fail_post = False
         self.swallow_post = False  # accepts the POST but never stores it
+        # None = the instance predates /api/site/status and 404s it, which
+        # the release check must survive (and report as drift).
+        self.status: dict | None = dict(STATUS)
 
     def __call__(self, method, url, body=None, token=None):
         if url.endswith("/api/site/config"):
             return dict(CONFIG)
+        if url.endswith("/api/site/status"):
+            if self.status is None:
+                raise RuntimeError("HTTP 404 from /api/site/status: Cannot GET")
+            return dict(self.status)
         if url.endswith("/api/blog/posts"):
             return POSTS
         if url.endswith("/api/contact"):
@@ -143,7 +162,9 @@ def make_fetcher(overrides=None, sitemap=SITEMAP_WITH_URLS):
         if url in overrides:
             return {"url": url, "bytes": 100, "ms": 50, "headers": {}, "body": "", **overrides[url]}
         body = PAGE_HTML
-        if url.endswith("/sitemap.xml"):
+        if url == health.RELEASED_PACKAGE_JSON_URL:
+            body = json.dumps({"name": "bl-site-package", "version": STATUS["version"]})
+        elif url.endswith("/sitemap.xml"):
             body = sitemap
         elif url.endswith("/robots.txt"):
             body = "User-agent: *"
@@ -591,6 +612,55 @@ def test_sweep_falls_back_to_homepage_links_without_a_sitemap(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Release drift
+# ---------------------------------------------------------------------------
+
+def test_matching_versions_are_not_outdated(monkeypatch):
+    release = run(monkeypatch)["release"]
+    assert release == {"deployed": "1.3.0", "latest": "1.3.0", "outdated": False}
+
+
+def test_stale_instance_is_outdated(monkeypatch, fake_api):
+    fake_api.status = {**STATUS, "version": "1.2.0"}
+    release = run(monkeypatch)["release"]
+    assert release == {"deployed": "1.2.0", "latest": "1.3.0", "outdated": True}
+
+
+def test_instance_ahead_of_main_is_also_outdated(monkeypatch, fake_api):
+    # Deployed > released means something shipped outside the release flow.
+    # Drift in either direction is BigLobster's to reconcile.
+    fake_api.status = {**STATUS, "version": "1.4.0"}
+    assert run(monkeypatch)["release"]["outdated"] is True
+
+
+def test_instance_without_the_status_endpoint_is_null_not_a_crash(monkeypatch, fake_api):
+    # An instance predating bl-site-package PR #32 404s /api/site/status.
+    # That is itself drift evidence and must never take down the whole check.
+    fake_api.status = None
+    result = run(monkeypatch)
+    assert result["release"]["deployed"] is None
+    assert result["release"]["outdated"] is None
+    assert result["availability"]["all_up"] is True
+
+
+def test_github_outage_degrades_latest_to_unknown(monkeypatch):
+    release = run(monkeypatch, overrides={
+        health.RELEASED_PACKAGE_JSON_URL: {"status": 503},
+    })["release"]
+    assert release == {"deployed": "1.3.0", "latest": None, "outdated": None}
+
+
+def test_garbage_package_json_is_unknown_not_a_crash(monkeypatch):
+    release = run(monkeypatch, overrides={
+        health.RELEASED_PACKAGE_JSON_URL: {
+            "status": 200, "body": "<html>rate limited</html>",
+        },
+    })["release"]
+    assert release["latest"] is None
+    assert release["outdated"] is None
+
+
+# ---------------------------------------------------------------------------
 # Monthly contact-form probe
 # ---------------------------------------------------------------------------
 
@@ -605,10 +675,28 @@ def test_form_probe_submits_once_and_confirms_it_persisted(monkeypatch, fake_api
 
 def test_form_probe_never_claims_the_email_was_delivered(monkeypatch):
     # src/api/contact.js swallows SMTP errors into console.error and answers
-    # success either way, so delivery is unobservable from out here.
+    # success either way, so delivery itself stays unobservable. What
+    # /api/site/status does answer is whether the mail path is configured.
     result = run(monkeypatch)["form_check"]
     assert result["email_delivery_verified"] is False
-    assert "site/status" in result["email_delivery_blocked_on"]
+    assert result["smtp_configured"] is True
+    assert result["notify_email_configured"] is True
+
+
+def test_form_probe_surfaces_an_unconfigured_mailer(monkeypatch, fake_api):
+    # The common failure: form persists fine, notification mail can never
+    # arrive. The flag turns "presumably sent" into "certainly never sent".
+    fake_api.status = {**STATUS, "smtp_configured": False}
+    result = run(monkeypatch)["form_check"]
+    assert result["smtp_configured"] is False
+    assert result["persisted"] is True
+
+
+def test_form_probe_mail_flags_are_null_without_the_status_endpoint(monkeypatch, fake_api):
+    fake_api.status = None
+    result = run(monkeypatch)["form_check"]
+    assert result["smtp_configured"] is None
+    assert result["notify_email_configured"] is None
 
 
 def test_form_probe_runs_at_most_once_a_month_even_on_a_retry(monkeypatch, fake_api):

@@ -31,6 +31,7 @@ Lo que devuelve, y qué significa cada cosa:
 | `structured_data` | Bloques JSON-LD rotos o con campos obligatorios ausentes | Avisar — lo genera la plantilla, no tú |
 | `old_site_redirects` | Rutas de la web antigua que hoy no llevan a ninguna parte (`null` si no hay web antigua) | Avisar — un redirect es config de servidor |
 | `form_check` | Prueba mensual del formulario de contacto | Avisar solo si falló (ver abajo) |
+| `release` | Versión desplegada de bl-site-package frente a la última publicada en `main` | Avisar a BigLobster si `outdated` — al cliente NUNCA (ver abajo) |
 | `tls` | Días que le quedan al certificado | Avisar si `days_remaining` < `tls_warn_days` |
 | `missing_security_headers` | Cabeceras de seguridad ausentes | Avisar — NO es arreglable desde aquí |
 | `slow_pages` / `heavy_pages` | Páginas por encima del presupuesto de tiempo/peso | Avisar, y arreglar solo la parte de imágenes |
@@ -80,7 +81,7 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
 - **No puedes parchear dependencias ni actualizar el software del sitio.** Todos
   los clientes comparten el mismo código de bl-site-package; una actualización
   es un redespliegue que hace BigLobster, no algo que se aplique por sitio. Si
-  ves algo que huele a versión antigua, se informa, no se toca.
+  `release.outdated` es `true`, se avisa a BigLobster (ver AVISOS), no se toca.
 - **No arregles los datos estructurados a mano.** Escribir un bloque JSON-LD
   correcto para una página que está mal no es mecánico, es criterio. Se informa.
 - **No toques títulos ni descripciones para deduplicarlos.** Aunque
@@ -98,6 +99,18 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   `NODE_ENV=production`: dilo así de claro, lo arregla BigLobster.
 - `publish_drift` no vacío → el sitio estático no se reconstruyó tras el último
   cambio. No hay arreglo desde aquí: es un aviso urgente para BigLobster.
+- `release.outdated` a `true` → aviso **para BigLobster, jamás para el
+  cliente**. Actualizar una instancia es un redespliegue que hace BigLobster;
+  "tu web está desactualizada" no es información para el cliente y no debe
+  llegarle por ningún canal. Ponlo en los avisos del informe diario (que llega
+  a BigLobster por el canal del cron) con las dos versiones: desplegada
+  (`release.deployed`) y publicada (`release.latest`). Da igual el sentido de
+  la diferencia: una versión por *delante* de main es un despliegue hecho fuera
+  del flujo de release, y también es asunto de BigLobster. Si
+  `release.deployed` es `null`, la instancia es tan antigua que ni siquiera
+  tiene `/api/site/status`: es el mismo aviso, dilo así. Si `outdated` es
+  `null` porque `latest` es `null`, GitHub no respondió — no avises, mañana se
+  reintenta solo.
 - Páginas lentas o pesadas que no se explican por imágenes → aviso.
 - Campos de página vacíos y datos legales/negocio incompletos → lista para el
   cliente, con una frase de por qué importa (los datos legales alimentan el
@@ -127,8 +140,13 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   incidencia grave, dilo en primera línea. Si fue bien, menciónalo únicamente
   en el informe mensual, con una frase honesta: se ha comprobado que el
   formulario **recibe y guarda** el mensaje, no que el correo de aviso llegue
-  al buzón del cliente — eso no se puede verificar desde fuera. Pide al cliente
-  que confirme si el mensaje de prueba le llegó por email. Y nunca lances tú la
+  al buzón del cliente — un fallo en el envío no se ve desde fuera. Pide al
+  cliente que confirme si el mensaje de prueba le llegó por email. Excepción
+  que sí se ve: si `form_check.smtp_configured` o
+  `form_check.notify_email_configured` es `false`, el correo de aviso **no
+  puede** llegar — incidencia, dilo en primera línea (la configuración SMTP es
+  campo `smtp_*`/`notify_email` del panel: prohibido para ti, lo corrige el
+  cliente o BigLobster). Y nunca lances tú la
   prueba a mano: la dispara `bl_site_health`, una vez al mes, y sola.
 
 ## CUÁNDO CALLAR
@@ -138,7 +156,8 @@ todo respondió 200, no hay `publish_drift`, no hay enlaces rotos, no hay
 problemas de imagen, no hay `social_contact_issues`, `structured_data.issues`
 está vacío, `duplicate_content` no tiene ningún par ni descripción corta,
 `old_site_redirects` es `null` o no tiene `dead_ends`, el `form_check` no
-falló, el TLS está por encima del umbral, no faltan cabeceras, no hay páginas
+falló, `release.outdated` no es `true` y `release.deployed` no es `null`, el
+TLS está por encima del umbral, no faltan cabeceras, no hay páginas
 lentas ni pesadas, no has hecho ningún arreglo, y `report_due` es `false`.
 Un día tranquilo no merece un mensaje.
 
@@ -190,6 +209,10 @@ también por email, es que el envío de correo del sitio está mal configurado �
 pídele que lo confirme, no lo des por hecho. Si `old_site_redirects` es `null`,
 escribe "no aplica" en esa línea; no inventes una web anterior.
 
+El informe mensual NUNCA menciona `release`, versiones de software ni
+"instancia desactualizada": es un aviso interno para BigLobster, no información
+para el cliente. Va en los avisos del informe diario y solo ahí.
+
 Después de redactarlo, llama a `bl_site_health` con
 `action: "record_report"` y un `summary` de una o dos frases, para que no se
 repita el mes que viene. Si esa llamada falla, dilo en la respuesta.
@@ -215,7 +238,7 @@ prometas una monitorización minuto a minuto que no existe.
 ✅ Revisión de mantenimiento — [fecha]
 - Estado: [todo operativo / INCIDENCIA: rutas caídas]
 - Arreglado: [lista de arreglos → ≤15 palabras cada uno, o "nada que arreglar"]
-- Avisos: [TLS / cabeceras / rebuild / lentitud / campos vacíos, o "ninguno"]
+- Avisos: [TLS / cabeceras / rebuild / versión desactualizada / lentitud / campos vacíos, o "ninguno"]
 - Pendiente para el cliente: [datos que faltan, o "nada"]
 - Fuera del alcance del producto: [lista, o "ninguna"]
 - [Si toca: el informe mensual completo, debajo]
