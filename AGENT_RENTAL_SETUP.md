@@ -104,14 +104,18 @@ then returns one JSON report:
 | **JSON-LD validity** — parse every block, required schema.org fields present and correctly typed | The required-field table comes from what `src/content/structured-data.js` itself emits; "does this parse / is `datePublished` there / is `acceptedAnswer.text` non-empty" has one answer |
 | **Old-site paths that now dead-end** (only with `OLD_SITE_URL`) | The old site's own sitemap, or one level of homepage links, capped at 40 — then a fetch each. No crawling heuristics, no depth |
 | **Contact form actually accepts and stores a submission** (monthly) | One synthetic POST to the public form, then read the panel inbox back and look for the marker. Boolean, not judgment |
+| **Release drift** — the instance's deployed version vs the latest released on `main` | `GET /api/site/status` version against `package.json` on GitHub; **any** mismatch counts (ahead of main = deployed outside the release flow), and either side degrades to `null` instead of failing the run |
 | 30-day uptime rollup and `report_due` | From `$HERMES_HOME/bl_site_health_history.json`, per profile |
 
-The five checks in bold were added after the first version shipped. All five are
-**report-only**: none of them extends the fix list. That is deliberate in each
+The checks in bold were added after the first version shipped. All of them are
+**report-only**: none extends the fix list. That is deliberate in each
 case — the social/contact fields are `biz_*`/`whatsapp_number` (already
 forbidden to the agent), rewriting a duplicate title is content work, hand-
 authoring correct JSON-LD for a broken page is judgment rather than a mechanical
-edit, and a redirect is web-server configuration the panel API cannot write.
+edit, a redirect is web-server configuration the panel API cannot write, and an
+outdated instance is a redeploy BigLobster performs — the drift notice routes to
+BigLobster through the cron's delivery channel, and the client is never told
+"your site is old".
 
 **The fix list is closed — five items, max five applications per run:** rewrite
 a broken internal link to a valid route (or unlink it), unlink a dead outbound
@@ -129,7 +133,9 @@ instead of quietly becoming bespoke work — the same boundary Site Launch draws
   LLM job. Sales copy must match this.
 - **Not dependency or security patching.** Every client shares one
   bl-site-package codebase; updating is a redeploy BigLobster performs, not a
-  per-instance operation. The agent cannot patch and must not claim to.
+  per-instance operation. The agent cannot patch and must not claim to — it
+  *detects* an outdated instance (the release-drift check) and notifies
+  BigLobster, never the client.
 - **No image compression work of its own** beyond re-hosting: uploads are
   already re-encoded to WebP server-side by `optimizeToWebp`.
 
@@ -150,17 +156,21 @@ in the client's inbox. The prompt forbids the agent from firing it by hand.
 
 What the probe proves is narrower than it looks, and the report must say so:
 `src/api/contact.js` catches every SMTP error into `console.error` and answers
-`{success: true}` regardless, so a working mailer and a silently broken one are
-indistinguishable from outside the instance. The probe therefore confirms the
-form **receives and stores** a lead — catching a 500, a broken rate limiter or a
-regressed route — and returns `email_delivery_verified: false` with the
-prerequisite that would close the gap. Closing it is prerequisite (3) below.
+`{success: true}` regardless, so a configured mailer that fails at send time is
+invisible from outside the instance. The probe therefore confirms the form
+**receives and stores** a lead — catching a 500, a broken rate limiter or a
+regressed route — and echoes the `smtp_configured` / `notify_email_configured`
+booleans from `GET /api/site/status`, which separates "presumably sent" from
+"certainly never sent" (the common failure). `email_delivery_verified` stays
+`false`; closing the rest of the gap is item (3) below.
 
-### Prerequisites in bl-site-package (not built — document only)
+### Prerequisites in bl-site-package — (2) shipped; (1) and (4) not built
 
-Four things the SKU would be better with, all blocked on a bl-site-package
-change. Same treatment as the `cta_url`/`cta_label` migration the Product
-Article Agent needs: ship them there first, then the agent can use them.
+Four things the SKU would be better with. (2) shipped as bl-site-package PR #32
+and the health tool consumes it; (3) is half-closed by the same endpoint. The
+rest stay blocked on a bl-site-package change — same treatment as the
+`cta_url`/`cta_label` migration the Product Article Agent needs: ship them
+there first, then the agent can use them.
 
 1. **`POST /api/site/notify`** (authenticated), body
    `{"subject": "...", "body_markdown": "..."}` → sends through the instance's
@@ -170,35 +180,37 @@ Article Agent needs: ship them there first, then the agent can use them.
    and the CEO forwards it** — the client does not get it automatically. Must
    be rate-limited (a handful per day) so a leaked panel password can't turn a
    client's site into a mailer.
-2. **`GET /api/site/status`** (authenticated), returning
-   `{"version": "1.0.0", "built_at": "...", "last_build_ok": true,
-   "smtp_configured": true, "notify_email_configured": true,
-   "posts": {"published": N, "draft": N}}` — **presence booleans only, never
-   the credentials**. Unlocks three checks that are impossible today:
-   an instance running an old release (`GET /api/site/config` exposes no
-   version), a failed background rebuild (currently only inferable from publish
-   drift), and a broken contact form (`src/api/contact.js` swallows SMTP
-   failures into `console.error`, so lost leads are invisible from outside).
+2. **`GET /api/site/status`** (authenticated) — **shipped (bl-site-package
+   PR #32) and consumed.** Returns `{version, built_at, last_build_ok,
+   smtp_configured, notify_email_configured, posts, last_contact_email}` —
+   **presence booleans only, never the credentials**. Of the three checks it
+   was scoped to unlock, two are live in `bl_site_health`: release drift
+   (the `release` section — deployed version vs `main`'s `package.json`, an
+   instance so old it 404s the endpoint reported as `deployed: null`) and the
+   mail-configuration booleans echoed into `form_check`. `last_build_ok` /
+   `built_at` are not consumed yet — a failed background rebuild is still
+   inferred from publish drift.
 
-3. **Contact-form delivery confirmation.** The monthly probe (above) proves the
-   form persists a lead; it cannot prove the notification e-mail arrived,
-   because `src/api/contact.js` swallows every SMTP error into `console.error`
-   and still answers `{success: true}`. Either of these closes it, cheapest
-   first:
+3. **Contact-form delivery confirmation — half-closed by (2).** The monthly
+   probe (above) proves the form persists a lead; it cannot prove the
+   notification e-mail arrived, because `src/api/contact.js` swallows every
+   SMTP error into `console.error` and still answers `{success: true}`. Two
+   fields close it, cheapest first:
    - the `smtp_configured` / `notify_email_configured` booleans of
-     `GET /api/site/status` in (2) — turns "we cannot see the mailer" into
-     "the mailer is not configured at all", which is the common failure; or
-   - a `last_contact_email` field on that same endpoint —
+     `GET /api/site/status` — **shipped and consumed**: `form_check` echoes
+     them, turning "we cannot see the mailer" into "the mailer is not
+     configured at all", which is the common failure.
+   - the `last_contact_email` field on that same endpoint —
      `{"at": "...", "ok": false, "error": "EAUTH"}`, written by the existing
      `catch` block. **Presence and an error *class* only, never the SMTP
-     credentials or the recipient.** This is the version that actually answers
-     the question, and it is a four-line change at the `console.error` that is
-     already there.
+     credentials or the recipient.** Shipped in the endpoint but **not
+     consumed yet**: reading it after the probe would need care with send
+     timing (the mail is sent asynchronously, so an immediate read can race
+     it). This is the version that actually answers the question.
 
-   Until one of them exists, `form_check.email_delivery_verified` is
-   permanently `false` and the report asks the client to confirm the test
-   message reached their inbox. That is honest, but it is a question the
-   product should not have to ask.
+   Until `last_contact_email` is consumed, `form_check.email_delivery_verified`
+   stays `false` and the report asks the client to confirm the test message
+   reached their inbox — unless the booleans already prove it could not have.
 
 4. **Backup verification — no mechanism exists to verify.** This was scoped as
    a check and turned out not to be buildable: bl-site-package has **no backup
@@ -224,11 +236,11 @@ Article Agent needs: ship them there first, then the agent can use them.
    belongs to a per-client agent — restoring into the live instance to prove a
    backup works is exactly the operation you do not want automated.
 
-None of the four is required to run the SKU as specified above; all four make it
-materially better. (1) is what turns the monthly report into something the
-client receives rather than something the CEO relays, and (3) is the difference
-between "your contact form works" and "your contact form stores messages, and
-we hope the e-mail goes out".
+None of the four is required to run the SKU as specified above. (2) has shipped
+and made the SKU materially better; the rest still would. (1) is what turns the
+monthly report into something the client receives rather than something the CEO
+relays, and finishing (3) is the difference between "your contact form works"
+and "your contact form stores messages, and we hope the e-mail goes out".
 
 ## Site Launch — the bounded product
 
