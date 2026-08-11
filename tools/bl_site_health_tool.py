@@ -143,6 +143,16 @@ OLD_SITE_PATH_CAP = 40
 # page and would drown the finding that matters.
 SWEEPABLE_SUFFIXES = ("", ".html", ".htm", ".php", ".asp", ".aspx", ".shtml")
 
+# --- Release drift ----------------------------------------------------------
+# Every client runs the same bl-site-package code; main's package.json is the
+# single statement of what "current" is. The deployed side comes from the
+# instance's own GET /api/site/status (bl-site-package PR #32). Any mismatch
+# counts as outdated — a version *ahead* of main was deployed outside the
+# release flow, which is exactly as much BigLobster's problem as a stale one.
+RELEASED_PACKAGE_JSON_URL = (
+    "https://raw.githubusercontent.com/br41s/bl-site-package/main/package.json"
+)
+
 # --- Monthly contact-form probe --------------------------------------------
 # Sends one real message through the client's public form, so the volume is
 # capped at one per calendar month and stamped in history *before* the send.
@@ -658,6 +668,58 @@ def _old_site_sweep(old_site_url: str, site_url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Release drift
+# ---------------------------------------------------------------------------
+
+def _instance_status(site_url: str, token: str) -> Optional[dict]:
+    """The instance's own ``GET /api/site/status``, or None when it can't answer.
+
+    The endpoint exists since bl-site-package PR #32, so a 404 here usually
+    *is* the finding: an instance old enough to lack it is outdated by
+    definition, and it surfaces as ``release.deployed = null`` rather than as
+    a crashed check.
+    """
+    try:
+        status = _http_json("GET", f"{site_url}/api/site/status", token=token)
+    except (RuntimeError, OSError, ValueError):
+        return None
+    return status if isinstance(status, dict) else None
+
+
+def _latest_released_version() -> Optional[str]:
+    """bl-site-package's version on main, or None when GitHub can't be read.
+
+    Goes through ``_fetch`` (which never raises), so a GitHub outage degrades
+    the release check to "latest unknown" instead of failing the whole run.
+    """
+    res = _fetch(RELEASED_PACKAGE_JSON_URL)
+    if res["status"] != 200:
+        return None
+    try:
+        version = json.loads(res["body"]).get("version")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return version.strip() if isinstance(version, str) and version.strip() else None
+
+
+def _release_drift(site_status: Optional[dict]) -> dict:
+    """Deployed vs released version. ``outdated`` is null when either side is
+    unknown — the agent reports "could not compare", it never guesses."""
+    deployed = None
+    if site_status:
+        raw = site_status.get("version")
+        if isinstance(raw, str) and raw.strip():
+            deployed = raw.strip()
+    latest = _latest_released_version()
+    return {
+        "deployed": deployed,
+        "latest": latest,
+        # Direction-agnostic on purpose — see RELEASED_PACKAGE_JSON_URL.
+        "outdated": (deployed != latest) if deployed and latest else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # History
 # ---------------------------------------------------------------------------
 
@@ -724,7 +786,10 @@ def _form_check_due(history: dict, period: str) -> bool:
     return not any(f.get("period") == period for f in history.get("form_checks", []))
 
 
-def _run_form_check(site_url: str, token: str, history: dict, period: str) -> dict:
+def _run_form_check(
+    site_url: str, token: str, history: dict, period: str,
+    site_status: Optional[dict] = None,
+) -> dict:
     """Post one synthetic message through the public contact form and confirm
     it landed in the panel inbox.
 
@@ -734,11 +799,14 @@ def _run_form_check(site_url: str, token: str, history: dict, period: str) -> di
 
     What it cannot prove: that the notification e-mail arrived. ``src/api/
     contact.js`` catches every SMTP error into ``console.error`` and answers
-    ``{success: true}`` regardless, so from outside the instance a working
-    mailer and a silently broken one are indistinguishable. Closing that gap
-    needs the ``GET /api/site/status`` endpoint documented as a prerequisite in
-    AGENT_RENTAL_SETUP.md; until it exists this result says so rather than
-    implying a delivery it did not observe.
+    ``{success: true}`` regardless, so a configured mailer that fails at send
+    time is invisible from out here and ``email_delivery_verified`` stays
+    False. What ``GET /api/site/status`` (bl-site-package PR #32) *does*
+    answer is whether the mail path is configured at all: its
+    ``smtp_configured`` / ``notify_email_configured`` booleans are echoed into
+    the result, separating "presumably sent" from "certainly never sent" —
+    the common failure. Both are None on an instance too old to have the
+    endpoint.
 
     The attempt is stamped into history *before* the POST: a crash between
     sending and verifying then costs one month's result, never a second e-mail
@@ -759,9 +827,8 @@ def _run_form_check(site_url: str, token: str, history: dict, period: str) -> di
         "marker": marker,
         # Never true from out here. See the docstring.
         "email_delivery_verified": False,
-        "email_delivery_blocked_on": "GET /api/site/status (smtp_configured / "
-                                     "notify_email_configured) — prerequisite, "
-                                     "not built in bl-site-package yet",
+        "smtp_configured": site_status.get("smtp_configured") if site_status else None,
+        "notify_email_configured": site_status.get("notify_email_configured") if site_status else None,
     }
     try:
         _http_json("POST", f"{site_url}/api/contact", {
@@ -812,6 +879,9 @@ def _get_old_site_url() -> Optional[str]:
 
 def _run_check(site_url: str, token: str) -> dict:
     config = _http_json("GET", f"{site_url}/api/site/config")
+    # None on an instance predating /api/site/status — which the release
+    # section then reports as drift rather than this call crashing the run.
+    site_status = _instance_status(site_url, token)
     posts = _http_json("GET", f"{site_url}/api/blog/posts", token=token).get("posts", [])
     published = [p for p in posts if (p.get("status") or "published") == "published"]
 
@@ -937,7 +1007,7 @@ def _run_check(site_url: str, token: str) -> dict:
     # outage would just record a failure we already know about, and would burn
     # the month's single allowed submission on it.
     if all_up and _form_check_due(history, period):
-        form_check = _run_form_check(site_url, token, history, period)
+        form_check = _run_form_check(site_url, token, history, period, site_status)
     else:
         form_check = {
             "ran": False,
@@ -979,6 +1049,9 @@ def _run_check(site_url: str, token: str) -> dict:
         "tls": _tls_days_remaining(site_url),
         "tls_warn_days": TLS_WARN_DAYS,
         "missing_security_headers": missing_headers,
+        # Operator finding, never a client one: an outdated instance is
+        # redeployed by BigLobster, the client is not told "your site is old".
+        "release": _release_drift(site_status),
         "sitemap": {
             "urls": sitemap_urls,
             "site_url_config": (config.get("site_url") or "").strip(),
@@ -1060,9 +1133,15 @@ BL_SITE_HEALTH_SCHEMA = {
         "descriptions that are near-identical by string similarity, plus ones that are too short), "
         "'structured_data' (JSON-LD blocks that fail to parse or are missing required schema.org "
         "fields), 'old_site_redirects' (only when the profile has OLD_SITE_URL: old paths that now "
-        "dead-end on the new site; null otherwise), and 'form_check' — once per calendar month it "
-        "posts one synthetic message through the public contact form and confirms it reached the "
-        "panel inbox; it can never confirm the notification e-mail was delivered. "
+        "dead-end on the new site; null otherwise), 'release' (the instance's deployed "
+        "bl-site-package version vs the latest released on main; 'outdated' is true on ANY "
+        "mismatch and null when either side is unknown — an outdated instance is reported to "
+        "BigLobster, who redeploys it; it is never something to tell the client), and "
+        "'form_check' — once per calendar month it posts one synthetic message through the "
+        "public contact form and confirms it reached the panel inbox; it can never confirm the "
+        "notification e-mail was delivered, but its 'smtp_configured'/'notify_email_configured' "
+        "flags (from the instance's /api/site/status) say whether the mail path is configured "
+        "at all. "
         "action='history' returns the stored run history without checking anything. "
         "action='record_report' stamps the monthly report as delivered for 'period' (YYYY-MM, "
         "defaults to the current month) so it is never produced twice. "
