@@ -1,0 +1,9 @@
+{
+  "1": {
+    "chatwootAccountId": 1,
+    "siteUrl": "https://cliente-ejemplo.com",
+    "knowledgeToken": "replace-with-the-cliente-ejemplo-KNOWLEDGE_API_TOKEN",
+    "companyName": "Cliente Ejemplo S.L.",
+    "enabled": true
+  }
+}
