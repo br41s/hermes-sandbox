@@ -1,0 +1,15 @@
+{
+  "name": "whatsapp-lead-bot",
+  "version": "0.1.0",
+  "description": "Central AgentBot service: Chatwoot webhook -> OpenRouter -> knowledge fetch -> lead qualification, for the bl-site-package rented WhatsApp chatbot.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test src/**/*.test.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
