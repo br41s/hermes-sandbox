@@ -71,6 +71,19 @@ function secretMatches(presented) {
   return timingSafeEqual(a, b);
 }
 
+// Chatwoot's Agent Bot "outgoing_url" is configured as a plain URL with no
+// documented way to attach a custom Authorization header, so the shared
+// secret is accepted either way: as a query param (?secret=..., put
+// directly in the outgoing_url Chatwoot is configured with -- this is the
+// one guaranteed to work) or as a Bearer header (kept for any deployment
+// that can set one). Exported and pure so both paths are testable without
+// a full Express request.
+export function resolvePresentedSecret(authHeader, querySecret) {
+  const header = authHeader || "";
+  if (header.startsWith("Bearer ")) return header.slice(7);
+  return header || querySecret || "";
+}
+
 // Pure decision, exported for testing: given a webhook payload, should
 // this event be handed to the AI pipeline at all?
 export function shouldProcess(payload) {
@@ -91,8 +104,7 @@ export function shouldProcess(payload) {
 // Route-scoped body parser so this router is mountable standalone without
 // relying on server.js to have applied one globally first.
 router.post("/", json(), async (req, res) => {
-  const authHeader = req.headers.authorization || "";
-  const presented = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+  const presented = resolvePresentedSecret(req.headers.authorization, req.query.secret);
   if (!secretMatches(presented)) {
     return res.status(401).json({ error: "unauthorized" });
   }
