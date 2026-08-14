@@ -6,6 +6,7 @@ function validRaw(overrides = {}) {
   return JSON.stringify({
     reply: "Hola, soy el asistente de IA de Acme. ¿En qué puedo ayudarte?",
     answer_status: "answered",
+    detected_language: "es",
     lead: { name: null, email: null, need: null },
     handoff: { required: false, reason: null },
     ...overrides,
@@ -47,6 +48,28 @@ test("rejects a non-boolean handoff.required", () => {
   assert.throws(() =>
     validateAssistantOutput(validRaw({ handoff: { required: "yes", reason: null } })),
   );
+});
+
+test("accepts an English-detected reply", () => {
+  const result = validateAssistantOutput(
+    validRaw({ reply: "Hi, I'm Acme's AI assistant. How can I help?", detected_language: "en" }),
+  );
+  assert.equal(result.detected_language, "en");
+});
+
+test("rejects a missing detected_language", () => {
+  const raw = JSON.stringify({
+    reply: "hola",
+    answer_status: "answered",
+    lead: { name: null, email: null, need: null },
+    handoff: { required: false, reason: null },
+  });
+  assert.throws(() => validateAssistantOutput(raw));
+});
+
+test("rejects a detected_language that isn't a 2-letter code", () => {
+  assert.throws(() => validateAssistantOutput(validRaw({ detected_language: "spanish" })));
+  assert.throws(() => validateAssistantOutput(validRaw({ detected_language: "ES" })));
 });
 
 test("trims whitespace on string fields", () => {

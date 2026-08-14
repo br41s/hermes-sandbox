@@ -21,6 +21,11 @@
 // understand a paraphrase) -- it exists only to catch the cases where the
 // model answers confidently on a topic it should never answer from
 // website content alone.
+//
+// Spanish + English -- at least one live account (BigLobster's own
+// biglobster.top dogfood instance) is bilingual, and this backstop must
+// not silently go blind just because the visitor happens to write in
+// English. Extend with more languages only when a real account needs it.
 const SENSITIVE_TOPIC_PATTERNS = [
   /\bprecio\b/i,
   /\bpresupuesto\b/i,
@@ -33,11 +38,31 @@ const SENSITIVE_TOPIC_PATTERNS = [
   /\bdemanda\b/i,
   /\babogad[oa]\b/i,
   /\blegal\b/i,
+  /\bprice\b/i,
+  /\bpricing\b/i,
+  /\bquote\b/i,
+  /\bhow much (does|is|would)\b/i,
+  /\bavailability\b/i,
+  /\bcommitment\b/i,
+  /\bcomplaint\b/i,
+  /\blawyer\b/i,
+  /\battorney\b/i,
 ];
 
 export function messageTouchesSensitiveTopic(text) {
   if (typeof text !== "string" || !text) return false;
   return SENSITIVE_TOPIC_PATTERNS.some((re) => re.test(text));
+}
+
+// Same bilingual-backstop reasoning as SENSITIVE_TOPIC_PATTERNS above.
+const HUMAN_REQUEST_PATTERNS = [
+  /\b(hablar con (una )?persona|agente humano|operador)\b/i,
+  /\b(talk to (a )?(person|human)|human agent|speak (to|with) (a )?(person|representative))\b/i,
+];
+
+export function messageRequestsHuman(text) {
+  if (typeof text !== "string" || !text) return false;
+  return HUMAN_REQUEST_PATTERNS.some((re) => re.test(text));
 }
 
 /**

@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideHandoff, isLeadQualified, messageTouchesSensitiveTopic } from "./policy.js";
+import {
+  decideHandoff,
+  isLeadQualified,
+  messageTouchesSensitiveTopic,
+  messageRequestsHuman,
+} from "./policy.js";
 
 const baseInput = {
   visitorMessage: "Hola, ¿tenéis servicio de reformas?",
@@ -107,4 +112,18 @@ test("messageTouchesSensitiveTopic matches Spanish pricing/legal/complaint terms
   assert.equal(messageTouchesSensitiveTopic("¿Cuál es el precio?"), true);
   assert.equal(messageTouchesSensitiveTopic("Quiero poner una reclamación"), true);
   assert.equal(messageTouchesSensitiveTopic("Hola, buenos días"), false);
+});
+
+test("messageTouchesSensitiveTopic also matches English pricing/legal/complaint terms", () => {
+  assert.equal(messageTouchesSensitiveTopic("What's the price for this?"), true);
+  assert.equal(messageTouchesSensitiveTopic("How much does it cost?"), true);
+  assert.equal(messageTouchesSensitiveTopic("I want to file a complaint"), true);
+  assert.equal(messageTouchesSensitiveTopic("Hi, good morning"), false);
+});
+
+test("messageRequestsHuman matches Spanish and English phrasing", () => {
+  assert.equal(messageRequestsHuman("Quiero hablar con una persona"), true);
+  assert.equal(messageRequestsHuman("I'd like to talk to a human"), true);
+  assert.equal(messageRequestsHuman("Can I speak with a representative?"), true);
+  assert.equal(messageRequestsHuman("¿Tenéis servicio de reformas?"), false);
 });

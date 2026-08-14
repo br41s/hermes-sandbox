@@ -19,11 +19,31 @@ import { timingSafeEqual } from "node:crypto";
 import { getRegistryEntry } from "./registry.js";
 import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
-import { decideHandoff } from "./policy.js";
+import { decideHandoff, messageRequestsHuman } from "./policy.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
 const router = Router();
+
+// Fixed, non-model-generated visitor-facing strings. These bypass the LLM
+// entirely (that's the point -- a malformed/hallucinating model can't
+// corrupt them), so they can't rely on the model's own detected_language
+// for anything except the safe-escalation reply, which does have one
+// available. Spanish is the fallback when no language signal exists at
+// all (e.g. OpenRouter never got called). Extend only when a real account
+// needs a third language -- see the note on SENSITIVE_TOPIC_PATTERNS in
+// policy.js for the same policy.
+const SAFE_ESCALATION_REPLY = {
+  es: "No tengo información suficiente para responderte con seguridad. Se lo paso a una persona para que continúe contigo aquí.",
+  en: "I don't have enough information to answer that safely. I'm handing this over to a person to continue with you here.",
+};
+
+// No model call happens on this path (see handleUnsupportedMedia below),
+// so there is no detected_language to key off of -- sent bilingually in
+// one message rather than guessing, which still respects the
+// one-outbound-message-per-turn cost rule.
+const UNSUPPORTED_MEDIA_REPLY =
+  "He recibido tu archivo. Ahora mismo solo puedo leer mensajes de texto, así que voy a pasarle esto a una persona para que lo revise.\n\nI've received your file. Right now I can only read text messages, so I'm passing this along to a person to review.";
 
 // Chatwoot message_created webhook retries -- dedupe on the message id so
 // a retry never produces a second reply. Bounded in-memory set: this
@@ -112,11 +132,7 @@ async function handleUnsupportedMedia(payload) {
   const accountId = payload?.account?.id;
   const conversationId = payload?.conversation?.id;
   if (!accountId || !conversationId) return;
-  await chatwoot.sendMessage(
-    accountId,
-    conversationId,
-    "He recibido tu archivo. Ahora mismo solo puedo leer mensajes de texto, así que voy a pasarle esto a una persona para que lo revise.",
-  );
+  await chatwoot.sendMessage(accountId, conversationId, UNSUPPORTED_MEDIA_REPLY);
   await chatwoot.setStatus(accountId, conversationId, "open");
   await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
   await chatwoot
@@ -168,9 +184,7 @@ async function processTurn(payload) {
     turnCap,
     knowledgeAvailable: Boolean(knowledge),
     hasUnsupportedMedia: false, // already filtered out in shouldProcess
-    visitorRequestedHuman: /\b(hablar con (una )?persona|agente humano|operador)\b/i.test(
-      visitorMessage,
-    ),
+    visitorRequestedHuman: messageRequestsHuman(visitorMessage),
     repeatedUnresolvedQuestion: false, // requires history diffing -- left conservative for MVP, see report
   });
 
@@ -193,8 +207,11 @@ async function processTurn(payload) {
   }
 
   if (decision.required) {
-    const safeReply =
-      "No tengo información suficiente para responderte con seguridad. Se lo paso a una persona para que continúe contigo aquí.";
+    // modelOutput can be null (e.g. OpenRouter was unavailable) -- fall
+    // back to Spanish, matching this service's original default, rather
+    // than guessing the visitor's language from scratch here.
+    const lang = modelOutput?.detected_language;
+    const safeReply = SAFE_ESCALATION_REPLY[lang] || SAFE_ESCALATION_REPLY.es;
     await chatwoot.sendMessage(accountId, conversationId, safeReply);
     await chatwoot.setStatus(accountId, conversationId, "open");
     await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
