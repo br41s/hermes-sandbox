@@ -9,12 +9,14 @@ for one-shot agents (they auto-remove after their single run).
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.provision_bl_client import (
     AGENT_SOURCES,
     AGENTS_REQUIRING_OLD_SITE,
     AGENTS_REQUIRING_PEXELS,
     MUTUALLY_EXCLUSIVE_AGENTS,
+    _write_config,
     pick_stagger_schedule,
     provision,
 )
@@ -138,3 +140,21 @@ def test_pexels_key_is_not_read_from_the_environment(monkeypatch):
     # Re-declare exactly as main() does and confirm the default stays None.
     parser.add_argument("--pexels-key", default=None)
     assert parser.parse_args([]).pexels_key is None
+
+
+# --- Every rented profile is written with web.search_backend: ddgs (#174) ---
+#
+# Every profile _write_config() writes IS a rented tenant — it's only ever
+# called from provision(), never for a BigLobster-owned profile — so this
+# is unconditional, not gated on which agents were ordered. Belt to
+# docker/cont-init.d/03-biglobster-config's boot-time reconcile (suspenders):
+# this makes a brand-new client's FIRST job (as soon as 5 minutes after
+# provisioning) correct immediately, without waiting for a container
+# restart to backfill it.
+
+def test_write_config_pins_ddgs_as_the_web_search_backend(tmp_path):
+    _write_config(tmp_path, model="deepseek/deepseek-v4-flash")
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["web"]["search_backend"] == "ddgs"
+    # Never Exa — that's the leak this pin exists to prevent.
+    assert cfg["web"].get("backend") != "exa"
