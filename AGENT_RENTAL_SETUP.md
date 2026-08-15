@@ -351,11 +351,21 @@ through untouched.
 
 `PEXELS_API_KEY` is the one credential in the whole rental flow that is **not
 BYOK**: the API is free, so every profile carries a copy of BigLobster's own
-key. That puts it squarely in the known trap where rotating a secret in the main
-`.env` leaves already-provisioned profiles on the revoked value — and the
-symptom is an HTTP 401 out of `stock_search`, not a config error. Rotate it
-across profile `.env` files, not just the main one. Provisioning without it does
-not fail; the videos just render on plain backgrounds instead of footage.
+key. Rotating it is safe — it is in the `inject` allowlist in
+`docker/cont-init.d/03-biglobster-config`, so every container boot overwrites the
+value in each profile's `.env` from the Zeabur env. That is the same mechanism
+that stops a rotation stranding profiles on a revoked key, which is exactly what
+broke `grow-shop` in the 2026-06-05 `OPENROUTER_API_KEY` rotation. Set it once on
+the Hermes service and restart the container; do **not** hand-edit profile `.env`
+files. `--pexels-key` at provision time exists so a brand-new client works
+immediately, before the next boot. Provisioning without it does not fail; the
+videos just render on plain backgrounds instead of footage.
+
+Note the quota is shared across the whole fleet, not per client: 200 requests per
+hour and 20,000 per month, against roughly three `stock_search` calls per video.
+`stock_search` surfaces a Pexels 429 as an explicit error rather than an empty
+result, so throttling shows up in the job report instead of silently producing
+background-only videos.
 
 What keeps the SKU bounded:
 

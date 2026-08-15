@@ -367,11 +367,11 @@ def _write_env(
     if fal_key:
         contents += f"FAL_KEY={fal_key}\n"
     # Stock B-roll for the shorts agent. Unlike the two above this is NOT BYOK:
-    # the Pexels API is free, so every client shares BigLobster's key. That puts
-    # it squarely in the "rotated secrets do not reach profile .env files" trap
-    # — rotating it in the main env leaves every already-provisioned profile on
-    # the revoked one, and the symptom is an HTTP 401 from stock_search rather
-    # than a config error. Re-run the rotation across profile .env files.
+    # the Pexels API is free, so every client shares BigLobster's key. Writing it
+    # here is what makes a brand-new client's first run work; from then on
+    # docker/cont-init.d/03-biglobster-config re-syncs it from the Zeabur env on
+    # every boot (it is in that hook's `inject` allowlist), so a rotation reaches
+    # this file without anyone editing it by hand.
     if pexels_key:
         contents += f"PEXELS_API_KEY={pexels_key}\n"
     env_path.write_text(contents, encoding="utf-8")

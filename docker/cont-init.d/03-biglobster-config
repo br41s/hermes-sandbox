@@ -146,6 +146,13 @@ inject = [
     # Read-only Google Search Console service-account key (base64), consumed by
     # the gsc MCP server (config.yaml mcp_servers.gsc). See optional-mcps/gsc/.
     "GSC_SERVICE_ACCOUNT_B64",
+    # Stock B-roll for the rented `shorts` agent (plugins/shorts/stock.py).
+    # Belongs here, unlike FAL_KEY: the Pexels API is free, so every profile
+    # runs on BigLobster's single shared key rather than a per-client one, and
+    # the whole fleet must follow a rotation. scripts/provision_bl_client.py
+    # also writes it at provision time so a brand-new client works before the
+    # next container boot; this keeps it current from then on.
+    "PEXELS_API_KEY",
 ]
 
 def _sync_env_file(env_path, exclude=()):

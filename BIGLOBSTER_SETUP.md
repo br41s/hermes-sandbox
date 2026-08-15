@@ -112,6 +112,7 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 | `TELEGRAM_ALLOWED_USERS` | No | CEO's Telegram user ID for direct access |
 | `EXA_API_KEY` | No | Exa web search API key — activates the `web` toolset |
 | `HUGGINGFACE_API_KEY` | No | HuggingFace token — activates `video_gen` (text-to-video) |
+| `PEXELS_API_KEY` | No | Pexels API key — stock B-roll for the rented `shorts` agent. Free tier, shared by the whole fleet (not BYOK, unlike `FAL_KEY`), so it is in `03-biglobster-config`'s `inject` list and propagates to every profile `.env` on boot. Without it `shorts` still renders, just on plain backgrounds. |
 | `GITHUB_TOKEN` | No | GitHub PAT (fine-grained, `contents:write` + `pull_requests:write`). At boot, `03-biglobster-config` writes it into `~/.git-credentials` so `git push/clone` over HTTPS works without prompts. Refresh = rotate token in Zeabur + restart. |
 
 ## Zeabur environment variables (BigLobster service)

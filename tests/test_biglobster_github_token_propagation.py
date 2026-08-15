@@ -58,26 +58,46 @@ def test_token_is_exported_under_both_names(boot_text: str) -> None:
     assert "export GITHUB_TOKEN GH_TOKEN" in boot_text
 
 
+def _parse_inject(boot_text: str) -> list[str]:
+    """Read §1's ``inject`` allowlist out of the boot script."""
+    match = re.search(r"inject = \[(.*?)\n\]", boot_text, re.DOTALL)
+    assert match, "inject list not found"
+    body = "\n".join(
+        line for line in match.group(1).splitlines()
+        if not line.strip().startswith("#")
+    )
+    return re.findall(r'"([^"]+)"', body)
+
+
 def test_inject_list_includes_both_token_names(boot_text: str) -> None:
     """§1 syncs GITHUB_TOKEN and GH_TOKEN into the main and per-profile .env."""
-    m = re.search(r"inject = \[(.*?)\]", boot_text, re.DOTALL)
-    assert m, "inject list not found"
-    inject_block = m.group(1)
-    assert '"GITHUB_TOKEN"' in inject_block
-    assert '"GH_TOKEN"' in inject_block
+    inject = _parse_inject(boot_text)
+    assert "GITHUB_TOKEN" in inject
+    assert "GH_TOKEN" in inject
+
+
+def test_inject_list_carries_the_shared_not_byok_keys(boot_text: str) -> None:
+    """Keys BigLobster owns for the whole fleet must ride the per-profile sync.
+
+    A shared key that is missing here survives its own rotation only in the
+    main .env; every already-provisioned profile keeps serving the revoked
+    value, which is what broke grow-shop in the 2026-06-05 rotation. FAL_KEY
+    is deliberately absent — it is genuinely per-client BYOK, and syncing it
+    would overwrite each client's own key with BigLobster's.
+    """
+    inject = _parse_inject(boot_text)
+    for shared in ("OPENROUTER_API_KEY", "EXA_API_KEY", "PEXELS_API_KEY"):
+        assert shared in inject, f"{shared} is shared and must be synced per profile"
+    assert "FAL_KEY" not in inject, "FAL_KEY is BYOK and must stay per-profile"
 
 
 # --- functional check of the embedded _sync_env_file dedupe semantics --------
-# Replicated verbatim from the §1 heredoc; if the heredoc changes, update here.
-_INJECT = [
-    "OPENROUTER_API_KEY", "HERMES_CALLBACK_SECRET", "HERMES_CALLBACK_URL",
-    "HERMES_MAX_ITERATIONS", "EXA_API_KEY", "HUGGINGFACE_API_KEY",
-    "GITHUB_TOKEN", "GH_TOKEN", "AUXILIARY_VISION_MODEL",
-]
-
-
-def _sync_env_file_content(content: str, environ: dict) -> str:
-    for var in _INJECT:
+# The allowlist is READ from the boot script rather than copied, because a
+# hand-maintained copy drifts: GSC_SERVICE_ACCOUNT_B64 was added to the script
+# and never mirrored here. Only the function body below is a replica; if the
+# §1 heredoc's _sync_env_file changes, update it here.
+def _sync_env_file_content(content: str, environ: dict, inject: list[str]) -> str:
+    for var in inject:
         val = environ.get(var, "")
         if not val:
             continue
@@ -96,7 +116,12 @@ def _sync_env_file_content(content: str, environ: dict) -> str:
     return content
 
 
-def test_sync_collapses_divergent_duplicates() -> None:
+@pytest.fixture(scope="module")
+def inject(boot_text: str) -> list[str]:
+    return _parse_inject(boot_text)
+
+
+def test_sync_collapses_divergent_duplicates(inject: list[str]) -> None:
     """The prod failure mode: two divergent GITHUB_TOKEN lines collapse to one
     canonical line (the valid, last one) and the stale one is removed."""
     prod = (
@@ -106,21 +131,46 @@ def test_sync_collapses_divergent_duplicates() -> None:
         "GITHUB_TOKEN=github_pat_VALID\n"
     )
     env = {"GITHUB_TOKEN": "github_pat_VALID", "GH_TOKEN": "github_pat_VALID"}
-    out = _sync_env_file_content(prod, env)
+    out = _sync_env_file_content(prod, env, inject)
     assert re.findall(r"^GITHUB_TOKEN=.*$", out, re.MULTILINE) == ["GITHUB_TOKEN=github_pat_VALID"]
     assert re.findall(r"^GH_TOKEN=.*$", out, re.MULTILINE) == ["GH_TOKEN=github_pat_VALID"]
     assert "ghp_STALE" not in out
 
 
-def test_sync_is_idempotent() -> None:
+def test_sync_is_idempotent(inject: list[str]) -> None:
     env = {"GITHUB_TOKEN": "github_pat_VALID", "GH_TOKEN": "github_pat_VALID"}
-    once = _sync_env_file_content("GITHUB_TOKEN=ghp_a\nGITHUB_TOKEN=ghp_b\n", env)
-    twice = _sync_env_file_content(once, env)
+    once = _sync_env_file_content("GITHUB_TOKEN=ghp_a\nGITHUB_TOKEN=ghp_b\n", env, inject)
+    twice = _sync_env_file_content(once, env, inject)
     assert once == twice
 
 
-def test_sync_single_line_preserves_position() -> None:
+def test_sync_single_line_preserves_position(inject: list[str]) -> None:
     """A single existing line is replaced in place — no reordering churn."""
     single = "A=1\nGITHUB_TOKEN=ghp_x\nB=2\n"
-    out = _sync_env_file_content(single, {"GITHUB_TOKEN": "ghp_x"})
+    out = _sync_env_file_content(single, {"GITHUB_TOKEN": "ghp_x"}, inject)
     assert out == single
+
+
+def test_sync_adds_pexels_key_to_a_profile_that_lacks_it(inject: list[str]) -> None:
+    """A profile provisioned before the shorts agent existed must pick the key
+    up on the next boot, appended without disturbing its existing lines."""
+    profile_env = (
+        "BL_SITE_URL=https://client.example\n"
+        "BL_SITE_PANEL_PASSWORD=pw\n"
+        "OPENROUTER_API_KEY=sk-or-client\n"
+    )
+    out = _sync_env_file_content(
+        profile_env, {"PEXELS_API_KEY": "pexels-shared"}, inject
+    )
+    assert "PEXELS_API_KEY=pexels-shared\n" in out
+    assert out.startswith(profile_env)
+
+
+def test_sync_replaces_a_rotated_pexels_key(inject: list[str]) -> None:
+    """The rotation case: an old value is overwritten, not left alongside."""
+    out = _sync_env_file_content(
+        "PEXELS_API_KEY=old-revoked\n", {"PEXELS_API_KEY": "new-live"}, inject
+    )
+    assert re.findall(r"^PEXELS_API_KEY=.*$", out, re.MULTILINE) == [
+        "PEXELS_API_KEY=new-live"
+    ]
