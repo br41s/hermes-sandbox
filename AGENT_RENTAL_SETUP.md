@@ -78,6 +78,26 @@ used, which is how it knows never to redo one — the same
 mark-it-in-the-content trick the Infographic Engineer uses, and the same
 prose-is-immutable rule. See "Social Shorts" below.
 
+Web research is **bundled, not BYOK — free ddgs, never the client's own key.**
+Content Gap Hunter, Onboarding Content, Product Article Agent, and Site Launch
+all call `web_search`. BigLobster's own profiles use Exa (paid, via
+`EXA_API_KEY`); every rented tenant is pinned to the free `ddgs` backend
+instead (`web.search_backend: ddgs` in `_write_config()`, re-asserted every
+boot by `docker/cont-init.d/03-biglobster-config`'s `is_rented` branch — see
+"Onboarding a client" below). This is a **deliberate exception** to the BYOK
+pattern used for `FAL_KEY`/`PEXELS_API_KEY`: those gate an *optional* premium
+SKU, so asking for one more key is proportionate to what the client is
+buying. Web search underpins the *base* product across four agents — making
+it BYOK would mean every single client signs up for an Exa account just to
+get gap-hunter working, which is exactly the multi-key onboarding friction
+BigLobster picked OpenRouter to avoid in the first place. ddgs needs no key
+at all, so there is nothing to ask the client for. Trade-off: DDG's lexical
+search is weaker than Exa's neural search for niche/long-tail queries —
+acceptable for now, revisit if gap-hunter/product-articles output quality
+measurably suffers (issue #174; found the same day `PEXELS_API_KEY` for the
+`shorts` agent was correctly made BYOK, which is the case that clarified
+the distinction).
+
 Off-Site GEO Scout is **not yet adapted** — it's monitoring-only and may not
 need the publish tool at all. Adapt it the same way, once a client orders it.
 
@@ -443,7 +463,7 @@ default. What the script does, in order:
 2b. If `site-setup` was ordered: validates the questionnaire against the fixed schema, then applies the site template to the instance (`scripts/bl_site_setup.py`) — completes `/setup`, writes the identity/legal/business fields verbatim, uploads the logo. This runs *before* the profile is created so a failure here (unreachable instance, instance already claimed under another password) leaves no half-built profile behind; it is idempotent, so a retry converges.
 3. `hermes profile create <slug> --no-skills` — an isolated `~/.hermes/profiles/<slug>/` (empty, no clone — this client needs none of BigLobster's own skills/config).
 4. Writes that profile's `SOUL.md`, matching the terse style of `docker/profiles/grow-shop/SOUL.md` — scope, working boundaries, nothing more.
-5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
+5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved and `web.search_backend: ddgs` (always — see "Web research is bundled, not BYOK" above; this is what stops the client's web_search calls landing on BigLobster's own Exa account) — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
 6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `FAL_KEY` if `--fal-key` was given and `OLD_SITE_URL` if `--old-site-url` was.
 7. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead.
 

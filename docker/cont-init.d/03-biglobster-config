@@ -256,12 +256,36 @@ if profiles_root.is_dir():
             # for a key we do not own and must not rotate. A tenant whose own
             # key dies now fails visibly on their own jobs instead of silently
             # spending our credit.
-            _exclude = ("OPENROUTER_API_KEY", "PEXELS_API_KEY")
-            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY / PEXELS_API_KEY)"
+            #
+            # EXA_API_KEY / HUGGINGFACE_API_KEY are a DIFFERENT shape of leak
+            # than OPENROUTER_API_KEY/PEXELS_API_KEY above: those two are BYOK
+            # (the tenant supplies their own and we must not clobber it);
+            # these two are ours alone and a tenant should never have EITHER —
+            # no rented prompt uses HuggingFace at all, and web research for
+            # tenants runs on the free ddgs backend (§2 below forces
+            # web.search_backend: ddgs), never billed to BigLobster's Exa
+            # account. Found while adding the shorts agent: gap-hunter and
+            # product-articles (both daily SKUs) call web_search, so this was
+            # a live, recurring leak, not a theoretical one (issue #174).
+            _exclude = ("OPENROUTER_API_KEY", "PEXELS_API_KEY", "EXA_API_KEY", "HUGGINGFACE_API_KEY")
+            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY/PEXELS_API_KEY; withheld shared EXA_API_KEY/HUGGINGFACE_API_KEY)"
         else:
             _exclude = ()
             _why = ""
         _sync_env_file(_prof_env, exclude=_exclude)
+        if _is_rented_tenant(_prof_env):
+            # _exclude only stops FUTURE overwrites — a profile that already
+            # picked up EXA_API_KEY/HUGGINGFACE_API_KEY from a boot before
+            # this fix shipped keeps that stale line forever otherwise (no
+            # manifest of already-provisioned tenants exists to backfill by
+            # hand; this loop already visits every one of them, every boot).
+            _c = _prof_env.read_text(encoding="utf-8") if _prof_env.exists() else ""
+            _stripped = _c
+            for _v in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
+                _stripped = re.sub(rf"^{_v}=.*(?:\n|$)", "", _stripped, flags=re.MULTILINE)
+            if _stripped != _c:
+                _prof_env.write_text(_stripped, encoding="utf-8")
+                print(f"[03-biglobster] Stripped stale shared research keys from {_prof_env}")
         print(f"[03-biglobster] Synced env vars into {_prof_env}{_why}")
 
 _auditor_env = profiles_root / "auditor" / ".env"
@@ -401,7 +425,7 @@ def _reconcile_group_topics(cfg):
             changed = True
     return changed
 
-def _reconcile_config(config_path, label):
+def _reconcile_config(config_path, label, is_rented=False):
     if not config_path.exists():
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
@@ -413,6 +437,26 @@ def _reconcile_config(config_path, label):
                 cfg[section] = {}
             if cfg[section].get(key) != val:
                 cfg[section][key] = val
+                changed = True
+        # Rented tenants: force web research onto the free ddgs backend,
+        # never the "web.backend": "exa" override above. Deliberately a
+        # MORE SPECIFIC key (search_backend, not backend) — the resolver
+        # (agent/web_search_registry.py get_active_search_provider) reads
+        # search_backend first and only falls back to backend when it's
+        # unset, so this wins without having to touch/remove the generic
+        # override. Forces the provider even before the ddgs package is
+        # physically installed on a fresh tenant (its own lazy-install
+        # fires on first real search — plugins/web/ddgs/provider.py). See
+        # issue #174: EXA_API_KEY billed every tenant's web_search calls to
+        # BigLobster's own Exa account; §1 above stops handing tenants the
+        # key at all, this is the other half — without it, a tenant with a
+        # stale key already on disk (or none at all) would still either
+        # bill us or hard-fail with "no provider configured".
+        if is_rented:
+            if not isinstance(cfg.get("web"), dict):
+                cfg["web"] = {}
+            if cfg["web"].get("search_backend") != "ddgs":
+                cfg["web"]["search_backend"] = "ddgs"
                 changed = True
         # Preserve the curated image_gen.openrouter.model only if unset.
         ig = cfg.get("image_gen")
@@ -567,7 +611,10 @@ if profiles_root.is_dir():
     for prof in sorted(p for p in profiles_root.iterdir() if p.is_dir()):
         if not (prof / "SOUL.md").exists():
             continue
-        _reconcile_config(prof / "config.yaml", prof.name)
+        _reconcile_config(
+            prof / "config.yaml", prof.name,
+            is_rented=_is_rented_tenant(prof / ".env"),
+        )
 PYEOF
 
 # --- 2b: per-profile routing env injection (every boot, not seed-once) ---

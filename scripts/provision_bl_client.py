@@ -375,10 +375,24 @@ def _write_config(profile_dir: Path, model: str, image_model: str | None = None)
     ``image_gen.model`` so the shared image_generate tool's _resolve_fal_model()
     picks it up per-profile — the client's FAL image model, billed to their own
     FAL_KEY. Omitted → _resolve_fal_model() falls back to the FAL default.
+
+    Every profile this function writes IS a rented tenant (it's only ever
+    called from provision(), never for a BigLobster-owned profile), so
+    web.search_backend is always pinned to the free ddgs backend — never
+    Exa, which would bill the tenant's web_search calls to BigLobster's own
+    account (issue #174). docker/cont-init.d/03-biglobster-config's boot
+    reconciler (§2, is_rented branch) re-asserts the same key on every boot,
+    so a client can't drift off it even by hand-editing config.yaml; writing
+    it here too means a client's FIRST job — which can fire as soon as 5
+    minutes after provisioning — gets it immediately, without waiting for
+    the next container restart.
     """
     import yaml
 
-    data: dict = {"model": {"default": model, "provider": "openrouter"}}
+    data: dict = {
+        "model": {"default": model, "provider": "openrouter"},
+        "web": {"search_backend": "ddgs"},
+    }
     if image_model:
         data["image_gen"] = {"model": image_model}
 

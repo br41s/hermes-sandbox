@@ -98,6 +98,20 @@ class DDGSWebSearchProvider(WebSearchProvider):
         wall-clock timeout (``_SEARCH_TIMEOUT_SECS``) so a hung search cannot
         block the shared agent loop indefinitely (#36776).
         """
+        # is_available() only probes importability (it must stay I/O-free —
+        # see its docstring), so nothing installs the package on the
+        # config-explicit path (web.search_backend: ddgs forces this provider
+        # even before the package is present, e.g. a freshly provisioned
+        # rented tenant — see docker/cont-init.d/03-biglobster-config).
+        # search.exa/search.firecrawl/search.parallel already lazy-install
+        # themselves at their own SDK-import chokepoint; ddgs never did.
+        try:
+            from tools.lazy_deps import ensure as _lazy_ensure
+
+            _lazy_ensure("search.ddgs", prompt=False)
+        except Exception as exc:  # noqa: BLE001 — fall through to the import probe below
+            logger.warning("ddgs lazy-install failed: %s", exc)
+
         try:
             import ddgs  # type: ignore  # noqa: F401 — availability probe
         except ImportError:

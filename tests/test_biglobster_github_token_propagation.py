@@ -215,3 +215,132 @@ def test_biglobster_own_profile_still_gets_the_pexels_rotation(inject: list[str]
     assert re.findall(r"^PEXELS_API_KEY=.*$", out, re.MULTILINE) == [
         "PEXELS_API_KEY=new-live"
     ]
+
+
+# --- Rented tenants never see EXA_API_KEY / HUGGINGFACE_API_KEY (#174) -------
+#
+# Different shape of leak than OPENROUTER_API_KEY/PEXELS_API_KEY above: those
+# are BYOK (a tenant supplies their own, must not be clobbered). These two are
+# BigLobster's alone — a tenant should never receive either at all. gap-hunter
+# and product-articles (both daily SKUs) call web_search, so EXA_API_KEY
+# billed every rented client's research to BigLobster's own Exa account until
+# this fix. Tenants use the free ddgs backend instead (see the config-
+# reconcile tests below); HUGGINGFACE_API_KEY gates video_gen, which no
+# rented prompt uses at all.
+
+def test_shared_research_keys_are_withheld_from_rented_tenants(
+    inject: list[str], tenant_exclude: tuple[str, ...]
+) -> None:
+    """Unlike the BYOK keys above, EXA_API_KEY/HUGGINGFACE_API_KEY must be
+    withheld, full stop — there's no client-supplied replacement to fall
+    back to (that's the whole point: tenants use the free ddgs backend, not
+    their own Exa key)."""
+    for shared in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
+        assert shared in inject, f"{shared} must still sync to BigLobster's own profiles"
+        assert shared in tenant_exclude, f"{shared} must be withheld from tenants"
+
+
+def test_excluded_keys_are_never_injected_into_a_tenant_env(
+    inject: list[str], tenant_exclude: tuple[str, ...]
+) -> None:
+    tenant_env = "BL_SITE_URL=https://client.example\n"
+    biglobster_env = {"EXA_API_KEY": "exa-BIGLOBSTER", "HUGGINGFACE_API_KEY": "hf-BIGLOBSTER"}
+    out = _sync_env_file_content(tenant_env, biglobster_env, inject, tenant_exclude)
+    assert "EXA_API_KEY" not in out
+    assert "HUGGINGFACE_API_KEY" not in out
+
+
+def _strip_stale_research_keys(content: str) -> str:
+    """Replicates the defensive stripping added alongside _exclude — a
+    profile that already picked up EXA_API_KEY/HUGGINGFACE_API_KEY from a
+    boot before this fix shipped keeps the stale line forever otherwise,
+    since exclude only stops future overwrites."""
+    stripped = content
+    for var in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
+        stripped = re.sub(rf"^{var}=.*(?:\n|$)", "", stripped, flags=re.MULTILINE)
+    return stripped
+
+
+def test_stale_research_keys_are_stripped_from_an_already_contaminated_tenant() -> None:
+    """The bl-shoroban-class regression, backfilled: a rented tenant .env
+    written by a PRE-fix boot already carries BigLobster's keys. There is no
+    manifest of already-provisioned tenants to hand-fix (provision_bl_client.py
+    never writes these two — only the boot injector ever did), so this must
+    self-heal from the SAME per-profile loop that already visits every
+    tenant, every boot."""
+    contaminated = (
+        "BL_SITE_URL=https://client.example\n"
+        "OPENROUTER_API_KEY=sk-or-CLIENT\n"
+        "EXA_API_KEY=exa-BIGLOBSTER\n"
+        "HUGGINGFACE_API_KEY=hf-BIGLOBSTER\n"
+    )
+    out = _strip_stale_research_keys(contaminated)
+    assert "EXA_API_KEY" not in out
+    assert "HUGGINGFACE_API_KEY" not in out
+    # Untouched: the tenant's own key and the site marker survive.
+    assert "sk-or-CLIENT" in out
+    assert "BL_SITE_URL=https://client.example" in out
+
+
+def test_stale_key_stripping_is_idempotent() -> None:
+    once = _strip_stale_research_keys("EXA_API_KEY=a\nOTHER=1\n")
+    twice = _strip_stale_research_keys(once)
+    assert once == twice == "OTHER=1\n"
+
+
+# --- Rented tenants get web.search_backend: ddgs forced (#174) --------------
+#
+# A SECOND, more direct leak than the .env injection above: §2's generic
+# overrides force web.backend: "exa" onto EVERY profile's config.yaml,
+# tenants included. search_backend (more specific) must win over backend in
+# the resolver's read order (agent/web_search_registry.py), so forcing it
+# per-tenant here is what actually stops a tenant's web_search from landing
+# on Exa, not just removing the key from their .env.
+
+def test_reconcile_config_accepts_is_rented_flag(boot_text: str) -> None:
+    assert "def _reconcile_config(config_path, label, is_rented=False):" in boot_text
+
+
+def test_is_rented_forces_ddgs_search_backend_not_generic_web_backend(boot_text: str) -> None:
+    idx = boot_text.index('cfg["web"]["search_backend"] = "ddgs"')
+    gate = boot_text.rindex("if is_rented:", 0, idx)
+    between = boot_text[gate:idx]
+    # Must sit inside the is_rented branch, and must be search_backend, never
+    # touching/overriding the generic ("web", "backend"): "exa" override.
+    assert 'cfg["web"].get("search_backend") != "ddgs"' in between
+    assert '"backend"' not in between
+
+
+def test_profile_loop_passes_is_rented_from_the_env_marker(boot_text: str) -> None:
+    assert "is_rented=_is_rented_tenant(prof / \".env\")" in boot_text
+
+
+def test_ddgs_reconcile_logic_on_sample_configs() -> None:
+    """Functionally replay the is_rented branch of _reconcile_config."""
+    def reconcile_web_backend(cfg: dict, is_rented: bool) -> bool:
+        changed = False
+        if is_rented:
+            if not isinstance(cfg.get("web"), dict):
+                cfg["web"] = {}
+            if cfg["web"].get("search_backend") != "ddgs":
+                cfg["web"]["search_backend"] = "ddgs"
+                changed = True
+        return changed
+
+    # Fresh tenant config: section created, ddgs forced.
+    cfg: dict = {"model": {"default": "x"}}
+    assert reconcile_web_backend(cfg, is_rented=True) is True
+    assert cfg["web"]["search_backend"] == "ddgs"
+
+    # Second boot: no change (idempotent).
+    assert reconcile_web_backend(cfg, is_rented=True) is False
+
+    # BigLobster's own profile: never touched.
+    own_cfg: dict = {"web": {"backend": "exa"}}
+    assert reconcile_web_backend(own_cfg, is_rented=False) is False
+    assert "search_backend" not in own_cfg["web"]
+
+    # A tenant who had manually set something else gets corrected back.
+    drifted_cfg: dict = {"web": {"search_backend": "exa", "extract_backend": "exa"}}
+    assert reconcile_web_backend(drifted_cfg, is_rented=True) is True
+    assert drifted_cfg["web"] == {"search_backend": "ddgs", "extract_backend": "exa"}
