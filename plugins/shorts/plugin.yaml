@@ -8,12 +8,14 @@ provides_tools:
 # No ``requires_env``: rendering needs only ffmpeg (in the container image) and
 # the profile's configured TTS provider, which defaults to the free Edge TTS.
 #
-# PEXELS_API_KEY is read at call time by the ``stock_search`` action and is
-# genuinely optional — without it the tool still renders, just on plain
-# backgrounds instead of stock footage. It is deliberately NOT declared as
-# ``optional_env`` here: that block is only read by the setup-UI injector in
-# hermes_cli/config.py, which scans plugins/platforms/ alone, so declaring it
-# would look like configuration the CLI surfaces when nothing reads it.
-# Provisioning writes it into each profile's .env (see
-# scripts/provision_bl_client.py) and docker/cont-init.d/03-biglobster-config
-# re-syncs it from the Zeabur env on every boot, so rotations propagate.
+# PEXELS_API_KEY is read at call time by the ``stock_search`` action. The tool
+# degrades without it (plain backgrounds instead of footage), but the rented
+# SKU does not: scripts/provision_bl_client.py refuses to sell `shorts` without
+# the client's own key, since a video product with no footage is worse than one
+# we declined to sell. It is BYOK — whoever owns the profile owns the key and
+# its 200/hour + 20k/month quota. This plugin neither knows nor cares which.
+#
+# It is deliberately NOT declared as ``optional_env`` here: that block is only
+# read by the setup-UI injector in hermes_cli/config.py, which scans
+# plugins/platforms/ alone, so declaring it would look like configuration the
+# CLI surfaces when nothing reads it.

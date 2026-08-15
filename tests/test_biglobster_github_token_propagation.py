@@ -76,19 +76,35 @@ def test_inject_list_includes_both_token_names(boot_text: str) -> None:
     assert "GH_TOKEN" in inject
 
 
-def test_inject_list_carries_the_shared_not_byok_keys(boot_text: str) -> None:
-    """Keys BigLobster owns for the whole fleet must ride the per-profile sync.
+def _parse_tenant_exclude(boot_text: str) -> list[str]:
+    """Read the keys held back from a rented tenant's per-profile sync."""
+    match = re.search(
+        r'_is_rented_tenant\(_prof_env\):.*?_exclude = \(([^)]*)\)',
+        boot_text,
+        re.DOTALL,
+    )
+    assert match, "rented-tenant _exclude tuple not found"
+    return re.findall(r'"([^"]+)"', match.group(1))
 
-    A shared key that is missing here survives its own rotation only in the
-    main .env; every already-provisioned profile keeps serving the revoked
-    value, which is what broke grow-shop in the 2026-06-05 rotation. FAL_KEY
-    is deliberately absent — it is genuinely per-client BYOK, and syncing it
-    would overwrite each client's own key with BigLobster's.
+
+def test_byok_keys_are_withheld_from_rented_tenants(boot_text: str) -> None:
+    """The bl-shoroban contract: a rented client's own keys are never overwritten.
+
+    A BYOK key must be in `inject` (so BigLobster's OWN profiles keep the
+    rotation repair §1 exists to provide) AND in the rented-tenant exclude (so
+    a boot never overwrites the client value provision_bl_client.py wrote).
+    Being in `inject` alone is the 2026-07-31 bug: every boot silently billed
+    tenant runs to BigLobster.
     """
     inject = _parse_inject(boot_text)
-    for shared in ("OPENROUTER_API_KEY", "EXA_API_KEY", "PEXELS_API_KEY"):
-        assert shared in inject, f"{shared} is shared and must be synced per profile"
-    assert "FAL_KEY" not in inject, "FAL_KEY is BYOK and must stay per-profile"
+    exclude = _parse_tenant_exclude(boot_text)
+    for byok in ("OPENROUTER_API_KEY", "PEXELS_API_KEY"):
+        assert byok in inject, f"{byok} must sync to BigLobster's own profiles"
+        assert byok in exclude, f"{byok} is BYOK and must be withheld from tenants"
+    # FAL_KEY is per-client too, but has never been in `inject` at all, so it
+    # needs no exclusion. Adding it to `inject` without the exclude would
+    # reintroduce the bug.
+    assert "FAL_KEY" not in inject, "FAL_KEY is BYOK and must stay out of inject"
 
 
 # --- functional check of the embedded _sync_env_file dedupe semantics --------
@@ -96,8 +112,12 @@ def test_inject_list_carries_the_shared_not_byok_keys(boot_text: str) -> None:
 # hand-maintained copy drifts: GSC_SERVICE_ACCOUNT_B64 was added to the script
 # and never mirrored here. Only the function body below is a replica; if the
 # §1 heredoc's _sync_env_file changes, update it here.
-def _sync_env_file_content(content: str, environ: dict, inject: list[str]) -> str:
+def _sync_env_file_content(
+    content: str, environ: dict, inject: list[str], exclude: tuple[str, ...] = ()
+) -> str:
     for var in inject:
+        if var in exclude:
+            continue
         val = environ.get(var, "")
         if not val:
             continue
@@ -151,23 +171,44 @@ def test_sync_single_line_preserves_position(inject: list[str]) -> None:
     assert out == single
 
 
-def test_sync_adds_pexels_key_to_a_profile_that_lacks_it(inject: list[str]) -> None:
-    """A profile provisioned before the shorts agent existed must pick the key
-    up on the next boot, appended without disturbing its existing lines."""
-    profile_env = (
+@pytest.fixture(scope="module")
+def tenant_exclude(boot_text: str) -> tuple[str, ...]:
+    return tuple(_parse_tenant_exclude(boot_text))
+
+
+def test_tenant_byok_keys_survive_a_boot_sync(
+    inject: list[str], tenant_exclude: tuple[str, ...]
+) -> None:
+    """The bl-shoroban regression, for both BYOK keys at once.
+
+    A rented client's .env carries their own OpenRouter and Pexels keys. A boot
+    where BigLobster's process env holds different values must leave both
+    untouched — otherwise the client's stock searches and model calls bill to
+    us, silently, on every run.
+    """
+    tenant_env = (
         "BL_SITE_URL=https://client.example\n"
         "BL_SITE_PANEL_PASSWORD=pw\n"
-        "OPENROUTER_API_KEY=sk-or-client\n"
+        "OPENROUTER_API_KEY=sk-or-CLIENT\n"
+        "PEXELS_API_KEY=pexels-CLIENT\n"
     )
-    out = _sync_env_file_content(
-        profile_env, {"PEXELS_API_KEY": "pexels-shared"}, inject
-    )
-    assert "PEXELS_API_KEY=pexels-shared\n" in out
-    assert out.startswith(profile_env)
+    biglobster_env = {
+        "OPENROUTER_API_KEY": "sk-or-BIGLOBSTER",
+        "PEXELS_API_KEY": "pexels-BIGLOBSTER",
+        "HERMES_CALLBACK_URL": "https://biglobster.top/api/hermes-callback",
+    }
+    out = _sync_env_file_content(tenant_env, biglobster_env, inject, tenant_exclude)
+
+    assert "sk-or-CLIENT" in out and "sk-or-BIGLOBSTER" not in out
+    assert "pexels-CLIENT" in out and "pexels-BIGLOBSTER" not in out
+    # Non-BYOK infrastructure values still sync, or tenants drift on the ones
+    # BigLobster does own.
+    assert "HERMES_CALLBACK_URL=https://biglobster.top/api/hermes-callback" in out
 
 
-def test_sync_replaces_a_rotated_pexels_key(inject: list[str]) -> None:
-    """The rotation case: an old value is overwritten, not left alongside."""
+def test_biglobster_own_profile_still_gets_the_pexels_rotation(inject: list[str]) -> None:
+    """A profile that is NOT a rented tenant (no BL_SITE_URL) gets our key
+    refreshed, which is why PEXELS_API_KEY stays in `inject` at all."""
     out = _sync_env_file_content(
         "PEXELS_API_KEY=old-revoked\n", {"PEXELS_API_KEY": "new-live"}, inject
     )

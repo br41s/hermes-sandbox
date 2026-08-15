@@ -349,23 +349,28 @@ raw material** — its licence permits commercial use and modification but not
 redistributing footage unaltered, which is why the renderer never hands a clip
 through untouched.
 
-`PEXELS_API_KEY` is the one credential in the whole rental flow that is **not
-BYOK**: the API is free, so every profile carries a copy of BigLobster's own
-key. Rotating it is safe — it is in the `inject` allowlist in
-`docker/cont-init.d/03-biglobster-config`, so every container boot overwrites the
-value in each profile's `.env` from the Zeabur env. That is the same mechanism
-that stops a rotation stranding profiles on a revoked key, which is exactly what
-broke `grow-shop` in the 2026-06-05 `OPENROUTER_API_KEY` rotation. Set it once on
-the Hermes service and restart the container; do **not** hand-edit profile `.env`
-files. `--pexels-key` at provision time exists so a brand-new client works
-immediately, before the next boot. Provisioning without it does not fail; the
-videos just render on plain backgrounds instead of footage.
+`PEXELS_API_KEY` is **BYOK, like `FAL_KEY`** — the client's own key, and
+`--pexels-key` is **required** to order the SKU (`AGENTS_REQUIRING_PEXELS`), the
+same shape as `--old-site-url` for `onboarding-content`. Provisioning refuses the
+order before creating anything, and validates the key live first, so a dead key
+fails at the door rather than on every cron run.
 
-Note the quota is shared across the whole fleet, not per client: 200 requests per
-hour and 20,000 per month, against roughly three `stock_search` calls per video.
-`stock_search` surfaces a Pexels 429 as an explicit error rather than an empty
-result, so throttling shows up in the job report instead of silently producing
-background-only videos.
+Free does not mean shareable. Pexels issues **one key per account, capped at 200
+requests/hour and 20,000/month**, against roughly three `stock_search` calls per
+video. One BigLobster key across the fleet would cap every client at once and let
+one heavy tenant throttle the rest into background-only videos. Per client that
+ceiling is unreachable; shared it is a matter of time.
+
+The key is therefore in the rented-tenant exclude list in
+`docker/cont-init.d/03-biglobster-config`, alongside `OPENROUTER_API_KEY` — a
+boot sync must never overwrite a tenant's key with BigLobster's. That guard
+exists because injecting our OpenRouter key into rented profiles did exactly that
+on bl-shoroban (2026-07-31), silently billing tenant runs to us. It stays in the
+`inject` list so BigLobster's *own* profiles, running shorts against
+biglobster.top on BigLobster's own key, keep the rotation repair.
+
+Requiring the key rather than degrading is deliberate: a video product that ships
+without footage is worse than one we declined to sell.
 
 What keeps the SKU bounded:
 
@@ -407,11 +412,12 @@ this pulls in via `cron/jobs.py`):
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
 `onboarding-content`, `product-articles`, `infographic`, `maintenance`,
-`site-setup`, `shorts`. `shorts` (the Social Shorts subscription) requires no
-extra flags either, but takes `--pexels-key` for its stock footage — shared, not
-BYOK, and defaulting to `PEXELS_API_KEY` in the environment. It also *uses*
-`--fal-key` when one is present, for the optional AI opening hook.
-`maintenance` (the Website Maintenance subscription) requires no
+`site-setup`, `shorts`. `shorts` (the Social Shorts subscription) **requires
+`--pexels-key`** — the client's own Pexels key, BYOK like `--fal-key`, free at
+<https://www.pexels.com/api/>. It deliberately does not fall back to
+`PEXELS_API_KEY` in the environment, which would bill the client's stock searches
+to BigLobster's quota. It also *uses* `--fal-key` when one is present, for the
+optional AI opening hook. `maintenance` (the Website Maintenance subscription) requires no
 extra flags. It *optionally* uses `--old-site-url`: when the profile carries
 `OLD_SITE_URL`, the daily check also sweeps the old site's published paths and
 reports the ones that now dead-end on the new site. Omit it and that one
@@ -547,6 +553,7 @@ await fetch(url, { method: "POST", body: raw, headers: {
 | `site_url` | no | Omit to claim a blank instance from the pool. Pass one only when BigLobster already knows the instance. |
 | `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |
 | `fal_key` | no | The buyer's own FAL key for image generation. Omit → text-only content. With `shorts`, it also buys the optional AI opening hook. |
+| `pexels_key` | with `shorts` | The buyer's own Pexels key (BYOK, free at pexels.com/api). Stock B-roll bills to their 200/hour + 20k/month, never BigLobster's. A `shorts` order without one is rejected as `invalid_order`. |
 | `old_site_url` | required for `onboarding-content` / `product-articles` | The buyer's existing site. |
 | `image_model` | no | Pins the FAL image model. |
 

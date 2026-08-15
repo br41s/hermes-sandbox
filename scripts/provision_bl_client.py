@@ -63,12 +63,13 @@ TikTok, plus a `captions.md` of per-network copy, written into the profile's
 `workspace/shorts/<slug>/`. Video and caption text are in English by design; the
 job's report stays Spanish like the rest of the fleet. Rendering is local ffmpeg
 (`plugins/shorts`) with the profile's configured TTS voice, so the marginal cost
-of a video is zero. `--pexels-key` supplies free stock footage and is shared, not
-BYOK. When the client also has a `--fal-key`, the agent spends it on one
-AI-generated 4s opening hook per video via the existing `video_generate` tool,
-and falls back to stock whenever that is absent or fails. It requires no
-`--old-site-url` and never posts to any social network — it produces files a
-human uploads.
+of a video is zero. `--pexels-key` is REQUIRED for it and is the client's own key
+(BYOK, like `--fal-key`) — free, but one per account at 200 req/hour and
+20k/month, so a shared key would cap the whole fleet. When the client also has a
+`--fal-key`, the agent spends it on one AI-generated 4s opening hook per video
+via the existing `video_generate` tool, and falls back to stock whenever that is
+absent or fails. It requires no `--old-site-url` and never posts to any social
+network — it produces files a human uploads.
 
 `maintenance` is the *Website Maintenance* subscription product: a daily
 deterministic health check (`tools/bl_site_health_tool.py`) plus a closed list
@@ -155,9 +156,9 @@ AGENT_SOURCES = {
     # rendered locally with ffmpeg (plugins/shorts). Needs no --old-site-url: it
     # only reads the client's own blog. Like infographic, it marks each post
     # done with a sentinel and goes [SILENT] once the blog is exhausted, so it
-    # is safe to leave scheduled daily. PEXELS_API_KEY (BigLobster's shared free
-    # key, not BYOK) supplies the stock B-roll; FAL_KEY, when the client has
-    # one, additionally buys an AI-generated opening hook.
+    # is safe to leave scheduled daily. Requires the client's own PEXELS_API_KEY
+    # for stock B-roll (BYOK, see AGENTS_REQUIRING_PEXELS); FAL_KEY, when the
+    # client has one, additionally buys an AI-generated opening hook.
     "shorts": (
         "shorts/bl-site-package-shorts.prompt",
         "Social Shorts",
@@ -167,6 +168,14 @@ AGENT_SOURCES = {
 
 # Agents that need --old-site-url (the client's existing site to migrate/read from).
 AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
+
+# Agents that need --pexels-key (the client's OWN Pexels key, BYOK like FAL_KEY).
+# Hard requirement rather than a graceful degradation: without it every scene
+# renders on a plain background, and a video product that ships without footage
+# is worse than one we declined to sell. Being free does not make the key
+# shareable — Pexels issues one per account at 200 req/hour and 20k/month, so a
+# BigLobster key across the fleet would cap every client at once.
+AGENTS_REQUIRING_PEXELS = {"shorts"}
 
 # site-setup and onboarding-content both do the initial page fill. Ordering
 # both would have two one-shot jobs racing to write the same fields.
@@ -258,6 +267,43 @@ def _validate_fal_key(key: str) -> None:
     except urllib.error.URLError as exc:
         # Unreachable — don't block provisioning; the format check already ran.
         print(f"Warning: could not reach FAL to validate the key ({exc.reason}); continuing.", file=sys.stderr)
+
+
+def _validate_pexels_key(key: str) -> None:
+    """Prove the client's own Pexels key works BEFORE the shorts jobs go live.
+
+    Mirrors the two validators above. Pexels has no dedicated key-check
+    endpoint, so we make the cheapest real query there is (one result) — it
+    costs one of the client's 200/hour and proves both auth and quota headroom.
+    401/403 is a bad key; 429 means the key is real but already throttled,
+    which is worth failing on here rather than discovering it on the first
+    cron run. Anything else, or unreachable, is treated as "couldn't verify"
+    rather than a hard fail, so a Pexels API change never bricks provisioning.
+    """
+    req = urllib.request.Request(
+        "https://api.pexels.com/v1/search?query=test&per_page=1",
+        headers={"Authorization": key},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise KeyValidationError(
+                f"Pexels key rejected: HTTP {exc.code} — check the key is correct. "
+                "The client gets one free at https://www.pexels.com/api/."
+            )
+        if exc.code == 429:
+            raise KeyValidationError(
+                "Pexels key is already rate-limited (HTTP 429). It is valid but "
+                "has no headroom right now — the free tier is 200 requests/hour "
+                "and 20,000/month. Retry later or use a different key."
+            )
+        # Other status: past auth, or the endpoint drifted — accept.
+    except urllib.error.URLError as exc:
+        print(
+            f"Warning: could not reach Pexels to validate the key ({exc.reason}); continuing.",
+            file=sys.stderr,
+        )
 
 
 def _read_panel_image_model(site_url: str) -> str | None:
@@ -366,12 +412,11 @@ def _write_env(
     # shared image_generate tool picks it up when a job runs under this profile.
     if fal_key:
         contents += f"FAL_KEY={fal_key}\n"
-    # Stock B-roll for the shorts agent. Unlike the two above this is NOT BYOK:
-    # the Pexels API is free, so every client shares BigLobster's key. Writing it
-    # here is what makes a brand-new client's first run work; from then on
-    # docker/cont-init.d/03-biglobster-config re-syncs it from the Zeabur env on
-    # every boot (it is in that hook's `inject` allowlist), so a rotation reaches
-    # this file without anyone editing it by hand.
+    # Client's own Pexels key (BYOK) — stock B-roll for the shorts agent bills
+    # against their 200/hour and 20k/month, never BigLobster's. This file is the
+    # only source: docker/cont-init.d/03-biglobster-config excludes
+    # PEXELS_API_KEY from its per-profile sync for rented tenants, alongside
+    # OPENROUTER_API_KEY, so a boot can never overwrite it with ours.
     if pexels_key:
         contents += f"PEXELS_API_KEY={pexels_key}\n"
     env_path.write_text(contents, encoding="utf-8")
@@ -437,6 +482,14 @@ def provision(
             "existing site to read/migrate content from) — omit the agent(s) if "
             "the client has no existing site to draw from."
         )
+    needs_pexels = AGENTS_REQUIRING_PEXELS & set(agents)
+    if needs_pexels and not pexels_key:
+        raise ValueError(
+            f"{sorted(needs_pexels)} need(s) --pexels-key: the client's OWN "
+            "Pexels API key (BYOK, like --fal-key). It is free at "
+            "https://www.pexels.com/api/ — one per account. Without it every "
+            "scene renders on a plain background instead of stock footage."
+        )
     if set(MUTUALLY_EXCLUSIVE_AGENTS) <= set(agents):
         raise ValueError(
             f"{list(MUTUALLY_EXCLUSIVE_AGENTS)} both do the initial page fill and "
@@ -463,6 +516,8 @@ def provision(
         _validate_model_call(openrouter_key, model)
         if fal_key:
             _validate_fal_key(fal_key)
+        if pexels_key:
+            _validate_pexels_key(pexels_key)
 
     # Apply the fixed site template from the questionnaire BEFORE creating the
     # profile: it's the step most likely to fail on a fresh instance
@@ -526,16 +581,7 @@ def provision(
         "model": model,
         "image_model": resolved_image_model or "(FAL default)",
         "fal_key": "set" if fal_key else "not set (image generation disabled)",
-        "pexels_key": (
-            "set"
-            if pexels_key
-            else (
-                "NOT SET — shorts will render on plain backgrounds with no "
-                "stock footage"
-                if "shorts" in agents
-                else "not set (not needed without the shorts agent)"
-            )
-        ),
+        "pexels_key": "set" if pexels_key else "not set (not needed without the shorts agent)",
         "env_path": str(env_path),
         "site_setup": site_setup_report,
         "jobs": created_jobs,
@@ -571,11 +617,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--pexels-key",
-        default=os.environ.get("PEXELS_API_KEY") or None,
-        help="Pexels API key for the shorts agent's stock B-roll. NOT BYOK — the "
-        "Pexels API is free, so this is BigLobster's shared key and defaults to "
-        "PEXELS_API_KEY in the environment. Without it the shorts agent still "
-        "renders, but on plain backgrounds instead of footage.",
+        default=None,
+        help="Client's own Pexels API key (BYOK, like --fal-key) for the shorts "
+        "agent's stock B-roll. Required when --agents includes shorts. Free at "
+        "https://www.pexels.com/api/, one key per account. Deliberately does NOT "
+        "default to PEXELS_API_KEY in the environment — that would silently bill "
+        "the client's searches to BigLobster's quota.",
     )
     parser.add_argument(
         "--questionnaire",
