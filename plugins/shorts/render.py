@@ -83,6 +83,26 @@ def _run(cmd: List[str], *, cwd: Path, what: str) -> None:
         raise RenderError(f"{what} timed out after {FFMPEG_TIMEOUT}s") from exc
 
 
+def _check_redirect_target(response: Any) -> None:
+    """Re-validate a redirect hop, so a safe URL can't 302 to a private one.
+
+    ``is_safe_url`` at the top of :func:`_download_clip` only checks the
+    original URL; ``follow_redirects=True`` would otherwise let a public URL
+    302 to ``http://169.254.169.254/...`` unchecked. Same guard as
+    ``gateway/platforms/yuanbao_media.py`` and the platform adapters
+    (``_ssrf_redirect_guard``). Takes ``Any`` rather than ``httpx.Response``
+    so it is testable without a real httpx dependency in the test.
+    """
+    from tools.url_safety import is_safe_url
+
+    if response.is_redirect and response.next_request:
+        redirect_url = str(response.next_request.url)
+        if not is_safe_url(redirect_url):
+            raise RenderError(
+                f"Blocked redirect to private/internal address: {redirect_url}"
+            )
+
+
 def _download_clip(url: str, dest: Path) -> None:
     """Fetch a remote clip, refusing unsafe URLs and oversized bodies."""
     from tools.url_safety import is_safe_url
@@ -95,7 +115,11 @@ def _download_clip(url: str, dest: Path) -> None:
     written = 0
     try:
         with httpx.stream(
-            "GET", url, timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
+            "GET",
+            url,
+            timeout=DOWNLOAD_TIMEOUT,
+            follow_redirects=True,
+            event_hooks={"response": [_check_redirect_target]},
         ) as response:
             response.raise_for_status()
             with open(dest, "wb") as handle:
@@ -116,11 +140,32 @@ def _download_clip(url: str, dest: Path) -> None:
         raise RenderError(f"Clip download produced an empty file: {url}")
 
 
+def _validate_local_path(raw: str, what: str) -> Path:
+    """Bound a scene-supplied local path to this profile's reachable dirs.
+
+    ``clip_path``/``music_path`` come from LLM-generated scene data, same as
+    ``output_path`` in ``plugins/shorts/__init__.py`` — a prompt-injected
+    agent must not be able to read arbitrary files off disk by pointing here.
+    Mirrors ``_validate_output_path``'s roots (profile home + system temp).
+    """
+    from hermes_constants import get_hermes_home
+    from tools.path_security import has_traversal_component, validate_within_dir
+
+    if has_traversal_component(raw):
+        raise RenderError(f"{what} contains a '..' component: {raw}")
+
+    path = Path(raw).expanduser()
+    roots = [Path(get_hermes_home()), Path(tempfile.gettempdir())]
+    if any(validate_within_dir(path, root) is None for root in roots):
+        return path
+    raise RenderError(f"{what} must stay inside {roots[0]}: {raw}")
+
+
 def _resolve_clip(scene: Dict[str, Any], index: int, workdir: Path) -> Optional[str]:
     """Return the local filename of this scene's B-roll, or None for none."""
     local = (scene.get("clip_path") or "").strip()
     if local:
-        source = Path(local).expanduser()
+        source = _validate_local_path(local, f"Scene {index + 1}: clip_path")
         if not source.exists():
             raise RenderError(f"Scene {index + 1}: clip_path does not exist: {local}")
         dest = workdir / f"src_{index:02d}{source.suffix or '.mp4'}"
@@ -241,8 +286,11 @@ def render_short(storyboard: Dict[str, Any], output_path: Path) -> Dict[str, Any
         )
 
     music_path = (storyboard.get("music_path") or "").strip()
-    if music_path and not Path(music_path).expanduser().exists():
-        raise RenderError(f"music_path does not exist: {music_path}")
+    music_path_resolved: Optional[Path] = None
+    if music_path:
+        music_path_resolved = _validate_local_path(music_path, "music_path")
+        if not music_path_resolved.exists():
+            raise RenderError(f"music_path does not exist: {music_path}")
 
     workdir = Path(tempfile.mkdtemp(prefix="shorts_"))
     try:
@@ -308,8 +356,8 @@ def render_short(storyboard: Dict[str, Any], output_path: Path) -> Dict[str, Any
         )
 
         audio_track = "voice.wav"
-        if music_path:
-            shutil.copyfile(Path(music_path).expanduser(), workdir / "music.src")
+        if music_path_resolved:
+            shutil.copyfile(music_path_resolved, workdir / "music.src")
             audio_track = _mix_music(ffmpeg, "voice.wav", "music.src", workdir)
 
         (workdir / "captions.ass").write_text(

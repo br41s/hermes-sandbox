@@ -344,6 +344,90 @@ def test_unsafe_clip_urls_are_refused(stub_render, tmp_path, monkeypatch):
     assert "unsafe" in str(excinfo.value)
 
 
+# ---------------------------------------------------------------------------
+# Redirect-hop SSRF guard
+#
+# is_safe_url() at the top of _download_clip only sees the original URL — a
+# public URL can still 302 to a private one. These test the per-hop guard
+# that closes that gap (_check_redirect_target), independent of httpx.
+# ---------------------------------------------------------------------------
+
+class _FakeRequest:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+class _FakeResponse:
+    def __init__(self, is_redirect: bool, next_url: str | None) -> None:
+        self.is_redirect = is_redirect
+        self.next_request = _FakeRequest(next_url) if next_url else None
+
+
+def test_redirect_to_a_private_address_is_blocked(monkeypatch):
+    monkeypatch.setattr("tools.url_safety.is_safe_url", lambda url: "169.254" not in url)
+    with pytest.raises(render_mod.RenderError) as excinfo:
+        render_mod._check_redirect_target(
+            _FakeResponse(is_redirect=True, next_url="http://169.254.169.254/meta.mp4")
+        )
+    assert "Blocked redirect" in str(excinfo.value)
+
+
+def test_redirect_to_a_safe_address_is_allowed(monkeypatch):
+    monkeypatch.setattr("tools.url_safety.is_safe_url", lambda url: True)
+    # No exception — a redirect to another public host is fine.
+    render_mod._check_redirect_target(
+        _FakeResponse(is_redirect=True, next_url="https://cdn.example.com/clip.mp4")
+    )
+
+
+def test_a_non_redirect_response_is_not_checked(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "tools.url_safety.is_safe_url", lambda url: calls.append(url) or True
+    )
+    render_mod._check_redirect_target(_FakeResponse(is_redirect=False, next_url=None))
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Local path bounding for clip_path / music_path
+#
+# output_path has always been bounded to the profile workspace or temp dir
+# (_validate_output_path, tested above). clip_path and music_path are the
+# same shape of LLM-supplied scene data and get the same treatment.
+# ---------------------------------------------------------------------------
+
+def test_clip_path_rejects_a_path_outside_allowed_roots(stub_render, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "hermes_constants.get_hermes_home", lambda: tmp_path / "home", raising=False
+    )
+    with pytest.raises(render_mod.RenderError) as excinfo:
+        render_mod.render_short(
+            {"scenes": [{"vo": "one", "clip_path": "/etc/passwd"}]}, tmp_path / "a.mp4"
+        )
+    assert "must stay inside" in str(excinfo.value)
+
+
+def test_clip_path_rejects_traversal(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "hermes_constants.get_hermes_home", lambda: tmp_path / "home", raising=False
+    )
+    with pytest.raises(render_mod.RenderError) as excinfo:
+        render_mod._validate_local_path("../../etc/passwd", "clip_path")
+    assert "'..' component" in str(excinfo.value)
+
+
+def test_music_path_rejects_a_path_outside_allowed_roots(stub_render, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "hermes_constants.get_hermes_home", lambda: tmp_path / "home", raising=False
+    )
+    with pytest.raises(render_mod.RenderError) as excinfo:
+        render_mod.render_short(
+            {"scenes": [{"vo": "one"}], "music_path": "/etc/passwd"}, tmp_path / "a.mp4"
+        )
+    assert "must stay inside" in str(excinfo.value)
+
+
 def test_temp_workdir_is_cleaned_up_even_when_rendering_fails(stub_render, tmp_path, monkeypatch):
     created: list[str] = []
     real_mkdtemp = render_mod.tempfile.mkdtemp
