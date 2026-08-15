@@ -146,6 +146,12 @@ inject = [
     # Read-only Google Search Console service-account key (base64), consumed by
     # the gsc MCP server (config.yaml mcp_servers.gsc). See optional-mcps/gsc/.
     "GSC_SERVICE_ACCOUNT_B64",
+    # Stock B-roll for the `shorts` agent (plugins/shorts/stock.py). This is
+    # BigLobster's OWN key, for BigLobster's own profiles running shorts against
+    # biglobster.top. Rented tenants bring their own and are excluded from it
+    # below, exactly like OPENROUTER_API_KEY — being in this list is only half
+    # the contract, and the half that keeps our rotation working.
+    "PEXELS_API_KEY",
 ]
 
 def _sync_env_file(env_path, exclude=()):
@@ -237,14 +243,21 @@ if profiles_root.is_dir():
             # "per-tenant billing with a DISTINCT OPENROUTER_API_KEY" case the
             # note above anticipated.
             #
+            # PEXELS_API_KEY is the same contract for the `shorts` agent. Being
+            # free does not make it shareable: Pexels issues one key per account
+            # at 200 req/hour and 20k/month, so one key across the fleet caps
+            # every client at once and lets a heavy tenant throttle the rest
+            # into background-only videos. Each tenant brings their own, and
+            # provision_bl_client.py refuses to sell the SKU without it.
+            #
             # Trade-off, accepted deliberately: rental profiles no longer get
             # the rotation repair that §1's injection exists to provide (the
             # 2026-06-05 grow-shop incident). That repair is the wrong thing
             # for a key we do not own and must not rotate. A tenant whose own
             # key dies now fails visibly on their own jobs instead of silently
             # spending our credit.
-            _exclude = ("OPENROUTER_API_KEY",)
-            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY)"
+            _exclude = ("OPENROUTER_API_KEY", "PEXELS_API_KEY")
+            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY / PEXELS_API_KEY)"
         else:
             _exclude = ()
             _why = ""

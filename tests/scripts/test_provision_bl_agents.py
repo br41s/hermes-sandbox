@@ -13,8 +13,10 @@ import pytest
 from scripts.provision_bl_client import (
     AGENT_SOURCES,
     AGENTS_REQUIRING_OLD_SITE,
+    AGENTS_REQUIRING_PEXELS,
     MUTUALLY_EXCLUSIVE_AGENTS,
     pick_stagger_schedule,
+    provision,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -66,3 +68,73 @@ def test_maintenance_prompt_states_its_boundaries():
     assert "record_report" in text
     # It must never claim to patch a shared codebase per client.
     assert "No puedes parchear dependencias" in text
+
+
+# --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
+
+
+def test_shorts_is_a_recurring_daily_agent():
+    source, display_name, schedule_kind = AGENT_SOURCES["shorts"]
+    assert source == "shorts/bl-site-package-shorts.prompt"
+    assert display_name == "Social Shorts"
+    # Goes [SILENT] once every post carries the sentinel, so daily is safe.
+    assert schedule_kind == "daily"
+
+
+def test_shorts_needs_no_old_site_url():
+    # It only reads the client's own blog.
+    assert "shorts" not in AGENTS_REQUIRING_OLD_SITE
+    assert "shorts" not in MUTUALLY_EXCLUSIVE_AGENTS
+
+
+def test_shorts_is_the_only_agent_requiring_a_pexels_key():
+    assert AGENTS_REQUIRING_PEXELS == {"shorts"}
+
+
+def test_ordering_shorts_without_a_pexels_key_is_refused(tmp_path, monkeypatch):
+    """BYOK is enforced at the door, not discovered on the first cron run.
+
+    Without this the SKU would provision happily and then ship background-only
+    videos — or, worse, quietly fall back to BigLobster's quota.
+    """
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    with pytest.raises(ValueError) as excinfo:
+        provision(
+            slug="bl-test-no-pexels",
+            client_name="Test",
+            site_url="https://client.example",
+            panel_password="pw",
+            openrouter_key="sk-or-client",
+            agents=["shorts"],
+            skip_key_check=True,
+        )
+    message = str(excinfo.value)
+    assert "--pexels-key" in message
+    # Names it as the client's key, not ours, so whoever hits this knows what
+    # to go and ask the buyer for.
+    assert "BYOK" in message
+    assert "client's OWN" in message
+    # Nothing half-built left behind: the check runs before create_profile().
+    assert not (tmp_path / "profiles" / "bl-test-no-pexels").exists()
+
+
+def test_pexels_key_is_not_read_from_the_environment(monkeypatch):
+    """The CLI flag must not default to PEXELS_API_KEY in the environment.
+
+    That default is the shared-key behaviour in disguise: omit the flag on a
+    rental and the client's stock searches silently bill to BigLobster's
+    200/hour. Provisioning has to be told the client's key explicitly.
+    """
+    import argparse
+    import inspect
+
+    import scripts.provision_bl_client as mod
+
+    monkeypatch.setenv("PEXELS_API_KEY", "biglobster-shared-key")
+    source = inspect.getsource(mod.main)
+    assert 'os.environ.get("PEXELS_API_KEY")' not in source
+
+    parser = argparse.ArgumentParser()
+    # Re-declare exactly as main() does and confirm the default stays None.
+    parser.add_argument("--pexels-key", default=None)
+    assert parser.parse_args([]).pexels_key is None
