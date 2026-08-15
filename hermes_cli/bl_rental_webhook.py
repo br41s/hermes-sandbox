@@ -416,6 +416,11 @@ def _run_provision(order: RentalOrder, site_url: str, panel_password: str):
             fal_key=order.fal_key,
             image_model=order.image_model,
             questionnaire=order.questionnaire,
+            # Not from the order body: the Pexels API is free, so the stock
+            # footage the `shorts` agent uses runs on BigLobster's own shared
+            # key rather than a per-buyer one. Absent → shorts still render,
+            # just without B-roll.
+            pexels_key=os.environ.get("PEXELS_API_KEY") or None,
         )
     except FileExistsError as exc:
         return "slug_collision", str(exc), None

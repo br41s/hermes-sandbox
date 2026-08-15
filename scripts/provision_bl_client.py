@@ -57,6 +57,19 @@ skips ones it's already covered, and writes up to 3 new product blog posts
 per run (draft, with a CTA button back to the original product page) until
 the catalog is exhausted. Omit both flags if the client has no existing site.
 
+`shorts` is the *Social Shorts* subscription product: a daily job that turns one
+not-yet-processed blog post into 3-5 vertical MP4s for Instagram Reels and
+TikTok, plus a `captions.md` of per-network copy, written into the profile's
+`workspace/shorts/<slug>/`. Video and caption text are in English by design; the
+job's report stays Spanish like the rest of the fleet. Rendering is local ffmpeg
+(`plugins/shorts`) with the profile's configured TTS voice, so the marginal cost
+of a video is zero. `--pexels-key` supplies free stock footage and is shared, not
+BYOK. When the client also has a `--fal-key`, the agent spends it on one
+AI-generated 4s opening hook per video via the existing `video_generate` tool,
+and falls back to stock whenever that is absent or fails. It requires no
+`--old-site-url` and never posts to any social network — it produces files a
+human uploads.
+
 `maintenance` is the *Website Maintenance* subscription product: a daily
 deterministic health check (`tools/bl_site_health_tool.py`) plus a closed list
 of mechanical fixes, and one client-facing report per calendar month. It
@@ -136,6 +149,19 @@ AGENT_SOURCES = {
         "site-setup/bl-site-package-site-setup.prompt",
         "Site Launch",
         "once",
+    ),
+    # The "Social Shorts" subscription product. Turns ONE existing blog post per
+    # run into 3-5 vertical MP4s plus a captions.md of Instagram/TikTok copy,
+    # rendered locally with ffmpeg (plugins/shorts). Needs no --old-site-url: it
+    # only reads the client's own blog. Like infographic, it marks each post
+    # done with a sentinel and goes [SILENT] once the blog is exhausted, so it
+    # is safe to leave scheduled daily. PEXELS_API_KEY (BigLobster's shared free
+    # key, not BYOK) supplies the stock B-roll; FAL_KEY, when the client has
+    # one, additionally buys an AI-generated opening hook.
+    "shorts": (
+        "shorts/bl-site-package-shorts.prompt",
+        "Social Shorts",
+        "daily",
     ),
 }
 
@@ -325,6 +351,7 @@ def _write_env(
     openrouter_key: str,
     old_site_url: str | None = None,
     fal_key: str | None = None,
+    pexels_key: str | None = None,
 ) -> Path:
     env_path = profile_dir / ".env"
     contents = (
@@ -339,6 +366,14 @@ def _write_env(
     # shared image_generate tool picks it up when a job runs under this profile.
     if fal_key:
         contents += f"FAL_KEY={fal_key}\n"
+    # Stock B-roll for the shorts agent. Unlike the two above this is NOT BYOK:
+    # the Pexels API is free, so every client shares BigLobster's key. That puts
+    # it squarely in the "rotated secrets do not reach profile .env files" trap
+    # — rotating it in the main env leaves every already-provisioned profile on
+    # the revoked one, and the symptom is an HTTP 401 from stock_search rather
+    # than a config error. Re-run the rotation across profile .env files.
+    if pexels_key:
+        contents += f"PEXELS_API_KEY={pexels_key}\n"
     env_path.write_text(contents, encoding="utf-8")
     os.chmod(env_path, 0o600)
     return env_path
@@ -379,6 +414,7 @@ def provision(
     fal_key: str | None = None,
     image_model: str | None = None,
     questionnaire: dict | None = None,
+    pexels_key: str | None = None,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -456,7 +492,13 @@ def provision(
     # it the profile has none → orchestrator 400 "No models provided".
     config_path = _write_config(profile_dir, model, image_model=resolved_image_model)
     env_path = _write_env(
-        profile_dir, site_url, panel_password, openrouter_key, old_site_url, fal_key=fal_key
+        profile_dir,
+        site_url,
+        panel_password,
+        openrouter_key,
+        old_site_url,
+        fal_key=fal_key,
+        pexels_key=pexels_key,
     )
 
     created_jobs = []
@@ -484,6 +526,16 @@ def provision(
         "model": model,
         "image_model": resolved_image_model or "(FAL default)",
         "fal_key": "set" if fal_key else "not set (image generation disabled)",
+        "pexels_key": (
+            "set"
+            if pexels_key
+            else (
+                "NOT SET — shorts will render on plain backgrounds with no "
+                "stock footage"
+                if "shorts" in agents
+                else "not set (not needed without the shorts agent)"
+            )
+        ),
         "env_path": str(env_path),
         "site_setup": site_setup_report,
         "jobs": created_jobs,
@@ -497,7 +549,7 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance,site-setup")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance,site-setup,shorts")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
     parser.add_argument(
         "--model",
@@ -516,6 +568,14 @@ def main() -> int:
         default=None,
         help="FAL image model id to pin for this client (e.g. fal-ai/flux-2-pro). Defaults to "
         "the client's panel choice (GET /api/site/config image_model), else the FAL default.",
+    )
+    parser.add_argument(
+        "--pexels-key",
+        default=os.environ.get("PEXELS_API_KEY") or None,
+        help="Pexels API key for the shorts agent's stock B-roll. NOT BYOK — the "
+        "Pexels API is free, so this is BigLobster's shared key and defaults to "
+        "PEXELS_API_KEY in the environment. Without it the shorts agent still "
+        "renders, but on plain backgrounds instead of footage.",
     )
     parser.add_argument(
         "--questionnaire",
@@ -558,6 +618,7 @@ def main() -> int:
             fal_key=args.fal_key,
             image_model=args.image_model,
             questionnaire=questionnaire,
+            pexels_key=args.pexels_key,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)

@@ -326,6 +326,12 @@ TOOLSETS = {
         "includes": []
     },
 
+    "shorts": {
+        "description": "Vertical short-form video: stock B-roll search and ffmpeg render to 1080x1920 MP4",
+        "tools": ["shorts_render"],
+        "includes": []
+    },
+
 
     # Scenario-specific toolsets
     

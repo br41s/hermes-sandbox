@@ -1,0 +1,18 @@
+name: shorts
+version: 1.0.0
+description: "Vertical short-form video assembly — stock B-roll search (Pexels) plus deterministic ffmpeg rendering of a storyboard into a 1080x1920 MP4 with voiceover and burned-in captions. Powers the rented `shorts` agent (blog post -> Instagram/TikTok videos)."
+author: BigLobster
+kind: backend
+provides_tools:
+  - shorts_render
+# No ``requires_env``: rendering needs only ffmpeg (in the container image) and
+# the profile's configured TTS provider, which defaults to the free Edge TTS.
+#
+# PEXELS_API_KEY is read at call time by the ``stock_search`` action and is
+# genuinely optional — without it the tool still renders, just on plain
+# backgrounds instead of stock footage. It is deliberately NOT declared as
+# ``optional_env`` here: that block is only read by the setup-UI injector in
+# hermes_cli/config.py, which scans plugins/platforms/ alone, so declaring it
+# would look like configuration the CLI surfaces when nothing reads it.
+# Provisioning writes it into each profile's .env — see
+# scripts/provision_bl_client.py.

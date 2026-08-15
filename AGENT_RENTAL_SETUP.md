@@ -38,8 +38,10 @@ path to a client's site.
 | SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
 | Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (draft, with CTA) | daily |
+| Infographic Engineer | `infographic/bl-site-package-infographic.prompt` | `update_blog_post` (inserts one inline SVG) | daily |
 | Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
+| Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | daily |
 
 Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
 recurring daily job like the other two. It runs once, scans the client's old
@@ -66,6 +68,15 @@ bl-site-package now supports AI images: blog posts have a cover
 BYOK) and attach them with `bl_site_publish` `action: "upload_image"`. Image
 generation is billed to the client's `FAL_KEY`; a client who didn't provide one
 just gets text-only content (the agents never block on a missing image).
+
+Social Shorts is the only agent whose deliverable is **not** on the client's
+site. Each run turns one not-yet-processed blog post into 3–5 vertical MP4s for
+Instagram Reels and TikTok plus a `captions.md` of per-network copy, written to
+`workspace/shorts/<post-slug>/` in the client's own profile. Its only write to
+the site is the `<!-- shorts:auto -->` sentinel appended to the post it just
+used, which is how it knows never to redo one — the same
+mark-it-in-the-content trick the Infographic Engineer uses, and the same
+prose-is-immutable rule. See "Social Shorts" below.
 
 Off-Site GEO Scout is **not yet adapted** — it's monitoring-only and may not
 need the publish tool at all. Adapt it the same way, once a client orders it.
@@ -316,6 +327,56 @@ domain setup (the buyer pointing their own DNS at the instance) also stays
 manual and remains **outside** the SKU: the product delivers a working site on
 its own URL.
 
+## Social Shorts — the bounded product
+
+`shorts` is the agent behind BigLobster's short-form video subscription. The
+thing that makes it sellable is that **the marginal cost of a video is zero**,
+so the margin does not erode with volume:
+
+| Piece | Where it comes from | Cost |
+|---|---|---|
+| Script | the client's own blog post, via `bl_site_publish` | tokens only |
+| Voiceover | `text_to_speech`, default provider Edge TTS | free, no key |
+| B-roll | Pexels Videos API, portrait orientation | free (200 req/h, 20k/month) |
+| Assembly, captions, loudness | `shorts_render` → ffmpeg, in-container | free |
+| *Optional* 4s AI opening hook | existing `video_generate`, fal provider | client's own `FAL_KEY` |
+
+Two licence facts are load-bearing here and should not be quietly changed.
+**Edge TTS or Kokoro (Apache-2.0) only** — XTTS-v2 ships under Coqui's CPML and
+F5-TTS's published weights are CC-BY-NC-4.0, so both are non-commercial and
+cannot legally voice a customer deliverable. And **Pexels clips are used only as
+raw material** — its licence permits commercial use and modification but not
+redistributing footage unaltered, which is why the renderer never hands a clip
+through untouched.
+
+`PEXELS_API_KEY` is the one credential in the whole rental flow that is **not
+BYOK**: the API is free, so every profile carries a copy of BigLobster's own
+key. That puts it squarely in the known trap where rotating a secret in the main
+`.env` leaves already-provisioned profiles on the revoked value — and the
+symptom is an HTTP 401 out of `stock_search`, not a config error. Rotate it
+across profile `.env` files, not just the main one. Provisioning without it does
+not fail; the videos just render on plain backgrounds instead of footage.
+
+What keeps the SKU bounded:
+
+| Bound | Enforced by |
+|---|---|
+| One blog post per run, 3–5 videos | the prompt; the `<!-- shorts:auto -->` sentinel makes it idempotent |
+| 60 seconds and 12 scenes per video | `plugins/shorts/render.py`, as a hard error rather than a silent trim |
+| 1080x1920, 30fps, −14 LUFS | fixed in the renderer; not a per-client decision |
+| Never posts to a social network | no credentials exist, and the prompt forbids seeking them |
+| Claims come from the post only | the prompt; no invented facts, no medical/legal/financial promises |
+
+The agent goes `[SILENT]` once every post carries the sentinel, so it is safe to
+leave scheduled daily on a small blog. Its report is Spanish like the rest of
+the fleet, but the **videos and their captions are English** — that was a
+deliberate reach for an international Reels/TikTok audience, not an oversight.
+
+Delivery is the folder. A rented profile's `.env` holds only that client's site
+credentials — no bot token — so the prompt's `send_message` media hand-off is
+conditional and silently skipped there; it is what makes the same prompt useful
+when the CEO runs it against BigLobster's own profile, which does have Telegram.
+
 ## Onboarding a client
 
 Run `scripts/provision_bl_client.py` from the repo root, using the repo's
@@ -336,7 +397,11 @@ this pulls in via `cron/jobs.py`):
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
 `onboarding-content`, `product-articles`, `infographic`, `maintenance`,
-`site-setup`. `maintenance` (the Website Maintenance subscription) requires no
+`site-setup`, `shorts`. `shorts` (the Social Shorts subscription) requires no
+extra flags either, but takes `--pexels-key` for its stock footage — shared, not
+BYOK, and defaulting to `PEXELS_API_KEY` in the environment. It also *uses*
+`--fal-key` when one is present, for the optional AI opening hook.
+`maintenance` (the Website Maintenance subscription) requires no
 extra flags. It *optionally* uses `--old-site-url`: when the profile carries
 `OLD_SITE_URL`, the daily check also sweeps the old site's published paths and
 reports the ones that now dead-end on the new site. Omit it and that one
@@ -467,11 +532,11 @@ await fetch(url, { method: "POST", body: raw, headers: {
 | `slug` | yes | Hermes profile name. Must be unused. |
 | `client_name` | yes | Display name only. |
 | `openrouter_key` | yes | The buyer's own key (BYOK). Validated live before anything is created. |
-| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`, `maintenance`. `site-setup` and `onboarding-content` are mutually exclusive. |
+| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`, `maintenance`, `shorts`. `site-setup` and `onboarding-content` are mutually exclusive. |
 | `questionnaire` | with `site-setup` | Fixed schema — see `scripts/bl_site_setup.py`. Unknown keys are rejected. |
 | `site_url` | no | Omit to claim a blank instance from the pool. Pass one only when BigLobster already knows the instance. |
 | `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |
-| `fal_key` | no | The buyer's own FAL key for image generation. Omit → text-only content. |
+| `fal_key` | no | The buyer's own FAL key for image generation. Omit → text-only content. With `shorts`, it also buys the optional AI opening hook. |
 | `old_site_url` | required for `onboarding-content` / `product-articles` | The buyer's existing site. |
 | `image_model` | no | Pins the FAL image model. |
 
