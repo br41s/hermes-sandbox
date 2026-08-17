@@ -34,9 +34,12 @@ su panel; tú no lo especificas. Flujo:
 3. Pasa esa URL a `create_blog_post` como `image_url`, junto con un `image_alt`
    descriptivo EN ESPAÑOL (qué se ve en la imagen, para accesibilidad y SEO).
 
-NUNCA bloquees la publicación por un fallo de imagen: si `image_generate` o
-`upload_image` fallan (p. ej. el cliente no tiene FAL_KEY o da error), publica
-el artículo SOLO con texto y anótalo en el informe final como "sin portada".
+Si `image_generate` falla, reinténtalo UNA vez — muchos fallos son errores
+transitorios del proveedor, no un problema real de configuración. Si falla la
+segunda vez (o falla `upload_image`), NUNCA bloquees la publicación por eso: si
+`image_generate` o `upload_image` fallan (p. ej. el cliente no tiene FAL_KEY o
+da error), publica el artículo SOLO con texto y anótalo en el informe final
+como "sin portada".
 
 ## REGLAS CRÍTICAS DEL ARTÍCULO (NO NEGOCIABLES)
 
@@ -49,6 +52,12 @@ La vara de calidad y extensión es BigLobster: usa `https://biglobster.top/servi
 y un artículo del blog de BigLobster como referencia del nivel de detalle, estructura
 y profundidad que se espera (no de la temática). Un post fino no vale: si no hay
 material para llegar a ese nivel con datos reales, mejor `[SILENT]` que un artículo corto.
+
+**Antes de llamar a `create_blog_post`, cuenta aproximadamente las palabras del
+borrador.** Si queda por debajo de 1200, no lo publiques así: amplía la sección
+más floja con más datos, ejemplos o contexto real (nunca relleno) hasta llegar
+al mínimo, o si de verdad no hay más material real que añadir, responde `[SILENT]`
+en vez de publicar un artículo corto.
 
 Estructura obligatoria:
 - Párrafo de apertura con gancho real (no un titular de manual).
@@ -133,9 +142,13 @@ puedas atribuir a una fuente real vía `web_search`. NUNCA inventes hechos sobre
 ESTE cliente concreto (años, certificaciones, clientes, direcciones) ni cites
 cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falsos.
 
-### Título y extracto
+### Título, extracto y badges
 - `title`: gancho real, no título de manual
 - `excerpt`: 1-2 frases que resuman el artículo, se muestra en el listado del blog
+- `badges`: 3-4 etiquetas de tema cortas, en minúsculas y separadas por comas
+  (p.ej. `"seo, marketing, pymes"`), que reflejen el tema del post y el sector
+  del cliente. Se muestran como una fila de badges sobre el título. No hay un
+  vocabulario fijo — elige las que mejor encajen con este artículo concreto.
 
 ## Flujo de trabajo:
 
@@ -150,8 +163,8 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 
 ### FASE 3: Creación y publicación
 1. Escribe el artículo en Markdown siguiendo las reglas de formato y humanización de arriba (~1200–1800 palabras, al nivel de BigLobster, H2 tipo pregunta, sub-listas, FAQ, CTA suave, enlaces internos)
-2. Genera la portada (sección PORTADA): `image_generate` → `upload_image` → obtén la URL `/uploads/...webp`. Si falla, sigue sin portada.
-3. Llama a `bl_site_publish` con `action: "create_blog_post"`, `title`, `content` (Markdown), `excerpt`, `cta_url` (URL absoluta con `BL_SITE_URL`) y `cta_label`, y si tienes portada `image_url` + `image_alt`
+2. Genera la portada (sección PORTADA): `image_generate` → `upload_image` → obtén la URL `/uploads/...webp`. Si `image_generate` falla, reinténtalo una vez; si sigue fallando, sigue sin portada.
+3. Llama a `bl_site_publish` con `action: "create_blog_post"`, `title`, `content` (Markdown), `excerpt`, `badges`, `cta_url` (URL absoluta con `BL_SITE_URL`) y `cta_label`, y si tienes portada `image_url` + `image_alt`
 4. Confirma que la respuesta indica `"success": true` y `"status": "draft"`
 
 ### Respuesta final:
@@ -159,7 +172,8 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 - Título: [TÍTULO]
 - Gap: [descripción]
 - Slug: [slug devuelto por la herramienta]
-- Extensión: [nº aprox. de palabras]
-- Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo]
+- Extensión: [nº aprox. de palabras] (mínimo 1200)
+- Badges: [lista de badges usados]
+- Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo, incluye si hubo reintento]
 - ✅ Humanizado (sin vocabulario IA) · Markdown con H2/FAQ · enlaces internos + botón CTA
 - ✅ Guardado como borrador — el cliente lo revisa y publica desde su panel
