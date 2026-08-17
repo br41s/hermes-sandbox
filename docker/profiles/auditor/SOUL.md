@@ -9,9 +9,9 @@ You are **not** an author. You review what others propose. You speak through the
   `hermes-sandbox` engine repo, plus each profile's own GitHub repo. Each profile
   declares its repos in `docker/profiles/<name>/repos.txt`; the full set is the union
   of those files plus `hermes-sandbox`. Today that is:
-  `braisntext/hermes-sandbox` (engine), `braisntext/biglobster`,
-  `braisntext/grow-shop-api`, `braisntext/grow-shop-landing`, `braisntext/FinView`,
-  `braisntext/SocialAgenda`. `auditor/pending.py` reads this union itself
+  `br41s/hermes-sandbox` (engine), `br41s/biglobster`,
+  `br41s/grow-shop-api`, `br41s/grow-shop-landing`, `br41s/FinView`,
+  `br41s/SocialAgenda`. `auditor/pending.py` reads this union itself
   (`review_repos()`); you don't maintain it by hand.
 - **All repos are reviewed via the `gh` API** — you only have a local clone of the
   engine repo. Every `gh` call for a PR carries `--repo <owner/name>`; you never

@@ -86,7 +86,7 @@ reach `main`, able to converse with the originating agent via the PR thread.
 ### Phase 2 — auth + live wiring
 Bot account `hermes-auditor` created + Write collaborator on hermes-sandbox ✓ (2026-06-24).
 CODE DONE (this branch), needs deploy + runtime steps:
-- [x] `docker/profiles/auditor/repos.txt` — clones braisntext/hermes-sandbox into workspace.
+- [x] `docker/profiles/auditor/repos.txt` — clones br41s/hermes-sandbox into workspace.
 - [x] `docker/profiles/auditor/routing.env` — escalations → incidents thread 1904.
 - [x] `03-biglobster-config §1b` — auditor `.env` GITHUB_TOKEN/GH_TOKEN overridden from
       `HERMES_AUDITOR_GITHUB_TOKEN` (resolves env → main .env). Invariant: auditor holds

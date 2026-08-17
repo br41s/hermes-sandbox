@@ -1,6 +1,6 @@
 # Dashboard Auth Lockdown Runbook
 
-**Target:** Hermes dashboard at https://blhermes.zeabur.app (service `braisntext/hermes-sandbox` on Zeabur)
+**Target:** Hermes dashboard at https://blhermes.zeabur.app (service `br41s/hermes-sandbox` on Zeabur)
 **Goal:** Close the public, no-auth hole by engaging the bundled Nous Portal OAuth gate.
 **Owner action required:** CEO (Brais) — steps touch Zeabur env + Nous Portal, which Claude cannot access.
 **Code change required:** **None.** The gate already exists and is wired; it is only disabled by env config.

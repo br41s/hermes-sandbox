@@ -136,6 +136,28 @@ curator:
   min_idle_hours: 2
   stale_after_days: 30
   archive_after_days: 90
+memory_curator:
+  # Weekly digest of unsaved lessons/corrections from recent sessions. The
+  # digest pass is read-only (proposals only); writing is human-gated via
+  # `hermes memory-curator apply` and reversible via `revert`. Opt-in.
+  enabled: false
+  interval_hours: 168
+  min_idle_hours: 2
+  lookback_days: 7
+  max_sessions: 20
+  # Auto-graduation (slice 4): once an add:<target> class has `graduation_k`
+  # clean human approvals, the weekly digest may auto-apply it — but ONLY when
+  # auto_apply is true. Off by default: auto-apply writes with no human in the
+  # loop. Only "add" graduates; evict/merge stay human-gated. A revert of a
+  # class resets its count and demotes it back to gated.
+  auto_apply: false
+  graduation_k: 5
+  graduatable_actions: ["add"]
+  # Telegram heads-up when the weekly digest has proposals (needs TELEGRAM_BOT_TOKEN).
+  # Empty chat id = no notification. Set the chat id (and optional topic thread id)
+  # to get pinged instead of having to check `hermes memory-curator show` manually.
+  telegram_chat_id: ''
+  telegram_thread_id: ''
 kanban:
   dispatch_in_gateway: true
   dispatch_interval_seconds: 60

@@ -337,24 +337,57 @@ def _apply_profile_git_auth(env: Dict[str, str], profile_home: str) -> None:
     * **Token export (best-effort).** Also set ``GITHUB_TOKEN``/``GH_TOKEN`` on
       the delegate env for any *in-process* consumer that reads them directly
       (those don't pass through the shell-tool blocklist). Sourced from the same
-      ``.git-credentials`` token, falling back to whatever is already in env.
+      ``.git-credentials`` token, falling back to whatever is already in env
+      only when the profile has no credential file of its own to begin with.
+
+    Fail-closed on a present-but-broken credential file: if
+    ``.git-credentials`` exists but yields no usable token (empty, garbled,
+    no github.com entry), that is treated as a signal something is
+    misconfigured for *this* profile, not as "no opinion" — we do NOT fall
+    back to the ambient/shared token in that case. Falling back there would
+    silently overwrite this profile's ``hosts.yml`` with a different
+    identity's credential (same class of bug as the auditor identity leak on
+    biglobster#408: whichever token ends up on disk / in env is what ``gh``
+    authenticates as, and a wrong-identity token is worse than none). The
+    ambient fallback is intended only for profiles with no per-profile
+    credential file at all (e.g. finview/grow-shop acting under the shared
+    CEO identity by design, per PRs #31/#32) — not for a profile whose own
+    credential file failed to parse.
     """
     profile_subprocess_home = os.path.join(profile_home, "home")
     token: Optional[str] = None
-    if os.path.isdir(profile_subprocess_home):
+    has_profile_home = os.path.isdir(profile_subprocess_home)
+    if has_profile_home:
         env["HOME"] = profile_subprocess_home
-        token = _token_from_git_credentials(
-            os.path.join(profile_subprocess_home, ".git-credentials")
-        )
+        creds_path = os.path.join(profile_subprocess_home, ".git-credentials")
+        token = _token_from_git_credentials(creds_path)
+        if not token and os.path.exists(creds_path):
+            logger.warning(
+                "Delegate: profile git-credentials at %s exists but yielded "
+                "no usable token; leaving gh/git unauthenticated for this "
+                "run rather than falling back to the ambient identity "
+                "(fail-closed — see _apply_profile_git_auth docstring)",
+                creds_path,
+            )
+            # env was seeded from {**os.environ, ...} by the caller, so an
+            # ambient GITHUB_TOKEN/GH_TOKEN may already be sitting in it —
+            # clear it rather than just skipping the write, or an in-process
+            # consumer reading env directly (the exact case this function's
+            # own "best-effort env export" docstring section calls out)
+            # would still see the wrong identity.
+            env.pop("GITHUB_TOKEN", None)
+            env.pop("GH_TOKEN", None)
+            return
 
-    # Fall back to the ambient env token only when the credential file yielded
-    # nothing (no per-profile home, or a token-less file).
+    # Fall back to the ambient env token only when the profile has no
+    # credential file of its own (no per-profile home, or no
+    # .git-credentials at all) — not when one exists but failed to parse.
     if not token:
         token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")
 
     if token:
         # Disk-based gh auth — the actual fix for `gh` (env tokens are stripped).
-        if os.path.isdir(profile_subprocess_home):
+        if has_profile_home:
             _write_gh_hosts(profile_subprocess_home, token)
         # Best-effort env export for in-process consumers. Assign both so a
         # stale inherited value can't shadow the credential-file token.

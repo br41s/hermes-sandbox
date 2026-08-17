@@ -27,7 +27,29 @@ EXPECTED_PUBLIC: frozenset[str] = frozenset({
     "/api/model/info",        # read-only model metadata
     "/api/dashboard/themes",  # read-only skin manifests
     "/api/dashboard/plugins",
-    "/api/delegate",          # external orchestrator; own auth (callback secret)
+    # External orchestrator endpoint (BigLobster COO). Mutates — it runs an
+    # arbitrary agent prompt — so it is on this list only because it fails
+    # closed: hermes_cli/web_server.py's _verify_delegate_secret() refuses
+    # every request unless HERMES_CALLBACK_SECRET is set, and then requires
+    # an x-hermes-secret header matching it (hmac.compare_digest). That
+    # header, not this allowlist, is the boundary.
+    "/api/delegate",
+    # Chronos managed-cron fire webhook (upstream v2026.7.20). Bypasses the
+    # cookie gate because it carries its own short-lived NAS-minted JWT
+    # (purpose=cron_fire) which the handler verifies — the JWT, not this
+    # allowlist, is the boundary. Inert on this deployment: no cron.chronos.*
+    # config is set, so verify_nas_fire_token() fails closed on an empty
+    # expected_audience and every request 401s.
+    "/api/cron/fire",
+    # BigLobster payment-confirmed rental provisioning (fork-specific; see
+    # AGENT_RENTAL_SETUP.md). This one DOES mutate — it creates a Hermes
+    # profile and cron jobs — so it is on this list only because it fails
+    # closed: hermes_cli/bl_rental_webhook.py refuses every request unless
+    # BL_RENTAL_WEBHOOK_SECRET is set, and then requires an HMAC-SHA256
+    # signature over "<timestamp>.<raw body>" inside a 300 s replay window.
+    # The signature, not this allowlist, is the boundary. If that handler ever
+    # grows an unauthenticated path, remove this entry with it.
+    "/api/bl/rental/provision",
 })
 
 # Substrings that must NEVER appear in any public path. These mark write /

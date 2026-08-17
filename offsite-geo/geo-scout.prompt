@@ -14,16 +14,24 @@ poisons the brand faster than ten good ones help it.
 
 ──────────────────────────────────────────────
 CONFIG  (the only project-specific block — change these to retarget)
-  BRAND          : BigLobster — agencia de automatización con IA para pymes y
-                   autónomos. Spain, Spanish-language. Value prop: agentes de IA
-                   a medida que automatizan tareas repetitivas (atención al
-                   cliente, datos, email), desarrollo web/ecommerce, integra-
-                   ciones. Differentiator: verificable, auditable, sin humo; el
-                   cliente es dueño del código; IA con supervisión humana.
-  BRAND_SOURCE   : Read https://biglobster.top live at run start for current
-                   voice, services, and the exact article/page URLs you can cite.
-  LANGUAGE       : Drafted assets are in SPANISH (es-ES), brand voice. These
-                   run-report sections are in English.
+  BRAND          : BigLobster — AI automation agency for SMBs and solo founders,
+                   worldwide (English-language, global SMB/startup audience as
+                   of 2026-08-12 — the core site and the sales pitch stay Spain/
+                   Galicia-focused, but this off-site content targets a worldwide
+                   audience). Value prop: custom AI agents that automate
+                   repetitive work (customer support, data, email), web/ecommerce
+                   development, integrations. Differentiator: verifiable,
+                   auditable, no smoke; the client owns the code; AI with human
+                   oversight.
+  BRAND_SOURCE   : Read https://biglobster.top/blog.html (English, root) live at
+                   run start for current voice, services, and the exact
+                   article/page URLs you can cite — prefer English (/blog/) pages
+                   as citation evidence over Spanish (/es/) ones for this
+                   worldwide-audience work.
+  LANGUAGE       : Drafted assets are in ENGLISH, brand voice, worldwide framing
+                   (no Spain-specific assumptions unless the opportunity itself
+                   is explicitly Spain-market). These run-report sections are in
+                   English.
   CHANNELS_OWNED : X (Twitter) only. Assume NO other off-site account exists.
   LEDGER         : offsite-geo-ledger.md in this job's workdir. Append-only
                    record of every query + opportunity already pitched, so runs
@@ -59,18 +67,18 @@ STEP 1 — Ground in the brand:
    you could legitimately cite as evidence in an answer.
 
 STEP 2 — Pick ONE target query (deterministic, not in ledger):
-   Choose a single real Spanish buyer question BigLobster can authentically
-   answer, e.g. "cómo automatizar la atención al cliente con IA en una pyme",
-   "merece la pena una agencia de automatización con IA para autónomos",
-   "mejores formas de automatizar tareas repetitivas en una empresa pequeña".
+   Choose a single real worldwide buyer question BigLobster can authentically
+   answer, e.g. "how to automate customer support with AI in a small business",
+   "is an AI automation agency worth it for a solo founder",
+   "best ways to automate repetitive tasks in a small company".
    Prefer queries with high GEO value (the kind answer engines field) and clear
    brand relevance. Skip anything already in the ledger.
 
 STEP 3 — Find ONE authentic off-site opportunity for that query:
    Search for where this question actually lives and gets answered: a Reddit
-   thread (r/empresas, r/spain, r/PymesyAutonomos, r/autonomos…), a Quora-es
-   question, a sector forum, or a "mejores agencias / herramientas de IA"
-   listicle BigLobster legitimately belongs in. Find candidates, then rank by:
+   thread (r/smallbusiness, r/Entrepreneur, r/SaaS, r/automation…), a Quora
+   question, Indie Hackers, a sector forum, or a "best AI automation agencies /
+   tools" listicle BigLobster legitimately belongs in. Find candidates, then rank by:
        1) Authenticity fit  — how naturally BigLobster belongs there (low spam
                               risk). This is the dominant factor.
        2) Citation value    — how likely an answer engine re-crawls & cites that
@@ -100,7 +108,7 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
    does NOT have (only X exists), STILL surface it but clearly flag the account
    requirement — never assume a login that doesn't exist.
 
-STEP 4 — Draft the paste-ready asset (Spanish, brand voice):
+STEP 4 — Draft the paste-ready asset (English, brand voice, worldwide framing):
    Write the actual text to post — sized and styled for that specific platform
    (a Reddit answer reads nothing like an X post or a directory blurb). Answer
    the question first and substantively; place the BigLobster link as supporting
@@ -116,7 +124,7 @@ STEP 5 — Record & report:
           and thread status (CONFIRMED open for replies + last-activity date)
         • Account needed? — "ready with X / no login" or "create a <platform>
           account first (we only have X today)"
-        • Paste-ready asset — the full Spanish text, clearly delimited
+        • Paste-ready asset — the full English text, clearly delimited
         • Compliance note — the platform's self-promo rule and how we respect it
         • Why this earns an AI citation — one plain sentence (so the CEO learns
           the GEO mechanic each run)

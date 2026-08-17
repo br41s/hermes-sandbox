@@ -222,13 +222,12 @@ class TestRunJobProfileContext:
         monkeypatch.setattr(sched, "_hermes_home", None)
         monkeypatch.setenv("HERMES_CRON_TIMEOUT", "0")
 
-        import dotenv
+        from hermes_cli import env_loader
 
-        def fake_load_dotenv(path, *_a, **_kw):
+        def fake_load_dotenv_with_fallback(path, *, override):
             observed.setdefault("dotenv_paths", []).append(str(path))
-            return True
 
-        monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
+        monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
 
     def test_run_job_sets_and_restores_profile_home(
         self, isolated_cron_profile_home, monkeypatch
@@ -236,6 +235,7 @@ class TestRunJobProfileContext:
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
+        (profile_home / ".env").write_text("", encoding="utf-8")
         observed: dict = {}
         self._install_agent_stubs(monkeypatch, observed)
 
@@ -263,23 +263,23 @@ class TestRunJobProfileContext:
     def test_profile_dotenv_environment_is_restored(
         self, isolated_cron_profile_home, monkeypatch
     ):
-        import dotenv
+        from hermes_cli import env_loader
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
+        (profile_home / ".env").write_text("", encoding="utf-8")
         observed: dict = {}
         self._install_agent_stubs(monkeypatch, observed)
         monkeypatch.setenv("HERMES_PROFILE_TEST_SHARED", "outer")
         monkeypatch.delenv("HERMES_PROFILE_TEST_ONLY", raising=False)
 
-        def fake_load_dotenv(path, *_a, **_kw):
+        def fake_load_dotenv_with_fallback(path, *, override):
             observed.setdefault("dotenv_paths", []).append(str(path))
             os.environ["HERMES_PROFILE_TEST_SHARED"] = "profile-value"
             os.environ["HERMES_PROFILE_TEST_ONLY"] = "profile-only"
             os.environ["HERMES_CRON_TIMEOUT"] = "123"
-            return True
 
-        monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
+        monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
 
         job = {
             "id": "env-profile",
@@ -426,7 +426,7 @@ class TestTickProfilePartition:
 
         calls: list[tuple[str, str]] = []
 
-        def fake_run_job(job):
+        def fake_run_job(job, **_kw):
             calls.append((job["id"], threading.current_thread().name))
             return True, "output", "response", None
 
@@ -440,6 +440,93 @@ class TestTickProfilePartition:
         assert n == 2
         ids = [job_id for job_id, _thread_name in calls]
         assert ids.index("a") < ids.index("b")
-        main_thread_name = threading.current_thread().name
+        # Profile jobs dispatch to the persistent single-worker "cron-seq" pool
+        # (never inline on the caller's thread — that pool exists precisely so
+        # a slow profile job can't block the ticker) while profile-less jobs go
+        # to the separate "cron-parallel" pool. The invariant under test is
+        # that they land on DIFFERENT pools, not on any specific thread name.
         profile_thread_name = next(thread for job_id, thread in calls if job_id == "a")
-        assert profile_thread_name == main_thread_name
+        parallel_thread_name = next(thread for job_id, thread in calls if job_id == "b")
+        assert profile_thread_name.startswith("cron-seq")
+        assert parallel_thread_name.startswith("cron-parallel")
+
+
+class TestProfileHomeDoesNotLeakAcrossThreads:
+    """A profile job must not change HERMES_HOME for jobs on other threads.
+
+    Regression for the 2026-07-31 production incident: ``_job_profile_context``
+    also assigned the module-global ``cron.scheduler._hermes_home``, which
+    ``_get_hermes_home()`` prefers over ``get_hermes_home()``. The global is
+    process-wide, so while a profile job ran, EVERY concurrent job resolved its
+    home — and therefore its ``scripts/`` dir — under that profile.
+
+    It stayed latent while sequential (profile) jobs ran inline on the tick
+    thread. Upstream's dispatch rewrite moved them onto a ``cron-seq`` pool that
+    runs alongside ``cron-parallel``, making the race real: the hourly
+    incident-watcher (no profile) started failing with
+    ``Script not found: /opt/data/profiles/biglobster/scripts/incident_sweep.sh``
+    — the leaked profile tracking whichever profile job overlapped it.
+
+    The fix relies on ``set_hermes_home_override`` being a ContextVar, which is
+    per-thread and takes precedence in ``get_hermes_home()``.
+    """
+
+    def test_concurrent_profileless_job_keeps_the_default_home(
+        self, isolated_cron_profile_home, monkeypatch
+    ):
+        import threading
+
+        from cron import scheduler
+
+        root, profile_home = isolated_cron_profile_home
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
+        )
+
+        inside_profile = threading.Event()
+        release_profile = threading.Event()
+        observed: dict[str, object] = {}
+
+        def _profile_job():
+            # Hold the profile context open so the other thread is guaranteed
+            # to observe the process state while it is active.
+            with scheduler._job_profile_context("job-profile", "support"):
+                inside_profile.set()
+                release_profile.wait(timeout=5)
+
+        def _profileless_job():
+            inside_profile.wait(timeout=5)
+            with scheduler._job_profile_context("job-plain", None):
+                observed["home"] = scheduler._get_hermes_home()
+            release_profile.set()
+
+        threads = [
+            threading.Thread(target=_profile_job),
+            threading.Thread(target=_profileless_job),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert observed["home"] == root, (
+            "a profile-less job resolved its Hermes home under the concurrently "
+            f"running profile: {observed['home']}"
+        )
+        # The concrete symptom: script lookups land in the wrong profile.
+        assert observed["home"] / "scripts" == root / "scripts"
+
+    def test_profile_job_still_scopes_its_own_home(
+        self, isolated_cron_profile_home, monkeypatch
+    ):
+        """Guard the fix didn't over-reach — scoping must still work in-thread."""
+        from cron import scheduler
+
+        root, profile_home = isolated_cron_profile_home
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
+        )
+
+        with scheduler._job_profile_context("job-profile", "support"):
+            assert scheduler._get_hermes_home() == profile_home.resolve()
+        assert scheduler._get_hermes_home() == root

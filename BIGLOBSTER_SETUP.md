@@ -22,8 +22,8 @@ BigLobster sentinel.js
 | Service name | `hermes` (Zeabur, same project as BigLobster) |
 | Internal URL | `http://hermes-sandbox.zeabur.internal:9119` |
 | Public URL | `https://blhermes.zeabur.app` |
-| Repo | `github.com/braisntext/hermes-sandbox` |
-| Docker image | `ghcr.io/braisntext/hermes-sandbox:latest` |
+| Repo | `github.com/br41s/hermes-sandbox` |
+| Docker image | `ghcr.io/br41s/hermes-sandbox:latest` |
 | Deploy method | **Docker image from GHCR** (not git autodeploy — see Deploy section) |
 
 ---
@@ -43,7 +43,7 @@ Zeabur's build timeout is too short for the 2.7GB image (Playwright + Chromium +
    cd /Users/brais/VSCODE/hermes-sandbox
    gcloud builds submit --config=cloudbuild.yaml --substitutions=_GITHUB_TOKEN="<ghcr_pat>"
    ```
-   Cloud Build builds the image and pushes it to `ghcr.io/braisntext/hermes-sandbox:latest`.
+   Cloud Build builds the image and pushes it to `ghcr.io/br41s/hermes-sandbox:latest`.
    - **First pull `main` in this checkout** (`git checkout main && git pull`) — `gcloud builds submit` packages the *working tree*, not GitHub. If you merge a PR on GitHub but don't pull, the build ships stale code. Verify with `grep ENTRYPOINT Dockerfile` → it should show `/init`.
 3. Restart Hermes service in Zeabur dashboard
 
@@ -112,6 +112,7 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 | `TELEGRAM_ALLOWED_USERS` | No | CEO's Telegram user ID for direct access |
 | `EXA_API_KEY` | No | Exa web search API key — activates the `web` toolset |
 | `HUGGINGFACE_API_KEY` | No | HuggingFace token — activates `video_gen` (text-to-video) |
+| `PEXELS_API_KEY` | No | **BigLobster's own** Pexels key — stock B-roll when the `shorts` agent runs against biglobster.top's blog. Rented clients are BYOK and bring their own (`--pexels-key`), so `03-biglobster-config` holds this back from rented tenant `.env` files exactly like `OPENROUTER_API_KEY`. Only needed if BigLobster itself runs `shorts`. |
 | `GITHUB_TOKEN` | No | GitHub PAT (fine-grained, `contents:write` + `pull_requests:write`). At boot, `03-biglobster-config` writes it into `~/.git-credentials` so `git push/clone` over HTTPS works without prompts. Refresh = rotate token in Zeabur + restart. |
 
 ## Zeabur environment variables (BigLobster service)
@@ -196,8 +197,8 @@ The Hermes container's only writable volume is `/opt/data/` (Zeabur persistent v
 
 | Container path | Repo | When |
 |----------------|------|------|
-| `/opt/data/profiles/grow-shop/workspace/grow-shop-api` | `braisntext/grow-shop-api` | cloned on first boot, pulled on subsequent boots |
-| `/opt/data/profiles/grow-shop/workspace/grow-shop-landing` | `braisntext/grow-shop-landing` | cloned on first boot, pulled on subsequent boots |
+| `/opt/data/profiles/grow-shop/workspace/grow-shop-api` | `br41s/grow-shop-api` | cloned on first boot, pulled on subsequent boots |
+| `/opt/data/profiles/grow-shop/workspace/grow-shop-landing` | `br41s/grow-shop-landing` | cloned on first boot, pulled on subsequent boots |
 
 To add repos for a new profile: create `docker/profiles/<name>/repos.txt` (one `owner/repo` per line) and rebuild the image.
 
@@ -205,8 +206,10 @@ To add repos for a new profile: create `docker/profiles/<name>/repos.txt` (one `
 
 | Container path | Repo | Used by |
 |----------------|------|---------|
-| `/opt/data/checkouts/biglobster-seo` | `braisntext/biglobster` | SEO/GEO cron (job `20ec3607f2c6`) |
-| `/opt/data/checkouts/biglobster-gaphunter` | `braisntext/biglobster` | Content Gap Hunter cron (job `ce583d11dedd`) |
+| `/opt/data/checkouts/biglobster-seo` | `br41s/biglobster` | SEO/GEO cron (job `20ec3607f2c6`) |
+| `/opt/data/checkouts/biglobster-gaphunter` | `br41s/biglobster` | Content Gap Hunter cron (job `ce583d11dedd`) |
+| `/opt/data/checkouts/biglobster-infographic` | `br41s/biglobster` | Infographic Engineer cron (job `2988bba27c73`) |
+| `/opt/data/checkouts/biglobster-translation` | `br41s/biglobster` | Translation Engineer cron (job `e197e33b0f00`) |
 
 Each is an independent clone (separate `.git`, index, `HEAD`, and locally pinned
 `user.email=hermes@agent.local`). Section 6b clones on first boot, then on every
@@ -222,7 +225,7 @@ on branch + git identity between the two jobs.
 > `$PWD`-relative paths with no `-C`/identity-pin (fixed in an earlier pass);
 > Gap Hunter's prompt (`gap-hunter/biglobster-gap-hunter.prompt`) was still on the
 > abandoned-clone paths and got the same fix, plus per-artifact commit→push
-> discipline, in [PR #116](https://github.com/braisntext/hermes-sandbox/pull/116).
+> discipline, in [PR #116](https://github.com/br41s/hermes-sandbox/pull/116).
 > The workdir-setting subcommand is `hermes cron edit` (there is no `update`):
 >
 > ```sh
@@ -318,8 +321,13 @@ curl https://blhermes.zeabur.app/health
 curl https://blhermes.zeabur.app/api/status
 
 # Manual delegate (from BigLobster or any service in same Zeabur project)
+# Requires x-hermes-secret to match the HERMES_CALLBACK_SECRET Zeabur env var —
+# /api/delegate is on the public dashboard-auth allowlist (reachable from
+# blhermes.zeabur.app, not just the internal network), so this header is the
+# ONLY thing gating it. Missing/wrong header -> 401; secret unset -> 503.
 curl -X POST http://hermes-sandbox.zeabur.internal:9119/api/delegate \
   -H "Content-Type: application/json" \
+  -H "x-hermes-secret: $HERMES_CALLBACK_SECRET" \
   -d '{
     "task_id": "test-001",
     "prompt": "List files in /opt/data/workspace/biglobster and return a summary.",
@@ -340,8 +348,8 @@ since the 2026-06 upgrade — the old `[entrypoint] …` lines are gone):
 [03-biglobster] Synced env vars into /opt/data/profiles/grow-shop/.env
 [03-biglobster] config.yaml keys already current   (or "Reconciled config.yaml keys")
 [03-biglobster] Seeded profiles/grow-shop/repos.txt   (first boot after image update only)
-[03-biglobster] Pulling braisntext/grow-shop-api      (or "Cloning …" on first boot)
-[03-biglobster] Pulling braisntext/grow-shop-landing
+[03-biglobster] Pulling br41s/grow-shop-api      (or "Cloning …" on first boot)
+[03-biglobster] Pulling br41s/grow-shop-landing
 [03-biglobster] Egress openrouter.ai: 200
 [03-biglobster] Egress router.huggingface.co: 200   (or FAIL if Zeabur blocks it)
 [startup] Model: openrouter/owl-alpha | Provider: openrouter | API key present: True

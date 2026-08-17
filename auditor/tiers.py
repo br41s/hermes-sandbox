@@ -152,14 +152,22 @@ _PROFILE_CONTENT_SUFFIXES = (
 )
 # Per-repo extra publish dirs that are safe content, VERIFIED against the repo's
 # layout. biglobster (Eleventy since biglobster#339, 2026-07-06): site/blog/
-# holds the article source files (JSON frontmatter + body HTML, no chrome),
-# web/blog/images/ the covers/infographics and web/assets/ the static media —
-# all safe to auto-publish. Everything else stays system, INCLUDING the legacy
-# frozen web/*.html copies (a write there means the agent is following the
+# holds the Spanish article source files (JSON frontmatter + body HTML, no
+# chrome; permalinks under /es/blog/ since the Aug 2026 i18n migration),
+# site/en/blog/ is the same shape for English translations (permalinks at
+# root /blog/, populated by the Translation Engineer cron), web/blog/images/
+# the covers/infographics and web/assets/ the static media — all safe to
+# auto-publish. Everything else stays system, INCLUDING the legacy frozen
+# web/*.html copies (a write there means the agent is following the
 # pre-migration workflow and must be flagged, not merged) and site/_includes/ /
 # site/_data/ (layouts and brand data are template/build changes).
 _REPO_EXTRA_CONTENT_DIRS = {
-    "br41s/biglobster": ("site/blog/", "web/blog/images/", "web/assets/"),
+    "br41s/biglobster": (
+        "site/blog/",
+        "site/en/blog/",
+        "web/blog/images/",
+        "web/assets/",
+    ),
 }
 # Per-repo exact files that are safe content despite living outside the publish
 # dirs above. biglobster no longer needs any: blog.html, sitemap.xml and

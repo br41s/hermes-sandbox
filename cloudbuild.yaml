@@ -1,22 +1,52 @@
+substitutions:
+  # SHA corto del commit que se construye. Se pasa en el submit:
+  #   gcloud builds submit --substitutions=_COMMIT_SHA="$(git rev-parse --short HEAD)"
+  # `gcloud builds submit` sube un DIRECTORIO local, no un repo, así que las
+  # variables automáticas ($SHORT_SHA / $COMMIT_SHA) llegan VACÍAS. De ahí ésta.
+  _COMMIT_SHA: ''
+
 steps:
+  # Paso 0: Exigir el SHA antes de construir nada. Sin él sólo existiría
+  # `:latest` (mutable, se sobrescribe en cada build) y un despliegue roto no
+  # tendría ninguna imagen anterior a la que volver. Falla RUIDOSAMENTE en vez
+  # de publicar un tag placeholder que daría una falsa sensación de rollback.
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ -z "$_COMMIT_SHA" ]; then
+          echo "ERROR: falta _COMMIT_SHA — build abortado." >&2
+          echo "Reenvía con: gcloud builds submit --substitutions=_COMMIT_SHA=<sha-corto>" >&2
+          exit 1
+        fi
+        echo "Construyendo ghcr.io/br41s/hermes-sandbox:sha-$_COMMIT_SHA"
+
   # Paso 1: Iniciar sesión en GitHub Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        echo "$_GITHUB_TOKEN" | docker login ghcr.io -u braisntext --password-stdin
+        echo "$_GITHUB_TOKEN" | docker login ghcr.io -u br41s --password-stdin
 
   # Paso 2: Compilar la imagen (¡CON BUILDKIT ACTIVO!)
+  # Se etiqueta DOS veces sobre la MISMA imagen: `:latest` (lo que tira Zeabur)
+  # y `:sha-<commit>` (inmutable, el ancla de rollback).
   - name: 'gcr.io/cloud-builders/docker'
     env:
       - 'DOCKER_BUILDKIT=1' # <--- ESTO ACTIVA EL MOTOR MODERNO
     args: [
       'build',
-      '-t', 'ghcr.io/braisntext/hermes-sandbox:latest',
+      '-t', 'ghcr.io/br41s/hermes-sandbox:latest',
+      '-t', 'ghcr.io/br41s/hermes-sandbox:sha-$_COMMIT_SHA',
       '.'
     ]
 
-  # Paso 3: Hacer el push a GitHub
+  # Paso 3: Hacer el push a GitHub. El tag INMUTABLE primero: si el push de
+  # `:latest` fallara a medias, la versión nueva ya sería recuperable por SHA.
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'ghcr.io/braisntext/hermes-sandbox:latest']
+    args: ['push', 'ghcr.io/br41s/hermes-sandbox:sha-$_COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'ghcr.io/br41s/hermes-sandbox:latest']

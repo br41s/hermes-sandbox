@@ -137,7 +137,7 @@ config/SOUL/memory.
 
 ### Manual fallback (if the volume is still too big after pruning)
 Skip Clone entirely:
-1. New project → add Hermes service from **prebuilt image** `ghcr.io/braisntext/hermes-sandbox:latest`
+1. New project → add Hermes service from **prebuilt image** `ghcr.io/br41s/hermes-sandbox:latest`
    (+ GHCR registry creds). Let it boot once (creates a fresh `/opt/data`).
 2. From the OLD Hermes terminal, tar ONLY the essentials:
    `tar czf /tmp/hermes-core.tgz -C /opt/data config.yaml .env SOUL.md memories profiles`

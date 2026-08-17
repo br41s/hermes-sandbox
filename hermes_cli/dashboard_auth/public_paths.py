@@ -48,7 +48,24 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     "/api/dashboard/plugins",
     # External orchestrator endpoint (BigLobster COO → Hermes /api/delegate).
     # Bypasses the dashboard session/OAuth gate because it carries its own
-    # authentication (HERMES_CALLBACK_SECRET); listed here so BOTH the
-    # session-token middleware and the OAuth gate honour it in lockstep.
+    # authentication: the handler requires an ``x-hermes-secret`` header
+    # matching ``HERMES_CALLBACK_SECRET`` (checked with hmac.compare_digest,
+    # fails closed if unset — see ``_verify_delegate_secret`` in
+    # ``web_server.py``). That header check — not this allowlist — is the
+    # real security boundary; listed here so BOTH the session-token
+    # middleware and the OAuth gate bypass it in lockstep.
     "/api/delegate",
+    # Chronos managed-cron fire webhook (NAS -> agent). NOT cookie-gated: it
+    # carries its own short-lived NAS-minted JWT (purpose=cron_fire), which the
+    # handler verifies as the real auth. Must bypass the dashboard auth gate so
+    # the NAS relay's bearer-only callback reaches the verifier instead of a
+    # 401 no_cookie. The JWT — not this allowlist — is the security boundary.
+    "/api/cron/fire",
+    # Payment-confirmed rental provisioning (BigLobster Stripe side → Hermes).
+    # NOT cookie-gated: it carries an HMAC-SHA256 signature over
+    # "<timestamp>.<raw body>" keyed on BL_RENTAL_WEBHOOK_SECRET, which the
+    # handler verifies and which — not this allowlist — is the security
+    # boundary. With no secret configured the route refuses every request, so
+    # listing it here can never leave provisioning open by default.
+    "/api/bl/rental/provision",
 })

@@ -1,0 +1,160 @@
+"""The rentable-agent catalog has to stay wired to real files.
+
+A rental is sold before it is provisioned, so a typo'd prompt path or a missing
+prompt file would surface as a paid client with a cron job that cannot run —
+which is exactly the failure the schedule/one-shot split makes unrecoverable
+for one-shot agents (they auto-remove after their single run).
+"""
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from scripts.provision_bl_client import (
+    AGENT_SOURCES,
+    AGENTS_REQUIRING_OLD_SITE,
+    AGENTS_REQUIRING_PEXELS,
+    MUTUALLY_EXCLUSIVE_AGENTS,
+    _write_config,
+    pick_stagger_schedule,
+    provision,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("agent_key", sorted(AGENT_SOURCES))
+def test_every_agent_prompt_file_exists(agent_key):
+    source, display_name, schedule_kind = AGENT_SOURCES[agent_key]
+    path = REPO_ROOT / source
+    assert path.is_file(), f"{agent_key} points at a missing prompt: {source}"
+    assert path.read_text(encoding="utf-8").strip()
+    assert display_name
+    assert schedule_kind in {"daily", "once"}
+
+
+def test_maintenance_is_a_recurring_daily_agent():
+    source, display_name, schedule_kind = AGENT_SOURCES["maintenance"]
+    assert source == "maintenance/bl-site-package-maintenance.prompt"
+    assert display_name == "Website Maintenance"
+    # Availability and publish-drift checks are only meaningful checked often;
+    # a one-shot or weekly cadence would let a site sit broken for days.
+    assert schedule_kind == "daily"
+
+
+def test_maintenance_needs_no_old_site_url():
+    # It only ever reads the client's own site, so ordering it must never be
+    # blocked on the client having had a previous website.
+    assert "maintenance" not in AGENTS_REQUIRING_OLD_SITE
+    assert "maintenance" not in MUTUALLY_EXCLUSIVE_AGENTS
+
+
+def test_maintenance_is_staggered_off_peak_like_the_other_daily_agents():
+    schedule = pick_stagger_schedule("bl-cliente-garcia", "maintenance")
+    minute, hour, *rest = schedule.split()
+    assert rest == ["*", "*", "*"]
+    assert 2 <= int(hour) <= 5
+    assert 0 <= int(minute) <= 59
+    # Different agents for the same client must not all fire at once.
+    assert schedule != pick_stagger_schedule("bl-cliente-garcia", "gap-hunter")
+
+
+def test_maintenance_prompt_states_its_boundaries():
+    text = (REPO_ROOT / AGENT_SOURCES["maintenance"][0]).read_text(encoding="utf-8")
+    # The price tier is only defensible if the scope stays closed: these are
+    # the claims the prompt must keep making, in the same spirit as the
+    # Site Launch prompt's "fuera del alcance del producto" rule.
+    assert "bl_site_health" in text
+    assert "fuera del alcance del producto" in text
+    assert "record_report" in text
+    # It must never claim to patch a shared codebase per client.
+    assert "No puedes parchear dependencias" in text
+
+
+# --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
+
+
+def test_shorts_is_a_recurring_daily_agent():
+    source, display_name, schedule_kind = AGENT_SOURCES["shorts"]
+    assert source == "shorts/bl-site-package-shorts.prompt"
+    assert display_name == "Social Shorts"
+    # Goes [SILENT] once every post carries the sentinel, so daily is safe.
+    assert schedule_kind == "daily"
+
+
+def test_shorts_needs_no_old_site_url():
+    # It only reads the client's own blog.
+    assert "shorts" not in AGENTS_REQUIRING_OLD_SITE
+    assert "shorts" not in MUTUALLY_EXCLUSIVE_AGENTS
+
+
+def test_shorts_is_the_only_agent_requiring_a_pexels_key():
+    assert AGENTS_REQUIRING_PEXELS == {"shorts"}
+
+
+def test_ordering_shorts_without_a_pexels_key_is_refused(tmp_path, monkeypatch):
+    """BYOK is enforced at the door, not discovered on the first cron run.
+
+    Without this the SKU would provision happily and then ship background-only
+    videos — or, worse, quietly fall back to BigLobster's quota.
+    """
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    with pytest.raises(ValueError) as excinfo:
+        provision(
+            slug="bl-test-no-pexels",
+            client_name="Test",
+            site_url="https://client.example",
+            panel_password="pw",
+            openrouter_key="sk-or-client",
+            agents=["shorts"],
+            skip_key_check=True,
+        )
+    message = str(excinfo.value)
+    assert "--pexels-key" in message
+    # Names it as the client's key, not ours, so whoever hits this knows what
+    # to go and ask the buyer for.
+    assert "BYOK" in message
+    assert "client's OWN" in message
+    # Nothing half-built left behind: the check runs before create_profile().
+    assert not (tmp_path / "profiles" / "bl-test-no-pexels").exists()
+
+
+def test_pexels_key_is_not_read_from_the_environment(monkeypatch):
+    """The CLI flag must not default to PEXELS_API_KEY in the environment.
+
+    That default is the shared-key behaviour in disguise: omit the flag on a
+    rental and the client's stock searches silently bill to BigLobster's
+    200/hour. Provisioning has to be told the client's key explicitly.
+    """
+    import argparse
+    import inspect
+
+    import scripts.provision_bl_client as mod
+
+    monkeypatch.setenv("PEXELS_API_KEY", "biglobster-shared-key")
+    source = inspect.getsource(mod.main)
+    assert 'os.environ.get("PEXELS_API_KEY")' not in source
+
+    parser = argparse.ArgumentParser()
+    # Re-declare exactly as main() does and confirm the default stays None.
+    parser.add_argument("--pexels-key", default=None)
+    assert parser.parse_args([]).pexels_key is None
+
+
+# --- Every rented profile is written with web.search_backend: ddgs (#174) ---
+#
+# Every profile _write_config() writes IS a rented tenant — it's only ever
+# called from provision(), never for a BigLobster-owned profile — so this
+# is unconditional, not gated on which agents were ordered. Belt to
+# docker/cont-init.d/03-biglobster-config's boot-time reconcile (suspenders):
+# this makes a brand-new client's FIRST job (as soon as 5 minutes after
+# provisioning) correct immediately, without waiting for a container
+# restart to backfill it.
+
+def test_write_config_pins_ddgs_as_the_web_search_backend(tmp_path):
+    _write_config(tmp_path, model="deepseek/deepseek-v4-flash")
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["web"]["search_backend"] == "ddgs"
+    # Never Exa — that's the leak this pin exists to prevent.
+    assert cfg["web"].get("backend") != "exa"

@@ -146,6 +146,12 @@ inject = [
     # Read-only Google Search Console service-account key (base64), consumed by
     # the gsc MCP server (config.yaml mcp_servers.gsc). See optional-mcps/gsc/.
     "GSC_SERVICE_ACCOUNT_B64",
+    # Stock B-roll for the `shorts` agent (plugins/shorts/stock.py). This is
+    # BigLobster's OWN key, for BigLobster's own profiles running shorts against
+    # biglobster.top. Rented tenants bring their own and are excluded from it
+    # below, exactly like OPENROUTER_API_KEY — being in this list is only half
+    # the contract, and the half that keeps our rotation working.
+    "PEXELS_API_KEY",
 ]
 
 def _sync_env_file(env_path, exclude=()):
@@ -201,6 +207,20 @@ if not auditor_token and (home / ".env").exists():
                    (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
     auditor_token = _m.group(1).strip() if _m else ""
 
+def _is_rented_tenant(env_path):
+    """True for a bl-site-package rental — a profile that pays its own way.
+
+    BL_SITE_URL is the marker rather than a slug prefix like "bl-": the slug is
+    chosen by whoever runs provision_bl_client.py and a client named without
+    that prefix would silently fall back to being billed to us. BL_SITE_URL is
+    written by the provisioner for every rental and by nothing else.
+    """
+    if not env_path.exists():
+        return False
+    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8"),
+                          flags=re.MULTILINE))
+
+
 # Per-profile .env files — keeps tenant gateways on current keys after a
 # rotation. SOUL.md is the "real profile" marker (same as the s6 reconciler).
 profiles_root = home / "profiles"
@@ -208,11 +228,65 @@ if profiles_root.is_dir():
     for prof in sorted(p for p in profiles_root.iterdir() if p.is_dir()):
         if not (prof / "SOUL.md").exists():
             continue
+        _prof_env = prof / ".env"
         # Never let the auditor profile's .env receive the shared token via
         # the generic path — §1b below is its ONLY source for these two keys.
-        _exclude = ("GITHUB_TOKEN", "GH_TOKEN") if prof.name == "auditor" else ()
-        _sync_env_file(prof / ".env", exclude=_exclude)
-        print(f"[03-biglobster] Synced env vars into {prof / '.env'}")
+        if prof.name == "auditor":
+            _exclude = ("GITHUB_TOKEN", "GH_TOKEN")
+            _why = ""
+        elif _is_rented_tenant(_prof_env):
+            # BYOK: a rented bl-site-package client brings their OWN OpenRouter
+            # key and their model usage bills to them. Injecting ours here
+            # silently defeated that — every boot overwrote the client key
+            # written by provision_bl_client.py, so tenant agent runs billed to
+            # BigLobster (found on bl-shoroban 2026-07-31). This is exactly the
+            # "per-tenant billing with a DISTINCT OPENROUTER_API_KEY" case the
+            # note above anticipated.
+            #
+            # PEXELS_API_KEY is the same contract for the `shorts` agent. Being
+            # free does not make it shareable: Pexels issues one key per account
+            # at 200 req/hour and 20k/month, so one key across the fleet caps
+            # every client at once and lets a heavy tenant throttle the rest
+            # into background-only videos. Each tenant brings their own, and
+            # provision_bl_client.py refuses to sell the SKU without it.
+            #
+            # Trade-off, accepted deliberately: rental profiles no longer get
+            # the rotation repair that §1's injection exists to provide (the
+            # 2026-06-05 grow-shop incident). That repair is the wrong thing
+            # for a key we do not own and must not rotate. A tenant whose own
+            # key dies now fails visibly on their own jobs instead of silently
+            # spending our credit.
+            #
+            # EXA_API_KEY / HUGGINGFACE_API_KEY are a DIFFERENT shape of leak
+            # than OPENROUTER_API_KEY/PEXELS_API_KEY above: those two are BYOK
+            # (the tenant supplies their own and we must not clobber it);
+            # these two are ours alone and a tenant should never have EITHER —
+            # no rented prompt uses HuggingFace at all, and web research for
+            # tenants runs on the free ddgs backend (§2 below forces
+            # web.search_backend: ddgs), never billed to BigLobster's Exa
+            # account. Found while adding the shorts agent: gap-hunter and
+            # product-articles (both daily SKUs) call web_search, so this was
+            # a live, recurring leak, not a theoretical one (issue #174).
+            _exclude = ("OPENROUTER_API_KEY", "PEXELS_API_KEY", "EXA_API_KEY", "HUGGINGFACE_API_KEY")
+            _why = " (BYOK tenant — kept its own OPENROUTER_API_KEY/PEXELS_API_KEY; withheld shared EXA_API_KEY/HUGGINGFACE_API_KEY)"
+        else:
+            _exclude = ()
+            _why = ""
+        _sync_env_file(_prof_env, exclude=_exclude)
+        if _is_rented_tenant(_prof_env):
+            # _exclude only stops FUTURE overwrites — a profile that already
+            # picked up EXA_API_KEY/HUGGINGFACE_API_KEY from a boot before
+            # this fix shipped keeps that stale line forever otherwise (no
+            # manifest of already-provisioned tenants exists to backfill by
+            # hand; this loop already visits every one of them, every boot).
+            _c = _prof_env.read_text(encoding="utf-8") if _prof_env.exists() else ""
+            _stripped = _c
+            for _v in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
+                _stripped = re.sub(rf"^{_v}=.*(?:\n|$)", "", _stripped, flags=re.MULTILINE)
+            if _stripped != _c:
+                _prof_env.write_text(_stripped, encoding="utf-8")
+                print(f"[03-biglobster] Stripped stale shared research keys from {_prof_env}")
+        print(f"[03-biglobster] Synced env vars into {_prof_env}{_why}")
 
 _auditor_env = profiles_root / "auditor" / ".env"
 if (profiles_root / "auditor" / "SOUL.md").exists():
@@ -351,7 +425,7 @@ def _reconcile_group_topics(cfg):
             changed = True
     return changed
 
-def _reconcile_config(config_path, label):
+def _reconcile_config(config_path, label, is_rented=False):
     if not config_path.exists():
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
@@ -363,6 +437,26 @@ def _reconcile_config(config_path, label):
                 cfg[section] = {}
             if cfg[section].get(key) != val:
                 cfg[section][key] = val
+                changed = True
+        # Rented tenants: force web research onto the free ddgs backend,
+        # never the "web.backend": "exa" override above. Deliberately a
+        # MORE SPECIFIC key (search_backend, not backend) — the resolver
+        # (agent/web_search_registry.py get_active_search_provider) reads
+        # search_backend first and only falls back to backend when it's
+        # unset, so this wins without having to touch/remove the generic
+        # override. Forces the provider even before the ddgs package is
+        # physically installed on a fresh tenant (its own lazy-install
+        # fires on first real search — plugins/web/ddgs/provider.py). See
+        # issue #174: EXA_API_KEY billed every tenant's web_search calls to
+        # BigLobster's own Exa account; §1 above stops handing tenants the
+        # key at all, this is the other half — without it, a tenant with a
+        # stale key already on disk (or none at all) would still either
+        # bill us or hard-fail with "no provider configured".
+        if is_rented:
+            if not isinstance(cfg.get("web"), dict):
+                cfg["web"] = {}
+            if cfg["web"].get("search_backend") != "ddgs":
+                cfg["web"]["search_backend"] = "ddgs"
                 changed = True
         # Preserve the curated image_gen.openrouter.model only if unset.
         ig = cfg.get("image_gen")
@@ -517,7 +611,10 @@ if profiles_root.is_dir():
     for prof in sorted(p for p in profiles_root.iterdir() if p.is_dir()):
         if not (prof / "SOUL.md").exists():
             continue
-        _reconcile_config(prof / "config.yaml", prof.name)
+        _reconcile_config(
+            prof / "config.yaml", prof.name,
+            is_rented=_is_rented_tenant(prof / ".env"),
+        )
 PYEOF
 
 # --- 2b: per-profile routing env injection (every boot, not seed-once) ---
@@ -587,7 +684,7 @@ if [ -n "$GITHUB_TOKEN" ]; then
     # back to the deployment owner if the API is unreachable at boot, so a
     # transient network blip never trips the guard or blocks git.
     gh_login=$(HOME="$HERMES_HOME" GH_TOKEN="$GITHUB_TOKEN" gh api user --jq .login 2>/dev/null || true)
-    [ -n "$gh_login" ] || gh_login="braisntext"
+    [ -n "$gh_login" ] || gh_login="br41s"
 
     # TRIPWIRE: the shared/content token must be the CEO identity, NEVER the
     # hermes-auditor bot. If it positively resolves to hermes-auditor, refuse to
@@ -714,7 +811,7 @@ if [ -f "$HERMES_HOME/profiles/auditor/SOUL.md" ]; then
         # the token just written MUST authenticate as hermes-auditor. If
         # HERMES_AUDITOR_GITHUB_TOKEN is crossed to a NON-auditor identity — e.g.
         # the CEO's own PAT, as happened in the 2026-07 Frankfurt secret rotation
-        # (auditor reviews then posted under `braisntext`, FinView #168) — the
+        # (auditor reviews then posted under `br41s`, FinView #168) — the
         # auditor would review/merge under that identity, breaking the "reviewer
         # distinct from author" invariant and making its reviews look like the
         # CEO's. Verify and, on a positive mismatch, STRIP the credential (fail
@@ -822,6 +919,32 @@ chmod +x "$HERMES_HOME/scripts/incident_sweep.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/incident_sweep.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/incident_sweep.sh"
 
+# --- 5d: seed the upstream-drift cron script (overwrite every boot to stay current) ---
+# Weekly watchdog: warns when our fork falls behind upstream NousResearch's
+# newest release tag. Merge cost is superlinear in ELAPSED TIME (10 days of
+# drift measured ~23 conflicted files; 2 months measured 44), so the point is to
+# nag before a merge turns into a rewrite-reapplication exercise. Prints nothing
+# under the threshold, so delivery stays silent until it matters.
+#
+# In here it runs in REMOTE mode: the image excludes .git, so it asks the GitHub
+# API for the newest tag and compares against the UPSTREAM_VERSION file. Run it
+# on a clone for the real conflict count. Runbook: tasks/upstream-merge-hygiene.md
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "0 9 * * 1" --no-agent --script upstream_drift.sh \
+#     --deliver "telegram:<chat_id>:1904" --name upstream-drift
+cat > "$HERMES_HOME/scripts/upstream_drift.sh" <<'DRIFT'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+# Exit 1 means "drift over threshold", which is a REPORT, not a failure — the
+# cron runner would otherwise mark the job errored every week it has something
+# to say. Its stdout is the message; empty stdout stays silent.
+.venv/bin/python scripts/upstream_drift.py || true
+DRIFT
+chmod +x "$HERMES_HOME/scripts/upstream_drift.sh"
+chown hermes:hermes "$HERMES_HOME/scripts/upstream_drift.sh" 2>/dev/null || true
+echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
+
 # --- 6: per-profile repo sync (clone on first boot, pull on subsequent boots) ---
 # Any profile with a repos.txt gets its listed GitHub repos cloned into
 # <profile>/workspace/<repo-name>/. Format: one "owner/repo" per line;
@@ -879,7 +1002,7 @@ fi
 
 # --- 6b: isolated BigLobster site checkouts (one per consuming cron job) ---
 # The SEO/GEO cron and the Content Gap Hunter cron both edit the BigLobster
-# site repo (braisntext/biglobster — the biglobster.top blog under web/blog/).
+# site repo (br41s/biglobster — the biglobster.top blog under web/blog/).
 # They used to share ONE working tree, which collided on branch AND git
 # identity: Gap Hunter left the tree on a blog/<slug> feature branch authored
 # as "BigLobster <biglobster@biglobster.top>", so the SEO agent's commits
@@ -896,10 +1019,10 @@ fi
 # prints a warning and boot continues. The git HTTPS credential from section 4
 # (default-profile HOME=$HERMES_HOME) supplies auth transparently; the remote is
 # kept tokenless so the agent never sees a redacted token in its remote URL.
-BIGLOBSTER_SITE_REPO="braisntext/biglobster"
+BIGLOBSTER_SITE_REPO="br41s/biglobster"
 checkouts_root="$HERMES_HOME/checkouts"
 as_hermes mkdir -p "$checkouts_root"
-for ckdir in biglobster-seo biglobster-gaphunter biglobster-infographic; do
+for ckdir in biglobster-seo biglobster-gaphunter biglobster-infographic biglobster-translation; do
     target="$checkouts_root/$ckdir"
     if [ -d "$target/.git" ]; then
         # Normalize to a tokenless remote (same rationale as section 6).
@@ -960,7 +1083,7 @@ done
 
 # --- 6c: install the managed git guard into every agent clone (every boot) ---
 # Why: on 2026-06-22 a blind `git add -A && git commit` (commit dd0e1f5) captured
-# the deletion of 48 cover/infographic images in braisntext/biglobster while the
+# the deletion of 48 cover/infographic images in br41s/biglobster while the
 # HTML still referenced them — pushed straight to main, blog 404'd for ~22h.
 # Root-cause class: blind `git add -A` in agent git flows + a shared mutable
 # working tree where rebase/build state leaks in. This makes that class

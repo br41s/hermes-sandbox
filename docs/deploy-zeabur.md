@@ -5,7 +5,7 @@ directly. The image is built by **Google Cloud Build** from your local working
 tree, pushed to **GHCR**, and pulled by Zeabur.
 
 ```
-local checkout ──gcloud builds submit──▶ Cloud Build ──push──▶ ghcr.io/braisntext/hermes-sandbox:latest ──pull──▶ Zeabur
+local checkout ──gcloud builds submit──▶ Cloud Build ──push──▶ ghcr.io/br41s/hermes-sandbox:latest ──pull──▶ Zeabur
 ```
 
 The Dockerfile does `COPY . .` then `uv pip install -e .`, so the image bakes in

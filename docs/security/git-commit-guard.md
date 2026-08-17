@@ -9,7 +9,7 @@ An autonomous Hermes Agent commit (`dd0e1f5`, "chore: commit pending changes for
 rebase sync", pushed straight to `main`) ran a blind `git add -A && git commit`
 in a shared working tree that was momentarily missing files (rebase/build state).
 The commit captured the **deletion of 48 cover/infographic images** in
-`braisntext/biglobster` while the HTML still referenced them. The blog served
+`br41s/biglobster` while the HTML still referenced them. The blog served
 404s for every cover for ~22h until `d872e9f` re-added them.
 
 Root-cause class: **blind `git add -A`** in agent git flows **+ a shared mutable
@@ -17,7 +17,7 @@ working tree** where partial state leaks in.
 
 ## Hard constraint: client-side only
 
-The GitHub account (`braisntext`) is on the **Free plan** and the project repos
+The GitHub account (`br41s`) is on the **Free plan** and the project repos
 are **private**. That disables the entire server-side enforcement tier:
 
 - ❌ GitHub Actions (workflows sit queued forever)
@@ -55,7 +55,7 @@ copy to drift.
 
 2. **Per-project broken-refs check** — chains to the repo's own committed
    `.githooks/pre-commit` if present. biglobster's
-   [`scripts/validate-assets.sh`](https://github.com/braisntext/biglobster)
+   [`scripts/validate-assets.sh`](https://github.com/br41s/biglobster)
    (every `web/**/*.html`-referenced image must exist, baseline-ratcheted via
    `scripts/asset-refs-baseline.txt`) is reused as-is. Other repos get an adapter
    only where there is a real referenced-asset risk (see *Per-project status*).
@@ -98,7 +98,7 @@ terminal tool, so it is unaffected.)
 
 | Profile | Repo | Workspace path | Universal guard | Broken-refs adapter |
 |---------|------|----------------|-----------------|---------------------|
-| biglobster | braisntext/biglobster | `workspace/biglobster` + 3 checkouts | ✅ | ✅ `scripts/validate-assets.sh` (HTML→images) |
+| biglobster | br41s/biglobster | `workspace/biglobster` + 3 checkouts | ✅ | ✅ `scripts/validate-assets.sh` (HTML→images) |
 | grow-shop | grow-shop-api, grow-shop-landing | `workspace/<repo>` | ✅ | follow-up (landing may serve static assets) |
 | socialagenda | SocialAgenda | `workspace/SocialAgenda` | ✅ | follow-up |
 | finview | FinView | `workspace/FinView` | ✅ | follow-up |
@@ -110,7 +110,7 @@ auto-discovers and chains to it.
 
 > **finview note:** finview previously had no `repos.txt` seed, so its clone was
 > hand-created on the volume. A seed (`docker/profiles/finview/repos.txt` →
-> `braisntext/FinView`, matching its `SOUL.md` working dir) now clones it into
+> `br41s/FinView`, matching its `SOUL.md` working dir) now clones it into
 > `profiles/finview/workspace/FinView` so section 6c guards it consistently.
 
 ## Override (legitimate large removal)

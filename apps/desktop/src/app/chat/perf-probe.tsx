@@ -1,6 +1,7 @@
 import { Profiler, type ProfilerOnRenderCallback, type ReactNode } from 'react'
 
-import { $messages, setMessages, setBusy } from '@/store/session'
+import { $gateway } from '@/store/gateway'
+import { $messages, setBusy, setMessages } from '@/store/session'
 
 type Sample = {
   id: string
@@ -24,6 +25,19 @@ declare global {
     __PERF_DRIVE__?: {
       /** Inject an assistant message and grow it by `chunk` every `intervalMs`. Returns a stop handle. */
       stream: (opts?: { chunk?: string; intervalMs?: number; totalTokens?: number }) => SyntheticDriverHandle
+      /**
+       * Replace the transcript with `turns` synthetic user/assistant pairs of
+       * realistic mixed markdown, then resolve with the ms elapsed from the
+       * `setMessages` commit to the second animation frame (a mount+paint
+       * proxy). Used by the `transcript` perf scenario. `reset()` restores.
+       */
+      loadTranscript: (turns?: number) => Promise<number>
+      /**
+       * Whether the active gateway socket is open. The perf harness waits on
+       * this before measuring so background reconnect churn (a booting/absent
+       * backend) doesn't contaminate frame-pacing numbers.
+       */
+      connected: () => boolean
       reset: () => void
       snapshotMsgs: () => number
     }
@@ -40,13 +54,16 @@ if (typeof window !== 'undefined' && !window.__PERF_PROBE__) {
     },
     summary: () => {
       const byId = new Map<string, number[]>()
+
       for (const s of samples) {
         const k = `${s.id}:${s.phase}`
         const arr = byId.get(k) ?? []
         arr.push(s.actualDuration)
         byId.set(k, arr)
       }
+
       const out: Record<string, { count: number; total: number; max: number; p50: number; p95: number }> = {}
+
       for (const [k, arr] of byId) {
         arr.sort((a, b) => a - b)
         const total = arr.reduce((a, b) => a + b, 0)
@@ -55,25 +72,33 @@ if (typeof window !== 'undefined' && !window.__PERF_PROBE__) {
           total: Math.round(total * 100) / 100,
           max: Math.round(arr[arr.length - 1] * 100) / 100,
           p50: Math.round(arr[Math.floor(arr.length * 0.5)] * 100) / 100,
-          p95: Math.round(arr[Math.floor(arr.length * 0.95)] * 100) / 100,
+          p95: Math.round(arr[Math.floor(arr.length * 0.95)] * 100) / 100
         }
       }
+
       return out
-    },
+    }
   }
 }
 
 const onRender: ProfilerOnRenderCallback = (id, phase, actualDuration, baseDuration, startTime, commitTime) => {
   const probe = typeof window !== 'undefined' ? window.__PERF_PROBE__ : undefined
-  if (!probe || !probe.enabled) return
+
+  if (!probe || !probe.enabled) {
+    return
+  }
+
   probe.samples.push({ id, phase, actualDuration, baseDuration, startTime, commitTime })
-  if (probe.samples.length > 5000) probe.samples.splice(0, probe.samples.length - 5000)
+
+  if (probe.samples.length > 5000) {
+    probe.samples.splice(0, probe.samples.length - 5000)
+  }
 }
 
 if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
   // Synthetic stream driver — pushes tokens through the live $messages atom so the
   // assistant-ui runtime + react tree sees them exactly as a real LLM stream would.
-  // Used by scripts/measure-real-stream.mjs when no live LLM credit is available.
+  // Driven by the perf harness (scripts/perf/) when no live LLM credit is available.
   let baseline: ReturnType<typeof $messages.get> | null = null
   let activeHandle: SyntheticDriverHandle | null = null
 
@@ -82,11 +107,94 @@ if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
     setBusy(false)
   }
 
+  // One synthetic turn's worth of mixed markdown — prose, a list, a fenced
+  // code block, inline code, a link, and a short table — so a loaded transcript
+  // exercises the same render cost (Streamdown blocks, code cards) a real one
+  // would. Kept deterministic (seeded by index) so runs are comparable.
+  const syntheticTurn = (i: number): ReturnType<typeof $messages.get> => {
+    const user = {
+      id: `perf-u-${i}`,
+      role: 'user' as const,
+      parts: [
+        { type: 'text' as const, text: `Question ${i}: how does the widget in module ${i} handle back-pressure?` }
+      ],
+      timestamp: Date.now()
+    }
+
+    const assistant = {
+      id: `perf-a-${i}`,
+      role: 'assistant' as const,
+      parts: [
+        {
+          type: 'text' as const,
+          text: [
+            `## Answer ${i}`,
+            '',
+            `The widget buffers writes and applies a bounded queue. Key points for module \`${i}\`:`,
+            '',
+            '- It coalesces bursts into a single flush.',
+            '- Back-pressure propagates via a `Promise` that resolves on drain.',
+            '- See [the design note](https://example.com/design) for the state machine.',
+            '',
+            '```ts',
+            `function flush${i}(items: number[]) {`,
+            '  return items.reduce((a, b) => a + b, 0)',
+            '}',
+            '```',
+            '',
+            '| stage | cost |',
+            '|---|---|',
+            '| enqueue | O(1) |',
+            '| flush | O(n) |',
+            ''
+          ].join('\n')
+        }
+      ],
+      timestamp: Date.now(),
+      pending: false
+    }
+
+    return [user, assistant]
+  }
+
   window.__PERF_DRIVE__ = {
     snapshotMsgs: () => $messages.get().length,
+    connected: () => {
+      try {
+        return $gateway.get()?.connectionState === 'open'
+      } catch {
+        return false
+      }
+    },
+    loadTranscript: (turns = 200) => {
+      if (!baseline) {
+        baseline = $messages.get()
+      }
+
+      const next: ReturnType<typeof $messages.get> = []
+
+      for (let i = 0; i < turns; i += 1) {
+        next.push(...syntheticTurn(i))
+      }
+
+      const t0 = performance.now()
+      setMessages(next)
+
+      return new Promise<number>(resolve => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve(performance.now() - t0)
+          })
+        })
+      })
+    },
     reset: () => {
       activeHandle?.stop()
-      if (baseline) setMessages(baseline)
+
+      if (baseline) {
+        setMessages(baseline)
+      }
+
       baseline = null
       setBusy(false)
     },
@@ -104,7 +212,11 @@ if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
     }: { chunk?: string; intervalMs?: number; totalTokens?: number; flushMinMs?: number } = {}) => {
       activeHandle?.stop()
       const current = $messages.get()
-      if (!baseline) baseline = current
+
+      if (!baseline) {
+        baseline = current
+      }
+
       const msgId = `synthetic-${Date.now()}`
       // Seed an empty assistant message — assistant-ui will see it grow.
       setMessages([
@@ -126,13 +238,20 @@ if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
       let flushHandle: number | null = null
 
       const applyDelta = (delta: string) => {
-        if (!delta) return
+        if (!delta) {
+          return
+        }
+
         setMessages(prev =>
           prev.map(m => {
-            if (m.id !== msgId) return m
+            if (m.id !== msgId) {
+              return m
+            }
+
             const head = m.parts.slice(0, -1)
             const last = m.parts.at(-1)
             const lastText = last && last.type === 'text' ? last.text : ''
+
             return {
               ...m,
               parts: [...head, { type: 'text', text: lastText + delta }]
@@ -150,8 +269,16 @@ if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
       }
 
       const scheduleFlush = () => {
-        if (flushHandle !== null) return
-        if (flushMinMs <= 0) { flushNow(); return }
+        if (flushHandle !== null) {
+          return
+        }
+
+        if (flushMinMs <= 0) {
+          flushNow()
+
+          return
+        }
+
         const since = performance.now() - lastFlushAt
         const wait = Math.max(0, flushMinMs - since)
         flushHandle =
@@ -162,48 +289,62 @@ if (typeof window !== 'undefined' && !window.__PERF_DRIVE__) {
 
       const handle: SyntheticDriverHandle = {
         stop: () => {
-          if (timer) clearTimeout(timer)
+          if (timer) {
+            clearTimeout(timer)
+          }
+
           timer = null
+
           if (flushHandle !== null) {
             clearTimeout(flushHandle)
             cancelAnimationFrame?.(flushHandle)
           }
+
           flushHandle = null
+
           if (pendingDelta) {
             applyDelta(pendingDelta)
             pendingDelta = ''
           }
+
           activeHandle = null
           // Mark message finalized.
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === msgId
-                ? { ...m, pending: false }
-                : m
-            )
-          )
+          setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, pending: false } : m)))
           setBusy(false)
         }
       }
+
       activeHandle = handle
 
       const tick = () => {
-        if (activeHandle !== handle) return
-        if (pushed >= totalTokens) {
-          if (pendingDelta) flushNow()
-          handle.stop()
+        if (activeHandle !== handle) {
           return
         }
+
+        if (pushed >= totalTokens) {
+          if (pendingDelta) {
+            flushNow()
+          }
+
+          handle.stop()
+
+          return
+        }
+
         pushed += 1
+
         if (flushMinMs > 0) {
           pendingDelta += chunk
           scheduleFlush()
         } else {
           applyDelta(chunk)
         }
+
         timer = setTimeout(tick, intervalMs)
       }
+
       timer = setTimeout(tick, intervalMs)
+
       return handle
     }
   }

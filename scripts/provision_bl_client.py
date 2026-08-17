@@ -3,21 +3,30 @@
 deterministic version of the manual runbook in AGENT_RENTAL_SETUP.md.
 
 Replaces the CEO-via-Telegram + Hermes-follows-a-markdown-runbook flow with
-one call: creates the client's isolated profile, writes its SOUL.md and .env
-(BL_SITE_URL / BL_SITE_PANEL_PASSWORD / their own OPENROUTER_API_KEY — BYOK,
-never BigLobster's own key), and registers one cron job per agent they
-ordered, each pointed at the *shared* prompt template for that agent
-(gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client prompt
-file is ever created.
+one call: creates the client's isolated profile, writes its SOUL.md, config.yaml
+(the base/orchestrator model + the client's chosen FAL image model — without it
+the profile has no model and every cron run 400s), and .env (BL_SITE_URL /
+BL_SITE_PANEL_PASSWORD / their own OPENROUTER_API_KEY and FAL_KEY — BYOK, never
+BigLobster's own keys), and registers one cron
+job per agent they ordered, each pointed at the *shared* prompt template for
+that agent (gap-hunter/bl-site-package-gap-hunter.prompt, etc.) — no per-client
+prompt file is ever created.
 
-This does NOT wire up an automatic trigger from bl-site-package's customer
-panel — that panel has no payment gate yet (see AGENT_RENTAL_SETUP.md), so
-an unauthenticated auto-trigger would let anyone spin up profiles and cron
-jobs for free. Until that gate exists, this script is meant to be run
-explicitly (by the CEO or by Hermes acting on the CEO's explicit request),
-the same trust boundary the manual runbook has today — it just removes the
-chance of an LLM skipping a runbook step (e.g. forgetting to validate the
-key before the job goes live).
+Two callers, one code path:
+
+* the CEO (or Hermes acting on the CEO's explicit request) running it by hand
+  for a rental ordered through the manual flow, and
+* ``hermes_cli/bl_rental_webhook.py`` — the authenticated, payment-confirmed
+  webhook BigLobster's Stripe side calls, which provisions with no human in
+  the per-order loop. See AGENT_RENTAL_SETUP.md for that contract.
+
+Both go through ``provision()`` so an LLM can never skip a runbook step (e.g.
+forgetting to validate the key before the job goes live).
+
+The ``site-setup`` agent is the *Site Launch* checkout product. Ordering it
+requires ``--questionnaire`` — the buyer's structured form answers — and
+applies bl-site-package's fixed five-page template deterministically
+(``scripts/bl_site_setup.py``) before scheduling the one-shot copywriting job.
 
 Usage (must run with the repo's venv Python — the bare `python3` on PATH
 won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
@@ -27,8 +36,17 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --site-url https://blcliente.zeabur.app \\
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
-        --agents gap-hunter,seo,onboarding-content,product-articles \\
+        --fal-key <key_id>:<key_secret> \\
+        --agents gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance \\
         --old-site-url https://their-old-site.example.com
+
+`--fal-key` is the client's own FAL key (BYOK) for image generation — blog
+covers and page images are billed to it, never BigLobster's. It's validated
+against FAL at provision time and written to the profile .env as FAL_KEY. Omit
+it if the client didn't order image generation; agents then publish text-only
+(they never block on a missing image). The FAL image model is taken from
+`--image-model`, else the client's panel choice (GET /api/site/config
+`image_model`), else the FAL default.
 
 `--old-site-url` is required when `onboarding-content` and/or
 `product-articles` is ordered. `onboarding-content` is a one-shot agent that
@@ -38,6 +56,28 @@ but scoped to the old site's product catalog: it crawls it for product pages,
 skips ones it's already covered, and writes up to 3 new product blog posts
 per run (draft, with a CTA button back to the original product page) until
 the catalog is exhausted. Omit both flags if the client has no existing site.
+
+`shorts` is the *Social Shorts* subscription product: a daily job that turns one
+not-yet-processed blog post into 3-5 vertical MP4s for Instagram Reels and
+TikTok, plus a `captions.md` of per-network copy, written into the profile's
+`workspace/shorts/<slug>/`. Video and caption text are in English by design; the
+job's report stays Spanish like the rest of the fleet. Rendering is local ffmpeg
+(`plugins/shorts`) with the profile's configured TTS voice, so the marginal cost
+of a video is zero. `--pexels-key` is REQUIRED for it and is the client's own key
+(BYOK, like `--fal-key`) — free, but one per account at 200 req/hour and
+20k/month, so a shared key would cap the whole fleet. When the client also has a
+`--fal-key`, the agent spends it on one AI-generated 4s opening hook per video
+via the existing `video_generate` tool, and falls back to stock whenever that is
+absent or fails. It requires no `--old-site-url` and never posts to any social
+network — it produces files a human uploads.
+
+`maintenance` is the *Website Maintenance* subscription product: a daily
+deterministic health check (`tools/bl_site_health_tool.py`) plus a closed list
+of mechanical fixes, and one client-facing report per calendar month. It
+requires no extra flags, but it *uses* `--old-site-url` when one is given: the
+check then also sweeps the old site's published paths and reports the ones that
+now dead-end. It is not listed in AGENTS_REQUIRING_OLD_SITE because it degrades
+cleanly without one.
 
 Removing a client (unchanged from the runbook — still manual, still
 confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
@@ -62,6 +102,7 @@ from hermes_cli.profiles import (  # noqa: E402
     validate_profile_name,
 )
 from cron.jobs import create_job  # noqa: E402
+from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa: E402
 
 # agent key -> (prompt_source relative to repo root, display name, schedule kind)
 # schedule kind "daily" = recurring via pick_stagger_schedule(); "once" = single
@@ -79,14 +120,78 @@ AGENT_SOURCES = {
         "Product Article Agent",
         "daily",
     ),
+    # Adds ONE inline-SVG infographic to ONE existing blog post per run, editing
+    # it in place. Needs no --old-site-url: it only ever reads the client's own
+    # blog. Goes quiet ([SILENT]) once every post already carries one, so it's
+    # safe to leave scheduled daily on a small blog.
+    "infographic": (
+        "infographic/bl-site-package-infographic.prompt",
+        "Infographic Engineer",
+        "daily",
+    ),
+    # The "Website Maintenance" subscription product. Daily, like gap-hunter:
+    # availability and publish-drift are only meaningful checked often, and a
+    # weekly cadence would let a site sit broken for six days. The monthly
+    # client report is NOT a second job — bl_site_health returns report_due
+    # once per calendar month, so the same daily run produces it exactly once
+    # (two jobs would race for the same "have I reported yet" state).
+    "maintenance": (
+        "maintenance/bl-site-package-maintenance.prompt",
+        "Website Maintenance",
+        "daily",
+    ),
+    # The "Site Launch" checkout product. One-shot, like onboarding-content,
+    # but it is the *whole* create-your-website job: the deterministic half
+    # (setup wizard, identity/legal fields, logo) runs in-process here via
+    # scripts/bl_site_setup.py BEFORE the job is scheduled, and this prompt
+    # only writes copy into the same fixed five-page field list. Needs no
+    # --old-site-url: a buyer with no previous site is the normal case.
+    "site-setup": (
+        "site-setup/bl-site-package-site-setup.prompt",
+        "Site Launch",
+        "once",
+    ),
+    # The "Social Shorts" subscription product. Turns ONE existing blog post per
+    # run into 3-5 vertical MP4s plus a captions.md of Instagram/TikTok copy,
+    # rendered locally with ffmpeg (plugins/shorts). Needs no --old-site-url: it
+    # only reads the client's own blog. Like infographic, it marks each post
+    # done with a sentinel and goes [SILENT] once the blog is exhausted, so it
+    # is safe to leave scheduled daily. Requires the client's own PEXELS_API_KEY
+    # for stock B-roll (BYOK, see AGENTS_REQUIRING_PEXELS); FAL_KEY, when the
+    # client has one, additionally buys an AI-generated opening hook.
+    "shorts": (
+        "shorts/bl-site-package-shorts.prompt",
+        "Social Shorts",
+        "daily",
+    ),
 }
 
 # Agents that need --old-site-url (the client's existing site to migrate/read from).
 AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
 
+# Agents that need --pexels-key (the client's OWN Pexels key, BYOK like FAL_KEY).
+# Hard requirement rather than a graceful degradation: without it every scene
+# renders on a plain background, and a video product that ships without footage
+# is worse than one we declined to sell. Being free does not make the key
+# shareable — Pexels issues one per account at 200 req/hour and 20k/month, so a
+# BigLobster key across the fleet would cap every client at once.
+AGENTS_REQUIRING_PEXELS = {"shorts"}
+
+# site-setup and onboarding-content both do the initial page fill. Ordering
+# both would have two one-shot jobs racing to write the same fields.
+MUTUALLY_EXCLUSIVE_AGENTS = ("site-setup", "onboarding-content")
+
 # Delay before the one-shot onboarding-content job fires — long enough that
 # the profile/.env writes below are certainly flushed to disk first.
 ONBOARDING_CONTENT_DELAY = "5m"
+
+# Base/orchestrator model for the rented profile. Billed to the CLIENT's own
+# BYOK OpenRouter key (profile .env OPENROUTER_API_KEY), so the default is the
+# cheap orchestrator the auditor already uses. A profile with no config.yaml
+# has NO base model, and the orchestrator loop then calls OpenRouter with no
+# model → RuntimeError: 400 "No models provided" and the agent silently does
+# nothing (confirmed on bl-shoroban, 2026-07-24). Override with --model.
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 
 SOUL_TEMPLATE = """# {client_name} — Hermes Agent (rented, bl-site-package)
 
@@ -107,6 +212,16 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research.
 """
 
 
+class KeyValidationError(ValueError):
+    """The client's own BYOK credentials are bad — not an infrastructure fault.
+
+    Kept distinct from the generic ValueError so the payment-confirmed webhook
+    can answer "the key the buyer gave us is rejected, ask them for a new one"
+    (400, don't retry) instead of "something broke, retry" (502). It stays a
+    ValueError so the CLI's existing handler keeps catching it.
+    """
+
+
 def _validate_openrouter_key(key: str) -> None:
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/auth/key",
@@ -115,11 +230,178 @@ def _validate_openrouter_key(key: str) -> None:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status != 200:
-                raise ValueError(f"OpenRouter key check returned HTTP {resp.status}")
+                raise KeyValidationError(f"OpenRouter key check returned HTTP {resp.status}")
     except urllib.error.HTTPError as exc:
-        raise ValueError(f"OpenRouter key rejected: HTTP {exc.code} — {exc.read().decode(errors='replace')}")
+        raise KeyValidationError(f"OpenRouter key rejected: HTTP {exc.code} — {exc.read().decode(errors='replace')}")
     except urllib.error.URLError as exc:
         raise ValueError(f"Could not reach OpenRouter to validate the key: {exc.reason}")
+
+
+def _validate_fal_key(key: str) -> None:
+    """Prove the client's FAL image key is valid BEFORE the profile goes live.
+
+    Mirrors _validate_openrouter_key. FAL has no free "check key" endpoint like
+    OpenRouter's /auth/key, so we use FAL's short-lived-token exchange
+    (rest.alpha.fal.ai/tokens/ — the same call fal's own browser SDK makes).
+    It does NOT generate an image, so it costs nothing. A valid key authenticates
+    (200, or 422 if the request body shape drifts — still past auth); an invalid
+    key is rejected at auth (401/403). Any other status / unreachable is treated
+    as "couldn't verify" rather than a hard fail, so a FAL API change never bricks
+    provisioning after the format check already passed.
+    """
+    if ":" not in key or len(key.strip()) < 16:
+        raise KeyValidationError("FAL key doesn't look valid (expected '<key_id>:<key_secret>').")
+    body = json.dumps({"allowed_apps": ["fal-ai/flux-2/klein/9b"], "token_expiration": 300}).encode()
+    req = urllib.request.Request(
+        "https://rest.alpha.fal.ai/tokens/",
+        data=body,
+        headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise KeyValidationError(f"FAL key rejected: HTTP {exc.code} — check the key is correct.")
+        # Other status (422/404/5xx): got past auth or endpoint drifted — accept.
+    except urllib.error.URLError as exc:
+        # Unreachable — don't block provisioning; the format check already ran.
+        print(f"Warning: could not reach FAL to validate the key ({exc.reason}); continuing.", file=sys.stderr)
+
+
+def _validate_pexels_key(key: str) -> None:
+    """Prove the client's own Pexels key works BEFORE the shorts jobs go live.
+
+    Mirrors the two validators above. Pexels has no dedicated key-check
+    endpoint, so we make the cheapest real query there is (one result) — it
+    costs one of the client's 200/hour and proves both auth and quota headroom.
+    401/403 is a bad key; 429 means the key is real but already throttled,
+    which is worth failing on here rather than discovering it on the first
+    cron run. Anything else, or unreachable, is treated as "couldn't verify"
+    rather than a hard fail, so a Pexels API change never bricks provisioning.
+    """
+    req = urllib.request.Request(
+        "https://api.pexels.com/v1/search?query=test&per_page=1",
+        headers={"Authorization": key},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).close()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise KeyValidationError(
+                f"Pexels key rejected: HTTP {exc.code} — check the key is correct. "
+                "The client gets one free at https://www.pexels.com/api/."
+            )
+        if exc.code == 429:
+            raise KeyValidationError(
+                "Pexels key is already rate-limited (HTTP 429). It is valid but "
+                "has no headroom right now — the free tier is 200 requests/hour "
+                "and 20,000/month. Retry later or use a different key."
+            )
+        # Other status: past auth, or the endpoint drifted — accept.
+    except urllib.error.URLError as exc:
+        print(
+            f"Warning: could not reach Pexels to validate the key ({exc.reason}); continuing.",
+            file=sys.stderr,
+        )
+
+
+def _read_panel_image_model(site_url: str) -> str | None:
+    """Best-effort read of the client's chosen image_model from their panel.
+
+    The client picks their FAL image model in the site panel; it's exposed at
+    GET /api/site/config. We snapshot it here and pin it into the profile
+    config.yaml (image_gen.model) so generation uses the client's choice.
+    Returns None on any error or if unset — the caller then leaves the model
+    unset and _resolve_fal_model() falls back to the FAL default.
+    """
+    try:
+        result = _http_json("GET", f"{site_url}/api/site/config")
+        value = result.get("image_model")
+        return value.strip() if isinstance(value, str) and value.strip() else None
+    except Exception:
+        return None
+
+
+def _http_json(method: str, url: str) -> dict:
+    req = urllib.request.Request(url, method=method)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _validate_model_call(key: str, model: str) -> None:
+    """Prove the profile can actually make a model call before it goes live.
+
+    The key check above only proves the key is *valid*; it says nothing about
+    whether the chosen model is callable on this client's account (typo'd id,
+    model retired, no credits for it). Because the one-shot onboarding-content
+    job auto-removes itself after its single run, a first run that 400s can't
+    be re-run by id — so we validate the model here, BEFORE the profile and its
+    jobs are created, and fail loudly instead of every cron run failing
+    silently. Costs one 1-token completion, billed to the client's own key.
+    """
+    body = json.dumps(
+        {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1}
+    ).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status != 200:
+                raise KeyValidationError(f"Model check for '{model}' returned HTTP {resp.status}")
+    except urllib.error.HTTPError as exc:
+        raise KeyValidationError(
+            f"Model '{model}' is not callable on this key: HTTP {exc.code} — "
+            f"{exc.read().decode(errors='replace')}"
+        )
+    except urllib.error.URLError as exc:
+        raise ValueError(f"Could not reach OpenRouter to validate the model: {exc.reason}")
+
+
+def _write_config(profile_dir: Path, model: str, image_model: str | None = None) -> Path:
+    """Write the profile's config.yaml with a base/orchestrator model.
+
+    Only the model block is written — everything else is deep-merged from
+    DEFAULT_CONFIG at runtime (see hermes_cli.config.load_config), so this
+    mirrors exactly what `hermes -p <slug> config set model.default …` produces.
+    Without this file the profile has no base model at all (the Shoroban bug).
+
+    When ``image_model`` is given (the client's panel choice), pin it as
+    ``image_gen.model`` so the shared image_generate tool's _resolve_fal_model()
+    picks it up per-profile — the client's FAL image model, billed to their own
+    FAL_KEY. Omitted → _resolve_fal_model() falls back to the FAL default.
+
+    Every profile this function writes IS a rented tenant (it's only ever
+    called from provision(), never for a BigLobster-owned profile), so
+    web.search_backend is always pinned to the free ddgs backend — never
+    Exa, which would bill the tenant's web_search calls to BigLobster's own
+    account (issue #174). docker/cont-init.d/03-biglobster-config's boot
+    reconciler (§2, is_rented branch) re-asserts the same key on every boot,
+    so a client can't drift off it even by hand-editing config.yaml; writing
+    it here too means a client's FIRST job — which can fire as soon as 5
+    minutes after provisioning — gets it immediately, without waiting for
+    the next container restart.
+    """
+    import yaml
+
+    data: dict = {
+        "model": {"default": model, "provider": "openrouter"},
+        "web": {"search_backend": "ddgs"},
+    }
+    if image_model:
+        data["image_gen"] = {"model": image_model}
+
+    config_path = profile_dir / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+    return config_path
 
 
 def _write_env(
@@ -128,6 +410,8 @@ def _write_env(
     panel_password: str,
     openrouter_key: str,
     old_site_url: str | None = None,
+    fal_key: str | None = None,
+    pexels_key: str | None = None,
 ) -> Path:
     env_path = profile_dir / ".env"
     contents = (
@@ -137,6 +421,18 @@ def _write_env(
     )
     if old_site_url:
         contents += f"OLD_SITE_URL={old_site_url}\n"
+    # Client's own FAL key (BYOK) — image generation is billed to it, never
+    # BigLobster's. Same per-profile resolution as OPENROUTER_API_KEY, so the
+    # shared image_generate tool picks it up when a job runs under this profile.
+    if fal_key:
+        contents += f"FAL_KEY={fal_key}\n"
+    # Client's own Pexels key (BYOK) — stock B-roll for the shorts agent bills
+    # against their 200/hour and 20k/month, never BigLobster's. This file is the
+    # only source: docker/cont-init.d/03-biglobster-config excludes
+    # PEXELS_API_KEY from its per-profile sync for rented tenants, alongside
+    # OPENROUTER_API_KEY, so a boot can never overwrite it with ours.
+    if pexels_key:
+        contents += f"PEXELS_API_KEY={pexels_key}\n"
     env_path.write_text(contents, encoding="utf-8")
     os.chmod(env_path, 0o600)
     return env_path
@@ -173,6 +469,11 @@ def provision(
     deliver: str = "local",
     skip_key_check: bool = False,
     old_site_url: str | None = None,
+    model: str = DEFAULT_MODEL,
+    fal_key: str | None = None,
+    image_model: str | None = None,
+    questionnaire: dict | None = None,
+    pexels_key: str | None = None,
 ) -> dict:
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
@@ -195,15 +496,79 @@ def provision(
             "existing site to read/migrate content from) — omit the agent(s) if "
             "the client has no existing site to draw from."
         )
+    needs_pexels = AGENTS_REQUIRING_PEXELS & set(agents)
+    if needs_pexels and not pexels_key:
+        raise ValueError(
+            f"{sorted(needs_pexels)} need(s) --pexels-key: the client's OWN "
+            "Pexels API key (BYOK, like --fal-key). It is free at "
+            "https://www.pexels.com/api/ — one per account. Without it every "
+            "scene renders on a plain background instead of stock footage."
+        )
+    if set(MUTUALLY_EXCLUSIVE_AGENTS) <= set(agents):
+        raise ValueError(
+            f"{list(MUTUALLY_EXCLUSIVE_AGENTS)} both do the initial page fill and "
+            "would race each other. Order site-setup (the Site Launch product) or "
+            "onboarding-content, not both."
+        )
+    if "site-setup" in agents and not questionnaire:
+        raise ValueError(
+            "site-setup needs --questionnaire (the buyer's structured form "
+            "answers) — it is what the template is applied from."
+        )
 
+    # Validate the questionnaire against the fixed schema BEFORE anything is
+    # created or any key is spent: a drifted BigLobster form must fail here,
+    # not halfway through a paid order.
+    if questionnaire is not None:
+        questionnaire = validate_answers(questionnaire)
+
+    # Validate the key AND that the chosen model is callable BEFORE creating
+    # the profile/jobs — a broken model must never reach the point where a
+    # one-shot job auto-removes itself on a silent 400.
     if not skip_key_check:
         _validate_openrouter_key(openrouter_key)
+        _validate_model_call(openrouter_key, model)
+        if fal_key:
+            _validate_fal_key(fal_key)
+        if pexels_key:
+            _validate_pexels_key(pexels_key)
+
+    # Apply the fixed site template from the questionnaire BEFORE creating the
+    # profile: it's the step most likely to fail on a fresh instance
+    # (unreachable, already claimed under another password, bad logo), and
+    # failing here leaves no half-built profile behind. It is idempotent, so a
+    # retried provision after a later failure re-converges rather than 409ing.
+    site_setup_report = None
+    if "site-setup" in agents:
+        site_setup_report = apply_site_template(
+            site_url,
+            panel_password,
+            questionnaire,
+            openrouter_key,
+            image_model=image_model,
+        )
+
+    # Resolve the FAL image model to pin per-profile: explicit flag wins,
+    # otherwise snapshot the client's panel choice (image_model in the site
+    # config). None → _resolve_fal_model() uses the FAL default.
+    resolved_image_model = image_model or _read_panel_image_model(site_url)
 
     profile_dir = create_profile(canon, no_skills=True, description=f"bl-site-package rental: {client_name}")
     (profile_dir / "SOUL.md").write_text(
         SOUL_TEMPLATE.format(client_name=client_name), encoding="utf-8"
     )
-    env_path = _write_env(profile_dir, site_url, panel_password, openrouter_key, old_site_url)
+    # Write config.yaml so the profile has a base/orchestrator model. Without
+    # it the profile has none → orchestrator 400 "No models provided".
+    config_path = _write_config(profile_dir, model, image_model=resolved_image_model)
+    env_path = _write_env(
+        profile_dir,
+        site_url,
+        panel_password,
+        openrouter_key,
+        old_site_url,
+        fal_key=fal_key,
+        pexels_key=pexels_key,
+    )
 
     created_jobs = []
     for agent_key in agents:
@@ -226,7 +591,13 @@ def provision(
     return {
         "profile": canon,
         "profile_dir": str(profile_dir),
+        "config_path": str(config_path),
+        "model": model,
+        "image_model": resolved_image_model or "(FAL default)",
+        "fal_key": "set" if fal_key else "not set (image generation disabled)",
+        "pexels_key": "set" if pexels_key else "not set (not needed without the shorts agent)",
         "env_path": str(env_path),
+        "site_setup": site_setup_report,
         "jobs": created_jobs,
     }
 
@@ -238,9 +609,43 @@ def main() -> int:
     parser.add_argument("--site-url", required=True)
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
-    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles")
+    parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance,site-setup,shorts")
     parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
-    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter key validation call")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Base/orchestrator model for the profile, billed to the client's own OpenRouter key (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--fal-key",
+        default=None,
+        help="Client's own FAL image key (BYOK). Written to the profile .env as FAL_KEY and "
+        "validated against FAL. Required for image generation (blog covers / page images); "
+        "omit if the client didn't order image generation.",
+    )
+    parser.add_argument(
+        "--image-model",
+        default=None,
+        help="FAL image model id to pin for this client (e.g. fal-ai/flux-2-pro). Defaults to "
+        "the client's panel choice (GET /api/site/config image_model), else the FAL default.",
+    )
+    parser.add_argument(
+        "--pexels-key",
+        default=None,
+        help="Client's own Pexels API key (BYOK, like --fal-key) for the shorts "
+        "agent's stock B-roll. Required when --agents includes shorts. Free at "
+        "https://www.pexels.com/api/, one key per account. Deliberately does NOT "
+        "default to PEXELS_API_KEY in the environment — that would silently bill "
+        "the client's searches to BigLobster's quota.",
+    )
+    parser.add_argument(
+        "--questionnaire",
+        default=None,
+        help="Path to the buyer's structured form answers (JSON). Required when "
+        "--agents includes site-setup — it is what the fixed site template is "
+        "applied from. Schema: scripts/bl_site_setup.py.",
+    )
+    parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter/FAL key + model validation calls")
     parser.add_argument(
         "--old-site-url",
         default=None,
@@ -249,6 +654,15 @@ def main() -> int:
     args = parser.parse_args()
 
     agents = [a.strip() for a in args.agents.split(",") if a.strip()]
+
+    questionnaire = None
+    if args.questionnaire:
+        try:
+            with open(args.questionnaire, encoding="utf-8") as fh:
+                questionnaire = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Provisioning failed: could not read --questionnaire: {exc}", file=sys.stderr)
+            return 1
 
     try:
         result = provision(
@@ -261,13 +675,21 @@ def main() -> int:
             deliver=args.deliver,
             skip_key_check=args.skip_key_check,
             old_site_url=args.old_site_url,
+            model=args.model,
+            fal_key=args.fal_key,
+            image_model=args.image_model,
+            questionnaire=questionnaire,
+            pexels_key=args.pexels_key,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)
         return 1
 
     print(json.dumps(result, indent=2))
-    print(f"\nProfile '{result['profile']}' ready with {len(result['jobs'])} job(s).")
+    print(
+        f"\nProfile '{result['profile']}' ready on model '{result['model']}' "
+        f"with {len(result['jobs'])} job(s)."
+    )
     return 0
 
 

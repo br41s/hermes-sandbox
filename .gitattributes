@@ -1,2 +1,37 @@
 # Auto-generated files — collapse diffs and exclude from language stats
 web/package-lock.json linguist-generated=true
+
+# ---------------------------------------------------------------------------
+# GENERATED FILES — REGENERATE, NEVER MERGE.
+#
+# `merge=union` and hand-resolution both produce a file that is valid but
+# describes neither side. Both of these bit the v2026.7.20 merge:
+#
+#   uv.lock                        resolved by hand -> pytest-asyncio silently
+#                                  went missing, and 321 of 419 failing test
+#                                  files traced back to that one omission
+#   website/static/api/model-catalog.json
+#                                  taken from upstream wholesale -> it then
+#                                  described UPSTREAM's model lists, not ours
+#                                  (tencent/hy3 lost its "recommended" mark)
+#
+# `merge=ours` keeps our copy so the merge does not stall, then you MUST rerun
+# the generator — the test suite checks both:
+#   uv lock
+#   python scripts/build_model_catalog.py
+# See tasks/upstream-merge-hygiene.md.
+#
+# NOTE: `merge=ours` needs the driver registered once per clone (it is not a
+# built-in). scripts/setup-merge-drivers.sh does it:
+#   git config merge.ours.driver true
+# ---------------------------------------------------------------------------
+uv.lock                               merge=ours linguist-generated=true
+website/static/api/model-catalog.json merge=ours linguist-generated=true
+
+# Enforce LF for scripts that run inside Linux containers.
+# Without this, Windows checkout converts to CRLF and breaks `exec` in the
+# container entrypoint with "no such file or directory".
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.dockerfile text eol=lf
+docker/entrypoint.sh text eol=lf
