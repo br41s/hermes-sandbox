@@ -98,6 +98,7 @@ def bl_site_publish(
     image_alt: Optional[str] = None,
     image_base64: Optional[str] = None,
     post_id: Optional[str] = None,
+    badges: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
 
@@ -148,6 +149,8 @@ def bl_site_publish(
                 payload["image_url"] = image_url
                 if image_alt:
                     payload["image_alt"] = image_alt
+            if badges:
+                payload["badges"] = badges
             result = _http_json(
                 "POST",
                 f"{site_url}/api/blog/posts",
@@ -223,6 +226,7 @@ def bl_site_publish(
                 ("title", title), ("content", content), ("excerpt", excerpt),
                 ("cta_url", cta_url), ("cta_label", cta_label),
                 ("image_url", image_url), ("image_alt", image_alt),
+                ("badges", badges),
             ):
                 if val is not None:
                     payload[key] = val
@@ -328,6 +332,15 @@ BL_SITE_PUBLISH_SCHEMA = {
                 "type": "string",
                 "description": "Optional label for the CTA button. Defaults to 'Ver ficha original' if cta_url is set but this isn't.",
             },
+            "badges": {
+                "type": "string",
+                "description": (
+                    "Optional for create_blog_post/update_blog_post: 3-4 short topic tags for "
+                    "the post, comma-separated (e.g. 'seo, marketing, pymes'), matching the "
+                    "post's subject and the client's sector. Rendered as a badge row above the "
+                    "post title. No fixed vocabulary — pick whatever tags fit this post."
+                ),
+            },
         },
         "required": ["action"],
     },
@@ -352,5 +365,6 @@ registry.register(
         image_alt=args.get("image_alt"),
         image_base64=args.get("image_base64"),
         post_id=args.get("post_id"),
+        badges=args.get("badges"),
     ),
 )
