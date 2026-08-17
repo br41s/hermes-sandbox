@@ -10,9 +10,9 @@ run a shell command has no tool that could ever execute it.
 
 Covers:
 - Agent is NOT invoked (``handle_message`` never called)
-- ``tools.cronjob_tools.cronjob`` is called with action="run" and the
-  configured job_id
-- HTTP returns 200 on success, 502 on a rejected/failed trigger or exception
+- the configured job is enqueued via ``cron.scheduler.dispatch_job_async``
+  (fire-and-forget on the scheduler's own pools), never run inline
+- HTTP returns 200 on success, 502 on an unknown job id or a dispatch exception
 - Startup validation rejects combining trigger_cron_job_id with deliver_only
 - HMAC auth, rate limiting, and idempotency still apply
 """
@@ -43,11 +43,25 @@ def _create_app(adapter: WebhookAdapter) -> web.Application:
     return app
 
 
-def _patch_cronjob_tool(return_value):
-    return patch(
-        "tools.cronjob_tools.cronjob",
-        MagicMock(return_value=json.dumps(return_value)),
+from contextlib import contextmanager
+
+_DUMMY_JOB = {"id": "job_abc123", "profile": "auditor"}
+
+
+@contextmanager
+def _patch_dispatch(*, queued=True, reason=None, job=_DUMMY_JOB, dispatch_raises=None):
+    """Patch the webhook's new enqueue path: ``cron.jobs.get_job`` (job lookup)
+    and ``cron.scheduler.dispatch_job_async`` (fire-and-forget enqueue). Yields
+    the dispatch mock so callers can assert call count."""
+    dispatch_kwargs = (
+        {"side_effect": dispatch_raises}
+        if dispatch_raises is not None
+        else {"return_value": {"queued": queued, "reason": reason}}
     )
+    with patch("cron.jobs.get_job", MagicMock(return_value=job)), patch(
+        "cron.scheduler.dispatch_job_async", MagicMock(**dispatch_kwargs)
+    ) as m:
+        yield m
 
 
 # ===================================================================
@@ -75,7 +89,7 @@ class TestTriggerCronJobBypassesAgent:
         adapter.handle_message = _capture
 
         app = _create_app(adapter)
-        with _patch_cronjob_tool({"success": True, "job": {"job_id": "job_abc123"}}) as mock_cronjob:
+        with _patch_dispatch() as mock_dispatch:
             async with TestClient(TestServer(app)) as cli:
                 resp = await cli.post(
                     "/webhooks/auditor-pr-trigger",
@@ -87,12 +101,12 @@ class TestTriggerCronJobBypassesAgent:
                 assert data["status"] == "triggered"
                 assert data["job_id"] == "job_abc123"
 
-        mock_cronjob.assert_called_once_with(action="run", job_id="job_abc123")
+        mock_dispatch.assert_called_once()
         assert handle_message_calls == []
 
     @pytest.mark.asyncio
     async def test_rejected_trigger_returns_502(self):
-        """cronjob() reporting success=False (e.g. stale/unknown job id) -> 502."""
+        """An unknown/stale job id (get_job -> None) returns 502."""
         routes = {
             "r": {
                 "secret": _INSECURE_NO_AUTH,
@@ -101,14 +115,14 @@ class TestTriggerCronJobBypassesAgent:
         }
         adapter = _make_adapter(routes)
         app = _create_app(adapter)
-        with _patch_cronjob_tool({"success": False, "error": "job not found"}):
+        with _patch_dispatch(job=None):
             async with TestClient(TestServer(app)) as cli:
                 resp = await cli.post(
                     "/webhooks/r", json={}, headers={"X-GitHub-Delivery": "d-2"}
                 )
                 assert resp.status == 502
                 data = await resp.json()
-                assert data["error"] == "job not found"
+                assert data["error"] == "Cron job not found"
 
     @pytest.mark.asyncio
     async def test_exception_returns_502(self):
@@ -121,7 +135,7 @@ class TestTriggerCronJobBypassesAgent:
         }
         adapter = _make_adapter(routes)
         app = _create_app(adapter)
-        with patch("tools.cronjob_tools.cronjob", side_effect=RuntimeError("boom")):
+        with _patch_dispatch(dispatch_raises=RuntimeError("boom")):
             async with TestClient(TestServer(app)) as cli:
                 resp = await cli.post(
                     "/webhooks/r", json={}, headers={"X-GitHub-Delivery": "d-3"}
@@ -185,13 +199,13 @@ class TestTriggerCronJobSecurityInvariants:
         }
         adapter = _make_adapter(routes)
         app = _create_app(adapter)
-        with _patch_cronjob_tool({"success": True, "job": {}}) as mock_cronjob:
+        with _patch_dispatch() as mock_dispatch:
             async with TestClient(TestServer(app)) as cli:
                 resp = await cli.post(
                     "/webhooks/r", json={}, headers={"X-GitHub-Delivery": "d-noauth"}
                 )
                 assert resp.status == 401
-            mock_cronjob.assert_not_called()
+            mock_dispatch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_idempotency_still_applies(self):
@@ -203,7 +217,7 @@ class TestTriggerCronJobSecurityInvariants:
         }
         adapter = _make_adapter(routes)
         app = _create_app(adapter)
-        with _patch_cronjob_tool({"success": True, "job": {}}) as mock_cronjob:
+        with _patch_dispatch() as mock_dispatch:
             async with TestClient(TestServer(app)) as cli:
                 r1 = await cli.post(
                     "/webhooks/r", json={}, headers={"X-GitHub-Delivery": "dup-1"}
@@ -215,7 +229,7 @@ class TestTriggerCronJobSecurityInvariants:
                 assert r2.status == 200
                 data = await r2.json()
                 assert data["status"] == "duplicate"
-            assert mock_cronjob.call_count == 1
+            assert mock_dispatch.call_count == 1
 
     @pytest.mark.asyncio
     async def test_rate_limit_still_applies(self):
@@ -227,7 +241,7 @@ class TestTriggerCronJobSecurityInvariants:
         }
         adapter = _make_adapter(routes, rate_limit=2)
         app = _create_app(adapter)
-        with _patch_cronjob_tool({"success": True, "job": {}}):
+        with _patch_dispatch():
             async with TestClient(TestServer(app)) as cli:
                 for i in range(2):
                     r = await cli.post(
