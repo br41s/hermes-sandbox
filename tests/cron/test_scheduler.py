@@ -2849,3 +2849,42 @@ class TestJobProfileContextFailsClosed:
 
         with pytest.raises(ProfileResolutionError):
             run_job({"id": "auditor-job", "profile": "auditor"})
+
+
+class TestJobRunLock:
+    """Per-job concurrency lock: overlapping triggers of the same job_id must
+    not both execute (the duplicate-auditor-review guard)."""
+
+    def test_run_job_skips_when_job_lock_held(self, tmp_path, monkeypatch):
+        import fcntl
+        import cron.scheduler as sched
+
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+        (tmp_path / "cron").mkdir(parents=True, exist_ok=True)
+        holder = open(tmp_path / "cron" / ".job-testjob.lock", "w")
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            calls = {"n": 0}
+            monkeypatch.setattr(
+                sched, "_run_job_impl",
+                lambda job: (calls.__setitem__("n", calls["n"] + 1), (True, "out", "resp", None))[1],
+            )
+            ok, out, resp, err = sched.run_job({"id": "testjob"})
+            assert calls["n"] == 0                       # impl never ran
+            assert (ok, out, resp, err) == (True, "", "", None)  # silent skip
+        finally:
+            fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+            holder.close()
+
+    def test_run_job_runs_when_lock_free(self, tmp_path, monkeypatch):
+        import cron.scheduler as sched
+
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+        calls = {"n": 0}
+        monkeypatch.setattr(
+            sched, "_run_job_impl",
+            lambda job: (calls.__setitem__("n", calls["n"] + 1), (True, "out", "resp", None))[1],
+        )
+        ok, out, resp, err = sched.run_job({"id": "testjob2"})
+        assert calls["n"] == 1
+        assert (ok, resp) == (True, "resp")
