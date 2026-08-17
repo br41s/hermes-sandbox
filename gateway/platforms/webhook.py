@@ -766,9 +766,31 @@ class WebhookAdapter(BasePlatformAdapter):
         # an exception in it.
         trigger_job_id = route_config.get("trigger_cron_job_id")
         if trigger_job_id:
+            # ENQUEUE onto the scheduler's own pools (fire-and-forget) rather
+            # than running the job inline here. A profile job mutates
+            # process-global os.environ (GITHUB_TOKEN/GH_TOKEN); running it
+            # inline let it race a tick-dispatched profile job and leak one
+            # profile's GitHub identity into the other's `gh`/`git` subprocess
+            # (biglobster content PRs authored as hermes-auditor → the auditor
+            # skipped its own PR). dispatch_job_async routes it through the same
+            # single-thread sequential pool tick uses, so profile jobs run one
+            # at a time. It also returns immediately, so a multi-minute run no
+            # longer blocks this event loop.
             try:
-                from tools.cronjob_tools import cronjob as _cronjob_tool
-                trigger_result = json.loads(_cronjob_tool(action="run", job_id=trigger_job_id))
+                from cron.jobs import get_job as _get_job
+                from cron.scheduler import dispatch_job_async as _dispatch_async
+                _job = _get_job(trigger_job_id)
+                if _job is None:
+                    logger.warning(
+                        "[webhook] trigger_cron_job_id not found route=%s job_id=%s delivery=%s",
+                        route_name, trigger_job_id, delivery_id,
+                    )
+                    return web.json_response(
+                        {"status": "error", "error": "Cron job not found",
+                         "delivery_id": delivery_id},
+                        status=502,
+                    )
+                trigger_result = _dispatch_async(_job)
             except Exception:
                 logger.exception(
                     "[webhook] trigger_cron_job_id failed route=%s job_id=%s delivery=%s",
@@ -778,26 +800,23 @@ class WebhookAdapter(BasePlatformAdapter):
                     {"status": "error", "error": "Cron trigger failed", "delivery_id": delivery_id},
                     status=502,
                 )
-            if not trigger_result.get("success"):
-                logger.warning(
-                    "[webhook] trigger_cron_job_id rejected route=%s job_id=%s error=%s delivery=%s",
-                    route_name, trigger_job_id, trigger_result.get("error"), delivery_id,
+            # queued=False for "already running" is a benign dedup (the in-flight
+            # run handles this event), not an error — ack 200 either way so the
+            # sender doesn't retry. A genuine dispatch failure is logged.
+            if trigger_result.get("queued"):
+                logger.info(
+                    "[webhook] direct-cron-trigger queued event=%s route=%s job_id=%s delivery=%s",
+                    event_type, route_name, trigger_job_id, delivery_id,
                 )
-                return web.json_response(
-                    {
-                        "status": "error",
-                        "error": trigger_result.get("error", "unknown"),
-                        "delivery_id": delivery_id,
-                    },
-                    status=502,
+            else:
+                logger.info(
+                    "[webhook] direct-cron-trigger not queued (%s) event=%s route=%s job_id=%s delivery=%s",
+                    trigger_result.get("reason"), event_type, route_name, trigger_job_id, delivery_id,
                 )
-            logger.info(
-                "[webhook] direct-cron-trigger event=%s route=%s job_id=%s delivery=%s",
-                event_type, route_name, trigger_job_id, delivery_id,
-            )
             return web.json_response(
                 {
-                    "status": "triggered",
+                    "status": "triggered" if trigger_result.get("queued") else "skipped",
+                    "reason": trigger_result.get("reason"),
                     "route": route_name,
                     "job_id": trigger_job_id,
                     "delivery_id": delivery_id,

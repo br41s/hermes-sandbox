@@ -4451,6 +4451,72 @@ def _notify_provider_jobs_changed() -> None:
         logger.debug("on_jobs_changed notify failed: %s", e)
 
 
+def dispatch_job_async(job: dict) -> dict:
+    """Enqueue a job on the SAME pools ``tick`` uses, fire-and-forget, and
+    return immediately without running it inline.
+
+    Why this exists: a job with a profile (or workdir) mutates process-global
+    state inside ``run_job`` — most importantly the profile's
+    ``GITHUB_TOKEN``/``GH_TOKEN`` in ``os.environ``. ``tick`` keeps those jobs
+    on the single-thread SEQUENTIAL pool so only one runs at a time. But the
+    webhook direct-trigger used to run ``run_one_job`` INLINE (in the gateway
+    event loop), concurrently with a tick-dispatched profile job — the two then
+    raced on ``os.environ`` and one profile's identity leaked into the other's
+    ``gh``/``git`` subprocess. That is how biglobster content PRs got authored
+    as ``hermes-auditor`` (so the auditor skipped its own PR): a content job's
+    ``gh pr create`` inherited the auditor's leaked token while the auditor ran
+    from a PR webhook. Routing webhook runs through the same sequential pool
+    serializes them with tick's profile jobs, so no two identities mutate the
+    env at once — and it also stops the multi-minute run from blocking the
+    event loop.
+
+    Honors the same in-flight dedup guard as tick (``_running_job_ids``): a job
+    already running (from a tick or a prior trigger) is not re-dispatched.
+    Fire-and-forget — the caller does not wait for the run. Returns
+    ``{"queued": bool, "reason": str | None}``.
+    """
+    job_id = job.get("id")
+    if not job_id:
+        return {"queued": False, "reason": "job has no id"}
+    if _interpreter_shutting_down():
+        return {"queued": False, "reason": "interpreter shutting down"}
+
+    # Same partition rule as tick: profile/workdir jobs are env-mutating and
+    # MUST run on the single-thread sequential pool; everything else is
+    # parallel-safe.
+    is_sequential = bool(
+        (job.get("workdir") or "").strip() or (job.get("profile") or "").strip()
+    )
+    pool = (
+        _get_sequential_pool()
+        if is_sequential
+        else _get_parallel_pool(_parallel_pool_max_workers)
+    )
+
+    with _running_lock:
+        if job_id in _running_job_ids:
+            return {"queued": False, "reason": "already running"}
+        _running_job_ids.add(job_id)
+
+    ctx = contextvars.copy_context()
+
+    def _run_and_release(j=job, c=ctx):
+        try:
+            return c.run(run_one_job, j)
+        finally:
+            with _running_lock:
+                _running_job_ids.discard(j["id"])
+
+    try:
+        pool.submit(_run_and_release)
+        return {"queued": True, "reason": None}
+    except Exception as submit_err:
+        with _running_lock:
+            _running_job_ids.discard(job_id)
+        logger.error("dispatch_job_async: job '%s' not dispatched: %s", job_id, submit_err)
+        return {"queued": False, "reason": f"dispatch failed: {submit_err}"}
+
+
 def tick(
     verbose: bool = True,
     adapters=None,

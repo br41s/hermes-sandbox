@@ -5270,3 +5270,60 @@ class TestSetCronSessionTitle:
         from cron.scheduler import _set_cron_session_title
         assert _set_cron_session_title(None, "sess-1", "X") is None
         assert _set_cron_session_title(MagicMock(), "", "X") is None
+
+
+class TestDispatchJobAsync:
+    """Webhook-triggered jobs must enqueue on the scheduler's own pools (so
+    profile jobs serialize with tick and can't leak os.environ identity across
+    concurrent runs), not run inline."""
+
+    class _InlinePool:
+        def submit(self, fn):
+            import concurrent.futures
+            fn()
+            fut = concurrent.futures.Future()
+            fut.set_result(True)
+            return fut
+
+    def test_profile_job_queues_on_sequential_pool(self, monkeypatch):
+        import cron.scheduler as sched
+
+        calls = {"run": 0, "seq": 0, "par": 0}
+        monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
+        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
+        sched._running_job_ids.discard("j1")
+
+        res = sched.dispatch_job_async({"id": "j1", "profile": "auditor"})
+
+        assert res["queued"] is True
+        assert calls == {"run": 1, "seq": 1, "par": 0}       # ran, via SEQUENTIAL pool
+        assert "j1" not in sched._running_job_ids            # in-flight guard released
+
+    def test_skips_when_already_running(self, monkeypatch):
+        import cron.scheduler as sched
+
+        calls = {"run": 0}
+        monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
+        sched._running_job_ids.add("j2")
+        try:
+            res = sched.dispatch_job_async({"id": "j2", "profile": "auditor"})
+            assert res["queued"] is False and res["reason"] == "already running"
+            assert calls["run"] == 0
+        finally:
+            sched._running_job_ids.discard("j2")
+
+    def test_workdirless_job_uses_parallel_pool(self, monkeypatch):
+        import cron.scheduler as sched
+
+        calls = {"seq": 0, "par": 0}
+        monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: None)
+        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
+        sched._running_job_ids.discard("j3")
+
+        res = sched.dispatch_job_async({"id": "j3"})  # no profile, no workdir
+
+        assert res["queued"] is True
+        assert calls == {"seq": 0, "par": 1}                 # parallel pool
+        sched._running_job_ids.discard("j3")
