@@ -78,6 +78,33 @@ def same_gtin(a, b) -> bool:
     return bool(da) and da == db
 
 
+def gtin_core(raw) -> str:
+    """The item reference inside a barcode, without packaging level or check digit.
+
+    A GTIN-14 is [indicator][the GTIN-13 body][a recalculated check digit], so
+    a case and the unit inside it share a body but agree on nothing else — not
+    even the check digit. Liderpapel stores a GTIN-14 under EAN_UNIDAD for some
+    products, so comparing whole codes against a distributor's UPC would miss
+    every one of them.
+    """
+    digits = _digits(raw)
+    if len(digits) == 14:
+        digits = digits[1:]
+    return digits[:-1].lstrip("0") if len(digits) > 1 else ""
+
+
+def same_item_different_packaging(a, b) -> bool:
+    """Same article, different packaging level — a case versus its unit.
+
+    Deliberately NOT treated as a match: the page could be describing a box of
+    ten, and its specifications would be about the box. Deliberately not
+    treated as a contradiction either, since the article is the same one, so
+    the manufacturer reference is still allowed to decide.
+    """
+    ca, cb = gtin_core(a), gtin_core(b)
+    return bool(ca) and ca == cb and not same_gtin(a, b)
+
+
 def normalize_ref(value) -> str:
     """Manufacturer references are written -CE262A-, CE262A, ce262a."""
     return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
@@ -159,7 +186,12 @@ def judge(candidate: dict, ours: dict) -> dict:
 
     our_gtin, our_ref, our_brand = ours.get("gtin"), ours.get("mpn"), ours.get("brand")
 
-    if our_gtin and their_gtin and not same_gtin(our_gtin, their_gtin):
+    if (
+        our_gtin
+        and their_gtin
+        and not same_gtin(our_gtin, their_gtin)
+        and not same_item_different_packaging(our_gtin, their_gtin)
+    ):
         return {"verdict": "rejected", "tier": None,
                 "reason": f"la página declara el EAN {their_gtin}, no el nuestro ({our_gtin})"}
     if our_ref and their_ref and normalize_ref(our_ref) != normalize_ref(their_ref):
@@ -182,6 +214,127 @@ def judge(candidate: dict, ours: dict) -> dict:
 
     return {"verdict": "rejected", "tier": None,
             "reason": "la página no publica un EAN ni una referencia que podamos comparar"}
+
+
+# A page can prove identity without publishing schema.org — most manufacturer
+# sites do exactly that, printing the reference in the copy and nothing
+# machine-readable anywhere. Verified against Fellowes and Rexel: neither
+# publishes Product data, both print the reference repeatedly.
+#
+# The risk this opens is a *listing* page, which mentions our reference among
+# twenty others; taking content from one would attribute another product's
+# specifications to ours. So a page carrying many product identifiers is
+# refused rather than mined.
+MAX_OTHER_IDENTIFIERS = 5
+
+
+def _distinct_eans(text: str) -> set:
+    """Barcodes of any length the standard allows.
+
+    Matching only 13 digits let a page full of GTIN-14s past the listing guard,
+    because the lookahead that stops a 13-digit match inside a longer run also
+    stopped it matching the longer run at all.
+    """
+    return {
+        t
+        for t in re.findall(r"(?<!\d)\d{12,14}(?!\d)", text)
+        if gtin_checksum_valid(t)
+    }
+
+
+def looks_like_a_listing(text: str, our_gtin) -> bool:
+    others = _distinct_eans(text)
+    if our_gtin:
+        others = {e for e in others if not same_gtin(e, our_gtin)}
+    return len(others) > MAX_OTHER_IDENTIFIERS
+
+
+def reference_is_distinctive(ref) -> bool:
+    """Is this reference specific enough to be evidence on its own?
+
+    "4691001" or "2104578EU" identify one article. "12" or "A4" appear on
+    every page of a stationery catalogue and prove nothing.
+    """
+    cleaned = normalize_ref(ref)
+    return len(cleaned) >= 5 and any(c.isdigit() for c in cleaned)
+
+
+def text_mentions_reference(text: str, ref) -> bool:
+    """The reference as a standalone token, not as part of a longer code."""
+    if not reference_is_distinctive(ref):
+        return False
+    pattern = re.escape(str(ref).strip())
+    return re.search(rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])", text, re.I) is not None
+
+
+def judge_by_text(html: str, ours: dict) -> dict:
+    """Identity from the page's own words, when it publishes no product data."""
+    text = re.sub(r"<[^>]+>", " ", html)
+
+    if looks_like_a_listing(text, ours.get("gtin")):
+        return {"verdict": "rejected", "tier": None,
+                "reason": "la página lista muchos productos distintos, así que no se puede "
+                          "saber qué texto es de este"}
+
+    our_gtin = ours.get("gtin")
+    if our_gtin and any(same_gtin(our_gtin, e) for e in _distinct_eans(text)):
+        return {"verdict": "verified", "tier": "gtin-text",
+                "reason": f"la página imprime nuestro EAN ({our_gtin})"}
+
+    our_ref = ours.get("mpn")
+    if our_ref and text_mentions_reference(text, our_ref):
+        brand = ours.get("brand")
+        if brand and not re.search(re.escape(brand), text, re.I):
+            return {"verdict": "rejected", "tier": None,
+                    "reason": f"aparece la referencia {our_ref} pero la marca {brand} no"}
+        return {"verdict": "verified", "tier": "mpn-text",
+                "reason": f"la página imprime nuestra referencia ({our_ref}) y la marca"}
+
+    return {"verdict": "rejected", "tier": None,
+            "reason": "la página no menciona ni nuestro EAN ni nuestra referencia"}
+
+
+def _meta(html: str, *names) -> Optional[str]:
+    for name in names:
+        m = re.search(
+            rf'<meta[^>]+(?:name|property)=[\'"]{re.escape(name)}[\'"][^>]*content=[\'"]([^\'"]+)',
+            html, re.I,
+        )
+        if m:
+            return m.group(1).strip()
+        m = re.search(
+            rf'<meta[^>]+content=[\'"]([^\'"]+)[\'"][^>]*(?:name|property)=[\'"]{re.escape(name)}',
+            html, re.I,
+        )
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def extract_tables(html: str, limit: int = 40) -> dict:
+    """Two-column rows from tables and definition lists — the spec sheet.
+
+    Prose is deliberately not scraped: on a product page a table is about that
+    product, whereas body text runs into related items, reviews and banners,
+    which is where a specification from a different product would come from.
+    """
+    specs = {}
+    rows = re.findall(r"<tr[ >].*?</tr>", html, re.S | re.I)
+    for row in rows:
+        cells = [
+            re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
+            for c in re.findall(r"<t[dh][ >].*?</t[dh]>", row, re.S | re.I)
+        ]
+        cells = [c for c in cells if c]
+        if len(cells) == 2 and 1 < len(cells[0]) <= 80 and 0 < len(cells[1]) <= 200:
+            specs.setdefault(cells[0], cells[1])
+    pairs = re.findall(r"<dt[ >](.*?)</dt>\s*<dd[ >](.*?)</dd>", html, re.S | re.I)
+    for term, desc in pairs:
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", term)).strip()
+        d = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", desc)).strip()
+        if t and d and len(t) <= 80 and len(d) <= 200:
+            specs.setdefault(t, d)
+    return dict(list(specs.items())[:limit])
 
 
 def _fetch(url: str) -> str:
@@ -241,35 +394,49 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
             ensure_ascii=False,
         )
 
-    candidates = extract_products(html)
-    if not candidates:
-        return json.dumps(
-            {"verdict": "rejected", "tier": None,
-             "reason": "la página no publica datos estructurados de producto (schema.org)",
-             "url": url},
-            ensure_ascii=False,
-        )
-
-    best = None
-    for node in candidates:
-        result = judge(node, ours)
-        if result["verdict"] == "verified":
-            best = (result, node)
+    # Structured data first: when a page publishes it, identity and content come
+    # from the same block and nothing has to be inferred.
+    node = None
+    result = None
+    for candidate in extract_products(html):
+        verdict_ = judge(candidate, ours)
+        if verdict_["verdict"] == "verified":
+            node, result = candidate, verdict_
             break
-        if best is None:
-            best = (result, node)
+        if result is None:
+            node, result = candidate, verdict_
 
-    result, node = best
+    # A page that contradicts us is done: it named a different product and no
+    # amount of matching text changes that.
+    contradicted = result is not None and "no es la nuestra" in result.get("reason", "") \
+        or (result is not None and "no el nuestro" in result.get("reason", ""))
+
+    if (result is None or result["verdict"] != "verified") and not contradicted:
+        # Most manufacturer pages publish nothing machine-readable — verified
+        # against Fellowes and Rexel — so fall back to what the page says in
+        # its own words, with the listing guard doing the scoping.
+        text_result = judge_by_text(html, ours)
+        if text_result["verdict"] == "verified":
+            result, node = text_result, None
+        elif result is None:
+            result = text_result
+
     payload = {**result, "url": url, "sku": sku}
 
     # Content crosses only on a verified identity. On rejection the caller gets
     # a reason and nothing else — there is deliberately no unverified text in
     # the conversation for a model to lean on.
     if result["verdict"] == "verified":
+        specs = dict(_specs_of(node) if node else {})
+        for key, value in extract_tables(html).items():
+            specs.setdefault(key, value)
+        description = (node.get("description") if node else None) or _meta(
+            html, "og:description", "description"
+        )
         payload["found"] = {
-            "name": _first(node, ("name",)),
-            "description": (node.get("description") or "")[:4000] or None,
-            "specs": _specs_of(node),
+            "name": (_first(node, ("name",)) if node else None) or _meta(html, "og:title"),
+            "description": (description or "")[:4000] or None,
+            "specs": dict(list(specs.items())[:40]),
         }
     return json.dumps(payload, ensure_ascii=False)
 
