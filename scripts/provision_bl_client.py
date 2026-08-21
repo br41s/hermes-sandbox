@@ -120,6 +120,19 @@ AGENT_SOURCES = {
         "Product Article Agent",
         "daily",
     ),
+    # Writes the product sheets the distributor never wrote. Only useful to a
+    # client whose catalogue comes from a distributor feed — it works from the
+    # feed's own specifications, barcode and documents, so a client with no
+    # feed has nothing for it to read and every run would go quiet.
+    #
+    # Daily and open-ended, unlike the content agents: the queue is thousands
+    # of products long, a run takes ten, and it stops on its own once every
+    # sellable product has a sheet or a recorded reason for not having one.
+    "product-sheets": (
+        "product-sheets/bl-site-package-product-sheets.prompt",
+        "Product Sheet Writer",
+        "daily",
+    ),
     # Adds ONE inline-SVG infographic to ONE existing blog post per run, editing
     # it in place. Needs no --old-site-url: it only ever reads the client's own
     # blog. Goes quiet ([SILENT]) once every post already carries one, so it's

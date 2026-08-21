@@ -431,13 +431,19 @@ this pulls in via `cron/jobs.py`):
 ```
 
 `--agents` is a comma-separated list from `gap-hunter`, `seo`,
-`onboarding-content`, `product-articles`, `infographic`, `maintenance`,
-`site-setup`, `shorts`. `shorts` (the Social Shorts subscription) **requires
+`onboarding-content`, `product-articles`, `product-sheets`, `infographic`,
+`maintenance`, `site-setup`, `shorts`. `shorts` (the Social Shorts subscription) **requires
 `--pexels-key`** — the client's own Pexels key, BYOK like `--fal-key`, free at
 <https://www.pexels.com/api/>. It deliberately does not fall back to
 `PEXELS_API_KEY` in the environment, which would bill the client's stock searches
 to BigLobster's quota. It also *uses* `--fal-key` when one is present, for the
-optional AI opening hook. `maintenance` (the Website Maintenance subscription) requires no
+optional AI opening hook. `product-sheets` (the Product Sheet Writer) is **only useful to a client whose
+catalogue comes from a distributor feed**. It writes the product sheets the
+distributor never wrote, working from that feed's own specifications, barcode,
+manufacturer reference and documents — not from a web search, which is what
+makes it safe to run unattended on thousands of products nobody has checked.
+Sold to a client with no feed it would go quiet on every run, having nothing to
+read. It needs no extra key. `maintenance` (the Website Maintenance subscription) requires no
 extra flags. It *optionally* uses `--old-site-url`: when the profile carries
 `OLD_SITE_URL`, the daily check also sweeps the old site's published paths and
 reports the ones that now dead-end on the new site. Omit it and that one
@@ -568,7 +574,7 @@ await fetch(url, { method: "POST", body: raw, headers: {
 | `slug` | yes | Hermes profile name. Must be unused. |
 | `client_name` | yes | Display name only. |
 | `openrouter_key` | yes | The buyer's own key (BYOK). Validated live before anything is created. |
-| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `infographic`, `maintenance`, `shorts`. `site-setup` and `onboarding-content` are mutually exclusive. |
+| `agents` | yes | Any of `site-setup`, `gap-hunter`, `seo`, `onboarding-content`, `product-articles`, `product-sheets`, `infographic`, `maintenance`, `shorts`. `site-setup` and `onboarding-content` are mutually exclusive. `product-sheets` only does anything for a client whose catalogue comes from a distributor feed. |
 | `questionnaire` | with `site-setup` | Fixed schema — see `scripts/bl_site_setup.py`. Unknown keys are rejected. |
 | `site_url` | no | Omit to claim a blank instance from the pool. Pass one only when BigLobster already knows the instance. |
 | `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |

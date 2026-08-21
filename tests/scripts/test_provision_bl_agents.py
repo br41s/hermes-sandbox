@@ -72,6 +72,57 @@ def test_maintenance_prompt_states_its_boundaries():
     assert "No puedes parchear dependencias" in text
 
 
+# --- Product Sheet Writer: works from the feed, never from recall -----------
+
+
+def test_product_sheets_is_a_recurring_daily_agent():
+    source, display_name, schedule_kind = AGENT_SOURCES["product-sheets"]
+    assert source == "product-sheets/bl-site-package-product-sheets.prompt"
+    assert display_name == "Product Sheet Writer"
+    # The queue is thousands of products long and a run takes ten, so this is
+    # open-ended work: it stops on its own once every sellable product has a
+    # sheet or a recorded reason for not having one.
+    assert schedule_kind == "daily"
+
+
+def test_product_sheets_needs_no_old_site_url_and_no_extra_key():
+    # It reads the client's own catalogue and the distributor feed behind it,
+    # so ordering it must not depend on a previous website or a BYOK key.
+    assert "product-sheets" not in AGENTS_REQUIRING_OLD_SITE
+    assert "product-sheets" not in MUTUALLY_EXCLUSIVE_AGENTS
+
+
+def test_product_sheets_is_staggered_off_peak_like_the_other_daily_agents():
+    schedule = pick_stagger_schedule("bl-cliente-garcia", "product-sheets")
+    minute, hour, *rest = schedule.split()
+    assert rest == ["*", "*", "*"]
+    assert 2 <= int(hour) <= 5
+    assert schedule != pick_stagger_schedule("bl-cliente-garcia", "gap-hunter")
+
+
+def test_product_sheets_prompt_forbids_inventing_product_facts():
+    text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
+    # This is the whole safety case for letting a model write, unattended,
+    # about thousands of products a client actually sells. A published false
+    # specification is the one failure here that reaches a customer as a lie,
+    # so the rule is pinned rather than left to survive future prompt edits.
+    assert "No inventes un solo dato" in text
+    # It must name the concrete temptations, not just the principle: the
+    # failure mode is a model completing a product it half-recognises.
+    assert "aunque creas conocer la marca" in text
+    # Passing over a product must stay an acceptable outcome, or the model
+    # will pad a sheet to avoid looking unproductive.
+    assert "skip_sheet" in text
+
+
+def test_product_sheets_prompt_never_tells_the_agent_to_search_the_web():
+    text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
+    # The feed is licensed data from the client's own supplier about the exact
+    # article they sell. A web search returns a product that merely looks like
+    # it, which is precisely how a wrong specification gets published.
+    assert "web_search" not in text
+
+
 # --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
 
 
