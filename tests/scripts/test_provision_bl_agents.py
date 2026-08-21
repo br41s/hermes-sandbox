@@ -115,12 +115,33 @@ def test_product_sheets_prompt_forbids_inventing_product_facts():
     assert "skip_sheet" in text
 
 
-def test_product_sheets_prompt_never_tells_the_agent_to_search_the_web():
+def test_product_sheets_prompt_requires_verifying_a_source_before_using_it():
     text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
-    # The feed is licensed data from the client's own supplier about the exact
-    # article they sell. A web search returns a product that merely looks like
-    # it, which is precisely how a wrong specification gets published.
-    assert "web_search" not in text
+    # An earlier version of this prompt banned web search outright, and a test
+    # here pinned that ban. It was the wrong policy: the product exists to
+    # enrich a sheet beyond what the distributor supplies, and the distributor
+    # is not the only source of truth about a product it merely resells.
+    #
+    # What has to hold instead is that nothing external is used until the
+    # identity gate has confirmed the page is about this exact article. The
+    # gate returns no content at all on a rejection, so there is nothing to
+    # quote — but the prompt must still send the agent through it.
+    assert "web_search" in text
+    assert "product_enrich" in text
+    assert "verify" in text
+    # The near-miss is the danger: same maker, same family, one letter apart.
+    assert "se *parece*" in text or "se parece" in text
+
+
+def test_product_sheets_prompt_forbids_shrinking_a_sheet():
+    text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
+    # The first production run rewrote ten sheets to roughly half the length of
+    # the text they replaced, because the prompt carried a 120-250 word cap.
+    # Improving a sheet means it ends up more complete, never less.
+    assert "nunca encoge" in text
+    assert "más corta" in text
+    # And the cap that caused it must not come back.
+    assert "120 y 250 palabras" not in text
 
 
 # --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
