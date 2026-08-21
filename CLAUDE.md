@@ -81,18 +81,39 @@ geo-block. Static egress IP `43.157.39.241`. Panel at
 
 Gotchas, each of which cost a session. Detail in workspace `memories/decisions/hermes.md`:
 
-- **A code change needs a rebuild, not a restart.** `zeabur service restart` re-runs the
-  image already on the node — it does not pull `ghcr:latest`, so a freshly built image is
-  simply ignored and the same stale code comes back up looking healthy. Force a real
-  rolling deploy by changing an env var:
+- **Deploy by moving the image tag. Everything else is a no-op.** Zeabur only reconciles a
+  prebuilt service when its *spec* changes, and `latest` never looks changed — so every
+  in-place operation is entitled to answer "nothing to do" and leave old code running under
+  a healthy-looking container. All three of the obvious paths fail:
+  `hermes gateway restart` (not supported on this platform, see below), `service restart`
+  (re-runs the image already on the node, no pull), and `service redeploy`
+  (`CANNOT_REDEPLOY_INPLACE` — it wants a bound GitHub repo, which a prebuilt service has
+  no). Changing an env var to force a rollout does not reliably work either; it was tried
+  and the pod never cycled.
+
+  Cloud Build tags every build `sha-<commit>` as well as `latest`. Point the service at the
+  sha — the spec changes, so a rollout has to happen, and afterwards you can name exactly
+  which build is running:
 
   ```bash
-  zeabur variable update --id 6a5ea5074d439e41ee4cd38c -k DEPLOY_NONCE=$(date +%s) -y
+  # 1. wait for the build to finish and publish, then:
+  gcloud builds list --limit=3 --format="value(id,status,createTime)"
+  # 2. point the service at that build (never omit -i=false; the CLI prompts otherwise)
+  zeabur service update tag --id 6a5ea5074d439e41ee4cd38c -t sha-<commit> -y -i=false
+  # 3. verify by a file that only exists in the new image
+  zeabur service exec --id 6a5ea5074d439e41ee4cd38c -i=false -- ls -l /opt/hermes/<new file>
   ```
 
-  (`create` the first time, `update` after.) Verify by the mtime of a file you changed
-  inside the container, not by grepping for a string — a stale image can contain the string
-  from an earlier build.
+  **Order matters**: bumping anything before the image is published just cycles onto the
+  stale one. Verify by mtime or by a file that did not exist before — never by grepping for
+  a string, which an older image can also contain.
+
+  `-t latest` puts it back on the floating tag when you want that.
+
+  **Never read Cloud Build substitutions into a terminal.** `gcloud builds describe ...
+  --format="value(substitutions)"` prints `_GITHUB_TOKEN` in clear. The token is stored in
+  plaintext in every build's metadata; treat it as exposed and rotate it if it is ever
+  printed.
 - **`hermes gateway start/stop/restart` does not work on Zeabur.** `is_container()` detects
   Docker only (`/.dockerenv`, cgroup `docker`), not Zeabur's k8s pods, so it reports "Not
   supported on this platform." Use `/command/s6-svc -u /run/service/gateway-<profile>`.
