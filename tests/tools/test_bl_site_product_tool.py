@@ -203,3 +203,29 @@ def test_skipping_never_carries_a_body(monkeypatch):
 
     assert "description_md" not in sent["body"]
     assert "display_name" not in sent["body"]
+
+
+def test_a_partial_write_carries_only_what_it_changes(monkeypatch):
+    # Reported by hermes-auditor on #181. write_sheet accepts either field
+    # alone, and sending the other as null asks the site to erase it — on a
+    # published sheet that is a product page losing its name.
+    sent = wire(monkeypatch, response={"status": "owned"})
+
+    mod.bl_site_product(action="write_sheet", sku="78276", description_md="Solo cuerpo.")
+    assert "display_name" not in sent["body"]
+    assert sent["body"]["description_md"] == "Solo cuerpo."
+
+    mod.bl_site_product(action="write_sheet", sku="78276", display_name="Solo título")
+    assert "description_md" not in sent["body"]
+    assert sent["body"]["display_name"] == "Solo título"
+
+
+def test_a_full_write_still_carries_both(monkeypatch):
+    sent = wire(monkeypatch, response={"status": "owned"})
+    mod.bl_site_product(
+        action="write_sheet", sku="78276", display_name="T", description_md="B", publish=True
+    )
+
+    assert sent["body"]["display_name"] == "T"
+    assert sent["body"]["description_md"] == "B"
+    assert sent["body"]["status"] == "owned"

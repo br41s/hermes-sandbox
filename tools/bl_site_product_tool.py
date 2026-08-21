@@ -111,13 +111,19 @@ def bl_site_product(
                 return tool_error(
                     "write_sheet requiere al menos 'display_name' o 'description_md'."
                 )
+            # Send only what this call actually means to change. The site
+            # treats an absent field as "leave alone" and a present-but-empty
+            # one as "clear", so passing None for a field the caller never
+            # mentioned would ask it to erase that field.
             body = {
-                "display_name": display_name,
-                "description_md": description_md,
                 # Draft unless told otherwise. A half-written sheet that reaches
                 # a visitor is worse than one that stays unwritten.
                 "status": "owned" if publish else "enriched",
             }
+            if display_name is not None:
+                body["display_name"] = display_name
+            if description_md is not None:
+                body["description_md"] = description_md
             if evidence is not None:
                 body["evidence"] = evidence
             result = _request(
