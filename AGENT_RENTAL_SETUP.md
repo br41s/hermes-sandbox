@@ -477,6 +477,45 @@ Confirm back to the CEO: profile slug, job IDs created (the script prints them a
 
 If the script isn't available and a step needs doing by hand, the underlying primitives are `hermes profile create`, setting the base model with `hermes -p <slug> config set model.default deepseek/deepseek-v4-flash` + `config set model.provider openrouter` (**don't skip this — a profile with no `config.yaml` has no model and every cron run 400s**), writing `.env`/`SOUL.md` directly under the profile dir, and `cronjob(action="create", ..., prompt_source=...)`. Always set `prompt_source` (not just `prompt`) so the job stays covered by the prompt-drift detector (`incidents/sweep.py`).
 
+## Catalogue sync — a job the client's own site cannot run
+
+Only for clients whose catalogue comes from a distributor feed, and it is **not** an agent:
+no model, no tokens, one authenticated POST.
+
+bl-site-package schedules its own sync in-process with `node-cron` at 06:00. That holds on
+Zeabur, where the Node process is long-lived. It does **not** hold on Passenger, which shuts
+application processes down when no request has arrived for a few minutes — so on a
+low-traffic client site the timer is never alive when its window comes round. Shoroban ran
+that way from go-live: catalogue seeded once, never refreshed, while upstream published
+prices every 12 h and stock every 10 minutes. The shop quoted a frozen snapshot and
+**nothing about the site looked wrong**.
+
+So the schedule lives here instead:
+
+```bash
+hermes cron create \
+  --profile bl-<client> \
+  --no-agent \
+  --script scripts/bl_site_liderpapel_sync.py \
+  --schedule "0 8 * * *" \
+  --name "Sincronización de catálogo — <Client>"
+```
+
+08:00 rather than 06:00: the distributor starts delivering from 07:00, so anything earlier
+pulls yesterday's files.
+
+It is silent when the sync succeeds — Hermes delivers a `no_agent` job's stdout, and empty
+stdout is no delivery. It reports on an unreachable site, a client with no feed configured,
+a sync that errors, one still running after 30 minutes, and the case that would otherwise
+pass for healthy: a sync returning `ok` **without advancing `lastSyncAt`**, which means the
+reply describes the previous run.
+
+**Prerequisite the job cannot fix.** The connection to the distributor's sFTP is made by
+the *client's own server*, not by Hermes. If their hosting blocks outbound port 22, this
+job faithfully presses a button that fails and mails you the failure every morning. Verify
+before selling a feed-backed site, and see `ONBOARDING-INTERNO.md` in bl-site-package for
+the panel-only way to tell a hosting block apart from a distributor block.
+
 ## Editing a shared agent prompt
 
 Edit the `.prompt` file once (e.g. `gap-hunter/bl-site-package-gap-hunter.prompt`).
