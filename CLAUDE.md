@@ -81,6 +81,18 @@ geo-block. Static egress IP `43.157.39.241`. Panel at
 
 Gotchas, each of which cost a session. Detail in workspace `memories/decisions/hermes.md`:
 
+- **A code change needs a rebuild, not a restart.** `zeabur service restart` re-runs the
+  image already on the node — it does not pull `ghcr:latest`, so a freshly built image is
+  simply ignored and the same stale code comes back up looking healthy. Force a real
+  rolling deploy by changing an env var:
+
+  ```bash
+  zeabur variable update --id 6a5ea5074d439e41ee4cd38c -k DEPLOY_NONCE=$(date +%s) -y
+  ```
+
+  (`create` the first time, `update` after.) Verify by the mtime of a file you changed
+  inside the container, not by grepping for a string — a stale image can contain the string
+  from an earlier build.
 - **`hermes gateway start/stop/restart` does not work on Zeabur.** `is_container()` detects
   Docker only (`/.dockerenv`, cgroup `docker`), not Zeabur's k8s pods, so it reports "Not
   supported on this platform." Use `/command/s6-svc -u /run/service/gateway-<profile>`.
@@ -104,6 +116,26 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 Keys live in Zeabur env vars and propagate to profile `.env` files. **Never print a variable
 table or `env[N].value` into a session transcript** — path-based redaction does not catch
 those, and keys have leaked here that way before.
+
+## Rented agents write to client sites through one audited path
+
+The bl-site-package rentals (`AGENT_SOURCES` in `scripts/provision_bl_client.py`) all reach
+a client's site over HTTP with that profile's own panel password — never a database, never
+a repo. `bl_site_publish` covers blog and page text; `bl_site_product` covers product
+sheets; `bl_site_health` is the read-only maintenance check.
+
+Two rules hold across all of them, and they are what makes unattended writing defensible:
+
+- **Facts are the site's, prose is the agent's.** A tool submits text. Identifiers, the
+  change-detection fingerprint and publication eligibility are decided server-side, so an
+  agent cannot assert a barcode, pin a stale fingerprint, or talk itself into publishing
+  something thin.
+- **Nothing an agent writes goes live implicitly.** Blog posts save as drafts; product
+  sheets save as drafts unless publication is explicit and the site's checklist passes.
+
+`product-sheets` is the exception worth remembering when selling: it only does anything for
+a client whose catalogue comes from a distributor feed, because that feed is the only thing
+it writes from. Sold to a client without one it goes quiet on every run.
 
 ## Fork-specific docs
 
