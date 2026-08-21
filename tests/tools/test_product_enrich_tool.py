@@ -208,3 +208,96 @@ def test_requires_an_http_url():
 
 def test_rejects_an_unknown_action():
     assert "desconocida" in mod.product_enrich(action="scrape_everything", sku="1", url="https://x.test")
+
+
+# --- packaging levels --------------------------------------------------------
+# Checked against real pages: Liderpapel stores a GTIN-14 under EAN_UNIDAD for
+# some products, and a distributor prints the UPC-A of the unit inside. Whole
+# codes disagree on every digit including the check digit, so a naive
+# comparison rejected a page that was about the right article.
+
+
+def test_a_case_code_and_its_unit_share_an_item_reference():
+    assert mod.gtin_core("50043859629256") == mod.gtin_core("043859629251")
+
+
+def test_that_is_not_treated_as_a_match():
+    # The page could be describing a box of ten, and its specifications would
+    # be about the box.
+    assert not mod.same_gtin("50043859629256", "043859629251")
+
+
+def test_nor_as_a_contradiction_that_vetoes_the_reference(monkeypatch):
+    # It must fall through to the manufacturer reference rather than rejecting.
+    ours = {"gtin": "50043859629256", "mpn": "4691001", "brand": "Fellowes"}
+    r = mod.judge(ld(gtin13="043859629251", mpn="4691001", brand={"name": "Fellowes"}), ours)
+    assert r["verdict"] == "verified"
+    assert r["tier"] == "mpn"
+
+
+def test_a_genuinely_different_article_still_contradicts():
+    ours = {"gtin": "50043859629256", "mpn": "4691001", "brand": "Fellowes"}
+    r = mod.judge(ld(gtin13="8412345678905"), ours)
+    assert r["verdict"] == "rejected"
+
+
+# --- identity from page text -------------------------------------------------
+# Most manufacturer pages publish nothing machine-readable. Verified against
+# Fellowes and Rexel: both render their specs with JavaScript, so the fetched
+# HTML carries navigation, meta tags and the reference in the copy.
+
+OURS_TEXT = {"gtin": "50043859629256", "mpn": "4691001", "brand": "Fellowes"}
+
+
+def test_a_page_printing_our_reference_and_brand_verifies():
+    html = "<html><body><h1>Destructora Fellowes 99Ci</h1><p>Ref. 4691001</p></body></html>"
+    r = mod.judge_by_text(html, OURS_TEXT)
+    assert r["verdict"] == "verified"
+    assert r["tier"] == "mpn-text"
+
+
+def test_the_reference_without_the_brand_is_not_enough():
+    # References are not unique across makers.
+    html = "<html><body><p>Ref. 4691001</p></body></html>"
+    assert mod.judge_by_text(html, OURS_TEXT)["verdict"] == "rejected"
+
+
+def test_a_reference_inside_a_longer_code_does_not_count():
+    html = "<html><body>Fellowes<p>SKU 99946910012</p></body></html>"
+    assert mod.judge_by_text(html, OURS_TEXT)["verdict"] == "rejected"
+
+
+def test_a_listing_page_is_refused_rather_than_mined():
+    # It mentions our product among many; any text taken from it could belong
+    # to a different one.
+    others = " ".join(["8412345678905", "5028252613842", "0088698004388",
+                       "8423473140325", "50043859676120", "50043859683746"])
+    html = f"<html><body>Fellowes 4691001 {others}</body></html>"
+    r = mod.judge_by_text(html, OURS_TEXT)
+    assert r["verdict"] == "rejected"
+    assert "muchos productos" in r["reason"]
+
+
+def test_an_undistinctive_reference_is_never_text_evidence():
+    # "A4" appears on every page of a stationery catalogue.
+    assert not mod.reference_is_distinctive("A4")
+    assert not mod.reference_is_distinctive("12")
+    assert mod.reference_is_distinctive("4691001")
+    assert mod.reference_is_distinctive("2104578EU")
+
+
+def test_specs_are_taken_from_tables_not_prose():
+    # A table on a product page is about that product; body text runs into
+    # related items and banners.
+    html = """<table>
+      <tr><td>Nivel de seguridad</td><td>P-4</td></tr>
+      <tr><td>Capacidad</td><td>18 hojas</td></tr>
+    </table>"""
+    specs = mod.extract_tables(html)
+    assert specs["Nivel de seguridad"] == "P-4"
+    assert specs["Capacidad"] == "18 hojas"
+
+
+def test_definition_lists_count_as_specs_too():
+    html = "<dl><dt>Peso</dt><dd>16,5 kg</dd></dl>"
+    assert mod.extract_tables(html)["Peso"] == "16,5 kg"
