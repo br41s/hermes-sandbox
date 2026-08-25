@@ -6,7 +6,7 @@ products. The rest render as a name, a price and a button. This tool is how the
 rented agent writes the ones the distributor never wrote, and how it improves
 the ones it wrote badly.
 
-What comes back from ``get_sheet`` is the *feed's own* data for that product:
+What comes back from ``next_product`` is the *feed's own* data for that product:
 its specifications, barcode, manufacturer reference, documents and images. That
 is the material a sheet is written from, and — unless the operator's prompt says
 otherwise — the only material. It is licensed data from the client's own
@@ -78,10 +78,6 @@ def _refuse_if_scripted():
     )
 
 
-# A batch is meant to be worked one product at a time; this bound stops a run
-# from pulling a queue so long the agent loses the thread of it.
-MAX_BATCH = 25
-DEFAULT_BATCH = 10
 REQUEST_TIMEOUT = 30
 
 
@@ -116,7 +112,6 @@ def bl_site_product(
     description_md: Optional[str] = None,
     evidence: Optional[list] = None,
     publish: Optional[bool] = None,
-    limit: Optional[int] = None,
     reason: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
@@ -135,10 +130,43 @@ def bl_site_product(
         token = _get_jwt(site_url, password)
         base = f"{site_url}/api/product-content"
 
-        if action == "next_batch":
-            size = min(max(int(limit or DEFAULT_BATCH), 1), MAX_BATCH)
-            result = _request("GET", f"{base}/queue?limit={size}", token)
-            return json.dumps(result, ensure_ascii=False)
+        if action == "next_product":
+            # One product, with everything needed to write its sheet already
+            # attached. Handing back a list invited the agent to treat the run
+            # as a loop to automate; handing back a single product with no
+            # count of what follows leaves nothing to iterate over.
+            queue = _request("GET", f"{base}/queue?limit=1", token)
+            pending = queue.get("pending") or []
+            review = queue.get("review") or []
+            head = pending[0] if pending else (review[0] if review else None)
+            if not head:
+                return json.dumps(
+                    {
+                        "product": None,
+                        "done": True,
+                        "message": "No queda ningún producto pendiente ahora mismo.",
+                        "totals": queue.get("totals"),
+                    },
+                    ensure_ascii=False,
+                )
+            kind = "pending" if pending else "review"
+            facts = _request(
+                "GET", f"{base}/{urllib.parse.quote(str(head['sku']))}", token
+            )
+            return json.dumps(
+                {
+                    "kind": kind,
+                    "sku": head["sku"],
+                    **facts,
+                    "totals": queue.get("totals"),
+                    "next_step": (
+                        "Investiga y escribe la ficha de ESTE producto. Cuando la "
+                        "hayas guardado con write_sheet, vuelve a llamar a "
+                        "next_product para recibir el siguiente."
+                    ),
+                },
+                ensure_ascii=False,
+            )
 
         if action == "get_sheet":
             if not sku:
@@ -200,7 +228,7 @@ def bl_site_product(
             )
 
         return tool_error(
-            f"Acción desconocida '{action}'. Usa 'next_batch', 'get_sheet', "
+            f"Acción desconocida '{action}'. Usa 'next_product', 'get_sheet', "
             "'write_sheet' o 'skip_sheet'."
         )
     except RuntimeError as e:
@@ -212,12 +240,15 @@ BL_SITE_PRODUCT_SCHEMA = {
     "description": (
         "Write and publish product sheets on the bl-site-package client site this profile is "
         "dedicated to. "
-        "Use action='next_batch' to get the products to work on: those in stock whose sheet "
-        "nobody has written yet, dearest first, plus any published sheet whose underlying feed "
-        "data has changed since it was written and needs re-checking. "
-        "Use action='get_sheet' with 'sku' to read everything known about one product — the "
-        "distributor's specifications, barcode, manufacturer reference, documents and images. "
-        "This is the material the sheet is written from. "
+        "Use action='next_product' to be handed the single product to work on now, with "
+        "everything known about it already attached: the distributor's specifications, barcode, "
+        "manufacturer reference, documents and images. That is the material the sheet is written "
+        "from. It returns the most valuable in-stock product whose sheet nobody has written yet, "
+        "or failing that a published sheet whose feed data has since changed. Finish that one "
+        "product, then call next_product again for the following one — the tool hands out work "
+        "one product at a time, on purpose, because each sheet needs its own research and its "
+        "own judgement. "
+        "Use action='get_sheet' with 'sku' only to re-read a product you already have. "
         "Use action='write_sheet' with 'sku', 'display_name' and 'description_md' to save the "
         "sheet. It saves as a draft that visitors never see; pass publish=true to put it live. "
         "The site refuses to publish a sheet that lacks a title, a body, or specifications in "
@@ -225,7 +256,7 @@ BL_SITE_PRODUCT_SCHEMA = {
         "publishing something thin. "
         "Use action='skip_sheet' with 'sku' and 'reason' when a product genuinely has nothing "
         "to write a sheet from — the feed knows a brand and nothing else. That is the correct "
-        "outcome for such a product, and recording it is what keeps it from leading the batch "
+        "outcome for such a product, and recording it is what keeps it from being handed out "
         "again tomorrow; it returns to the queue by itself if the distributor ever supplies "
         "more. Never pad a sheet with invented detail to avoid skipping. "
         "The barcode, the manufacturer reference and the change-detection fingerprint are "
@@ -238,13 +269,13 @@ BL_SITE_PRODUCT_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["next_batch", "get_sheet", "write_sheet", "skip_sheet"],
+                "enum": ["next_product", "get_sheet", "write_sheet", "skip_sheet"],
                 "description": "Which operation to perform.",
             },
             "sku": {
                 "type": "string",
                 "description": (
-                    "Product code, as returned by next_batch. Required for get_sheet and "
+                    "Product code, as returned by next_product. Required for get_sheet and "
                     "write_sheet."
                 ),
             },
@@ -289,10 +320,6 @@ BL_SITE_PRODUCT_SCHEMA = {
                     "silently retried."
                 ),
             },
-            "limit": {
-                "type": "integer",
-                "description": f"next_batch only: how many products to fetch (default {DEFAULT_BATCH}, max {MAX_BATCH}).",
-            },
         },
         "required": ["action"],
     },
@@ -312,7 +339,6 @@ registry.register(
             description_md=a.get("description_md"),
             evidence=a.get("evidence"),
             publish=a.get("publish"),
-            limit=a.get("limit"),
             reason=a.get("reason"),
         ),
         args,
