@@ -133,6 +133,18 @@ def test_product_sheets_prompt_requires_verifying_a_source_before_using_it():
     assert "se *parece*" in text or "se parece" in text
 
 
+def test_product_sheets_prompt_forbids_scripting_the_tools():
+    text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
+    # A run under the research workflow wrote /opt/data/product_job.py and tried
+    # to drive bl_site_product from Python: terminal refused the heredoc,
+    # execute_code is blocked for cron jobs with no approver, and the pass
+    # produced zero sheets. Describing a repetitive procedure invites a model to
+    # automate it, so the prompt has to close that door explicitly.
+    assert "No escribas scripts" in text
+    assert "execute_code" in text
+    assert "una llamada cada vez" in text
+
+
 def test_product_sheets_prompt_forbids_shrinking_a_sheet():
     text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
     # The first production run rewrote ten sheets to roughly half the length of

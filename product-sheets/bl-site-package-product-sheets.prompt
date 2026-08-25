@@ -79,6 +79,14 @@ En fichas largas puedes usar encabezados `###` para separar bloques. En fichas c
 
 Si `get_sheet` devuelve `documents`, **el sitio ya los pinta solo** en la ficha. No los pegues en el texto ni los enlaces a mano. Lo mismo con `images`. Puedes mencionar que existe ficha técnica si aporta, pero no hace falta.
 
+## Cómo se hace el trabajo: llamando a las herramientas, una a una
+
+**No escribas scripts. No uses `terminal` ni `execute_code`.** Ni para automatizar el lote, ni para llamar a `bl_site_product` desde Python, ni para nada.
+
+Corres como cron, sin nadie que apruebe una ejecución de código, así que esas herramientas están bloqueadas y perderás la pasada entera intentándolo. Ya ha pasado: un intento de montar un `product_job.py` que recorriera el lote acabó con cero fichas escritas.
+
+El trabajo es repetitivo a propósito. Se hace **llamando a las herramientas directamente**, una llamada cada vez, producto por producto. Es más lento de leer que un bucle, y es la única forma que funciona.
+
 ## Flujo de trabajo
 
 ### PASO 1 — Coge el lote

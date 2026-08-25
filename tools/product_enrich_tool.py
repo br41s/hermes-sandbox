@@ -360,6 +360,14 @@ def _our_product(sku: str) -> dict:
 
 def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = None) -> str:
     from tools.registry import tool_error
+    from tools.bl_site_product_tool import _refuse_if_scripted
+
+    # Same boundary as bl_site_product: verification is per-candidate work, and
+    # a script driving it in a loop is an agent skipping the judgement it is
+    # here to apply.
+    scripted = _refuse_if_scripted()
+    if scripted:
+        return scripted
 
     if action != "verify":
         return tool_error(f"Acción desconocida '{action}'. Usa 'verify'.")
@@ -473,15 +481,19 @@ PRODUCT_ENRICH_SCHEMA = {
     },
 }
 
+from tools.bl_site_product_tool import _tool_call  # noqa: E402
 from tools.registry import registry  # noqa: E402
 
 registry.register(
     name="product_enrich",
     toolset="bl_site_product",
     schema=PRODUCT_ENRICH_SCHEMA,
-    handler=lambda args, **kw: product_enrich(
-        action=args.get("action", ""),
-        sku=args.get("sku"),
-        url=args.get("url"),
+    handler=lambda args, **kw: _tool_call(
+        lambda a: product_enrich(
+            action=a.get("action", ""),
+            sku=a.get("sku"),
+            url=a.get("url"),
+        ),
+        args,
     ),
 )

@@ -13,6 +13,25 @@ import urllib.error
 
 import pytest
 
+
+@pytest.fixture
+def as_tool():
+    """Run a test's direct calls as if the registry had dispatched them.
+
+    The tool refuses scripted callers, and a test is one. The refusal has its
+    own test below; everything else is about the logic behind it.
+    """
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    token = _AS_TOOL.set(True)
+    yield
+    _AS_TOOL.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _dispatched_as_tool(as_tool):
+    yield
+
 from tools import bl_site_product_tool as mod
 
 SITE = "https://cliente.example"
@@ -229,3 +248,38 @@ def test_a_full_write_still_carries_both(monkeypatch):
     assert sent["body"]["display_name"] == "T"
     assert sent["body"]["description_md"] == "B"
     assert sent["body"]["status"] == "owned"
+
+
+def test_bl_site_product_refuses_to_run_from_a_script():
+    # The boundary that the prompt could not hold. A cron agent wrote
+    # /opt/data/product_batch.py and drove this function in a loop: terminal
+    # blocked the heredoc, execute_code blocked outright, but running a file it
+    # had just written was uncovered, and a whole batch went through with no
+    # per-product judgement. Telling it not to only moved the attempt.
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    # Step outside the tool-call context the other tests run in — a script has
+    # no such context, which is the whole point.
+    token = _AS_TOOL.set(False)
+    try:
+        out = mod.bl_site_product(action="next_batch")
+    finally:
+        _AS_TOOL.reset(token)
+    assert "no desde un script" in out
+
+
+def test_bl_site_product_works_when_dispatched_as_a_tool(monkeypatch):
+    # The same call must still work through the registry, or the guard would
+    # break the agent it is meant to keep honest.
+    from tools.registry import registry
+
+    seen = {}
+
+    def fake(*a, **k):
+        seen["ran"] = True
+        return "ok"
+
+    monkeypatch.setattr(mod, "bl_site_product", fake)
+    entry = registry.get_entry("bl_site_product")
+    entry.handler({"action": "verify"})
+    assert seen.get("ran") is True
