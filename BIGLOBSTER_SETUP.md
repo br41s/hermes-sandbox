@@ -210,6 +210,7 @@ To add repos for a new profile: create `docker/profiles/<name>/repos.txt` (one `
 | `/opt/data/checkouts/biglobster-gaphunter` | `br41s/biglobster` | Content Gap Hunter cron (job `ce583d11dedd`) |
 | `/opt/data/checkouts/biglobster-infographic` | `br41s/biglobster` | Infographic Engineer cron (job `2988bba27c73`) |
 | `/opt/data/checkouts/biglobster-translation` | `br41s/biglobster` | Translation Engineer cron (job `e197e33b0f00`) |
+| `/opt/data/checkouts/biglobster-directory` | `br41s/biglobster` | Directory Scout + Directory Outreach cron (job ids TBD at creation) |
 
 Each is an independent clone (separate `.git`, index, `HEAD`, and locally pinned
 `user.email=hermes@agent.local`). Section 6b clones on first boot, then on every
@@ -257,6 +258,77 @@ their canonical `.prompt` file in this repo and explain how to sync a change —
 do not re-expand them into full copies of the workflow.
 
 ---
+
+## Business directory agents (Directory Scout + Directory Outreach)
+
+Two cron jobs that build the local-business directory on biglobster.top and then
+tell the listed businesses they are on it. Prompts live in `directory/`; the state
+and send guards live in `directory/outreach.py`, deployed at
+`/opt/hermes/directory/outreach.py`.
+
+| Job | Prompt | Cadence | Writes |
+|---|---|---|---|
+| Directory Scout | `directory/biglobster-directory-scout.prompt` | every 3 days | one `site/directory-data/*.json` per run, via PR |
+| Directory Outreach | `directory/biglobster-directory-outreach.prompt` | every 3 days, offset ~36 h | outbound email + the profile ledger |
+
+Both use `workdir=/opt/data/checkouts/biglobster-directory` and must be created with
+`prompt_source=` set, so `incidents/sweep.py` covers them for prompt drift:
+
+```
+cronjob(action="create", name="Directory Scout", profile="biglobster",
+        workdir="/opt/data/checkouts/biglobster-directory",
+        prompt_source="directory/biglobster-directory-scout.prompt", ...)
+```
+
+The **36 h offset is load-bearing**, not cosmetic: outreach may only email a business
+whose directory page is already live, and a scout PR has to be reviewed, merged and
+deployed first. The outreach prompt re-checks the public URL with `web_extract` on
+every run and refuses to send if the page is not up, so a missed merge degrades to
+"nothing sent", not to "emails about a page that does not exist".
+
+### Profile `.env` additions (profile `biglobster`, mode 0600)
+
+The main `.env` is **not** enough — profiles carry their own copy, and a value that
+only reaches the main file leaves the job unable to send (see the rotated-secrets
+gotcha in `CLAUDE.md`).
+
+| Variable | Purpose |
+|---|---|
+| `BREVO_SMTP_USER` / `BREVO_SMTP_PASSWORD` | Brevo relay credentials, same account the site contact form uses |
+| `DIRECTORY_FROM_EMAIL` | From address for outreach |
+| `DIRECTORY_FROM_NAME` | Display name (default `BigLobster`) |
+| `DIRECTORY_UNSUBSCRIBE_EMAIL` | Opt-out mailbox; defaults to `DIRECTORY_FROM_EMAIL` |
+| `DIRECTORY_POSTAL_ADDRESS` | Overrides the built-in Biglobster LLC address in the footer |
+| `BREVO_SMTP_HOST` / `BREVO_SMTP_PORT` | Optional; default `smtp-relay.brevo.com:587` |
+
+Without `DIRECTORY_FROM_EMAIL` or the Brevo pair the send exits 7 and nothing is
+recorded — it fails closed, and never names which value was missing (that text
+reaches a transcript).
+
+**Consider a dedicated sending subdomain.** These are cold sends; bounces and
+complaints against the same domain the contact form uses will degrade delivery of
+transactional mail. Splitting the sender is the standing recommendation, not done yet.
+
+### Why the guards are in Python and not in the prompt
+
+`directory/outreach.py` enforces: one message per business domain **ever**, permanent
+suppression (a bounce auto-suppresses), a trailing-24 h send cap, a hard stop above a
+35 % bounce rate, and the `List-Unsubscribe` header + postal address + GDPR basis
+footer on every message. A prompt instruction is advisory; a non-zero exit is not.
+Exit codes: 3 already-contacted, 4 suppressed, 5 rate cap, 6 halted, 7 no credentials,
+8 send failed. Guard tests: `python3 directory/test_outreach.py` (stdlib only, stubs
+SMTP, opens no sockets).
+
+A corrupt ledger aborts with `LEDGER_UNREADABLE` rather than reading as "nobody has
+been contacted" — that failure mode would re-mail the entire directory.
+
+### Policy posture (do not quietly change this)
+
+The listing is free, editorial and **unconditional**: it is published before anyone is
+emailed and is never withdrawn for not linking back. The email is an inclusion notice
+plus a free "Verified" badge; a link back is mentioned once as an optional courtesy.
+Conditioning the listing on a link would make this a link scheme, and the site
+carrying the penalty would be biglobster.top itself.
 
 ## Available tools
 

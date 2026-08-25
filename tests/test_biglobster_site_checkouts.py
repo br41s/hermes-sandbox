@@ -62,7 +62,7 @@ def test_isolated_checkout_per_consuming_job(boot_text: str) -> None:
         (ln for ln in s.splitlines() if ln.lstrip().startswith("for ckdir in")), ""
     )
     assert loop, "section 6b has no `for ckdir in ...` checkout loop"
-    for job in ("biglobster-seo", "biglobster-gaphunter", "biglobster-infographic"):
+    for job in ("biglobster-seo", "biglobster-gaphunter", "biglobster-infographic", "biglobster-directory"):
         assert job in loop, f"{job} has no isolated checkout in section 6b"
 
 
