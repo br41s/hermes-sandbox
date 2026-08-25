@@ -12,6 +12,25 @@ import json
 
 import pytest
 
+
+@pytest.fixture
+def as_tool():
+    """Run a test's direct calls as if the registry had dispatched them.
+
+    The tool refuses scripted callers, and a test is one. The refusal has its
+    own test below; everything else is about the logic behind it.
+    """
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    token = _AS_TOOL.set(True)
+    yield
+    _AS_TOOL.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _dispatched_as_tool(as_tool):
+    yield
+
 from tools import product_enrich_tool as mod
 
 OURS = {"gtin": "50043859629256", "mpn": "4691001", "brand": "Fellowes"}
@@ -301,3 +320,38 @@ def test_specs_are_taken_from_tables_not_prose():
 def test_definition_lists_count_as_specs_too():
     html = "<dl><dt>Peso</dt><dd>16,5 kg</dd></dl>"
     assert mod.extract_tables(html)["Peso"] == "16,5 kg"
+
+
+def test_product_enrich_refuses_to_run_from_a_script():
+    # The boundary that the prompt could not hold. A cron agent wrote
+    # /opt/data/product_batch.py and drove this function in a loop: terminal
+    # blocked the heredoc, execute_code blocked outright, but running a file it
+    # had just written was uncovered, and a whole batch went through with no
+    # per-product judgement. Telling it not to only moved the attempt.
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    # Step outside the tool-call context the other tests run in — a script has
+    # no such context, which is the whole point.
+    token = _AS_TOOL.set(False)
+    try:
+        out = mod.product_enrich(action="verify")
+    finally:
+        _AS_TOOL.reset(token)
+    assert "no desde un script" in out
+
+
+def test_product_enrich_works_when_dispatched_as_a_tool(monkeypatch):
+    # The same call must still work through the registry, or the guard would
+    # break the agent it is meant to keep honest.
+    from tools.registry import registry
+
+    seen = {}
+
+    def fake(*a, **k):
+        seen["ran"] = True
+        return "ok"
+
+    monkeypatch.setattr(mod, "product_enrich", fake)
+    entry = registry.get_entry("product_enrich")
+    entry.handler({"action": "verify"})
+    assert seen.get("ran") is True

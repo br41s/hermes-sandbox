@@ -31,6 +31,7 @@ can never be resolved two different ways.
 
 from __future__ import annotations
 
+import contextvars
 import json
 from typing import Optional
 
@@ -39,6 +40,43 @@ import urllib.parse
 import urllib.request
 
 from tools.bl_site_publish_tool import _get_jwt, _get_site_credentials
+
+# True only while the registry is dispatching a real tool call.
+#
+# A cron agent handed a repetitive workflow will try to automate it: one run
+# wrote /opt/data/product_batch.py and drove these functions from Python.
+# terminal refused the heredoc and execute_code refused outright, but running a
+# file the agent had just written was not covered, so a whole batch went
+# through in one call — no per-product judgement, no research, no verification.
+# The agent had turned itself into a for-loop.
+#
+# Saying "do not script this" in the prompt only moved the attempt, so the
+# boundary enforces it. There is deliberately no environment-variable escape:
+# an agent with a shell can set one.
+_AS_TOOL = contextvars.ContextVar("bl_site_product_as_tool", default=False)
+
+
+def _tool_call(fn, args):
+    """Run a handler with the tool-call flag set, and always clear it."""
+    token = _AS_TOOL.set(True)
+    try:
+        return fn(args)
+    finally:
+        _AS_TOOL.reset(token)
+
+
+def _refuse_if_scripted():
+    """An error string when reached from a script, None when reached as a tool."""
+    if _AS_TOOL.get():
+        return None
+    from tools.registry import tool_error
+
+    return tool_error(
+        "Esta herramienta solo funciona llamándola directamente, no desde un script "
+        "ni desde terminal/execute_code. El trabajo se hace producto a producto: "
+        "llama a la herramienta una vez por cada paso."
+    )
+
 
 # A batch is meant to be worked one product at a time; this bound stops a run
 # from pulling a queue so long the agent loses the thread of it.
@@ -82,6 +120,10 @@ def bl_site_product(
     reason: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
+
+    scripted = _refuse_if_scripted()
+    if scripted:
+        return scripted
 
     site_url, password = _get_site_credentials()
     if not site_url or not password:
@@ -262,14 +304,17 @@ registry.register(
     name="bl_site_product",
     toolset="bl_site_product",
     schema=BL_SITE_PRODUCT_SCHEMA,
-    handler=lambda args, **kw: bl_site_product(
-        action=args.get("action", ""),
-        sku=args.get("sku"),
-        display_name=args.get("display_name"),
-        description_md=args.get("description_md"),
-        evidence=args.get("evidence"),
-        publish=args.get("publish"),
-        limit=args.get("limit"),
-        reason=args.get("reason"),
+    handler=lambda args, **kw: _tool_call(
+        lambda a: bl_site_product(
+            action=a.get("action", ""),
+            sku=a.get("sku"),
+            display_name=a.get("display_name"),
+            description_md=a.get("description_md"),
+            evidence=a.get("evidence"),
+            publish=a.get("publish"),
+            limit=a.get("limit"),
+            reason=a.get("reason"),
+        ),
+        args,
     ),
 )
