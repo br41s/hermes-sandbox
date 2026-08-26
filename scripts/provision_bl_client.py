@@ -123,16 +123,20 @@ from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa:
 # no execute_code — so the workflow cannot be short-circuited into a script,
 # and the unused schemas stop riding along in every cached prefix.
 AGENT_SOURCES = {
-    # The content agents are left on the cron default deliberately, for now.
-    # Their prompts name `bl_site_publish`, which the default does not carry —
-    # they reach the site over the shell instead and their runs do succeed. See
-    # AGENTS_WITHOUT_THEIR_TOOLS below: narrowing them is a behaviour change to
-    # working jobs and wants its own pass, not a drive-by here.
+    # Each content agent's list is a superset of the tools its runs actually
+    # used, plus the `bl_site_publish` its prompt has always instructed and
+    # never had. Nothing an agent relies on is removed — terminal and file stay,
+    # so a run that still reaches the site over the shell keeps working — while
+    # the schema drops from 52 tools to roughly a dozen.
+    #
+    # `todo` is listed because all three prompts use it and it lives in the
+    # core set; declaring toolsets would otherwise take it away silently. That
+    # is the trap in restricting: it removes as well as adds.
     "gap-hunter": (
         "gap-hunter/bl-site-package-gap-hunter.prompt",
         "Content Gap Hunter",
         "daily",
-        None,
+        ["bl_site_publish", "image_gen", "web", "file", "terminal", "skills", "todo"],
     ),
     "seo": ("onsite-seo/bl-site-package-seo-agent.prompt", "SEO/GEO On-Site", "daily", None),
     "onboarding-content": (
@@ -171,7 +175,7 @@ AGENT_SOURCES = {
         "infographic/bl-site-package-infographic.prompt",
         "Infographic Engineer",
         "daily",
-        None,
+        ["bl_site_publish", "image_gen", "file", "terminal", "skills", "todo"],
     ),
     # The "Website Maintenance" subscription product. Daily, like gap-hunter:
     # availability and publish-drift are only meaningful checked often, and a
@@ -183,7 +187,7 @@ AGENT_SOURCES = {
         "maintenance/bl-site-package-maintenance.prompt",
         "Website Maintenance",
         "daily",
-        None,
+        ["bl_site_publish", "terminal", "file", "todo"],
     ),
     # The "Site Launch" checkout product. One-shot, like onboarding-content,
     # but it is the *whole* create-your-website job: the deterministic half

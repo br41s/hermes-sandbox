@@ -31,25 +31,24 @@ from toolsets import resolve_toolset
 # with nothing behind them.
 FORK_TOOLS = {"bl_site_product", "product_enrich", "bl_site_publish"}
 
-# Every content agent instructs `bl_site_publish`, and not one of them has it.
+# What is left of the gap: the agents nobody has run yet.
 #
-# They are not broken — each reaches the client's site over the shell instead,
-# and their runs succeed. But the prompt orders one thing and the schema allows
-# another: gap-hunter's opens "usa la herramienta `bl_site_publish`, NUNCA
-# git/PR", so the agent improvises past a direct instruction on every run and
-# the report still reads as a clean success. That is the same shape as the
-# Product Sheet Writer bug, caught before it cost another week.
+# All eight content agents instructed `bl_site_publish` without having it. The
+# three that are live for a client — gap-hunter, infographic, maintenance — are
+# fixed, because their run logs say exactly which tools they use and a list can
+# be built that adds the missing one without taking anything away.
 #
-# Left as-is deliberately: narrowing eight working production jobs is a
-# behaviour change that wants its own pass, with a run watched per agent.
+# These five have never run. Their prompts name the tools they intend, but a
+# prompt is what the agent was told to do, not what it turned out to need — the
+# three that did run all reached for terminal and file, which none of their
+# prompts mention. Guessing a list here would swap a known gap for an unknown
+# one, so they keep the cron default until a first run says what to declare.
+#
 # Shrinking this set is the point — do not add to it without a note here.
 AGENTS_WITHOUT_THEIR_TOOLS = {
-    "gap-hunter",
     "seo",
     "onboarding-content",
     "product-articles",
-    "infographic",
-    "maintenance",
     "site-setup",
     "shorts",
 }
@@ -105,3 +104,48 @@ def test_product_sheets_carries_exactly_what_its_prompt_asks_for():
     # And deliberately not these: with no shell there is no way to turn the
     # per-product workflow back into a script.
     assert not {"terminal", "execute_code"} & reachable
+
+
+# Tools each live agent's runs have actually used, read off the production logs
+# for profile bl-shoroban. Declaring toolsets removes as well as adds, so this
+# is the floor: a narrower list would take away something an agent is using and
+# the failure would show up as improvisation, not as an error.
+OBSERVED_IN_PRODUCTION = {
+    "gap-hunter": {
+        "image_generate", "patch", "read_file", "search_files", "skill_manage",
+        "skill_view", "terminal", "web_extract", "web_search", "write_file",
+    },
+    "infographic": {
+        "patch", "read_file", "skill_manage", "skill_view", "terminal", "write_file",
+    },
+    "maintenance": {"terminal"},
+}
+
+
+@pytest.mark.parametrize("agent_key", sorted(OBSERVED_IN_PRODUCTION))
+def test_narrowing_never_removes_a_tool_the_agent_uses(agent_key):
+    _source, _display, _kind, toolsets = AGENT_SOURCES[agent_key]
+    assert toolsets, f"{agent_key} should declare toolsets"
+
+    removed = OBSERVED_IN_PRODUCTION[agent_key] - reachable_from(toolsets)
+
+    assert not removed, (
+        f"declaring toolsets for {agent_key} takes away {sorted(removed)}, which "
+        f"its production runs use. Add the toolset that carries them."
+    )
+
+
+def test_the_live_agents_finally_have_their_publish_tool():
+    # The whole point of the exercise: their prompts have instructed
+    # bl_site_publish since the day they were written.
+    for agent_key in ("gap-hunter", "infographic", "maintenance"):
+        _source, _display, _kind, toolsets = AGENT_SOURCES[agent_key]
+        assert "bl_site_publish" in reachable_from(toolsets), agent_key
+
+
+def test_todo_survives_narrowing():
+    # todo lives in the core set, so declaring toolsets would drop it. All
+    # three prompts use it, and losing it would be invisible.
+    for agent_key in ("gap-hunter", "infographic", "maintenance"):
+        _source, _display, _kind, toolsets = AGENT_SOURCES[agent_key]
+        assert "todo" in reachable_from(toolsets), agent_key
