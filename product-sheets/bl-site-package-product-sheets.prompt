@@ -113,6 +113,21 @@ Es normal que ninguno verifique. Cuando pase, escribe la ficha solo con lo del f
 - Si dice `verified` → te devuelve los datos que publica esa página. Úsalos.
 - Si dice `rejected` → **no te devuelve nada, y así tiene que ser.** No abras esa página por tu cuenta ni uses lo que recuerdes de ella. Pasa al siguiente candidato.
 
+Cada respuesta trae además un `outcome`, y **tienes que ir apuntándolos** porque el informe final los pide:
+
+| `outcome` | Qué pasó |
+|---|---|
+| `verified` | Coincide y trae datos aprovechables. |
+| `verified_thin` | Es nuestro producto sin duda, pero la página no publica nada que merezca la pena. |
+| `blocked` | La página nos rechaza el acceso (403/429, protección anti-bot). **No la hemos leído**: puede que tuviera datos buenos. |
+| `unreachable` | Enlace muerto o timeout. |
+| `mismatch` | Es otro producto. |
+| `unverifiable` | La página no publica EAN ni referencia que comparar. |
+| `listing` | Es una página de categoría con muchos productos. |
+| `no_identifiers` | Nuestro propio feed no trae EAN ni referencia, así que no hay nada que comprobar. |
+
+La diferencia entre `blocked` y `verified_thin` es la que importa: `blocked` es un límite de nuestras herramientas, `verified_thin` es que la fuente no tenía nada. Si no los distingues, un informe que dice "no había nada que añadir" tapa el caso en el que sí lo había pero no pudimos leerlo.
+
 La herramienta compara el EAN y la referencia del fabricante contra los del catálogo del cliente. Un producto que se *parece* al nuestro es exactamente por donde se publica una especificación falsa: mismo fabricante, misma familia, una letra de diferencia en el modelo y 2.400 páginas de diferencia en el rendimiento.
 
 ### 4. Escribe y publica
@@ -151,6 +166,8 @@ Revisadas (datos del feed cambiados):
 
 Saltadas por falta de datos (skip_sheet):
 - [SKU] · [nombre del feed] · [qué falta]
+
+Investigación: [n] páginas verificadas · [n] sin datos útiles (verified_thin) · [n] bloqueadas 403/429 · [n] otro producto · [n] sin identificadores comparables · [n] inalcanzables
 
 Cola: [totals.products] productos, [totals.owned] con ficha propia.
 [Si totals.drifted > 0: "Aviso: [n] fichas publicadas tienen datos del feed cambiados — revísalas desde el panel."]
