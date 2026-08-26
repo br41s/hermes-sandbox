@@ -104,21 +104,48 @@ from hermes_cli.profiles import (  # noqa: E402
 from cron.jobs import create_job  # noqa: E402
 from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa: E402
 
-# agent key -> (prompt_source relative to repo root, display name, schedule kind)
+# agent key -> (prompt_source relative to repo root, display name, schedule kind,
+#               enabled toolsets)
 # schedule kind "daily" = recurring via pick_stagger_schedule(); "once" = single
 # run a few minutes after provisioning (see provision()).
+#
+# The toolsets entry is what the job's agent may call. None means "the cron
+# default", which is `_HERMES_CORE_TOOLS` in toolsets.py — an allowlist that
+# does NOT contain this fork's own tools. That gap is not theoretical: the
+# Product Sheet Writer ran for five days against a prompt telling it to call
+# `bl_site_product`, never had the tool in its schema, and reached the function
+# by importing the module under execute_code instead. Every run reported
+# success. Naming the toolsets here is what keeps a rented agent's prompt and
+# its actual capabilities from drifting apart silently.
+#
+# Declaring toolsets *restricts* the job to them, which is the point twice
+# over: the agent gets what its prompt names, and nothing else — no terminal,
+# no execute_code — so the workflow cannot be short-circuited into a script,
+# and the unused schemas stop riding along in every cached prefix.
 AGENT_SOURCES = {
-    "gap-hunter": ("gap-hunter/bl-site-package-gap-hunter.prompt", "Content Gap Hunter", "daily"),
-    "seo": ("onsite-seo/bl-site-package-seo-agent.prompt", "SEO/GEO On-Site", "daily"),
+    # The content agents are left on the cron default deliberately, for now.
+    # Their prompts name `bl_site_publish`, which the default does not carry —
+    # they reach the site over the shell instead and their runs do succeed. See
+    # AGENTS_WITHOUT_THEIR_TOOLS below: narrowing them is a behaviour change to
+    # working jobs and wants its own pass, not a drive-by here.
+    "gap-hunter": (
+        "gap-hunter/bl-site-package-gap-hunter.prompt",
+        "Content Gap Hunter",
+        "daily",
+        None,
+    ),
+    "seo": ("onsite-seo/bl-site-package-seo-agent.prompt", "SEO/GEO On-Site", "daily", None),
     "onboarding-content": (
         "onboarding-content/bl-site-package-onboarding-content.prompt",
         "Onboarding Content Agent",
         "once",
+        None,
     ),
     "product-articles": (
         "product-articles/bl-site-package-product-articles.prompt",
         "Product Article Agent",
         "daily",
+        None,
     ),
     # Writes the product sheets the distributor never wrote. Only useful to a
     # client whose catalogue comes from a distributor feed — it works from the
@@ -128,10 +155,13 @@ AGENT_SOURCES = {
     # Daily and open-ended, unlike the content agents: the queue is thousands
     # of products long, a run takes ten, and it stops on its own once every
     # sellable product has a sheet or a recorded reason for not having one.
+    # `bl_site_product` carries both bl_site_product and product_enrich; `web`
+    # carries web_search. That is the whole of what this prompt asks for.
     "product-sheets": (
         "product-sheets/bl-site-package-product-sheets.prompt",
         "Product Sheet Writer",
         "daily",
+        ["bl_site_product", "web"],
     ),
     # Adds ONE inline-SVG infographic to ONE existing blog post per run, editing
     # it in place. Needs no --old-site-url: it only ever reads the client's own
@@ -141,6 +171,7 @@ AGENT_SOURCES = {
         "infographic/bl-site-package-infographic.prompt",
         "Infographic Engineer",
         "daily",
+        None,
     ),
     # The "Website Maintenance" subscription product. Daily, like gap-hunter:
     # availability and publish-drift are only meaningful checked often, and a
@@ -152,6 +183,7 @@ AGENT_SOURCES = {
         "maintenance/bl-site-package-maintenance.prompt",
         "Website Maintenance",
         "daily",
+        None,
     ),
     # The "Site Launch" checkout product. One-shot, like onboarding-content,
     # but it is the *whole* create-your-website job: the deterministic half
@@ -163,6 +195,7 @@ AGENT_SOURCES = {
         "site-setup/bl-site-package-site-setup.prompt",
         "Site Launch",
         "once",
+        None,
     ),
     # The "Social Shorts" subscription product. Turns ONE existing blog post per
     # run into 3-5 vertical MP4s plus a captions.md of Instagram/TikTok copy,
@@ -176,6 +209,7 @@ AGENT_SOURCES = {
         "shorts/bl-site-package-shorts.prompt",
         "Social Shorts",
         "daily",
+        None,
     ),
 }
 
@@ -585,7 +619,7 @@ def provision(
 
     created_jobs = []
     for agent_key in agents:
-        source, display_name, schedule_kind = AGENT_SOURCES[agent_key]
+        source, display_name, schedule_kind, toolsets = AGENT_SOURCES[agent_key]
         schedule = (
             ONBOARDING_CONTENT_DELAY
             if schedule_kind == "once"
@@ -598,6 +632,7 @@ def provision(
             deliver=deliver,
             profile=canon,
             prompt_source=source,
+            enabled_toolsets=list(toolsets) if toolsets else None,
         )
         created_jobs.append({"job_id": job["id"], "name": job["name"], "schedule": schedule, "source": source})
 
