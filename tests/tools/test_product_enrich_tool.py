@@ -9,6 +9,8 @@ as good enough.
 """
 
 import json
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -355,3 +357,78 @@ def test_product_enrich_works_when_dispatched_as_a_tool(monkeypatch):
     entry = registry.get_entry("product_enrich")
     entry.handler({"action": "verify"})
     assert seen.get("ran") is True
+
+
+# --- outcome codes -----------------------------------------------------------
+#
+# Every rejection used to read the same from the outside, so a run could not
+# say whether the sources had nothing to add or simply would not open. A
+# production run reported "el texto del feed ya era completo" for five products
+# while noting in passing that pages had answered 403 — two very different
+# facts wearing one label.
+
+
+def test_a_page_that_refuses_us_is_not_a_mismatch(monkeypatch):
+    def refuse(*_a, **_k):
+        raise urllib.error.HTTPError("https://x.test/p", 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", refuse)
+
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["verdict"] == "rejected"
+    assert out["outcome"] == "blocked"
+    assert out["http_status"] == 403
+    # The distinction has to survive into the reason the agent reads, or it
+    # will report the product as having nothing to add.
+    assert "no hemos podido leerla" in out["reason"]
+
+
+def test_a_dead_link_is_unreachable_rather_than_blocked(monkeypatch):
+    def boom(_url):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(mod, "_fetch", boom)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "unreachable"
+
+
+def test_a_404_is_unreachable_not_a_refusal(monkeypatch):
+    # Only the statuses that mean "we were turned away" count as blocked;
+    # a missing page is genuinely missing.
+    def gone(*_a, **_k):
+        raise urllib.error.HTTPError("https://x.test/p", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", gone)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "unreachable"
+
+
+def test_a_matching_page_with_nothing_on_it_is_thin(monkeypatch):
+    # Proving identity is not the same as having something to say.
+    bare = '''<html><body><script type="application/ld+json">
+    {"@type": "Product", "name": "Destructora", "gtin13": "50043859629256"}
+    </script></body></html>'''
+    monkeypatch.setattr(mod, "_fetch", lambda _url: bare)
+
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["verdict"] == "verified"
+    assert out["outcome"] == "verified_thin"
+
+
+def test_a_useful_match_is_plainly_verified(monkeypatch):
+    monkeypatch.setattr(mod, "_fetch", lambda _url: HTML)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "verified"
+
+
+def test_a_different_product_is_a_mismatch(monkeypatch):
+    wrong = HTML.replace("50043859629256", "50043859629999")
+    monkeypatch.setattr(mod, "_fetch", lambda _url: wrong)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "mismatch"
+
+
+def test_our_own_product_lacking_identifiers_says_so(monkeypatch):
+    monkeypatch.setattr(mod, "_our_product", lambda _sku: {"gtin": None, "mpn": None, "brand": "X"})
+    out = json.loads(mod.product_enrich(action="verify", sku="1", url="https://x.test/p"))
+    assert out["outcome"] == "no_identifiers"
