@@ -35,6 +35,11 @@ import requests
 _SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 _DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token"
 _GSC_BASE = "https://searchconsole.googleapis.com/webmasters/v3"
+# URL Inspection lives on a different API surface (v1, not the v3 webmasters
+# API Search Analytics uses). Google documents webmasters.readonly as
+# sufficient for the inspect call — verify this still holds before trusting
+# it if Google ever tightens scope requirements for this method.
+_GSC_INSPECTION_BASE = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
 
 # Process-lifetime access-token cache. Tokens are valid ~1h; we refresh a
 # minute early. The server is a long-lived stdio subprocess, so caching here
@@ -112,10 +117,16 @@ def _get_access_token() -> str:
 
 
 def _request(method: str, path: str, json_body: dict | None = None) -> dict:
+    return _request_url(method, f"{_GSC_BASE}{path}", json_body)
+
+
+def _request_url(method: str, url: str, json_body: dict | None = None) -> dict:
+    """Same auth/error handling as `_request`, but against a full URL — needed
+    because URL Inspection lives on a different API base than Search Analytics."""
     token = _get_access_token()
     resp = requests.request(
         method,
-        f"{_GSC_BASE}{path}",
+        url,
         json=json_body,
         headers={"Authorization": f"Bearer {token}"},
         timeout=60,
@@ -125,6 +136,12 @@ def _request(method: str, path: str, json_body: dict | None = None) -> dict:
             "403 from GSC. The service account almost certainly lacks access to "
             "this property — add its client_email as a user in Search Console "
             "(Settings → Users and permissions). Body: " + resp.text[:300]
+        )
+    if resp.status_code == 429:
+        raise RuntimeError(
+            "429 from GSC — URL Inspection daily quota likely exhausted for this "
+            "property. Skip inspection for the rest of this run; it is a "
+            "confidence booster, not a required signal. Body: " + resp.text[:300]
         )
     if resp.status_code != 200:
         raise RuntimeError(f"GSC API error ({resp.status_code}): {resp.text[:300]}")
@@ -186,6 +203,36 @@ def gsc_search_analytics(
     }
     encoded_site = urllib.parse.quote(site_url, safe="")
     return _request("POST", f"/sites/{encoded_site}/searchAnalytics/query", body)
+
+
+@mcp.tool()
+def gsc_inspect_url(inspection_url: str, site_url: str) -> dict:
+    """Ask Google for a single URL's live indexing status (URL Inspection API).
+
+    Use this ONLY as a confidence booster on a handful of high-value 404
+    candidates already found by other means (e.g. a URL with historical clicks
+    in gsc_search_analytics that a live HTTP check now confirms is dead) — this
+    is a per-URL, quota-limited call (Google has documented a low daily cap per
+    property; re-verify the current number against Google's docs rather than
+    assuming), not a bulk index-coverage export. Google never shipped a bulk
+    "Coverage report" API, so this and gsc_search_analytics's historical page
+    list are the only two signals available; do not call this in a loop over
+    every URL on the site.
+
+    Args:
+        inspection_url: The exact URL to inspect, e.g. "https://biglobster.top/es/blog/old-slug".
+        site_url: The verified property, e.g. "sc-domain:biglobster.top".
+
+    Returns the raw `inspectionResult` (includes `indexStatusResult.verdict`,
+    `.coverageState`, `.lastCrawlTime`). A 429 here means the daily quota is
+    exhausted — treat that as "skip inspection for this run", never as a
+    reason to abort the run: detection must not depend on this call succeeding.
+    """
+    return _request_url(
+        "POST",
+        _GSC_INSPECTION_BASE,
+        {"inspectionUrl": inspection_url, "siteUrl": site_url},
+    )
 
 
 if __name__ == "__main__":
