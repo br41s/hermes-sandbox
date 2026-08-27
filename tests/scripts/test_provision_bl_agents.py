@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize("agent_key", sorted(AGENT_SOURCES))
 def test_every_agent_prompt_file_exists(agent_key):
-    source, display_name, schedule_kind = AGENT_SOURCES[agent_key]
+    source, display_name, schedule_kind, _toolsets = AGENT_SOURCES[agent_key]
     path = REPO_ROOT / source
     assert path.is_file(), f"{agent_key} points at a missing prompt: {source}"
     assert path.read_text(encoding="utf-8").strip()
@@ -35,7 +35,7 @@ def test_every_agent_prompt_file_exists(agent_key):
 
 
 def test_maintenance_is_a_recurring_daily_agent():
-    source, display_name, schedule_kind = AGENT_SOURCES["maintenance"]
+    source, display_name, schedule_kind, _toolsets = AGENT_SOURCES["maintenance"]
     assert source == "maintenance/bl-site-package-maintenance.prompt"
     assert display_name == "Website Maintenance"
     # Availability and publish-drift checks are only meaningful checked often;
@@ -76,7 +76,7 @@ def test_maintenance_prompt_states_its_boundaries():
 
 
 def test_product_sheets_is_a_recurring_daily_agent():
-    source, display_name, schedule_kind = AGENT_SOURCES["product-sheets"]
+    source, display_name, schedule_kind, _toolsets = AGENT_SOURCES["product-sheets"]
     assert source == "product-sheets/bl-site-package-product-sheets.prompt"
     assert display_name == "Product Sheet Writer"
     # The queue is thousands of products long and a run takes ten, so this is
@@ -133,6 +133,20 @@ def test_product_sheets_prompt_requires_verifying_a_source_before_using_it():
     assert "se *parece*" in text or "se parece" in text
 
 
+def test_product_sheets_prompt_forbids_scripting_the_tools():
+    text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
+    # A run under the research workflow wrote /opt/data/product_job.py and tried
+    # to drive bl_site_product from Python: terminal refused the heredoc,
+    # execute_code is blocked for cron jobs with no approver, and the pass
+    # produced zero sheets. Describing a repetitive procedure invites a model to
+    # automate it, so the prompt has to close that door explicitly.
+    assert "No escribas scripts" in text
+    assert "execute_code" in text
+    # The wording moved when the batch became a one-at-a-time cursor; what has
+    # to survive is that the prompt says work happens per product, not in bulk.
+    assert "un producto cada vez" in text
+
+
 def test_product_sheets_prompt_forbids_shrinking_a_sheet():
     text = (REPO_ROOT / AGENT_SOURCES["product-sheets"][0]).read_text(encoding="utf-8")
     # The first production run rewrote ten sheets to roughly half the length of
@@ -148,7 +162,7 @@ def test_product_sheets_prompt_forbids_shrinking_a_sheet():
 
 
 def test_shorts_is_a_recurring_daily_agent():
-    source, display_name, schedule_kind = AGENT_SOURCES["shorts"]
+    source, display_name, schedule_kind, _toolsets = AGENT_SOURCES["shorts"]
     assert source == "shorts/bl-site-package-shorts.prompt"
     assert display_name == "Social Shorts"
     # Goes [SILENT] once every post carries the sentinel, so daily is safe.

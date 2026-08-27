@@ -13,6 +13,25 @@ import urllib.error
 
 import pytest
 
+
+@pytest.fixture
+def as_tool():
+    """Run a test's direct calls as if the registry had dispatched them.
+
+    The tool refuses scripted callers, and a test is one. The refusal has its
+    own test below; everything else is about the logic behind it.
+    """
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    token = _AS_TOOL.set(True)
+    yield
+    _AS_TOOL.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _dispatched_as_tool(as_tool):
+    yield
+
 from tools import bl_site_product_tool as mod
 
 SITE = "https://cliente.example"
@@ -51,24 +70,76 @@ def wire(monkeypatch, response=None, error=None):
 
 def test_reports_a_profile_without_a_site(monkeypatch):
     monkeypatch.setattr(mod, "_get_site_credentials", lambda: (None, None))
-    assert "BL_SITE_URL" in mod.bl_site_product(action="next_batch")
+    assert "BL_SITE_URL" in mod.bl_site_product(action="next_product")
 
 
-def test_next_batch_passes_the_queue_through(monkeypatch):
-    queue = {"pending": [{"sku": "78276"}], "review": [], "totals": {"owned": 0}}
-    wire(monkeypatch, response=queue)
+def wire_routes(monkeypatch, routes):
+    """Answer each request by the first route fragment its URL contains."""
+    urls = []
 
-    assert json.loads(mod.bl_site_product(action="next_batch")) == queue
+    def _request(method, url, token, body=None):
+        urls.append(url)
+        for fragment, response in routes.items():
+            if fragment in url:
+                return response
+        raise AssertionError(f"unexpected request to {url}")
+
+    monkeypatch.setattr(mod, "_request", _request)
+    return urls
 
 
-def test_next_batch_is_bounded(monkeypatch):
-    # A queue longer than the agent can hold in mind is not a useful batch.
-    sent = wire(monkeypatch, response={})
-    mod.bl_site_product(action="next_batch", limit=500)
-    assert f"limit={mod.MAX_BATCH}" in sent["url"]
+def test_next_product_hands_over_one_product_with_its_facts(monkeypatch):
+    # One product, its material already attached: there is no list to iterate
+    # over and no second call needed before work can start.
+    urls = wire_routes(
+        monkeypatch,
+        {
+            "/queue": {
+                "pending": [{"sku": "78276"}],
+                "review": [{"sku": "99999"}],
+                "totals": {"owned": 12},
+            },
+            "/78276": FEED_SHEET,
+        },
+    )
 
-    mod.bl_site_product(action="next_batch", limit=0)
-    assert "limit=1" in sent["url"]
+    result = json.loads(mod.bl_site_product(action="next_product"))
+
+    assert result["sku"] == "78276"
+    assert result["kind"] == "pending"
+    assert result["feed"] == FEED_SHEET["feed"]
+    assert result["totals"] == {"owned": 12}
+    assert "next_product" in result["next_step"]
+    # Never asks for more than the one product it is about to hand over.
+    assert any("limit=1" in u for u in urls)
+
+
+def test_next_product_falls_back_to_a_drifted_sheet(monkeypatch):
+    # Nothing unwritten left: re-checking a sheet the feed moved under is the
+    # next most valuable thing to do, not a reason to stop.
+    wire_routes(
+        monkeypatch,
+        {
+            "/queue": {"pending": [], "review": [{"sku": "78276"}], "totals": {}},
+            "/78276": FEED_SHEET,
+        },
+    )
+
+    result = json.loads(mod.bl_site_product(action="next_product"))
+    assert result["kind"] == "review"
+    assert result["sku"] == "78276"
+
+
+def test_next_product_says_so_when_the_queue_is_empty(monkeypatch):
+    # An empty queue is an outcome to report, not an error to work around.
+    wire_routes(
+        monkeypatch, {"/queue": {"pending": [], "review": [], "totals": {"owned": 90}}}
+    )
+
+    result = json.loads(mod.bl_site_product(action="next_product"))
+    assert result["done"] is True
+    assert result["product"] is None
+    assert result["totals"] == {"owned": 90}
 
 
 def test_get_sheet_returns_the_feed_material(monkeypatch):
@@ -229,3 +300,38 @@ def test_a_full_write_still_carries_both(monkeypatch):
     assert sent["body"]["display_name"] == "T"
     assert sent["body"]["description_md"] == "B"
     assert sent["body"]["status"] == "owned"
+
+
+def test_bl_site_product_refuses_to_run_from_a_script():
+    # The boundary that the prompt could not hold. A cron agent wrote
+    # /opt/data/product_batch.py and drove this function in a loop: terminal
+    # blocked the heredoc, execute_code blocked outright, but running a file it
+    # had just written was uncovered, and a whole batch went through with no
+    # per-product judgement. Telling it not to only moved the attempt.
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    # Step outside the tool-call context the other tests run in — a script has
+    # no such context, which is the whole point.
+    token = _AS_TOOL.set(False)
+    try:
+        out = mod.bl_site_product(action="next_product")
+    finally:
+        _AS_TOOL.reset(token)
+    assert "no desde un script" in out
+
+
+def test_bl_site_product_works_when_dispatched_as_a_tool(monkeypatch):
+    # The same call must still work through the registry, or the guard would
+    # break the agent it is meant to keep honest.
+    from tools.registry import registry
+
+    seen = {}
+
+    def fake(*a, **k):
+        seen["ran"] = True
+        return "ok"
+
+    monkeypatch.setattr(mod, "bl_site_product", fake)
+    entry = registry.get_entry("bl_site_product")
+    entry.handler({"action": "verify"})
+    assert seen.get("ran") is True

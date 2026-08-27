@@ -192,27 +192,27 @@ def judge(candidate: dict, ours: dict) -> dict:
         and not same_gtin(our_gtin, their_gtin)
         and not same_item_different_packaging(our_gtin, their_gtin)
     ):
-        return {"verdict": "rejected", "tier": None,
+        return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                 "reason": f"la página declara el EAN {their_gtin}, no el nuestro ({our_gtin})"}
     if our_ref and their_ref and normalize_ref(our_ref) != normalize_ref(their_ref):
-        return {"verdict": "rejected", "tier": None,
+        return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                 "reason": f"la referencia de la página ({their_ref}) no es la nuestra ({our_ref})"}
 
     if our_gtin and their_gtin and same_gtin(our_gtin, their_gtin):
         if not gtin_checksum_valid(their_gtin):
-            return {"verdict": "rejected", "tier": None,
+            return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                     "reason": f"el EAN de la página ({their_gtin}) no pasa su dígito de control"}
-        return {"verdict": "verified", "tier": "gtin",
+        return {"verdict": "verified", "outcome": "verified", "tier": "gtin",
                 "reason": f"EAN coincidente y válido ({their_gtin})"}
 
     if our_ref and their_ref and normalize_ref(our_ref) == normalize_ref(their_ref):
         if our_brand and their_brand and normalize_ref(our_brand) != normalize_ref(their_brand):
-            return {"verdict": "rejected", "tier": None,
+            return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                     "reason": f"misma referencia pero otra marca ({their_brand} ≠ {our_brand})"}
-        return {"verdict": "verified", "tier": "mpn",
+        return {"verdict": "verified", "outcome": "verified", "tier": "mpn",
                 "reason": f"referencia de fabricante coincidente ({their_ref})"}
 
-    return {"verdict": "rejected", "tier": None,
+    return {"verdict": "rejected", "outcome": "unverifiable", "tier": None,
             "reason": "la página no publica un EAN ni una referencia que podamos comparar"}
 
 
@@ -272,25 +272,25 @@ def judge_by_text(html: str, ours: dict) -> dict:
     text = re.sub(r"<[^>]+>", " ", html)
 
     if looks_like_a_listing(text, ours.get("gtin")):
-        return {"verdict": "rejected", "tier": None,
+        return {"verdict": "rejected", "outcome": "listing", "tier": None,
                 "reason": "la página lista muchos productos distintos, así que no se puede "
                           "saber qué texto es de este"}
 
     our_gtin = ours.get("gtin")
     if our_gtin and any(same_gtin(our_gtin, e) for e in _distinct_eans(text)):
-        return {"verdict": "verified", "tier": "gtin-text",
+        return {"verdict": "verified", "outcome": "verified", "tier": "gtin-text",
                 "reason": f"la página imprime nuestro EAN ({our_gtin})"}
 
     our_ref = ours.get("mpn")
     if our_ref and text_mentions_reference(text, our_ref):
         brand = ours.get("brand")
         if brand and not re.search(re.escape(brand), text, re.I):
-            return {"verdict": "rejected", "tier": None,
+            return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                     "reason": f"aparece la referencia {our_ref} pero la marca {brand} no"}
-        return {"verdict": "verified", "tier": "mpn-text",
+        return {"verdict": "verified", "outcome": "verified", "tier": "mpn-text",
                 "reason": f"la página imprime nuestra referencia ({our_ref}) y la marca"}
 
-    return {"verdict": "rejected", "tier": None,
+    return {"verdict": "rejected", "outcome": "unverifiable", "tier": None,
             "reason": "la página no menciona ni nuestro EAN ni nuestra referencia"}
 
 
@@ -337,10 +337,34 @@ def extract_tables(html: str, limit: int = 40) -> dict:
     return dict(list(specs.items())[:limit])
 
 
+class FetchRefused(Exception):
+    """The page would not be served to us, as opposed to not existing.
+
+    Retailers behind bot protection answer a plain urllib request with 403 or
+    429 while serving the same URL to a browser. That is a different fact from
+    a dead link or a genuine mismatch, and lumping them together hid how much
+    research was being lost: a run reports "nothing to add" identically whether
+    the source had nothing or simply would not open.
+    """
+
+    def __init__(self, status: int):
+        self.status = status
+        super().__init__(f"HTTP {status}")
+
+
+# Statuses that mean "we were turned away", not "there is nothing here".
+REFUSING_STATUSES = {401, 402, 403, 405, 406, 409, 429, 451}
+
+
 def _fetch(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
-        return resp.read(MAX_PAGE_BYTES).decode("utf-8", errors="replace")
+    try:
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+            return resp.read(MAX_PAGE_BYTES).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as err:
+        if err.code in REFUSING_STATUSES:
+            raise FetchRefused(err.code) from err
+        raise
 
 
 # --- Identifying a dead URL from its last archived snapshot ------------------
@@ -386,16 +410,23 @@ def judge_archived_snapshot(dead_url: str, ours: dict) -> dict:
     snapshot_url = wayback_snapshot_url(dead_url)
     if not snapshot_url:
         return {
-            "verdict": "rejected", "tier": None,
+            "verdict": "rejected", "outcome": "unreachable", "tier": None,
             "reason": "no hay una copia archivada de esta URL en Wayback Machine",
             "url": dead_url,
         }
 
     try:
         html = _fetch(snapshot_url)
+    except FetchRefused as err:
+        return {
+            "verdict": "rejected", "outcome": "blocked", "tier": None,
+            "http_status": err.status,
+            "reason": f"Wayback Machine nos rechaza el acceso a la copia (HTTP {err.status})",
+            "url": dead_url, "snapshot_url": snapshot_url,
+        }
     except Exception as err:  # noqa: BLE001
         return {
-            "verdict": "rejected", "tier": None,
+            "verdict": "rejected", "outcome": "unreachable", "tier": None,
             "reason": f"no se pudo leer la copia archivada: {err}",
             "url": dead_url, "snapshot_url": snapshot_url,
         }
@@ -434,6 +465,14 @@ def _our_product(sku: str) -> dict:
 
 def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = None) -> str:
     from tools.registry import tool_error
+    from tools.bl_site_product_tool import _refuse_if_scripted
+
+    # Same boundary as bl_site_product: verification is per-candidate work, and
+    # a script driving it in a loop is an agent skipping the judgement it is
+    # here to apply.
+    scripted = _refuse_if_scripted()
+    if scripted:
+        return scripted
 
     if action not in ("verify", "verify_dead_url"):
         return tool_error(f"Acción desconocida '{action}'. Usa 'verify' o 'verify_dead_url'.")
@@ -450,7 +489,7 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
     if action == "verify_dead_url":
         if not ours.get("gtin") and not ours.get("mpn"):
             return json.dumps({
-                "verdict": "rejected", "tier": None,
+                "verdict": "rejected", "outcome": "no_identifiers", "tier": None,
                 "reason": "este producto no tiene EAN ni referencia en el feed, así que "
                           "no hay forma de comprobar que la URL archivada hablara de él",
                 "url": url,
@@ -462,6 +501,7 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
             {
                 "verdict": "rejected",
                 "tier": None,
+                "outcome": "no_identifiers",
                 "reason": "este producto no tiene EAN ni referencia en el feed, así que "
                           "no hay forma de comprobar que una página hable de él",
                 "url": url,
@@ -471,9 +511,22 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
 
     try:
         html = _fetch(url)
+    except FetchRefused as err:
+        # Worth telling apart in the run report: this source existed and was
+        # withheld, so a run full of these is a tooling limit, not a catalogue
+        # with nothing left to add.
+        return json.dumps(
+            {"verdict": "rejected", "outcome": "blocked", "tier": None,
+             "http_status": err.status,
+             "reason": f"la página nos rechaza el acceso (HTTP {err.status}); "
+                       "probablemente protección anti-bot. No es que el producto "
+                       "no coincida: no hemos podido leerla.",
+             "url": url},
+            ensure_ascii=False,
+        )
     except Exception as err:  # noqa: BLE001
         return json.dumps(
-            {"verdict": "rejected", "tier": None,
+            {"verdict": "rejected", "outcome": "unreachable", "tier": None,
              "reason": f"no se pudo leer la página: {err}", "url": url},
             ensure_ascii=False,
         )
@@ -522,6 +575,13 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
             "description": (description or "")[:4000] or None,
             "specs": dict(list(specs.items())[:40]),
         }
+        # Proving identity is not the same as having something to say. A page
+        # can be unmistakably our product and still carry no specifications and
+        # no prose — a bare shop listing. Reported apart from a useful match so
+        # a run can distinguish "the sources had nothing" from "we could not
+        # reach the sources", which reads identically in a skip line otherwise.
+        if not payload["found"]["specs"] and not payload["found"]["description"]:
+            payload["outcome"] = "verified_thin"
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -548,7 +608,19 @@ PRODUCT_ENRICH_SCHEMA = {
         "is deliberate: a product that merely resembles this one is how a false specification "
         "(or a wrong redirect target) gets published. Verify before using anything from it; "
         "if 'verify' finds no candidate, write the sheet from the distributor's data alone; "
-        "if 'verify_dead_url' rejects, do not propose a redirect for that URL from this signal."
+        "if 'verify_dead_url' rejects, do not propose a redirect for that URL from this signal. "
+        "Every answer carries an 'outcome' saying which of these happened, and they are not "
+        "the same fact: 'verified' (a usable match), 'verified_thin' (definitely our product, "
+        "but the page publishes no specifications worth taking), 'blocked' (the page refused "
+        "us — HTTP 403/429, bot protection — so it was never read and might well have been "
+        "useful), 'unreachable' (dead link, timeout, or — for 'verify_dead_url' only — no "
+        "Wayback Machine snapshot exists at all), 'mismatch' (a different product), "
+        "'unverifiable' (the page publishes no barcode or reference to compare), 'listing' "
+        "(a category page covering many products), 'no_identifiers' (our own catalogue has "
+        "neither barcode nor reference for this product, so nothing can be checked). "
+        "Report the tally of these at the end of a run: 'blocked' is a limit of our tooling "
+        "and 'verified_thin' is a limit of the sources, and telling them apart is what says "
+        "whether better fetching would buy anything."
     ),
     "parameters": {
         "type": "object",
@@ -571,15 +643,19 @@ PRODUCT_ENRICH_SCHEMA = {
     },
 }
 
+from tools.bl_site_product_tool import _tool_call  # noqa: E402
 from tools.registry import registry  # noqa: E402
 
 registry.register(
     name="product_enrich",
     toolset="bl_site_product",
     schema=PRODUCT_ENRICH_SCHEMA,
-    handler=lambda args, **kw: product_enrich(
-        action=args.get("action", ""),
-        sku=args.get("sku"),
-        url=args.get("url"),
+    handler=lambda args, **kw: _tool_call(
+        lambda a: product_enrich(
+            action=a.get("action", ""),
+            sku=a.get("sku"),
+            url=a.get("url"),
+        ),
+        args,
     ),
 )

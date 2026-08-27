@@ -9,8 +9,29 @@ as good enough.
 """
 
 import json
+import urllib.error
+import urllib.request
 
 import pytest
+
+
+@pytest.fixture
+def as_tool():
+    """Run a test's direct calls as if the registry had dispatched them.
+
+    The tool refuses scripted callers, and a test is one. The refusal has its
+    own test below; everything else is about the logic behind it.
+    """
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    token = _AS_TOOL.set(True)
+    yield
+    _AS_TOOL.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _dispatched_as_tool(as_tool):
+    yield
 
 from tools import product_enrich_tool as mod
 
@@ -303,6 +324,116 @@ def test_definition_lists_count_as_specs_too():
     assert mod.extract_tables(html)["Peso"] == "16,5 kg"
 
 
+def test_product_enrich_refuses_to_run_from_a_script():
+    # The boundary that the prompt could not hold. A cron agent wrote
+    # /opt/data/product_batch.py and drove this function in a loop: terminal
+    # blocked the heredoc, execute_code blocked outright, but running a file it
+    # had just written was uncovered, and a whole batch went through with no
+    # per-product judgement. Telling it not to only moved the attempt.
+    from tools.bl_site_product_tool import _AS_TOOL
+
+    # Step outside the tool-call context the other tests run in — a script has
+    # no such context, which is the whole point.
+    token = _AS_TOOL.set(False)
+    try:
+        out = mod.product_enrich(action="verify")
+    finally:
+        _AS_TOOL.reset(token)
+    assert "no desde un script" in out
+
+
+def test_product_enrich_works_when_dispatched_as_a_tool(monkeypatch):
+    # The same call must still work through the registry, or the guard would
+    # break the agent it is meant to keep honest.
+    from tools.registry import registry
+
+    seen = {}
+
+    def fake(*a, **k):
+        seen["ran"] = True
+        return "ok"
+
+    monkeypatch.setattr(mod, "product_enrich", fake)
+    entry = registry.get_entry("product_enrich")
+    entry.handler({"action": "verify"})
+    assert seen.get("ran") is True
+
+
+# --- outcome codes -----------------------------------------------------------
+#
+# Every rejection used to read the same from the outside, so a run could not
+# say whether the sources had nothing to add or simply would not open. A
+# production run reported "el texto del feed ya era completo" for five products
+# while noting in passing that pages had answered 403 — two very different
+# facts wearing one label.
+
+
+def test_a_page_that_refuses_us_is_not_a_mismatch(monkeypatch):
+    def refuse(*_a, **_k):
+        raise urllib.error.HTTPError("https://x.test/p", 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", refuse)
+
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["verdict"] == "rejected"
+    assert out["outcome"] == "blocked"
+    assert out["http_status"] == 403
+    # The distinction has to survive into the reason the agent reads, or it
+    # will report the product as having nothing to add.
+    assert "no hemos podido leerla" in out["reason"]
+
+
+def test_a_dead_link_is_unreachable_rather_than_blocked(monkeypatch):
+    def boom(_url):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(mod, "_fetch", boom)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "unreachable"
+
+
+def test_a_404_is_unreachable_not_a_refusal(monkeypatch):
+    # Only the statuses that mean "we were turned away" count as blocked;
+    # a missing page is genuinely missing.
+    def gone(*_a, **_k):
+        raise urllib.error.HTTPError("https://x.test/p", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", gone)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "unreachable"
+
+
+def test_a_matching_page_with_nothing_on_it_is_thin(monkeypatch):
+    # Proving identity is not the same as having something to say.
+    bare = '''<html><body><script type="application/ld+json">
+    {"@type": "Product", "name": "Destructora", "gtin13": "50043859629256"}
+    </script></body></html>'''
+    monkeypatch.setattr(mod, "_fetch", lambda _url: bare)
+
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["verdict"] == "verified"
+    assert out["outcome"] == "verified_thin"
+
+
+def test_a_useful_match_is_plainly_verified(monkeypatch):
+    monkeypatch.setattr(mod, "_fetch", lambda _url: HTML)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "verified"
+
+
+def test_a_different_product_is_a_mismatch(monkeypatch):
+    wrong = HTML.replace("50043859629256", "50043859629999")
+    monkeypatch.setattr(mod, "_fetch", lambda _url: wrong)
+    out = json.loads(mod.product_enrich(action="verify", sku="78276", url="https://x.test/p"))
+    assert out["outcome"] == "mismatch"
+
+
+def test_our_own_product_lacking_identifiers_says_so(monkeypatch):
+    monkeypatch.setattr(mod, "_our_product", lambda _sku: {"gtin": None, "mpn": None, "brand": "X"})
+    out = json.loads(mod.product_enrich(action="verify", sku="1", url="https://x.test/p"))
+    assert out["outcome"] == "no_identifiers"
+
+
 # --- verify_dead_url: identity from a Wayback snapshot ----------------------
 
 
@@ -329,7 +460,27 @@ def test_no_snapshot_is_a_clean_rejection_not_a_crash(monkeypatch):
     )
     r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
     assert r["verdict"] == "rejected"
+    assert r["outcome"] == "unreachable"
     assert "archivada" in r["reason"]
+
+
+def test_wayback_refusing_us_is_blocked_not_unreachable(monkeypatch):
+    # Same distinction as the live-candidate path: a source that exists and
+    # withheld itself is a tooling limit, not evidence of anything.
+    def fake_urlopen(req, timeout=None):
+        if "wayback/available" in req.full_url:
+            return _FakeResponse(json.dumps({
+                "archived_snapshots": {
+                    "closest": {"available": True, "url": "https://web.archive.org/web/2025/z"}
+                }
+            }).encode("utf-8"))
+        raise urllib.error.HTTPError("https://web.archive.org/web/2025/z", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
+    assert r["verdict"] == "rejected"
+    assert r["outcome"] == "blocked"
+    assert r["http_status"] == 429
 
 
 def test_archived_snapshot_with_matching_gtin_verifies(monkeypatch):
