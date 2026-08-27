@@ -367,6 +367,87 @@ def _fetch(url: str) -> str:
         raise
 
 
+# --- Identifying a dead URL from its last archived snapshot ------------------
+#
+# A URL that now 404s has no live content to fetch, which is what `verify`
+# above assumes it has. The Wayback Machine's last snapshot of that same URL is
+# ordinary HTML, so the identity judgment already built above — checksum-valid
+# GTIN match, exact MPN match, contradiction-outranks-match — applies to it
+# unchanged; nothing about `judge`/`judge_by_text` cares where the HTML came
+# from. This is the one new entry point needed to reuse them against a dead
+# page's history instead of a live candidate's present.
+
+
+def wayback_snapshot_url(dead_url: str, timeout: int = FETCH_TIMEOUT) -> Optional[str]:
+    """The closest-to-death archived snapshot URL for `dead_url`, or None.
+
+    No API key needed for either call. Returns None on any failure (no
+    snapshot exists, archive.org unreachable) rather than raising — a page
+    that was never archived is a normal, boring answer, not an error.
+    """
+    api_url = "https://archive.org/wayback/available?url=" + urllib.parse.quote(dead_url, safe="")
+    try:
+        req = urllib.request.Request(api_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read(1_000_000).decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        return None
+    snapshot = (data or {}).get("archived_snapshots", {}).get("closest")
+    if not snapshot or not snapshot.get("available"):
+        return None
+    return snapshot.get("url")
+
+
+def judge_archived_snapshot(dead_url: str, ours: dict) -> dict:
+    """Identity of a now-dead URL, judged from its last Wayback snapshot.
+
+    Same verdict shape and same trust hierarchy as `verify`'s live path:
+    structured-data (`judge`) first, falling back to `judge_by_text` only when
+    the archived page carried no schema.org Product block. A `judge_by_text`
+    result is exactly as low-trust here as it is for a live candidate — it is
+    not upgraded just because the source is an archive.
+    """
+    snapshot_url = wayback_snapshot_url(dead_url)
+    if not snapshot_url:
+        return {
+            "verdict": "rejected", "outcome": "unreachable", "tier": None,
+            "reason": "no hay una copia archivada de esta URL en Wayback Machine",
+            "url": dead_url,
+        }
+
+    try:
+        html = _fetch(snapshot_url)
+    except FetchRefused as err:
+        return {
+            "verdict": "rejected", "outcome": "blocked", "tier": None,
+            "http_status": err.status,
+            "reason": f"Wayback Machine nos rechaza el acceso a la copia (HTTP {err.status})",
+            "url": dead_url, "snapshot_url": snapshot_url,
+        }
+    except Exception as err:  # noqa: BLE001
+        return {
+            "verdict": "rejected", "outcome": "unreachable", "tier": None,
+            "reason": f"no se pudo leer la copia archivada: {err}",
+            "url": dead_url, "snapshot_url": snapshot_url,
+        }
+
+    result = None
+    for candidate in extract_products(html):
+        verdict_ = judge(candidate, ours)
+        if verdict_["verdict"] == "verified":
+            result = verdict_
+            break
+        if result is None:
+            result = verdict_
+
+    if result is None or result["verdict"] != "verified":
+        text_result = judge_by_text(html, ours)
+        if text_result["verdict"] == "verified" or result is None:
+            result = text_result
+
+    return {**result, "url": dead_url, "snapshot_url": snapshot_url}
+
+
 def _our_product(sku: str) -> dict:
     site_url, password = _get_site_credentials()
     if not site_url or not password:
@@ -393,10 +474,10 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
     if scripted:
         return scripted
 
-    if action != "verify":
-        return tool_error(f"Acción desconocida '{action}'. Usa 'verify'.")
+    if action not in ("verify", "verify_dead_url"):
+        return tool_error(f"Acción desconocida '{action}'. Usa 'verify' o 'verify_dead_url'.")
     if not sku or not url:
-        return tool_error("verify requiere 'sku' y 'url'.")
+        return tool_error(f"{action} requiere 'sku' y 'url'.")
     if not re.match(r"^https?://", url, re.I):
         return tool_error("'url' debe ser una URL http(s).")
 
@@ -404,6 +485,16 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
         ours = _our_product(sku)
     except Exception as err:  # noqa: BLE001
         return tool_error(f"No se pudo leer el producto {sku}: {err}")
+
+    if action == "verify_dead_url":
+        if not ours.get("gtin") and not ours.get("mpn"):
+            return json.dumps({
+                "verdict": "rejected", "outcome": "no_identifiers", "tier": None,
+                "reason": "este producto no tiene EAN ni referencia en el feed, así que "
+                          "no hay forma de comprobar que la URL archivada hablara de él",
+                "url": url,
+            }, ensure_ascii=False)
+        return json.dumps(judge_archived_snapshot(url, ours), ensure_ascii=False)
 
     if not ours.get("gtin") and not ours.get("mpn"):
         return json.dumps(
@@ -501,20 +592,29 @@ PRODUCT_ENRICH_SCHEMA = {
         "does, hand back the facts that page publishes. "
         "Use action='verify' with the product's 'sku' and the 'url' of a candidate page "
         "found by searching. "
-        "Identity is decided by code, not by you: the tool reads the product's barcode and "
-        "manufacturer reference from the client's own catalogue and compares them against "
-        "what the page publishes. A page is accepted only on a checksum-valid barcode match, "
-        "or on an exact manufacturer-reference match with the same brand. A page naming a "
-        "different barcode or reference is rejected however similar the name looks. "
+        "Use action='verify_dead_url' with 'sku' and 'url' set to a URL that now 404s on our "
+        "OWN site, to check whether it used to be this product's page — for redirect-mapping "
+        "a dead product URL, not for enriching content. It fetches the URL's last snapshot "
+        "from the Wayback Machine (no live content exists for a dead URL) and runs the exact "
+        "same identity check against it. Rejects with a reason (e.g. 'never archived') if "
+        "there is no snapshot to check. "
+        "Identity is decided by code, not by you, for BOTH actions: the tool reads the "
+        "product's barcode and manufacturer reference from the client's own catalogue and "
+        "compares them against what the page (or its archived snapshot) publishes. A match "
+        "is accepted only on a checksum-valid barcode match, or on an exact "
+        "manufacturer-reference match with the same brand. A page naming a different barcode "
+        "or reference is rejected however similar the name looks. "
         "On rejection you get a reason and NO content — there is nothing to quote, and that "
         "is deliberate: a product that merely resembles this one is how a false specification "
-        "gets published. Verify a page before using anything from it, and if no candidate "
-        "verifies, write the sheet from the distributor's data alone. "
+        "(or a wrong redirect target) gets published. Verify before using anything from it; "
+        "if 'verify' finds no candidate, write the sheet from the distributor's data alone; "
+        "if 'verify_dead_url' rejects, do not propose a redirect for that URL from this signal. "
         "Every answer carries an 'outcome' saying which of these happened, and they are not "
         "the same fact: 'verified' (a usable match), 'verified_thin' (definitely our product, "
         "but the page publishes no specifications worth taking), 'blocked' (the page refused "
         "us — HTTP 403/429, bot protection — so it was never read and might well have been "
-        "useful), 'unreachable' (dead link, timeout), 'mismatch' (a different product), "
+        "useful), 'unreachable' (dead link, timeout, or — for 'verify_dead_url' only — no "
+        "Wayback Machine snapshot exists at all), 'mismatch' (a different product), "
         "'unverifiable' (the page publishes no barcode or reference to compare), 'listing' "
         "(a category page covering many products), 'no_identifiers' (our own catalogue has "
         "neither barcode nor reference for this product, so nothing can be checked). "
@@ -525,12 +625,18 @@ PRODUCT_ENRICH_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["verify"], "description": "Only 'verify'."},
+            "action": {
+                "type": "string",
+                "enum": ["verify", "verify_dead_url"],
+                "description": "'verify' for a live candidate page found by searching; "
+                               "'verify_dead_url' for one of OUR OWN URLs that now 404s.",
+            },
             "sku": {"type": "string", "description": "The client's product code."},
             "url": {
                 "type": "string",
-                "description": "Candidate page to check, from a web search. Prefer the "
-                               "manufacturer's own site.",
+                "description": "For 'verify': a candidate page to check, from a web search "
+                               "(prefer the manufacturer's own site). For 'verify_dead_url': "
+                               "our own dead URL to look up in the Wayback Machine.",
             },
         },
         "required": ["action", "sku", "url"],

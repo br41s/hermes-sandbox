@@ -432,3 +432,97 @@ def test_our_own_product_lacking_identifiers_says_so(monkeypatch):
     monkeypatch.setattr(mod, "_our_product", lambda _sku: {"gtin": None, "mpn": None, "brand": "X"})
     out = json.loads(mod.product_enrich(action="verify", sku="1", url="https://x.test/p"))
     assert out["outcome"] == "no_identifiers"
+
+
+# --- verify_dead_url: identity from a Wayback snapshot ----------------------
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self, _n=None):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_no_snapshot_is_a_clean_rejection_not_a_crash(monkeypatch):
+    monkeypatch.setattr(
+        mod.urllib.request, "urlopen",
+        lambda req, timeout=None: _FakeResponse(
+            json.dumps({"archived_snapshots": {}}).encode("utf-8")
+        ),
+    )
+    r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
+    assert r["verdict"] == "rejected"
+    assert r["outcome"] == "unreachable"
+    assert "archivada" in r["reason"]
+
+
+def test_wayback_refusing_us_is_blocked_not_unreachable(monkeypatch):
+    # Same distinction as the live-candidate path: a source that exists and
+    # withheld itself is a tooling limit, not evidence of anything.
+    def fake_urlopen(req, timeout=None):
+        if "wayback/available" in req.full_url:
+            return _FakeResponse(json.dumps({
+                "archived_snapshots": {
+                    "closest": {"available": True, "url": "https://web.archive.org/web/2025/z"}
+                }
+            }).encode("utf-8"))
+        raise urllib.error.HTTPError("https://web.archive.org/web/2025/z", 429, "Too Many Requests", {}, None)
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
+    assert r["verdict"] == "rejected"
+    assert r["outcome"] == "blocked"
+    assert r["http_status"] == 429
+
+
+def test_archived_snapshot_with_matching_gtin_verifies(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _FakeResponse(json.dumps({
+                "archived_snapshots": {
+                    "closest": {"available": True, "url": "https://web.archive.org/web/2025/x"}
+                }
+            }).encode("utf-8"))
+        html = (
+            '<script type="application/ld+json">'
+            '{"@type": "Product", "gtin13": "50043859629256", "name": "Fellowes 99Ci"}'
+            "</script>"
+        )
+        return _FakeResponse(html.encode("utf-8"))
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
+    assert r["verdict"] == "verified"
+    assert r["tier"] == "gtin"
+    assert r["snapshot_url"] == "https://web.archive.org/web/2025/x"
+
+
+def test_archived_snapshot_naming_a_different_product_is_rejected(monkeypatch):
+    def fake_urlopen(req, timeout=None):
+        if "wayback/available" in req.full_url:
+            return _FakeResponse(json.dumps({
+                "archived_snapshots": {
+                    "closest": {"available": True, "url": "https://web.archive.org/web/2025/y"}
+                }
+            }).encode("utf-8"))
+        html = (
+            '<script type="application/ld+json">'
+            '{"@type": "Product", "gtin13": "50043859629999", "name": "Fellowes 99Ci"}'
+            "</script>"
+        )
+        return _FakeResponse(html.encode("utf-8"))
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    r = mod.judge_archived_snapshot("https://shop.example/producto/gone.html", OURS)
+    assert r["verdict"] == "rejected"

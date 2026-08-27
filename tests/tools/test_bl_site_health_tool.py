@@ -750,3 +750,65 @@ def test_tool_refuses_without_profile_credentials(monkeypatch):
 def _creds(monkeypatch):
     monkeypatch.setattr(health, "_get_site_credentials", lambda: (SITE, "pw"))
     monkeypatch.setattr(health, "_get_jwt", lambda url, pw: "tok")
+
+
+# --- redirect_candidates: run-to-run sitemap diff, two-run confirmation ----
+
+SITEMAP_TWO_URLS = (
+    "<urlset>"
+    f"<url><loc>{SITE}/</loc></url>"
+    f"<url><loc>{SITE}/productos/viejo.html</loc></url>"
+    "</urlset>"
+)
+SITEMAP_ONE_URL = f"<urlset><url><loc>{SITE}/</loc></url></urlset>"
+DEAD_PATH = SITE + "/productos/viejo.html"
+
+
+def test_first_run_ever_has_nothing_to_diff_against(monkeypatch):
+    result = run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    rc = result["redirect_candidates"]
+    assert rc["checked"] == 0
+    assert rc["confirmed_dead"] == []
+    assert rc["pending_confirmation"] == []
+
+
+def test_url_missing_next_run_and_dead_is_pending_not_confirmed(monkeypatch):
+    run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    result = run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    rc = result["redirect_candidates"]
+    assert rc["confirmed_dead"] == []
+    assert [c["url"] for c in rc["pending_confirmation"]] == [DEAD_PATH]
+
+
+def test_url_dead_on_two_separate_runs_is_confirmed(monkeypatch):
+    run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    result = run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    rc = result["redirect_candidates"]
+    assert [c["url"] for c in rc["confirmed_dead"]] == [DEAD_PATH]
+    assert rc["pending_confirmation"] == []
+
+
+def test_a_5xx_does_not_advance_or_reset_confirmation(monkeypatch):
+    run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    # Third run: the URL answers 503 instead of 404 — an outage, not evidence
+    # it is gone. Must not confirm, and must not erase the pending state either.
+    result = run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 503}})
+    rc = result["redirect_candidates"]
+    assert rc["confirmed_dead"] == []
+    # A URL absent from the current sitemap is still a disappeared candidate,
+    # so it's still checked — just not confirmed off a 5xx.
+    assert rc["checked"] == 1
+
+
+def test_url_reappearing_alive_clears_the_watch(monkeypatch):
+    run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    run(monkeypatch, sitemap=SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    # It comes back into the sitemap on the next run — no longer "disappeared"
+    # at all, so it shouldn't be checked or flagged.
+    result = run(monkeypatch, sitemap=SITEMAP_TWO_URLS)
+    rc = result["redirect_candidates"]
+    assert rc["checked"] == 0
+    assert rc["confirmed_dead"] == []
+    assert rc["pending_confirmation"] == []

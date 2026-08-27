@@ -30,6 +30,7 @@ Lo que devuelve, y qué significa cada cosa:
 | `duplicate_content` | Títulos o descripciones casi idénticos entre páginas, y descripciones demasiado cortas | Avisar — NUNCA reescribas el texto |
 | `structured_data` | Bloques JSON-LD rotos o con campos obligatorios ausentes | Avisar — lo genera la plantilla, no tú |
 | `old_site_redirects` | Rutas de la web antigua que hoy no llevan a ninguna parte (`null` si no hay web antigua) | Avisar — un redirect es config de servidor |
+| `redirect_candidates` | URLs que estaban en el sitemap de ESTE MISMO sitio en una ejecución anterior y hoy han desaparecido y dan 404 | Avisar solo `confirmed_dead` (ver abajo) — un redirect es config de servidor |
 | `form_check` | Prueba mensual del formulario de contacto | Avisar solo si falló (ver abajo) |
 | `release` | Versión desplegada de bl-site-package frente a la última publicada en `main` | Avisar a BigLobster si `outdated` — al cliente NUNCA (ver abajo) |
 | `tls` | Días que le quedan al certificado | Avisar si `days_remaining` < `tls_warn_days` |
@@ -135,6 +136,16 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   que siguen circulando (Google, enlaces de terceros, tarjetas impresas) y hoy
   no llevan a ninguna parte. Un redirect se configura en el servidor, no desde
   el panel: es tarea de BigLobster. Da la lista con la URL antigua y la nueva.
+- `redirect_candidates.confirmed_dead` → aviso. Son URLs de ESTE MISMO sitio
+  (no de una web anterior) que aparecían en el sitemap hace una o más
+  ejecuciones y hoy han desaparecido y dan 404 — típicamente un producto
+  retirado del catálogo del distribuidor o una página eliminada. Confirmado
+  significa que ha dado 404 en dos ejecuciones distintas, no solo en esta; no
+  es un fallo pasajero. Igual que `old_site_redirects`, un redirect es config
+  de servidor, no algo que el panel API pueda escribir hoy: da la lista de
+  URLs y para. `redirect_candidates.pending_confirmation` NO se informa —
+  solo lleva una ejecución sin aparecer, puede ser una caída pasajera del
+  sitemap y se resuelve solo en el próximo ciclo si no era real.
 - `form_check` → **solo se informa si algo falló**. Si `submitted` es `false` o
   `persisted` es `false`, el formulario de contacto está perdiendo mensajes:
   incidencia grave, dilo en primera línea. Si fue bien, menciónalo únicamente
@@ -155,7 +166,8 @@ Responde exactamente `[SILENT]` si y solo si se cumple TODO esto:
 todo respondió 200, no hay `publish_drift`, no hay enlaces rotos, no hay
 problemas de imagen, no hay `social_contact_issues`, `structured_data.issues`
 está vacío, `duplicate_content` no tiene ningún par ni descripción corta,
-`old_site_redirects` es `null` o no tiene `dead_ends`, el `form_check` no
+`old_site_redirects` es `null` o no tiene `dead_ends`,
+`redirect_candidates.confirmed_dead` está vacío, el `form_check` no
 falló, `release.outdated` no es `true` y `release.deployed` no es `null`, el
 TLS está por encima del umbral, no faltan cabeceras, no hay páginas
 lentas ni pesadas, no has hecho ningún arreglo, y `report_due` es `false`.

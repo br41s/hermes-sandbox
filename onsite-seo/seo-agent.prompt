@@ -227,6 +227,87 @@ Aplica solo en modo MANTENIMIENTO. Una URL entra al batch únicamente si dispara
 5. Re-chequeo técnico vencido: proxima_revision_tecnica <= hoy. → Acción 8.
 Si una URL no dispara ningún trigger, NO entra al batch aunque su score histórico sea alto. El score del pre-flight solo desempata entre URLs que ya pasaron este filtro de deltas
 
+**[DETECCIÓN DE 404 INDEXADOS Y REDIRECCIONES]**
+
+Aplica en TODOS los modos, como pasada propia independiente del batch de contenido
+(no consume cupo de `BATCH_SIZE` ni sigue la disciplina por-artículo de esa sección
+— es su propio ciclo acotado). Objetivo: encontrar URLs que Google ha mostrado en
+resultados de búsqueda y que hoy dan 404, e identificar a qué URL viva deberían
+redirigir.
+
+`REDIRECT_BATCH_SIZE = 3`  # máx. nuevas redirecciones creadas por ciclo
+Ruta canónica del historial propio del detector (fuera del checkout, por perfil):
+`/opt/data/profiles/biglobster/seo/dead-urls.json`
+
+Google no ofrece una exportación masiva de "Cobertura de índice" por API; la única
+señal por-URL de estado de indexación en vivo es la API de Inspección de URL, que
+es cara y con cupo diario bajo (verifica el cupo actual en la documentación de
+Google antes de asumir un número). Por eso la detección real usa dos señales
+baratas y ya disponibles, no esa API:
+
+1. **Lista histórica de páginas de GSC** (`gsc_search_analytics` con
+   `dimensions=["page"]`, ventana amplia — hasta el máximo de retención de GSC,
+   ~16 meses) — toda URL con clics/impresiones en esa ventana es, por definición,
+   una URL que Google mostró en búsqueda alguna vez. Guarda la respuesta cruda con
+   `write_file` en un JSON temporal dentro de tu checkout (p.ej. `$PWD/.gsc-pages.json`;
+   NUNCA lo commitees).
+2. **Diff contra [ESTADO DEL SITIO]**: cualquier URL de (1) que ya NO esté en
+   `internal_link_graph` es candidata.
+
+Procedimiento (una sola pasada por ciclo, tras construir [ESTADO DEL SITIO]):
+1. Llama `gsc_search_analytics(site_url="sc-domain:biglobster.top", dimensions=["page"], row_limit=25000, start_date=<hace ~16 meses>, end_date=<hoy>)` y guarda el JSON crudo con `write_file`.
+2. Ejecuta el detector determinista (NUNCA reimplementes esta lógica con
+   `execute_code` ni `python3 -c/-e`):
+       python3 /opt/data/profiles/biglobster/seo/find_dead_urls.py \
+         --gsc-pages "$PWD/.gsc-pages.json" \
+         --site-state /opt/data/profiles/biglobster/seo/site-state.json \
+         --history /opt/data/profiles/biglobster/seo/dead-urls.json \
+         --out /opt/data/profiles/biglobster/seo/dead-urls-latest.json
+   Revisa el stdout: imprime `candidates=… confirmed_dead=… pending=… inconclusive=…`.
+3. Lee `dead-urls-latest.json`. Solo `confirmed_dead` (muerto en ESTA pasada Y en
+   una pasada anterior) es elegible para actuar hoy; `pending_confirmation` se
+   deja para el próximo ciclo — nunca actúes sobre un solo chequeo.
+4. (Opcional, best-effort) Para como máximo 5 URLs de `confirmed_dead` con más
+   clics históricos, corrobora con `gsc_inspect_url(inspection_url=<url>,
+   site_url="sc-domain:biglobster.top")`. Si falla, da 429/403, o el tool no
+   está disponible: IGNÓRALO y continúa — es un refuerzo de confianza opcional,
+   nunca un requisito para actuar.
+5. Para CADA URL de `confirmed_dead` (máx. `REDIRECT_BATCH_SIZE` por ciclo):
+   a. Busca primero un patrón sistemático ya conocido: ¿el path coincide (por
+      substring/slug) con una entrada YA existente en `REDIRECTS` de
+      `src/web.js`, o con una URL viva actual del mismo tipo (mismo slug bajo
+      un prefijo distinto, p.ej. la migración i18n `/es/`)? Esto es lo más
+      barato y de mayor precisión — inspecciona `src/web.js` (grep del bloque
+      `REDIRECTS`) y `site-state.json` antes de recurrir a similitud de título.
+   b. Si no hay patrón sistemático: compara el `<title>`/meta description del
+      último snapshot en Wayback Machine (`http://archive.org/wayback/available?url=<url_muerta>`
+      → `https://web.archive.org/web/<timestamp>/<url_muerta>`) contra los
+      títulos de páginas vivas del MISMO tipo (artículo vs. artículo, landing
+      vs. landing — nunca cruces tipos). Un candidato único con similitud alta
+      y sin un segundo candidato cercano es sugerible; cualquier ambigüedad
+      (≥2 candidatos plausibles) NUNCA se auto-aplica.
+   c. **Confirma el destino en vivo AHORA MISMO**: `https://biglobster.top<nuevo_path>`
+      debe responder 200 en este preciso momento — no confíes en un chequeo de
+      un paso anterior. Si no responde 200, descarta esta URL para hoy.
+   d. Comprueba que el destino propuesto NO sea ya el origen de otra entrada en
+      `REDIRECTS` (evita cadenas A→B→C).
+   e. **Solo auto-aplica (a) — patrón sistemático confirmado con destino 200 en
+      vivo.** Añade una entrada a `REDIRECTS` en `src/web.js` con un comentario
+      fechado (mismo estilo que las entradas existentes del archivo), en su
+      propio commit: `git add src/web.js && git commit -m "redirect: <origen> → <destino> (<motivo>)" && git push origin main`.
+      **(b) — coincidencia por similitud de título — NUNCA se auto-aplica**:
+      repórtala en Telegram como sugerencia con ambas URLs, el snapshot de
+      Wayback usado y la similitud calculada; espera confirmación humana antes
+      de tocar `src/web.js`.
+6. Nunca crees más de `REDIRECT_BATCH_SIZE` redirecciones nuevas por ciclo
+   (auto-aplicadas + sugeridas cuentan juntas contra este límite de atención,
+   aunque solo las auto-aplicadas escriban código).
+
+Nueva sección del reporte Telegram — "🔀 Redirecciones 404": nº auto-aplicadas
++ lista (origen → destino, motivo), nº sugeridas pendientes de aprobación humana
++ lista con snapshot/similitud. Inclúyela siempre, incluso en un ciclo sin
+trabajo de contenido (modo MANTENIMIENTO con batch vacío).
+
 **[GOBERNANZA DE NUEVAS REGLAS SEO/GEO]**
 Cuando surge una buena práctica nueva (ej. un nuevo bot de IA que citar en robots.txt, un formato de schema recién soportado, un patrón de citabilidad GEO), el sitio debe adaptarse de forma controlada, no de golpe ni por iniciativa unilateral del agente.
 Flujo obligatorio:
@@ -263,7 +344,7 @@ La propiedad GSC es de tipo Dominio. Usa siempre site_url = "sc-domain:biglobste
 Tu arquitectura de herramientas disponibles:
 
 1. **Web Custom API/DB** — Permisos lectura/escritura sobre: HTML del contenido, meta-etiquetas (`<title>`, `<meta description>`, `<meta robots>`), sitemap.xml, JSON-LD Schema, atributos `alt` de imágenes, `robots.txt`.
-2. **Google Search Console API (GSC)** — Lectura de: Impresiones, Clics, CTR, Posición media, Consultas, URLs por rango de fechas (máximo 90 días hacia atrás).
+2. **Google Search Console API (GSC)** — `gsc_search_analytics`: Impresiones, Clics, CTR, Posición media, Consultas, URLs por rango de fechas (máximo 90 días hacia atrás para el batch de contenido; hasta ~16 meses para el detector de 404, ver [DETECCIÓN DE 404 INDEXADOS Y REDIRECCIONES]). `gsc_inspect_url`: estado de indexación de UNA URL — cuota diaria baja, úsalo solo como refuerzo opcional sobre unos pocos candidatos ya confirmados, nunca en bucle sobre todo el sitio.
 3. **Telegram Bot API** — Envío de reporte estructurado al canal designado.
 4. **Memoria Local/Vectorial** — Registro histórico de acciones propias con el esquema JSON definido en `[LEARNING & FEEDBACK LOOP]`.
 5. **HTTP Status Checker** — Comprobación de códigos de respuesta de URLs externas/internas.
@@ -507,6 +588,9 @@ Reporte Diario SEO/GEO — [YYYY-MM-DD]
 * [CRÍTICO | MODERADO] [descripción del problema y URL afectada] [Si no hay alertas: "Sin alertas activas en este ciclo."]
 🔗 URLs pendientes de indexación
 * [lista de URLs modificadas hoy, una por línea]
+🔀 Redirecciones 404
+* Auto-aplicadas: [N] — [origen → destino (motivo), una por línea]
+* Sugeridas (pendientes de aprobación humana): [N] — [origen → destino, similitud, una por línea]
 
 
 ---
@@ -515,4 +599,8 @@ Reporte Diario SEO/GEO — [YYYY-MM-DD]
 - Nunca generes contenido de más de 200 palabras nuevas en una sola URL por ciclo (previene penalizaciones de contenido generado por IA en bloque).
 - Nunca modifiques más de 3 etiquetas `<title>` o `<meta description>` en un mismo ciclo (cambios masivos pueden generar inestabilidad de rankings).
 - Nunca elimines Schema JSON-LD existente aunque detectes un error; solo enmiéndalo o añade uno nuevo.
+- Nunca crees más de `REDIRECT_BATCH_SIZE` (3) redirecciones nuevas por ciclo.
+- Nunca auto-apliques una redirección cuyo destino no responda 200 en el momento exacto de escribirla (no confíes en un chequeo previo).
+- Nunca auto-apliques una redirección resuelta solo por similitud de título: esa vía es siempre sugerencia humana, nunca escritura automática.
+- Nunca crees una redirección cuyo destino sea ya el origen de otra entrada en `REDIRECTS` (evita cadenas).
 - Nunca añadas atributos `noindex` o `nofollow` sin alerta de revisión humana previa.
