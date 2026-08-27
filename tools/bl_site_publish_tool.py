@@ -141,7 +141,7 @@ def bl_site_publish(
         if action == "create_blog_post":
             if not title or not content:
                 return tool_error("create_blog_post requires 'title' and 'content'.")
-            payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "draft"}
+            payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "published"}
             if cta_url:
                 payload["cta_url"] = cta_url
                 payload["cta_label"] = cta_label or "Ver ficha original"
@@ -161,8 +161,8 @@ def bl_site_publish(
                 "success": True,
                 "id": result.get("id"),
                 "slug": result.get("slug"),
-                "status": "draft",
-                "note": "Saved as a draft — the client reviews and publishes it themselves.",
+                "status": "published",
+                "note": "Published immediately — live on the blog now.",
             })
 
         if action == "update_page_text":
@@ -258,8 +258,8 @@ BL_SITE_PUBLISH_SCHEMA = {
     "name": "bl_site_publish",
     "description": (
         "Publish content to the bl-site-package client site this profile is dedicated to. "
-        "Use action='create_blog_post' to save a new blog article as a draft (the client reviews "
-        "and publishes it from their own panel — never assume it's live). "
+        "Use action='create_blog_post' to publish a new blog article immediately — it goes live "
+        "on the client's blog right away, no draft/review step. "
         "Use action='update_page_text' to directly update one page-text field (e.g. "
         "'page_servicios_desc') — this applies immediately, no draft step, matching how the "
         "client's own built-in agent already edits page text. "
