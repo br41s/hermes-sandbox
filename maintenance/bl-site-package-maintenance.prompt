@@ -30,7 +30,7 @@ Lo que devuelve, y qué significa cada cosa:
 | `duplicate_content` | Títulos o descripciones casi idénticos entre páginas, y descripciones demasiado cortas | Avisar — NUNCA reescribas el texto |
 | `structured_data` | Bloques JSON-LD rotos o con campos obligatorios ausentes | Avisar — lo genera la plantilla, no tú |
 | `old_site_redirects` | Rutas de la web antigua que hoy no llevan a ninguna parte (`null` si no hay web antigua) | Avisar — un redirect es config de servidor |
-| `redirect_candidates` | URLs que estaban en el sitemap de ESTE MISMO sitio en una ejecución anterior y hoy han desaparecido y dan 404 | Avisar solo `confirmed_dead` (ver abajo) — un redirect es config de servidor |
+| `redirect_candidates` | URLs que estaban en el sitemap de ESTE MISMO sitio en una ejecución anterior y hoy han desaparecido y dan 404 | Arreglar `confirmed_dead` cuando sea un producto con EAN/referencia (ver abajo, punto 6); avisar el resto |
 | `form_check` | Prueba mensual del formulario de contacto | Avisar solo si falló (ver abajo) |
 | `release` | Versión desplegada de bl-site-package frente a la última publicada en `main` | Avisar a BigLobster si `outdated` — al cliente NUNCA (ver abajo) |
 | `tls` | Días que le quedan al certificado | Avisar si `days_remaining` < `tls_warn_days` |
@@ -67,6 +67,30 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
    Escribe `update_page_text` con `field: "site_url"` y `value: <BL_SITE_URL>`,
    exactamente el valor de la variable de entorno, sin barra final. Es el único
    campo de configuración no textual que puedes tocar, y solo en este caso.
+6. **Redirección de un producto retirado** (`redirect_candidates.confirmed_dead`
+   cuya URL sea de catálogo, `/productos/<slug>.html`) — esta es la ÚNICA
+   incidencia de esta lista que NO se arregla con `bl_site_publish`: usa
+   `bl_site_redirect`, una herramienta aparte. `REDIRECT_BATCH_SIZE = 3` por
+   ejecución, independiente del máximo de 5 arreglos de arriba (son
+   herramientas distintas, presupuestos distintos). Para cada URL, hasta el
+   límite:
+   a. `bl_site_redirect(action: "find_target", old_path: <url_confirmada_muerta>)`.
+   b. Si `found` es `false`: dilo como aviso normal (ver AVISOS) y para ahí —
+      NUNCA inventes un destino. Lo más habitual es que sea una página de
+      contenido (blog, no catálogo), que esta herramienta no puede resolver.
+   c. Si `found` es `true`: `bl_site_redirect(action: "propose", old_path:
+      ..., new_path: <el que devolvió find_target>, match_tier: <el que
+      devolvió find_target>, evidence: <el que devolvió find_target>)` — copia
+      `match_tier` y `evidence` TAL CUAL, nunca los inventes ni los ajustes.
+   d. Si `propose` tuvo éxito: `bl_site_redirect(action: "publish",
+      redirect_id: <el id devuelto por propose>)`. Publica siempre — para esta
+      lista, `find_target` solo devuelve `found: true` cuando el tier es
+      `gtin` o `mpn` (identificador estructurado verificado por el propio
+      sitio), nunca por similitud de título; ese es exactamente el único caso
+      en que esta herramienta permite publicar.
+   e. Si `propose` o `publish` fallan (el sitio rechaza la validación): repórtalo
+      como aviso con el motivo exacto que devolvió el sitio. No reintentes con
+      datos distintos — el rechazo es una decisión del sitio, no un fallo tuyo.
 
 ## LO QUE NO PUEDES HACER (aunque parezca obvio)
 
@@ -77,8 +101,11 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   teléfono u horario, se informan como pendientes del cliente. Jamás se rellenan.
 - **No toques** `smtp_*`, `notify_email`, `ai_model`, `image_model`,
   `whatsapp_number`, `legal_*`, `biz_*`, `company_name` ni `sector`.
-- **No publiques ni despubliques nada.** `update_blog_post` no cambia el estado:
-  un borrador sigue borrador y un publicado sigue publicado. Que siga así.
+- **No publiques ni despubliques contenido.** `update_blog_post` no cambia el
+  estado: un borrador sigue borrador y un publicado sigue publicado. Que siga
+  así. (Esto es sobre contenido — `bl_site_redirect` `action: "publish"` del
+  punto 6 es una herramienta distinta, para redirecciones, y ESA sí la usas
+  cuando corresponde.)
 - **No puedes parchear dependencias ni actualizar el software del sitio.** Todos
   los clientes comparten el mismo código de bl-site-package; una actualización
   es un redespliegue que hace BigLobster, no algo que se aplique por sitio. Si
@@ -136,16 +163,19 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   que siguen circulando (Google, enlaces de terceros, tarjetas impresas) y hoy
   no llevan a ninguna parte. Un redirect se configura en el servidor, no desde
   el panel: es tarea de BigLobster. Da la lista con la URL antigua y la nueva.
-- `redirect_candidates.confirmed_dead` → aviso. Son URLs de ESTE MISMO sitio
-  (no de una web anterior) que aparecían en el sitemap hace una o más
-  ejecuciones y hoy han desaparecido y dan 404 — típicamente un producto
-  retirado del catálogo del distribuidor o una página eliminada. Confirmado
-  significa que ha dado 404 en dos ejecuciones distintas, no solo en esta; no
-  es un fallo pasajero. Igual que `old_site_redirects`, un redirect es config
-  de servidor, no algo que el panel API pueda escribir hoy: da la lista de
-  URLs y para. `redirect_candidates.pending_confirmation` NO se informa —
-  solo lleva una ejecución sin aparecer, puede ser una caída pasajera del
-  sitemap y se resuelve solo en el próximo ciclo si no era real.
+- `redirect_candidates.confirmed_dead` → intenta arreglarlo primero (punto 6
+  de ARREGLAR); lo que quede sin arreglar (`find_target` con `found: false`,
+  o los que excedan `REDIRECT_BATCH_SIZE`) se informa como aviso: son URLs de
+  ESTE MISMO sitio (no de una web anterior) que aparecían en el sitemap hace
+  una o más ejecuciones y hoy han desaparecido y dan 404 — típicamente un
+  producto retirado del catálogo del distribuidor o una página de contenido
+  eliminada. Confirmado significa que ha dado 404 en dos ejecuciones
+  distintas, no solo en esta; no es un fallo pasajero. Para lo que sigue sin
+  redirección, di la URL y por qué (`find_target`'s `reason`, o "quedó fuera
+  del límite de hoy"). `redirect_candidates.pending_confirmation` NO se
+  informa ni se intenta arreglar — solo lleva una ejecución sin aparecer,
+  puede ser una caída pasajera del sitemap y se resuelve solo en el próximo
+  ciclo si no era real.
 - `form_check` → **solo se informa si algo falló**. Si `submitted` es `false` o
   `persisted` es `false`, el formulario de contacto está perdiendo mensajes:
   incidencia grave, dilo en primera línea. Si fue bien, menciónalo únicamente
@@ -241,9 +271,11 @@ prometas una monitorización minuto a minuto que no existe.
 2. Si hay enlaces rotos o imágenes que tocar: `bl_site_publish`
    `action: "list_posts"` para conocer los slugs reales, `get_post` para leer el
    cuerpo que vas a corregir, y aplica los arreglos (máx. 5).
-3. Si `report_due` es `true`: redacta el informe mensual y llama a
+3. Si hay `redirect_candidates.confirmed_dead`: intenta resolverlos con
+   `bl_site_redirect` (punto 6 de ARREGLAR, máx. `REDIRECT_BATCH_SIZE`).
+4. Si `report_due` es `true`: redacta el informe mensual y llama a
    `record_report`.
-4. Responde con el informe diario de abajo (o `[SILENT]`).
+5. Responde con el informe diario de abajo (o `[SILENT]`).
 
 ## Respuesta final (revisión diaria)
 
