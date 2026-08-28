@@ -134,27 +134,42 @@ then returns one JSON report:
 | **Duplicate / thin content** — near-identical `<title>` or meta description across the fixed pages + posts | `difflib` character ratio against a fixed 0.90 threshold, and a fixed 50-char floor for descriptions. String similarity, never meaning |
 | **JSON-LD validity** — parse every block, required schema.org fields present and correctly typed | The required-field table comes from what `src/content/structured-data.js` itself emits; "does this parse / is `datePublished` there / is `acceptedAnswer.text` non-empty" has one answer |
 | **Old-site paths that now dead-end** (only with `OLD_SITE_URL`) | The old site's own sitemap, or one level of homepage links, capped at 40 — then a fetch each. No crawling heuristics, no depth |
+| **Same-site 404s** — URLs that were in THIS site's own sitemap on a prior run and are gone now | Run-to-run diff of the stored sitemap snapshot; only a URL dead on this run AND the run that first noticed it missing counts as `confirmed_dead` — a transient outage can't trigger a redirect off one bad check |
 | **Contact form actually accepts and stores a submission** (monthly) | One synthetic POST to the public form, then read the panel inbox back and look for the marker. Boolean, not judgment |
 | **Release drift** — the instance's deployed version vs the latest released on `main` | `GET /api/site/status` version against `package.json` on GitHub; **any** mismatch counts (ahead of main = deployed outside the release flow), and either side degrades to `null` instead of failing the run |
 | 30-day uptime rollup and `report_due` | From `$HERMES_HOME/bl_site_health_history.json`, per profile |
 
-The checks in bold were added after the first version shipped. All of them are
-**report-only**: none extends the fix list. That is deliberate in each
-case — the social/contact fields are `biz_*`/`whatsapp_number` (already
+The checks in bold were added after the first version shipped. Most of them are
+**report-only**: none extends the closed fix list below. That is deliberate in
+each case — the social/contact fields are `biz_*`/`whatsapp_number` (already
 forbidden to the agent), rewriting a duplicate title is content work, hand-
 authoring correct JSON-LD for a broken page is judgment rather than a mechanical
-edit, a redirect is web-server configuration the panel API cannot write, and an
-outdated instance is a redeploy BigLobster performs — the drift notice routes to
-BigLobster through the cron's delivery channel, and the client is never told
-"your site is old".
+edit, and an outdated instance is a redeploy BigLobster performs — the drift
+notice routes to BigLobster through the cron's delivery channel, and the client
+is never told "your site is old".
+
+**Same-site 404s are the one exception with a real write path.**
+`tools/bl_site_redirect_tool.py` closes a gap that genuinely didn't have a fix
+until it shipped — a redirect really was web-server configuration the panel API
+couldn't write. `find_target` reads the dead URL's last Wayback Machine
+snapshot, matches it to a live product by barcode or manufacturer reference
+(structured data only, never guessed from a similar name), and the site's own
+`/api/redirects` independently re-derives that match before accepting it. Only
+a checksum-verified identifier match auto-publishes, capped at 3/run,
+independent of the five-item fix list below. A content-page 404 — no
+verifiable identifier to match on — still stays report-only, same as
+everything else in this table.
 
 **The fix list is closed — five items, max five applications per run:** rewrite
 a broken internal link to a valid route (or unlink it), unlink a dead outbound
 link, write missing image `alt` text, re-host a hotlinked image through
 `upload_image` (the site re-encodes to WebP), and set `site_url` when the
-sitemap is empty. Everything else is a *notice*, not a fix. The prompt states
-that explicitly, so "my site should also do X" surfaces as a line in the report
-instead of quietly becoming bespoke work — the same boundary Site Launch draws.
+sitemap is empty. Everything else is a *notice*, not a fix, with one exception:
+same-site 404 redirects go through `bl_site_redirect` instead of
+`bl_site_publish`, so they carry their own separate cap (3/run) rather than
+sharing this one. The prompt states the boundary explicitly, so "my site should
+also do X" surfaces as a line in the report instead of quietly becoming bespoke
+work — the same boundary Site Launch draws.
 
 **What it deliberately does not promise**, because it cannot deliver it:
 
