@@ -1663,6 +1663,48 @@ class TestRunJobSessionPersistence:
         assert call_args[0][1] is False  # success should be False
         assert "empty" in call_args[0][2].lower()  # error should mention empty
 
+    def test_tick_records_cli_source_without_adapters(self, tmp_path):
+        """A standalone `hermes cron tick` call (no gateway adapters) must be
+        attributable after the fact — this is the exact gap that made an
+        unattributed 2026-08-28 production run undiagnosable from the
+        execution ledger alone (only reconstructible from raw process logs)."""
+        from cron.scheduler import tick
+
+        job = {
+            "id": "cli-trigger-job",
+            "name": "cli trigger job",
+            "schedule": {"kind": "interval", "seconds": 60},
+            "next_run_at": "2020-01-01T00:00:00+00:00",
+            "enabled": True,
+        }
+        with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
+             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.run_one_job", return_value=True), \
+             patch("cron.scheduler.create_execution", return_value={"id": "exec-1"}) as mock_create:
+            assert tick(verbose=False, sync=True, adapters=None) == 1
+
+        mock_create.assert_called_once_with("cli-trigger-job", source="cli")
+
+    def test_tick_records_builtin_source_with_gateway_adapters(self, tmp_path):
+        """The gateway's own in-process ticker always passes `adapters` —
+        those runs stay attributed as 'builtin', unchanged."""
+        from cron.scheduler import tick
+
+        job = {
+            "id": "gateway-tick-job",
+            "name": "gateway tick job",
+            "schedule": {"kind": "interval", "seconds": 60},
+            "next_run_at": "2020-01-01T00:00:00+00:00",
+            "enabled": True,
+        }
+        with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
+             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.run_one_job", return_value=True), \
+             patch("cron.scheduler.create_execution", return_value={"id": "exec-2"}) as mock_create:
+            assert tick(verbose=False, sync=True, adapters={"telegram": object()}) == 1
+
+        mock_create.assert_called_once_with("gateway-tick-job", source="builtin")
+
     def test_run_job_sets_auto_delivery_env_from_dotenv_home_channel(self, tmp_path, monkeypatch):
         job = {
             "id": "test-job",
