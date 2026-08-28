@@ -143,7 +143,10 @@ those, and keys have leaked here that way before.
 The bl-site-package rentals (`AGENT_SOURCES` in `scripts/provision_bl_client.py`) all reach
 a client's site over HTTP with that profile's own panel password — never a database, never
 a repo. `bl_site_publish` covers blog and page text; `bl_site_product` covers product
-sheets; `bl_site_health` is the read-only maintenance check.
+sheets; `bl_site_health` is the read-only maintenance check; `bl_site_redirect` covers
+same-site 301s — `find_target` reads a dead product URL's last Wayback Machine snapshot and
+matches it to the current catalogue by barcode/reference, `propose`/`publish`/`remove` write
+through the site's own `/api/redirects`.
 
 Two rules hold across all of them, and they are what makes unattended writing defensible:
 
@@ -152,7 +155,10 @@ Two rules hold across all of them, and they are what makes unattended writing de
   agent cannot assert a barcode, pin a stale fingerprint, or talk itself into publishing
   something thin.
 - **Nothing an agent writes goes live implicitly.** Blog posts save as drafts; product
-  sheets save as drafts unless publication is explicit and the site's checklist passes.
+  sheets save as drafts unless publication is explicit and the site's checklist passes;
+  redirects save as pending and only auto-publish on a checksum-verified barcode or
+  manufacturer-reference match — anything resolved by title similarity or human judgement
+  stays pending for a person to publish.
 
 `product-sheets` is the exception worth remembering when selling: it only does anything for
 a client whose catalogue comes from a distributor feed, because that feed is the only thing
