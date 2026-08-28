@@ -4663,7 +4663,18 @@ def tick(
                 _running_job_ids.add(job_id)
             # Record the attempt before executor dispatch. Recovery classifies
             # abandoned records as unknown; it never automatically retries them.
-            execution = create_execution(job_id, source="builtin")
+            # adapters is only ever populated by the gateway's own in-process
+            # ticker (InProcessCronScheduler.start, scheduler_provider.py) — a
+            # standalone `hermes cron tick` invocation always calls tick() with
+            # adapters=None. That's the one reliable signal distinguishing a
+            # warm gateway tick from a one-shot CLI process (confirmed the hard
+            # way investigating an unattributed 2026-08-28 run: cold process +
+            # plugin reload + no "via live adapter" delivery suffix, vs. an
+            # in-process tick with neither). Recorded here instead of guessed
+            # from logs after the fact.
+            execution = create_execution(
+                job_id, source="builtin" if adapters is not None else "cli"
+            )
             dispatched_job = dict(job, execution_id=execution["id"])
             _ctx = contextvars.copy_context()
 
