@@ -277,3 +277,79 @@ def test_list_passes_through(monkeypatch):
     wire_routes(monkeypatch, {"/api/redirects": {"redirects": [{"id": 1}]}})
     out = json.loads(mod.bl_site_redirect(action="list"))
     assert out["redirects"] == [{"id": 1}]
+
+
+# --- scan: run-to-run sitemap diff, two-run confirmation --------------------
+#
+# Moved here from bl_site_health_tool.py: detection belongs with the SEO
+# agent that acts on it (every bl-site-package client's onsite-seo agent),
+# not tied to whichever client happened to also buy Website Maintenance.
+
+SITEMAP_TWO_URLS = (
+    "<urlset>"
+    f"<url><loc>{SITE}/</loc></url>"
+    f"<url><loc>{SITE}/productos/viejo.html</loc></url>"
+    "</urlset>"
+)
+SITEMAP_ONE_URL = f"<urlset><url><loc>{SITE}/</loc></url></urlset>"
+DEAD_PATH = SITE + "/productos/viejo.html"
+
+
+@pytest.fixture(autouse=True)
+def _scan_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "_scan_history_path", lambda: tmp_path / "redirect_history.json")
+
+
+def run_scan(monkeypatch, sitemap, overrides=None):
+    """Fake _scan_fetch: sitemap.xml returns `sitemap`; everything else 200
+    unless overridden per URL."""
+    overrides = overrides or {}
+
+    def _scan_fetch(url):
+        if url in overrides:
+            return {"body": "", **overrides[url]}
+        if url.endswith("/sitemap.xml"):
+            return {"status": 200, "body": sitemap}
+        return {"status": 200, "body": ""}
+
+    monkeypatch.setattr(mod, "_scan_fetch", _scan_fetch)
+    return json.loads(mod.bl_site_redirect(action="scan"))
+
+
+def test_scan_first_run_ever_has_nothing_to_diff_against(monkeypatch):
+    result = run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    assert result["checked"] == 0
+    assert result["confirmed_dead"] == []
+
+
+def test_scan_url_missing_next_run_and_dead_is_pending_not_confirmed(monkeypatch):
+    run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    result = run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    assert result["confirmed_dead"] == []
+    assert [c["url"] for c in result["pending_confirmation"]] == [DEAD_PATH]
+
+
+def test_scan_url_dead_on_two_separate_runs_is_confirmed(monkeypatch):
+    run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    result = run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    assert [c["url"] for c in result["confirmed_dead"]] == [DEAD_PATH]
+    assert result["pending_confirmation"] == []
+
+
+def test_scan_a_5xx_does_not_advance_or_reset_confirmation(monkeypatch):
+    run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    # Third run: an outage, not evidence the URL is gone.
+    result = run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 503}})
+    assert result["confirmed_dead"] == []
+    assert result["checked"] == 1
+
+
+def test_scan_url_reappearing_alive_clears_the_watch(monkeypatch):
+    run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    run_scan(monkeypatch, SITEMAP_ONE_URL, overrides={DEAD_PATH: {"status": 404}})
+    result = run_scan(monkeypatch, SITEMAP_TWO_URLS)
+    assert result["checked"] == 0
+    assert result["confirmed_dead"] == []
+    assert result["pending_confirmation"] == []

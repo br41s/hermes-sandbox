@@ -668,92 +668,6 @@ def _old_site_sweep(old_site_url: str, site_url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Same-site redirect candidates
-# ---------------------------------------------------------------------------
-# GSC is not wired per rental client (bl-site-package-seo-agent.prompt runs
-# without it), so the historical-search-analytics signal BigLobster's
-# find_dead_urls.py uses is unavailable here. The next-cheapest signal that
-# needs no extra API is a run-to-run diff of the site's OWN sitemap: a URL
-# present last run and gone from the current one, confirmed dead by a live
-# check, is a real candidate independent of whether Google ever indexed it.
-REDIRECT_CANDIDATE_CAP = 40
-REDIRECT_WATCH_KEEP_DAYS = 60
-REDIRECT_DEAD_STATUSES = (404, 410)
-
-
-def _redirect_candidates(sitemap_body: str, history: dict) -> dict:
-    """URLs that were in this site's sitemap last run and are gone now.
-
-    Same two-run-confirmation discipline as find_dead_urls.py, and for the
-    same reason: a URL must look dead on THIS run and on the run that first
-    noticed it missing before it is confirmed — a transient sitemap hiccup or
-    outage must never be enough on its own to redirect away a page that is
-    still there. Report-only today: nothing on this side writes a redirect
-    yet (that needs a redirects table on the client's own instance), so this
-    surfaces the same way old_site_redirects already does.
-    """
-    current_urls = {loc.strip() for loc in _LOC_VALUE_RE.findall(sitemap_body) if loc.strip()}
-    prior_urls = set(history.get("known_sitemap_urls", []))
-    watch = history.setdefault("redirect_watch", {})
-    # Newly missing this run, PLUS anything already under watch that still
-    # isn't back in the sitemap — without the latter, a URL that vanished
-    # once would drop out of "disappeared" on the very next run (it's no
-    # longer in the prior snapshot either) and silently stop being checked
-    # before it ever reached two-run confirmation.
-    newly_missing = prior_urls - current_urls
-    still_missing = {u for u in watch if u not in current_urls}
-    all_disappeared = sorted(newly_missing | still_missing)
-    disappeared = all_disappeared[:REDIRECT_CANDIDATE_CAP]
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    confirmed_dead: list[dict] = []
-    pending: list[dict] = []
-    now_alive: list[dict] = []
-
-    for url in disappeared:
-        res = _fetch(url)
-        prior = watch.get(url)
-        if res["status"] in REDIRECT_DEAD_STATUSES:
-            record = {"url": url, "status": res["status"], "checked_at": now_iso}
-            if prior and prior.get("last_status") in REDIRECT_DEAD_STATUSES:
-                record["first_seen_dead"] = prior.get("first_seen_dead", now_iso)
-                confirmed_dead.append(record)
-            else:
-                record["first_seen_dead"] = now_iso
-                pending.append(record)
-            watch[url] = {
-                "last_status": res["status"], "last_checked": now_iso,
-                "first_seen_dead": record["first_seen_dead"],
-            }
-        elif res["status"] == 200:
-            now_alive.append({"url": url, "status": res["status"]})
-            watch.pop(url, None)
-        # Anything else (5xx, transport failure) is an outage, not evidence of
-        # removal — the watch entry is left exactly as it was.
-
-    cutoff = time.time() - REDIRECT_WATCH_KEEP_DAYS * 86400
-    pruned = {}
-    for url, rec in watch.items():
-        try:
-            last = datetime.fromisoformat(rec["last_checked"]).timestamp()
-        except (KeyError, ValueError, TypeError):
-            continue
-        if last >= cutoff:
-            pruned[url] = rec
-    history["redirect_watch"] = pruned
-    history["known_sitemap_urls"] = sorted(current_urls)
-
-    return {
-        "path_source": "sitemap_diff",
-        "checked": len(disappeared),
-        "cap": REDIRECT_CANDIDATE_CAP,
-        "list_capped": len(all_disappeared) > REDIRECT_CANDIDATE_CAP,
-        "confirmed_dead": confirmed_dead,
-        "pending_confirmation": pending,
-        "now_alive": now_alive,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Release drift
 # ---------------------------------------------------------------------------
 
@@ -826,8 +740,6 @@ def _load_history() -> dict:
     data.setdefault("runs", [])
     data.setdefault("reports", [])
     data.setdefault("form_checks", [])
-    data.setdefault("known_sitemap_urls", [])
-    data.setdefault("redirect_watch", {})
     return data
 
 
@@ -1090,7 +1002,6 @@ def _run_check(site_url: str, token: str) -> dict:
     period = now.strftime("%Y-%m")
 
     history = _load_history()
-    redirect_candidates = _redirect_candidates(sitemap_body, history)
 
     # Monthly, and only when the site is actually up: probing the form during an
     # outage would just record a failure we already know about, and would burn
@@ -1151,10 +1062,6 @@ def _run_check(site_url: str, token: str) -> dict:
         "structured_data": structured_data,
         # None when the client never had a previous site (no OLD_SITE_URL).
         "old_site_redirects": old_site_redirects,
-        # Same-site 404s: URLs that were in OUR OWN sitemap last run and are
-        # gone now, confirmed dead on two separate runs. Empty on the first
-        # ever run (nothing to diff against yet) — not a sign of a clean site.
-        "redirect_candidates": redirect_candidates,
         "form_check": form_check,
         "empty_page_fields": empty_page_fields,
         "empty_legal_fields": empty_legal,
@@ -1226,11 +1133,7 @@ BL_SITE_HEALTH_SCHEMA = {
         "descriptions that are near-identical by string similarity, plus ones that are too short), "
         "'structured_data' (JSON-LD blocks that fail to parse or are missing required schema.org "
         "fields), 'old_site_redirects' (only when the profile has OLD_SITE_URL: old paths that now "
-        "dead-end on the new site; null otherwise), 'redirect_candidates' (URLs that were in "
-        "THIS site's own sitemap on a previous run and are gone now — 'confirmed_dead' means "
-        "dead on two separate runs and is the list worth reporting; 'pending_confirmation' just "
-        "went missing this run and needs one more run to confirm; empty on the very first run "
-        "ever, which is not a sign of a clean site), 'release' (the instance's deployed "
+        "dead-end on the new site; null otherwise), 'release' (the instance's deployed "
         "bl-site-package version vs the latest released on main; 'outdated' is true on ANY "
         "mismatch and null when either side is unknown — an outdated instance is reported to "
         "BigLobster, who redeploys it; it is never something to tell the client), and "

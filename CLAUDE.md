@@ -144,9 +144,12 @@ The bl-site-package rentals (`AGENT_SOURCES` in `scripts/provision_bl_client.py`
 a client's site over HTTP with that profile's own panel password — never a database, never
 a repo. `bl_site_publish` covers blog and page text; `bl_site_product` covers product
 sheets; `bl_site_health` is the read-only maintenance check; `bl_site_redirect` covers
-same-site 301s — `find_target` reads a dead product URL's last Wayback Machine snapshot and
-matches it to the current catalogue by barcode/reference, `propose`/`publish`/`remove` write
-through the site's own `/api/redirects`.
+same-site 301s — `scan` detects a same-site URL that's gone (its own history file, confirmed
+dead on two separate runs), `find_target` reads a dead product URL's last Wayback Machine
+snapshot and matches it to the current catalogue by barcode/reference, `propose`/`publish`/
+`remove` write through the site's own `/api/redirects`. It's wired into the onsite SEO agent
+(`onsite-seo/bl-site-package-seo-agent.prompt`), not Website Maintenance — detection belongs
+with the tool that acts on it, independent of which other products a client has bought.
 
 Two rules hold across all of them, and they are what makes unattended writing defensible:
 

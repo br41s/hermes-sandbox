@@ -1,12 +1,19 @@
 """Find and write same-site 301 redirects on a bl-site-package client site.
 
-Companion to ``bl_site_health``'s ``redirect_candidates``: that tool only
-detects that a URL is gone (a sitemap diff, confirmed dead on two separate
-runs); it has no idea what the URL should now point to, and nothing on the
-Hermes side could write a redirect at all until the site grew a
-``/api/redirects`` write path (bl-site-package PR #65) to match.
+``scan`` detects that a URL is gone (a run-to-run sitemap diff, confirmed dead
+only after two separate runs agree); ``find_target`` figures out what it should
+point to now; ``propose``/``publish``/``list``/``remove`` write through the
+site's own ``/api/redirects`` (bl-site-package PR #65). All four steps live in
+this one tool on purpose: detection used to sit inside ``bl_site_health``, but
+that coupled a same-site 404 to the Website Maintenance product specifically,
+when the actual capability belongs with SEO — every bl-site-package client's
+onsite SEO agent (``onsite-seo/bl-site-package-seo-agent.prompt``) should be
+able to call it regardless of which other products they've bought. ``scan``
+keeps its own history file, independent of ``bl_site_health``'s, so the two
+tools' state never entangles.
 
-``find_target`` is the one new piece of reasoning this file adds: given a dead
+``find_target`` is the one piece of reasoning that maps a dead URL to a live
+one: given a dead
 URL, pull its last Wayback Machine snapshot, read the barcode or manufacturer
 reference off whatever schema.org Product data that snapshot published, and
 ask the site which LIVE product now carries that identifier
@@ -35,9 +42,13 @@ do: the work is one redirect's worth of judgement at a time.
 from __future__ import annotations
 
 import json
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from tools.bl_site_product_tool import _refuse_if_scripted, _tool_call
@@ -54,6 +65,127 @@ from tools.product_enrich_tool import (
 )
 
 REQUEST_TIMEOUT = 30
+
+# --- scan: run-to-run sitemap diff, own history file -----------------------
+_LOC_VALUE_RE = re.compile(r"<loc>\s*([^<]+?)\s*</loc>", re.IGNORECASE)
+SCAN_HISTORY_FILE = "bl_site_redirect_history.json"
+SCAN_CANDIDATE_CAP = 40
+SCAN_WATCH_KEEP_DAYS = 60
+SCAN_DEAD_STATUSES = (404, 410)
+SCAN_REQUEST_TIMEOUT = 20
+
+
+def _scan_history_path() -> Path:
+    from hermes_constants import get_hermes_home
+
+    return Path(get_hermes_home()) / SCAN_HISTORY_FILE
+
+
+def _load_scan_history() -> dict:
+    path = _scan_history_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("known_sitemap_urls", [])
+    data.setdefault("redirect_watch", {})
+    return data
+
+
+def _save_scan_history(history: dict) -> None:
+    path = _scan_history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+
+def _scan_fetch(url: str) -> dict:
+    """One GET. Never raises — status 0 means a transport failure, same
+    convention as every other fetcher in this codebase."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=SCAN_REQUEST_TIMEOUT) as resp:
+            return {"status": resp.status, "body": resp.read(2_000_000).decode("utf-8", errors="replace")}
+    except urllib.error.HTTPError as e:
+        return {"status": e.code, "body": ""}
+    except urllib.error.URLError:
+        return {"status": 0, "body": ""}
+
+
+def _scan_sitemap(site_url: str) -> dict:
+    """URLs that were in this site's own sitemap on a prior run and are gone
+    now, confirmed dead on two separate runs.
+
+    Same two-run-confirmation discipline as everywhere else this pattern is
+    used: a URL must look dead on THIS run AND the run that first noticed it
+    missing before it counts as confirmed — a transient outage must never be
+    enough on its own to justify a redirect.
+    """
+    sitemap = _scan_fetch(site_url.rstrip("/") + "/sitemap.xml")
+    current_urls = {loc.strip() for loc in _LOC_VALUE_RE.findall(sitemap["body"]) if loc.strip()}
+
+    history = _load_scan_history()
+    prior_urls = set(history.get("known_sitemap_urls", []))
+    watch = history.setdefault("redirect_watch", {})
+
+    # Newly missing this run, PLUS anything already under watch that still
+    # isn't back in the sitemap — without the latter, a URL that vanished once
+    # would drop out of "disappeared" on the very next run (it's no longer in
+    # the prior snapshot either) before it ever reached two-run confirmation.
+    newly_missing = prior_urls - current_urls
+    still_missing = {u for u in watch if u not in current_urls}
+    all_disappeared = sorted(newly_missing | still_missing)
+    disappeared = all_disappeared[:SCAN_CANDIDATE_CAP]
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    confirmed_dead: list[dict] = []
+    pending: list[dict] = []
+    now_alive: list[dict] = []
+
+    for url in disappeared:
+        res = _scan_fetch(url)
+        status = res["status"]
+        prior = watch.get(url)
+        if status in SCAN_DEAD_STATUSES:
+            record = {"url": url, "status": status, "checked_at": now_iso}
+            if prior and prior.get("last_status") in SCAN_DEAD_STATUSES:
+                record["first_seen_dead"] = prior.get("first_seen_dead", now_iso)
+                confirmed_dead.append(record)
+            else:
+                record["first_seen_dead"] = now_iso
+                pending.append(record)
+            watch[url] = {
+                "last_status": status, "last_checked": now_iso,
+                "first_seen_dead": record["first_seen_dead"],
+            }
+        elif status == 200:
+            now_alive.append({"url": url, "status": status})
+            watch.pop(url, None)
+        # Anything else (5xx, transport failure) is an outage, not evidence of
+        # removal — the watch entry is left exactly as it was.
+
+    cutoff = time.time() - SCAN_WATCH_KEEP_DAYS * 86400
+    pruned = {}
+    for url, rec in watch.items():
+        try:
+            last = datetime.fromisoformat(rec["last_checked"]).timestamp()
+        except (KeyError, ValueError, TypeError):
+            continue
+        if last >= cutoff:
+            pruned[url] = rec
+    history["redirect_watch"] = pruned
+    history["known_sitemap_urls"] = sorted(current_urls)
+    _save_scan_history(history)
+
+    return {
+        "checked": len(disappeared),
+        "cap": SCAN_CANDIDATE_CAP,
+        "list_capped": len(all_disappeared) > SCAN_CANDIDATE_CAP,
+        "confirmed_dead": confirmed_dead,
+        "pending_confirmation": pending,
+        "now_alive": now_alive,
+    }
 
 
 def _request(method: str, url: str, token: str, body: Optional[dict] = None) -> dict:
@@ -171,6 +303,9 @@ def bl_site_redirect(
         token = _get_jwt(site_url, password)
         base = f"{site_url}/api/redirects"
 
+        if action == "scan":
+            return json.dumps(_scan_sitemap(site_url), ensure_ascii=False)
+
         if action == "find_target":
             if not old_path:
                 return tool_error("find_target requiere 'old_path'.")
@@ -204,8 +339,8 @@ def bl_site_redirect(
             return json.dumps(result, ensure_ascii=False)
 
         return tool_error(
-            f"Acción desconocida '{action}'. Usa 'find_target', 'list', 'propose', "
-            "'publish' o 'remove'."
+            f"Acción desconocida '{action}'. Usa 'scan', 'find_target', 'list', "
+            "'propose', 'publish' o 'remove'."
         )
     except RuntimeError as e:
         return tool_error(str(e))
@@ -215,9 +350,15 @@ BL_SITE_REDIRECT_SCHEMA = {
     "name": "bl_site_redirect",
     "description": (
         "Find and manage same-site 301 redirects for the bl-site-package client site this "
-        "profile is dedicated to — for a URL confirmed dead by bl_site_health's "
-        "'redirect_candidates', map it to the current page and redirect it there. "
-        "Use action='find_target' with 'old_path' (the dead URL) to discover a candidate: it "
+        "profile is dedicated to. "
+        "Use action='scan' (no other arguments) once per run to find URLs that were in this "
+        "site's own sitemap on a prior run and are gone now. Returns 'confirmed_dead' (dead on "
+        "this run AND the run that first noticed it missing — eligible to act on), "
+        "'pending_confirmation' (just went missing this run, needs one more run to confirm — do "
+        "nothing with these yet) and 'now_alive' (came back, nothing to do). Empty on the very "
+        "first run ever, which is not a sign of a clean site — there is nothing to diff against yet. "
+        "Use action='find_target' with 'old_path' (a URL from 'confirmed_dead') to discover a "
+        "candidate: it "
         "reads the barcode/reference off the URL's last Wayback Machine snapshot and looks up "
         "which LIVE product now carries it. Returns found=false with a reason when there is no "
         "archive, the archive publishes no structured barcode/reference, or no live product "
@@ -242,13 +383,14 @@ BL_SITE_REDIRECT_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["find_target", "list", "propose", "publish", "remove"],
+                "enum": ["scan", "find_target", "list", "propose", "publish", "remove"],
                 "description": "Which operation to perform.",
             },
             "old_path": {
                 "type": "string",
                 "description": "The dead URL's path (e.g. '/productos/viejo.html'). Required "
-                               "for 'find_target' and 'propose'.",
+                               "for 'find_target' and 'propose'; comes from scan's "
+                               "'confirmed_dead' list.",
             },
             "new_path": {
                 "type": "string",
