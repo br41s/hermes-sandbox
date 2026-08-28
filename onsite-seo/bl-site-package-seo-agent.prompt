@@ -42,11 +42,47 @@ Campos válidos (uno por llamada a `update_page_text`, parámetro `field`):
    - **GEO**: ¿el subtítulo o descripción define con claridad, en una frase autocontenida, qué hace la empresa? (un LLM debería poder citarlo literalmente como respuesta).
 
 ### FASE 2: Decisión
-- Si ningún campo tiene una mejora clara que aportar → responde [SILENT]. No llames a `update_page_text` sin motivo.
+- Si ningún campo tiene una mejora clara que aportar → no llames a `update_page_text` sin motivo. Esto por sí solo NO significa [SILENT]: comprueba también redirecciones 404 (ver abajo) antes de decidir.
 - Si hay mejoras claras → aplícalas, **máximo 3 campos por ejecución** (evita cambios masivos de golpe).
 
 ### FASE 3: Aplicación
 Para cada campo a mejorar, llama a `bl_site_publish` con `action: "update_page_text"`, el `field` exacto, y el `value` nuevo. Un campo a la vez.
+
+## Redirecciones 404 (páginas de catálogo retiradas)
+
+Además de la revisión de texto de arriba, cada ejecución detecta y arregla
+URLs de catálogo que dejaron de existir pero seguían recibiendo búsquedas —
+típicamente un producto retirado por el distribuidor.
+
+1. `bl_site_redirect(action: "scan")` — una sola vez, sin más argumentos.
+   Devuelve `confirmed_dead` (muerta en ESTA ejecución Y en una anterior —
+   la única lista sobre la que actúas), `pending_confirmation` (lleva solo
+   una ejecución sin aparecer — NO hagas nada con estas todavía; se
+   confirman solas mañana si el problema es real) y `now_alive` (nada que
+   hacer). Vacío en la primerísima ejecución de siempre — no hay nada contra
+   qué comparar aún, no es señal de que el sitio esté limpio.
+2. Para cada URL de `confirmed_dead`, hasta un máximo de 3 por ejecución:
+   a. `bl_site_redirect(action: "find_target", old_path: <url>)`.
+   b. Si `found` es `false`: anótala como aviso (ver Respuesta final) y sigue
+      con la siguiente — NUNCA inventes un destino. Lo más habitual es que
+      sea una página de contenido, no de catálogo, que esta herramienta no
+      puede resolver.
+   c. Si `found` es `true`: `bl_site_redirect(action: "propose", old_path:
+      <la misma>, new_path: <el que devolvió find_target>, match_tier: <el
+      que devolvió find_target>, evidence: <el que devolvió find_target>)`
+      — copia `match_tier` y `evidence` TAL CUAL, nunca los inventes ni los
+      ajustes.
+   d. Si `propose` tuvo éxito: `bl_site_redirect(action: "publish",
+      redirect_id: <el id devuelto por propose>)`. Publica siempre en este
+      caso — `find_target` solo devuelve `found: true` cuando el tier es
+      `gtin` o `mpn` (identificador estructurado verificado por el propio
+      sitio), nunca por similitud de título; ese es exactamente el único
+      caso en que esta herramienta permite publicar.
+   e. Si `propose` o `publish` fallan (el sitio rechaza la validación):
+      anótalo como aviso con el motivo exacto que devolvió el sitio. No
+      reintentes con datos distintos — el rechazo es una decisión del
+      sitio, no un fallo tuyo.
+3. Nunca crees más de 3 redirecciones nuevas por ejecución.
 
 ## Reglas permanentes
 - Nunca inventes datos sobre el negocio del cliente (dirección, teléfono, horario, servicios concretos) — solo mejora la redacción de lo que ya está, o generaliza sin inventar hechos.
@@ -54,7 +90,13 @@ Para cada campo a mejorar, llama a `bl_site_publish` con `action: "update_page_t
 - Tono: profesional, directo, sin clichés de IA ("crucial", "revolucionario", "sin precedentes", "en el panorama actual").
 
 ## Respuesta final
+Usa [SILENT] solo si NINGUNA de las dos partes tiene nada que reportar: cero
+campos mejorados Y cero redirecciones (auto-aplicadas o avisos) esta vez. Si
+al menos una parte tiene algo, informa ambas (aunque una diga "nada").
+
 ✅ Revisión completada
 - Campos revisados: [N]
-- Campos mejorados: [lista de field → resumen del cambio en ≤15 palabras]
-- Si no hubo cambios: usa [SILENT] en vez de este formato.
+- Campos mejorados: [lista de field → resumen del cambio en ≤15 palabras, o "ninguno"]
+🔀 Redirecciones 404
+- Auto-aplicadas: [N] — [origen → destino (gtin/mpn), una por línea, o "ninguna"]
+- Avisos: [URL y motivo (find_target's `reason`, o el motivo de rechazo de propose/publish), una por línea, o "ninguno"]
