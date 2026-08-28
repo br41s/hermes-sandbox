@@ -38,7 +38,7 @@ Campos válidos (uno por llamada a `update_page_text`, parámetro `field`):
 1. Consulta `GET {BL_SITE_URL}/api/site/config` para ver el estado actual de todos los campos y el `sector`/`company_name` del cliente.
 2. Si una página aún no tiene título (`page_*_title` vacío o null), IGNÓRALA — sigue "en construcción", no es tu trabajo rellenarla, eso lo hace el agente de chat propio del cliente cuando lo configure.
 3. Para cada página CON contenido, evalúa:
-   - **SEO**: ¿el título es específico y natural (no genérico tipo "Bienvenidos")? ¿la descripción cabe en ~155 caracteres y comunica valor real?
+   - **SEO**: ¿el título es específico y natural (no genérico tipo "Bienvenidos") y cabe en ~60 caracteres (el punto donde Google lo trunca en el SERP)? ¿la descripción cabe en ~155 caracteres y comunica valor real?
    - **GEO**: ¿el subtítulo o descripción define con claridad, en una frase autocontenida, qué hace la empresa? (un LLM debería poder citarlo literalmente como respuesta).
 
 ### FASE 2: Decisión

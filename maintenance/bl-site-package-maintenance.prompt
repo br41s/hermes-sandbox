@@ -28,7 +28,7 @@ Lo que devuelve, y qué significa cada cosa:
 | `sitemap` | Nº de URLs del sitemap y valor de `site_url` en config | Arreglar si está vacío (ver abajo) |
 | `social_contact_issues` | WhatsApp/teléfono/email mal formados y perfiles sociales caídos | Avisar — son campos `biz_*`, NO los tocas |
 | `duplicate_content` | Títulos o descripciones casi idénticos entre páginas, y descripciones demasiado cortas | Avisar — NUNCA reescribas el texto |
-| `structured_data` | Bloques JSON-LD rotos o con campos obligatorios ausentes | Avisar — lo genera la plantilla, no tú |
+| `structured_data` | Bloques JSON-LD rotos o con campos obligatorios ausentes, y páginas sin ningún bloque (`pages_without_jsonld`) | Avisar — lo genera la plantilla, no tú |
 | `old_site_redirects` | Rutas de la web antigua que hoy no llevan a ninguna parte (`null` si no hay web antigua) | Avisar — un redirect es config de servidor |
 | `form_check` | Prueba mensual del formulario de contacto | Avisar solo si falló (ver abajo) |
 | `release` | Versión desplegada de bl-site-package frente a la última publicada en `main` | Avisar a BigLobster si `outdated` — al cliente NUNCA (ver abajo) |
@@ -130,7 +130,11 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
   `missing_required_field` o `faq_answer_empty`, es un fallo de la plantilla o
   de los datos que la alimentan, y lo arregla BigLobster. Una excepción
   reveladora: `url_mismatch` casi siempre significa que `site_url` está mal
-  puesto — dilo así, porque también explica un sitemap vacío.
+  puesto — dilo así, porque también explica un sitemap vacío. Si
+  `pages_without_jsonld` no está vacío, avísalo igual — tampoco es tuyo de
+  arreglar (la plantilla es la que decide qué bloque emite en cada página),
+  pero es información real para BigLobster: una página sin ningún JSON-LD
+  puede ser un tipo de página que la plantilla aún no cubre.
 - `old_site_redirects.dead_ends` → aviso. Son direcciones de la web anterior
   que siguen circulando (Google, enlaces de terceros, tarjetas impresas) y hoy
   no llevan a ninguna parte. Un redirect se configura en el servidor, no desde
@@ -154,7 +158,8 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
 Responde exactamente `[SILENT]` si y solo si se cumple TODO esto:
 todo respondió 200, no hay `publish_drift`, no hay enlaces rotos, no hay
 problemas de imagen, no hay `social_contact_issues`, `structured_data.issues`
-está vacío, `duplicate_content` no tiene ningún par ni descripción corta,
+está vacío, `structured_data.pages_without_jsonld` está vacío,
+`duplicate_content` no tiene ningún par ni descripción corta,
 `old_site_redirects` es `null` o no tiene `dead_ends`, el `form_check` no
 falló, `release.outdated` no es `true` y `release.deployed` no es `null`, el
 TLS está por encima del umbral, no faltan cabeceras, no hay páginas

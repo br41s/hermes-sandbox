@@ -11,7 +11,8 @@ which is a normal file execution and clears the approval gate — and is version
 and auditable, the safer trust model.
 
 This builder owns only the file-derived portion of site-state: the internal link
-graph, inbound edges, and orphans. `keyword_url_map` and `cannibalization` are GSC-
+graph, inbound edges, orphans, and broken internal links (an outbound href whose
+target isn't any crawled page). `keyword_url_map` and `cannibalization` are GSC-
 derived and left for the agent to populate via its GSC tool; pass --merge to
 preserve them across runs.
 """
@@ -100,6 +101,20 @@ def find_orphans(graph, pillars):
     return sorted(u for u, d in graph.items() if u not in pset and not d["inbound"])
 
 
+def find_broken_internal_links(graph):
+    """Internal hrefs whose target isn't any crawled page — a 404 in waiting.
+
+    ``build_graph`` already computes this while building inbound edges (an
+    outbound target not in ``graph`` is silently excluded from ``inbound``);
+    this just keeps the pairs instead of discarding them.
+    """
+    return {
+        src: sorted(tgt for tgt in data["outbound"] if tgt not in graph)
+        for src, data in sorted(graph.items())
+        if any(tgt not in graph for tgt in data["outbound"])
+    }
+
+
 def git_head(repo):
     try:
         out = subprocess.run(
@@ -132,6 +147,7 @@ def main(argv=None):
 
     graph, errors = build_graph(args.web_dir, site_base)
     orphans = find_orphans(graph, pillars)
+    broken_internal_links = find_broken_internal_links(graph)
     commit = git_head(args.repo or args.web_dir)
 
     keyword_url_map, cannibalization = {}, []
@@ -150,6 +166,7 @@ def main(argv=None):
         "internal_link_graph": graph,
         "keyword_url_map": keyword_url_map,
         "orphans": orphans,
+        "broken_internal_links": broken_internal_links,
         "cannibalization": cannibalization,
     }
 
@@ -162,7 +179,11 @@ def main(argv=None):
     os.replace(tmp, args.out)  # atomic
 
     print(f"site-state written: {args.out}")
-    print(f"pages={len(graph)} orphans={len(orphans)} commit={commit or 'n/a'}")
+    broken_count = sum(len(v) for v in broken_internal_links.values())
+    print(
+        f"pages={len(graph)} orphans={len(orphans)} "
+        f"broken_internal_links={broken_count} commit={commit or 'n/a'}"
+    )
     if errors:
         print(f"parse_errors={len(errors)} (partial graph)", file=sys.stderr)
         for e in errors[:10]:

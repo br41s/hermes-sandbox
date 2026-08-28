@@ -114,6 +114,9 @@ Esquema:
   },
   "keyword_url_map": { "<consulta GSC>": ["url1", "url2"] },
   "orphans": ["urls sin inbound"],
+  "broken_internal_links": {
+    "https://biglobster.top/es/blog/<slug>": ["https://biglobster.top/... (no existe)"]
+  },
   "cannibalization": [ {"query": "...", "urls": ["url1", "url2"]} ]
 }
 ```
@@ -461,7 +464,7 @@ transacción atómica independiente.
 
 **Acción 7 — Optimización de CTR**
 - Filtra en GSC: URLs con >500 impresiones en los últimos 30 días Y CTR inferior a la media del sitio.
-- Reescribe el `<title>` con una de estas técnicas (elige según el tipo de contenido):
+- Reescribe el `<title>` con una de estas técnicas (elige según el tipo de contenido). Límite: ~60 caracteres — es el punto donde Google trunca el título en el SERP, así que uno más largo desperdicia las palabras que quedan fuera:
   - Pregunta directa: "¿Cómo [resolver problema]? Guía práctica"
   - Número específico: "5 formas en que [concepto] mejora [resultado]"
   - Valor concreto: "[Resultado medible] con [solución] — [año]"
@@ -470,6 +473,7 @@ transacción atómica independiente.
 
 **Acción 8 — Auditoría de Salud Técnica**
 - Comprueba el código de estado HTTP de todos los enlaces salientes (externos) de las URLs del batch. Registra como alerta cualquier enlace que devuelva: 301/302 (redirigido, actualiza el href), 404 (roto, elimina o reemplaza), 5xx (error de servidor, alerta humana).
+- **Enlaces internos rotos**: a diferencia del punto anterior, esto NO está limitado al batch — `broken_internal_links` en [ESTADO DEL SITIO] cubre todo el sitio, porque una página que no se toca en meses nunca entraría en un batch. Para cada URL origen y cada destino roto, hasta un máximo de 3 arreglos por ciclo: si hay una ruta actual del sitio que claramente sustituye al destino roto (mismo slug reubicado, redirect conocido, etc.), reescribe el `href` a esa ruta; si ninguna encaja, quita el enlace dejando el texto tal cual — nunca inventes una ruta. Edita el archivo fuente en `site/` (nunca `_site/`, que se regenera en el siguiente `npm run build`) y commitea el cambio.
 - Añade atributo `alt` descriptivo a todas las imágenes `<img>` sin él o con `alt=""` (no decorativo). Infiere el contexto del texto circundante y del `src` del archivo.
 - Verifica que el `sitemap.xml` incluya todas las URLs del batch con `<lastmod>` actualizado.
 
