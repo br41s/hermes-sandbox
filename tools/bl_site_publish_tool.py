@@ -60,12 +60,32 @@ def _get_site_credentials() -> tuple[Optional[str], Optional[str]]:
     return url or None, password or None
 
 
-def _http_json(method: str, url: str, body: Optional[dict] = None, token: Optional[str] = None) -> dict:
+def _get_automation_key() -> Optional[str]:
+    """Shared secret this client's site accepts to skip Turnstile on login.
+
+    Optional: a site with no Turnstile configured (or one this profile has
+    no key for) never sends the header, and login works exactly as before.
+    """
+    from hermes_cli.config import get_env_value
+
+    key = (get_env_value("BL_SITE_AUTOMATION_KEY") or "").strip()
+    return key or None
+
+
+def _http_json(
+    method: str,
+    url: str,
+    body: Optional[dict] = None,
+    token: Optional[str] = None,
+    headers: Optional[dict] = None,
+) -> dict:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -77,7 +97,13 @@ def _http_json(method: str, url: str, body: Optional[dict] = None, token: Option
 def _get_jwt(site_url: str, password: str) -> str:
     if site_url in _jwt_cache:
         return _jwt_cache[site_url]
-    result = _http_json("POST", f"{site_url}/api/auth/login", {"password": password})
+    headers = {}
+    automation_key = _get_automation_key()
+    if automation_key:
+        headers["X-Automation-Key"] = automation_key
+    result = _http_json(
+        "POST", f"{site_url}/api/auth/login", {"password": password}, headers=headers or None
+    )
     token = result.get("token")
     if not token:
         raise RuntimeError(f"Login to {site_url} did not return a token: {result}")
