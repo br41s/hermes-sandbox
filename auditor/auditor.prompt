@@ -8,7 +8,7 @@
 #
 # Runs as an agent cron under the `auditor` profile. Reviews open PRs across EVERY
 # repo in the system — the Hermes engine plus every profile's repo (biglobster,
-# FinView, grow-shop-*, SocialAgenda) — entirely through the `gh` API; it does not
+# FinView, grow-shop-*, SocialAgenda, Flywell, bl-site-package, Offlinepictures) — entirely through the `gh` API; it does not
 # clone the profile repos. Merge authority is CONTENT-TIER ONLY, on every repo:
 # it `gh pr merge`s a clean, mergeable, non-draft CONTENT PR, but NEVER auto-merges
 # a system-tier PR (it approves those and leaves them for the CEO). Per-repo tiers
