@@ -52,7 +52,8 @@ Para cada campo a mejorar, llama a `bl_site_publish` con `action: "update_page_t
 
 Además de la revisión de texto de arriba, cada ejecución detecta y arregla
 URLs de catálogo que dejaron de existir pero seguían recibiendo búsquedas —
-típicamente un producto retirado por el distribuidor.
+típicamente un producto retirado por el distribuidor, o una URL indexada de
+la plataforma anterior del cliente (antes de migrar a bl-site-package).
 
 1. `bl_site_redirect(action: "scan")` — una sola vez, sin más argumentos.
    Devuelve `confirmed_dead` (muerta en ESTA ejecución Y en una anterior —
@@ -61,7 +62,15 @@ típicamente un producto retirado por el distribuidor.
    confirman solas mañana si el problema es real) y `now_alive` (nada que
    hacer). Vacío en la primerísima ejecución de siempre — no hay nada contra
    qué comparar aún, no es señal de que el sitio esté limpio.
-2. Para cada URL de `confirmed_dead`, hasta un máximo de 3 por ejecución:
+2. `bl_site_redirect(action: "scan_legacy")` — también una sola vez, sin más
+   argumentos. Cubre lo que `scan` estructuralmente no puede ver: URLs que
+   Google indexó de la web anterior del cliente y que nunca estuvieron en el
+   sitemap de bl-site-package. Devuelve `new_candidates`, una lista pequeña
+   ya lista para el mismo bucle de abajo — trátala exactamente igual que
+   `confirmed_dead`. El propio historial evita que una URL se repita una vez
+   intentada, así que no hace falta ninguna comprobación extra de tu parte.
+3. Junta `confirmed_dead` y `new_candidates` en una sola lista. Para cada
+   URL, hasta un máximo de 3 por ejecución EN TOTAL (sumando ambas fuentes):
    a. `bl_site_redirect(action: "find_target", old_path: <url>)`.
    b. Si `found` es `false`: anótala como aviso (ver Respuesta final) y sigue
       con la siguiente — NUNCA inventes un destino. Lo más habitual es que
@@ -82,7 +91,7 @@ típicamente un producto retirado por el distribuidor.
       anótalo como aviso con el motivo exacto que devolvió el sitio. No
       reintentes con datos distintos — el rechazo es una decisión del
       sitio, no un fallo tuyo.
-3. Nunca crees más de 3 redirecciones nuevas por ejecución.
+4. Nunca crees más de 3 redirecciones nuevas por ejecución, contando ambas fuentes juntas.
 
 ## Reglas permanentes
 - Nunca inventes datos sobre el negocio del cliente (dirección, teléfono, horario, servicios concretos) — solo mejora la redacción de lo que ya está, o generaliza sin inventar hechos.

@@ -1,16 +1,31 @@
 """Find and write same-site 301 redirects on a bl-site-package client site.
 
 ``scan`` detects that a URL is gone (a run-to-run sitemap diff, confirmed dead
-only after two separate runs agree); ``find_target`` figures out what it should
-point to now; ``propose``/``publish``/``list``/``remove`` write through the
-site's own ``/api/redirects`` (bl-site-package PR #65). All four steps live in
-this one tool on purpose: detection used to sit inside ``bl_site_health``, but
-that coupled a same-site 404 to the Website Maintenance product specifically,
-when the actual capability belongs with SEO — every bl-site-package client's
+only after two separate runs agree); ``scan_legacy`` detects a URL from the
+client's PRE-bl-site-package platform that Google still has indexed but that
+was never in any bl-site-package sitemap, so ``scan`` can never see it (a
+sitemap diff only knows about URLs THIS site has published at some point);
+``find_target`` figures out what a dead URL should point to now;
+``propose``/``publish``/``list``/``remove`` write through the site's own
+``/api/redirects`` (bl-site-package PR #65). All these steps live in this one
+tool on purpose: detection used to sit inside ``bl_site_health``, but that
+coupled a same-site 404 to the Website Maintenance product specifically, when
+the actual capability belongs with SEO — every bl-site-package client's
 onsite SEO agent (``onsite-seo/bl-site-package-seo-agent.prompt``) should be
 able to call it regardless of which other products they've bought. ``scan``
-keeps its own history file, independent of ``bl_site_health``'s, so the two
-tools' state never entangles.
+and ``scan_legacy`` share one history file, independent of
+``bl_site_health``'s, so the two tools' state never entangles.
+
+``scan_legacy`` exists because a client migrating onto bl-site-package from
+a real old platform (confirmed for one client: a PrestaShop storefront) keeps
+its old, Google-indexed URLs turning up as 404s indefinitely — with no GSC
+access for rental clients (a deliberate architecture decision, not a gap) and
+no live old site left to crawl, the only source that doesn't depend on either
+is the Wayback Machine's CDX index, which lists every URL it has ever
+archived under a domain. Discovery is deliberately rare (every
+``LEGACY_REDISCOVERY_DAYS``, not every run) — these URLs are gone forever, so
+there is nothing to re-poll for on a daily cadence, unlike ``scan``'s
+two-run-confirmation, which exists specifically to catch a URL mid-flap.
 
 ``find_target`` is the one piece of reasoning that maps a dead URL to a live
 one: given a dead
@@ -51,6 +66,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from tools.bl_site_health_tool import _sweepable
 from tools.bl_site_product_tool import _refuse_if_scripted, _tool_call
 from tools.bl_site_publish_tool import _get_jwt, _get_site_credentials
 from tools.product_enrich_tool import (
@@ -74,6 +90,12 @@ SCAN_WATCH_KEEP_DAYS = 60
 SCAN_DEAD_STATUSES = (404, 410)
 SCAN_REQUEST_TIMEOUT = 20
 
+# --- scan_legacy: one-time-ish Wayback CDX discovery, same history file ----
+LEGACY_REDISCOVERY_DAYS = 30
+LEGACY_CDX_LIMIT = 2000
+LEGACY_CANDIDATE_BATCH = 5
+CDX_REQUEST_TIMEOUT = 30
+
 
 def _scan_history_path() -> Path:
     from hermes_constants import get_hermes_home
@@ -91,6 +113,8 @@ def _load_scan_history() -> dict:
         data = {}
     data.setdefault("known_sitemap_urls", [])
     data.setdefault("redirect_watch", {})
+    data.setdefault("legacy_discovery", {})
+    data.setdefault("legacy_candidates", {})
     return data
 
 
@@ -188,6 +212,106 @@ def _scan_sitemap(site_url: str) -> dict:
     }
 
 
+def _cdx_fetch(domain: str) -> Optional[list[str]]:
+    """Every URL Wayback Machine has ever archived under this domain, or None
+    on any failure — a discovery miss is a normal, boring answer here (same
+    convention ``wayback_snapshot_url`` already uses), not something to raise
+    on. ``fl=original`` makes the first row a ``["original"]`` header row."""
+    query = urllib.parse.urlencode({
+        "url": domain,
+        "matchType": "domain",
+        "output": "json",
+        "collapse": "urlkey",
+        "fl": "original",
+        "limit": str(LEGACY_CDX_LIMIT),
+    })
+    req = urllib.request.Request(
+        f"http://web.archive.org/cdx/search/cdx?{query}",
+        headers={"User-Agent": USER_AGENT},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=CDX_REQUEST_TIMEOUT) as resp:
+            data = json.loads(resp.read(5_000_000).decode("utf-8", errors="replace"))
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, list) or len(data) < 2:
+        return []
+    return [row[0] for row in data[1:] if row]
+
+
+def _discover_legacy_urls(site_url: str) -> dict:
+    """Legacy-platform URLs discovered via Wayback CDX, drained a few at a
+    time through the same find_target/propose/publish loop ``scan``'s own
+    candidates use.
+
+    Re-discovery (the CDX call itself) is gated to LEGACY_REDISCOVERY_DAYS —
+    these URLs are gone forever, so there is nothing to catch by polling
+    daily, unlike ``scan``'s two-run confirmation which exists to catch a URL
+    mid-flap. Once a URL is known, it is recorded permanently: a live-200
+    check clears it as ``resolves_now``, and ``_find_target`` marks it
+    ``processed`` the moment it's actually attempted — so nothing here is
+    ever re-queried or re-reported forever.
+    """
+    history = _load_scan_history()
+    discovery = history["legacy_discovery"]
+    candidates = history["legacy_candidates"]
+
+    due = True
+    last_run = discovery.get("last_run")
+    if last_run:
+        try:
+            age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(last_run)).days
+            due = age_days >= LEGACY_REDISCOVERY_DAYS
+        except ValueError:
+            due = True
+
+    domain = urllib.parse.urlparse(site_url).netloc
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    if due:
+        found = _cdx_fetch(domain)
+        if found is not None:
+            for raw_url in found:
+                path = urllib.parse.urlparse(raw_url).path
+                if not path or path == "/" or not _sweepable(path):
+                    continue
+                normalized = site_url.rstrip("/") + path
+                if normalized not in candidates:
+                    candidates[normalized] = {"status": "new", "discovered_at": now_iso}
+            discovery["last_run"] = now_iso
+            discovery["domain"] = domain
+        # else: CDX unreachable/rate-limited this run — soft-fail, last_run
+        # stays untouched so the next eligible run tries again.
+
+    new_urls = sorted(u for u, rec in candidates.items() if rec.get("status") == "new")
+    batch: list[str] = []
+    for url in new_urls[:LEGACY_CANDIDATE_BATCH]:
+        res = _scan_fetch(url)
+        if res["status"] == 200:
+            candidates[url]["status"] = "resolves_now"
+        else:
+            batch.append(url)
+
+    _save_scan_history(history)
+    return {
+        "checked_domain": domain,
+        "known_legacy_urls": len(candidates),
+        "new_candidates": batch,
+    }
+
+
+def _mark_legacy_processed(old_path: str) -> None:
+    """Record that a legacy candidate was actually attempted this run —
+    called from ``_find_target`` itself, the one call every per-URL loop
+    (scan-sourced or legacy-sourced) always makes first, regardless of
+    outcome. A no-op for any URL that isn't a known legacy candidate."""
+    history = _load_scan_history()
+    candidates = history["legacy_candidates"]
+    if old_path in candidates and candidates[old_path].get("status") == "new":
+        candidates[old_path]["status"] = "processed"
+        _save_scan_history(history)
+
+
 def _request(method: str, url: str, token: str, body: Optional[dict] = None) -> dict:
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -223,6 +347,7 @@ def _fetch_snapshot(url: str) -> str:
 
 def _find_target(site_url: str, token: str, old_path: str) -> dict:
     dead_url = old_path if old_path.startswith("http") else site_url.rstrip("/") + old_path
+    _mark_legacy_processed(dead_url)
     snapshot_url = wayback_snapshot_url(dead_url)
     if not snapshot_url:
         return {
@@ -306,6 +431,9 @@ def bl_site_redirect(
         if action == "scan":
             return json.dumps(_scan_sitemap(site_url), ensure_ascii=False)
 
+        if action == "scan_legacy":
+            return json.dumps(_discover_legacy_urls(site_url), ensure_ascii=False)
+
         if action == "find_target":
             if not old_path:
                 return tool_error("find_target requiere 'old_path'.")
@@ -339,8 +467,8 @@ def bl_site_redirect(
             return json.dumps(result, ensure_ascii=False)
 
         return tool_error(
-            f"Acción desconocida '{action}'. Usa 'scan', 'find_target', 'list', "
-            "'propose', 'publish' o 'remove'."
+            f"Acción desconocida '{action}'. Usa 'scan', 'scan_legacy', 'find_target', "
+            "'list', 'propose', 'publish' o 'remove'."
         )
     except RuntimeError as e:
         return tool_error(str(e))
@@ -357,7 +485,15 @@ BL_SITE_REDIRECT_SCHEMA = {
         "'pending_confirmation' (just went missing this run, needs one more run to confirm — do "
         "nothing with these yet) and 'now_alive' (came back, nothing to do). Empty on the very "
         "first run ever, which is not a sign of a clean site — there is nothing to diff against yet. "
-        "Use action='find_target' with 'old_path' (a URL from 'confirmed_dead') to discover a "
+        "Use action='scan_legacy' (no other arguments) once per run to find URLs from the "
+        "client's platform BEFORE bl-site-package that Google still has indexed — these were "
+        "never in this site's own sitemap, so 'scan' can never find them. Discovery itself (a "
+        "Wayback Machine CDX lookup) only runs every ~30 days since these URLs are gone forever, "
+        "not flapping; returns 'new_candidates', a small batch ready for 'find_target' exactly "
+        "like 'confirmed_dead' is. A URL that resolves 200 live is dropped automatically, and "
+        "every URL is remembered permanently so nothing is re-suggested twice. "
+        "Use action='find_target' with 'old_path' (a URL from 'confirmed_dead' or "
+        "'new_candidates') to discover a "
         "candidate: it "
         "reads the barcode/reference off the URL's last Wayback Machine snapshot and looks up "
         "which LIVE product now carries it. Returns found=false with a reason when there is no "
@@ -383,14 +519,14 @@ BL_SITE_REDIRECT_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["scan", "find_target", "list", "propose", "publish", "remove"],
+                "enum": ["scan", "scan_legacy", "find_target", "list", "propose", "publish", "remove"],
                 "description": "Which operation to perform.",
             },
             "old_path": {
                 "type": "string",
                 "description": "The dead URL's path (e.g. '/productos/viejo.html'). Required "
                                "for 'find_target' and 'propose'; comes from scan's "
-                               "'confirmed_dead' list.",
+                               "'confirmed_dead' list or scan_legacy's 'new_candidates' list.",
             },
             "new_path": {
                 "type": "string",
