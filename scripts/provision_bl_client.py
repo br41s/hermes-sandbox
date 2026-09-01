@@ -187,7 +187,7 @@ AGENT_SOURCES = {
         "maintenance/bl-site-package-maintenance.prompt",
         "Website Maintenance",
         "daily",
-        ["bl_site_publish", "terminal", "file", "todo"],
+        ["bl_site_publish", "bl_site_health", "terminal", "file", "todo"],
     ),
     # The "Site Launch" checkout product. One-shot, like onboarding-content,
     # but it is the *whole* create-your-website job: the deterministic half

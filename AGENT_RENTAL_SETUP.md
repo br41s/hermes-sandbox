@@ -27,12 +27,18 @@ Both agents below publish through the `bl_site_publish` tool
 (`tools/bl_site_publish_tool.py`) — an authenticated HTTP client for the
 client's own bl-site-package panel API, **not** git. There is no per-client
 repo to check out, so unlike biglobster's own agents these jobs need no
-`workdir`/checkout at all. Website Maintenance additionally *reads* through
-`bl_site_health` (`tools/bl_site_health_tool.py`); SEO/GEO On-Site additionally
-finds and writes same-site 301s through `bl_site_redirect`
-(`tools/bl_site_redirect_tool.py`) — both are registered into the same
-`bl_site_publish` toolset, so there is still exactly one write path to a
-client's site.
+`workdir`/checkout at all. SEO/GEO On-Site additionally finds and writes
+same-site 301s through `bl_site_redirect` (`tools/bl_site_redirect_tool.py`),
+registered into the same `bl_site_publish` toolset — still exactly one write
+path to a client's site. Website Maintenance additionally *reads* through
+`bl_site_health` (`tools/bl_site_health_tool.py`), on its **own** toolset
+(`bl_site_health`, explicitly added to Maintenance's `enabled_toolsets`) —
+deliberately NOT shared with `bl_site_publish`, unlike `bl_site_redirect`:
+a job only needs one write path, but `bl_site_health`'s deterministic crawl
+has no business being schema-visible to a prompt that never asks for it.
+Confirmed live on Shoroban's SEO/GEO On-Site job before this split existed —
+it reached for `bl_site_health` unprompted and never got back to the
+redirect work its own prompt actually documents.
 
 | Agent | Prompt file | Publishes via | Schedule |
 |---|---|---|---|

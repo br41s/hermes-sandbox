@@ -1170,12 +1170,15 @@ BL_SITE_HEALTH_SCHEMA = {
 
 from tools.registry import registry  # noqa: E402
 
-# Registered into the EXISTING bl_site_publish toolset on purpose: the rented
-# profiles already have that toolset enabled, so no client config changes and no
-# new toolset gets switched on anywhere else.
+# Own toolset, deliberately separate from bl_site_publish: this tool used to
+# share that toolset, and every job whose enabled_toolsets included
+# "bl_site_publish" got bl_site_health schema-visible whether its prompt
+# asked for it or not — confirmed live on Shoroban's SEO/GEO On-Site job,
+# which reached for bl_site_health unprompted and never got back on script.
+# Only maintenance/bl-site-package-maintenance.prompt should ever see this.
 registry.register(
     name="bl_site_health",
-    toolset="bl_site_publish",
+    toolset="bl_site_health",
     schema=BL_SITE_HEALTH_SCHEMA,
     handler=lambda args, **kw: bl_site_health(
         action=args.get("action", "check"),
