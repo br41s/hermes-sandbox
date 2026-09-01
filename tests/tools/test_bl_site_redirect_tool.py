@@ -353,3 +353,93 @@ def test_scan_url_reappearing_alive_clears_the_watch(monkeypatch):
     assert result["checked"] == 0
     assert result["confirmed_dead"] == []
     assert result["pending_confirmation"] == []
+
+
+# --- scan_legacy -------------------------------------------------------
+
+LEGACY_PATH = SITE + "/product/15302-diccionario-vox.html"
+LEGACY_CAT_PATH = SITE + "/cat/228-papel.html"
+
+
+def run_scan_legacy(monkeypatch, cdx_urls, live_overrides=None):
+    """Fake _cdx_fetch (network) and _scan_fetch (per-URL live check)."""
+    live_overrides = live_overrides or {}
+
+    def _cdx_fetch(_domain):
+        return cdx_urls
+
+    def _scan_fetch(url):
+        if url in live_overrides:
+            return {"body": "", **live_overrides[url]}
+        return {"status": 404, "body": ""}
+
+    monkeypatch.setattr(mod, "_cdx_fetch", _cdx_fetch)
+    monkeypatch.setattr(mod, "_scan_fetch", _scan_fetch)
+    return json.loads(mod.bl_site_redirect(action="scan_legacy"))
+
+
+def test_scan_legacy_first_run_discovers_and_returns_candidates(monkeypatch):
+    result = run_scan_legacy(monkeypatch, [
+        "https://old.example.net/product/15302-diccionario-vox.html",
+    ])
+    assert result["new_candidates"] == [LEGACY_PATH]
+    assert result["known_legacy_urls"] == 1
+
+
+def test_scan_legacy_drops_a_url_that_currently_resolves_live(monkeypatch):
+    result = run_scan_legacy(
+        monkeypatch,
+        ["https://old.example.net/product/15302-diccionario-vox.html"],
+        live_overrides={LEGACY_PATH: {"status": 200}},
+    )
+    assert result["new_candidates"] == []
+    assert result["known_legacy_urls"] == 1
+
+
+def test_scan_legacy_drops_non_sweepable_paths(monkeypatch):
+    result = run_scan_legacy(monkeypatch, [
+        "https://old.example.net/assets/logo.png",
+    ])
+    assert result["new_candidates"] == []
+    assert result["known_legacy_urls"] == 0
+
+
+def test_scan_legacy_does_not_requery_cdx_within_the_rediscovery_window(monkeypatch):
+    run_scan_legacy(monkeypatch, [
+        "https://old.example.net/product/15302-diccionario-vox.html",
+    ])
+
+    def _boom(_domain):
+        raise AssertionError("CDX should not be queried again this soon")
+
+    monkeypatch.setattr(mod, "_cdx_fetch", _boom)
+    monkeypatch.setattr(mod, "_scan_fetch", lambda url: {"status": 404, "body": ""})
+    result = json.loads(mod.bl_site_redirect(action="scan_legacy"))
+    # Already-known candidate is still served from history, no new CDX call.
+    assert result["new_candidates"] == [LEGACY_PATH]
+
+
+def test_scan_legacy_cdx_failure_is_a_soft_fail_not_a_crash(monkeypatch):
+    monkeypatch.setattr(mod, "_cdx_fetch", lambda _domain: None)
+    monkeypatch.setattr(mod, "_scan_fetch", lambda url: {"status": 404, "body": ""})
+    result = json.loads(mod.bl_site_redirect(action="scan_legacy"))
+    assert result["new_candidates"] == []
+    assert result["known_legacy_urls"] == 0
+
+
+def test_scan_legacy_a_url_find_target_already_attempted_is_not_resuggested(monkeypatch):
+    run_scan_legacy(monkeypatch, [
+        "https://old.example.net/product/15302-diccionario-vox.html",
+        "https://old.example.net/cat/228-papel.html",
+    ])
+
+    monkeypatch.setattr(mod, "wayback_snapshot_url", lambda _url: None)
+    mod.bl_site_redirect(action="find_target", old_path=LEGACY_PATH)
+
+    def _boom(_domain):
+        raise AssertionError("CDX should not be queried again this soon")
+
+    monkeypatch.setattr(mod, "_cdx_fetch", _boom)
+    monkeypatch.setattr(mod, "_scan_fetch", lambda url: {"status": 404, "body": ""})
+    result = json.loads(mod.bl_site_redirect(action="scan_legacy"))
+    assert result["new_candidates"] == [LEGACY_CAT_PATH]
