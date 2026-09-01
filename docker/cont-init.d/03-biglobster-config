@@ -207,6 +207,21 @@ if not auditor_token and (home / ".env").exists():
                    (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
     auditor_token = _m.group(1).strip() if _m else ""
 
+# Dedicated OpenRouter key for the auditor, resolved the same way (env first,
+# then the durable main .env). Lets the auditor's LLM spend bill to — and be
+# capped by — a SEPARATE OpenRouter key from the shared content fleet, so
+# content agents exhausting the shared key's weekly limit can no longer starve
+# the auditor (the whole auditor cron failed HTTP 402 for >1 day on 2026-09-01
+# once the shared key hit its cap). OPTIONAL: if unset, the auditor keeps the
+# shared OPENROUTER_API_KEY the §1 loop already wrote — a missing LLM key kills
+# reviews outright, so this falls back for availability rather than failing
+# closed like the GitHub token above.
+auditor_openrouter_key = os.environ.get("HERMES_AUDITOR_OPENROUTER_API_KEY", "")
+if not auditor_openrouter_key and (home / ".env").exists():
+    _m = re.search(r"^HERMES_AUDITOR_OPENROUTER_API_KEY=(.*)$",
+                   (home / ".env").read_text(encoding="utf-8"), flags=re.MULTILINE)
+    auditor_openrouter_key = _m.group(1).strip() if _m else ""
+
 def _is_rented_tenant(env_path):
     """True for a bl-site-package rental — a profile that pays its own way.
 
@@ -332,6 +347,22 @@ if (profiles_root / "auditor" / "SOUL.md").exists():
             _c += "\n"
         _c += f"{_mv}={_val}\n"
     _ae.write_text(_c, encoding="utf-8")
+
+# 1d. Dedicated OpenRouter key override (resolved in §1b above). The §1 sync loop
+#     wrote the SHARED OPENROUTER_API_KEY into the auditor .env; if a dedicated
+#     HERMES_AUDITOR_OPENROUTER_API_KEY is set, replace it here so the auditor's
+#     model spend is isolated from the content fleet's shared key and its weekly
+#     cap. No-op (keeps the shared key as fallback) when the dedicated one is
+#     unset. Runs AFTER the §1 loop so this override always wins.
+if auditor_openrouter_key and (profiles_root / "auditor" / "SOUL.md").exists():
+    _ae = profiles_root / "auditor" / ".env"
+    _c = _ae.read_text(encoding="utf-8") if _ae.exists() else ""
+    _c = re.sub(r"^OPENROUTER_API_KEY=.*(?:\n|$)", "", _c, flags=re.MULTILINE)
+    if _c and not _c.endswith("\n"):
+        _c += "\n"
+    _c += f"OPENROUTER_API_KEY={auditor_openrouter_key}\n"
+    _ae.write_text(_c, encoding="utf-8")
+    print("[03-biglobster] Auditor profile pinned to dedicated OpenRouter key")
 
 # 2. Re-assert runtime-critical config keys (idempotent). docker/config.yaml
 #    is the first-boot source of truth; here we only force the keys that must
