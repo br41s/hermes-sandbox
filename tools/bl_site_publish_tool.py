@@ -32,21 +32,34 @@ _MAX_IMAGE_BYTES = 12 * 1024 * 1024
 
 
 def _download_bytes(url: str) -> bytes:
-    """Fetch an image from a URL (e.g. the FAL-hosted result of image_generate).
+    """Get image bytes from what image_generate returned — a URL or a local path.
+
+    FAL-backed models return a hosted URL; other providers (e.g. the
+    OpenRouter image_gen plugin) download the result themselves and return
+    a local file path instead (see plugins/image_gen/openrouter). Handle
+    both so the cover-image flow works regardless of which image_gen
+    provider a profile is configured for.
 
     Streams up to _MAX_IMAGE_BYTES + 1 so an oversized response is rejected
     without buffering it all. Raises RuntimeError on transport/size errors.
     """
-    req = urllib.request.Request(url, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read(_MAX_IMAGE_BYTES + 1)
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"HTTP {e.code} fetching image from {url}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Could not fetch image from {url}: {e.reason}") from e
+    if url.startswith("http://") or url.startswith("https://"):
+        req = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read(_MAX_IMAGE_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"HTTP {e.code} fetching image from {url}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Could not fetch image from {url}: {e.reason}") from e
+    else:
+        try:
+            with open(url, "rb") as f:
+                data = f.read(_MAX_IMAGE_BYTES + 1)
+        except OSError as e:
+            raise RuntimeError(f"Could not read local image file {url}: {e}") from e
     if not data:
-        raise RuntimeError(f"Image URL returned no data: {url}")
+        raise RuntimeError(f"Image source returned no data: {url}")
     if len(data) > _MAX_IMAGE_BYTES:
         raise RuntimeError("Image exceeds the 12 MB upload limit")
     return data
