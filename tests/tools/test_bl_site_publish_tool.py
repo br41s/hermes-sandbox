@@ -77,3 +77,42 @@ def test_get_automation_key_reads_profile_env(monkeypatch):
 def test_get_automation_key_is_none_when_unset(monkeypatch):
     monkeypatch.setattr("hermes_cli.config.get_env_value", lambda name: None)
     assert publish._get_automation_key() is None
+
+
+def test_download_bytes_fetches_a_url(monkeypatch):
+    captured = {}
+
+    class _FakeBinaryResponse:
+        def read(self, n=-1):
+            return b"http-image-bytes"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _FakeBinaryResponse()
+
+    monkeypatch.setattr(publish.urllib.request, "urlopen", fake_urlopen)
+
+    data = publish._download_bytes("https://cdn.example/cover.png")
+
+    assert data == b"http-image-bytes"
+    assert captured["url"] == "https://cdn.example/cover.png"
+
+
+def test_download_bytes_reads_a_local_path(tmp_path):
+    local_file = tmp_path / "openrouter_gen_20260901_a11dc223.png"
+    local_file.write_bytes(b"local-image-bytes")
+
+    data = publish._download_bytes(str(local_file))
+
+    assert data == b"local-image-bytes"
+
+
+def test_download_bytes_raises_for_a_missing_local_path():
+    with pytest.raises(RuntimeError, match="Could not read local image file"):
+        publish._download_bytes("/no/such/file.png")
