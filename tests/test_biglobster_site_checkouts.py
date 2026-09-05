@@ -112,4 +112,31 @@ def test_writes_run_as_hermes(boot_text: str) -> None:
     """Checkouts must land hermes-owned, like the rest of the script."""
     s = _section6b(boot_text)
     assert "as_hermes timeout 300 git clone" in s
+
+
+def test_dirty_tracked_file_is_self_healed_only_when_not_ahead(boot_text: str) -> None:
+    """Regression lock for the 2026-09-05 incident: all four checkouts sat
+    dirty (SOUL.md diverged from a real upstream commit synced in without
+    advancing the branch pointer) and silently blocked `pull --ff-only` for a
+    month. A dirty tracked file with no local commits at risk must now be
+    auto-discarded via `checkout -- .` (never `reset --hard`, which would also
+    swallow real unmerged commits) before the fast-forward is attempted."""
+    s = _section6b(boot_text)
+    assert 'git -C "$target" status --porcelain' in s
+    assert 'rev-list --count HEAD "^origin/main"' in s
+    assert 'checkout --quiet -- .' in s
+    assert "reset --hard" not in s
+
+
+def test_diverged_checkout_is_reported_not_guessed(boot_text: str) -> None:
+    """A checkout that is BOTH dirty AND ahead of origin/main might hold real
+    unmerged work (confirmed: biglobster-seo carried 4 real commits during the
+    2026-09-05 incident). That case must never be auto-discarded — only
+    reported, via the same jsonl-signal convention the git-guard pre-commit
+    hook uses, so the hourly incident watcher (incidents/sweep.py) surfaces it
+    instead of it going silent for weeks."""
+    s = _section6b(boot_text)
+    assert "checkout-drift.jsonl" in s
+    assert '"checkout":"%s"' in s
+    assert '"ahead":%s' in s
     assert 'as_hermes mkdir -p "$checkouts_root"' in s
