@@ -1073,6 +1073,39 @@ for ckdir in biglobster-seo biglobster-gaphunter biglobster-infographic biglobst
         # rewrites local history. Each step is independently non-fatal.
         HOME="$HERMES_HOME" as_hermes timeout 120 git -C "$target" fetch --quiet origin main 2>&1 \
             || echo "[03-biglobster] Warning: git fetch failed/timed out for $ckdir (non-fatal)"
+        # Self-heal a dirty TRACKED file blocking the upcoming fast-forward.
+        # Found 2026-09-05: a real commit to SOUL.md on origin/main (4ab6335e,
+        # 2026-08-12) was single-file-synced into all four checkouts
+        # (`git checkout origin/main -- SOUL.md`) without advancing each
+        # checkout's own branch pointer, leaving every one of them permanently
+        # dirty against their own stale HEAD — checkout+pull below then
+        # refused to fast-forward for a MONTH, silently (non-fatal warning,
+        # nobody looked, four identical broken checkouts). Only auto-discard
+        # when the checkout carries NO commits origin/main doesn't have — i.e.
+        # the dirt is pure working-tree noise, never real unmerged work. When
+        # local commits ARE ahead (confirmed to actually happen: biglobster-seo
+        # carried 4 real SEO commits that had — by luck — already landed
+        # upstream via PR #426), do not guess: leave the tree untouched and
+        # report it instead via the same jsonl-signal convention the git-guard
+        # pre-commit hook uses for blocked-commits.jsonl (incidents/sweep.py
+        # picks both up on its hourly pass).
+        _ck_dirty=$(HOME="$HERMES_HOME" as_hermes git -C "$target" status --porcelain 2>/dev/null)
+        _ck_ahead=$(HOME="$HERMES_HOME" as_hermes git -C "$target" rev-list --count HEAD "^origin/main" 2>/dev/null) \
+            || _ck_ahead=0
+        if [ -n "$_ck_dirty" ]; then
+            if [ "${_ck_ahead:-0}" = "0" ]; then
+                HOME="$HERMES_HOME" as_hermes git -C "$target" checkout --quiet -- . 2>/dev/null \
+                    && echo "[03-biglobster] Discarded dirty tracked-file state in $ckdir (no local commits at risk)" \
+                    || echo "[03-biglobster] Warning: could not clean dirty state in $ckdir (non-fatal)"
+            else
+                echo "[03-biglobster] Warning: $ckdir is dirty AND $_ck_ahead commit(s) ahead of origin/main — leaving untouched, logging to incident watcher"
+                as_hermes mkdir -p "$HERMES_HOME/incidents" 2>/dev/null
+                _ck_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                printf '{"ts":"%s","checkout":"%s","ahead":%s,"reason":"dirty tracked file + local commits ahead of origin/main block the fast-forward pull"}\n' \
+                    "$_ck_ts" "$ckdir" "$_ck_ahead" \
+                    | as_hermes tee -a "$HERMES_HOME/incidents/checkout-drift.jsonl" > /dev/null
+            fi
+        fi
         HOME="$HERMES_HOME" as_hermes git -C "$target" checkout --quiet main 2>/dev/null \
             || echo "[03-biglobster] Warning: checkout main failed for $ckdir (non-fatal)"
         HOME="$HERMES_HOME" as_hermes timeout 120 git -C "$target" pull --ff-only --quiet 2>&1 \

@@ -15,6 +15,12 @@ Signals:
     editing one side silently diverges the other). Opt-in per job.
   * Errored Langfuse traces — best-effort via the public read API (ERROR-level
     observations grouped by trace). Degrades to nothing if the API/keys are absent.
+  * Blocked agent commits — the git-guard pre-commit hook appends a JSON line to
+    ``blocked-commits.jsonl`` when it blocks a mass-deletion commit.
+  * Site-checkout drift — docker/cont-init.d/03-biglobster-config section 6b
+    appends a JSON line to ``checkout-drift.jsonl`` when a BigLobster site
+    checkout is both dirty and carries local commits origin/main doesn't have
+    (never auto-resolved, so it needs a human look).
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -69,6 +75,11 @@ def _state_path() -> Path:
 def _blocked_path() -> Path:
     from hermes_constants import get_hermes_home
     return get_hermes_home() / "incidents" / "blocked-commits.jsonl"
+
+
+def _checkout_drift_path() -> Path:
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "incidents" / "checkout-drift.jsonl"
 
 
 def _load_state(path: Path) -> dict:
@@ -330,6 +341,58 @@ def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
     return out
 
 
+def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
+    """Read the site-checkout drift signal and surface each one.
+
+    docker/cont-init.d/03-biglobster-config section 6b appends one JSON line to
+    ``$HERMES_HOME/incidents/checkout-drift.jsonl`` when a BigLobster site
+    checkout is both dirty (uncommitted changes to a tracked file) AND carries
+    local commits origin/main doesn't have. That combination is never
+    auto-resolved (it might be real unmerged work), so it would otherwise sit
+    as a silent, non-fatal boot warning indefinitely — exactly what happened
+    2026-08-12 through 2026-09-05: a single-file sync of a real SOUL.md commit
+    into all four checkouts, without advancing their branch pointers, left
+    every one of them permanently dirty and blocked `pull --ff-only` for a
+    month before anyone noticed. This is the alert path so it gets surfaced
+    the same boot it happens, not discovered a month later.
+
+    Best-effort: a malformed or missing file yields []. Dedup is by the
+    existing seen-state (stable id per signal), so a drift is reported once
+    per checkout per ahead-count (the id changes if the count changes).
+    """
+    path = path or _checkout_drift_path()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    out: List[Incident] = []
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            continue
+        ts = str(rec.get("ts") or "unknown")
+        checkout = str(rec.get("checkout") or "unknown")
+        ahead = rec.get("ahead")
+        reason = str(rec.get("reason") or "dirty checkout with local commits ahead of origin/main")
+        out.append(Incident(
+            id=f"checkout-drift:{checkout}:{ahead}",
+            kind="checkout_drift",
+            title=f"Site checkout '{checkout}' diverged and stopped pulling",
+            detail=f"when: {ts}\ncheckout: {checkout}\nahead: {ahead}\nreason: {reason}",
+            handoff=(
+                f"inspect $HERMES_HOME/checkouts/{checkout} — confirm whether its "
+                f"local commits already landed upstream (check for a merged PR with "
+                f"the same content) before resetting it to origin/main"
+            ),
+        ))
+    return out
+
+
 def _prune_blocked(path: Path, cap: int = _BLOCKED_CAP) -> None:
     """Keep the signal file bounded. Reported ids persist in seen-state, so
     trimming the oldest lines never re-surfaces an already-reported block."""
@@ -403,7 +466,8 @@ def _reconcile_text(jobs: List[dict], *, now: datetime, dry_run: bool,
 
 def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           langfuse: Optional[List[Incident]] = None,
-          blocked: Optional[List[Incident]] = None, state_path: Optional[Path] = None,
+          blocked: Optional[List[Incident]] = None,
+          checkout_drift: Optional[List[Incident]] = None, state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
     """Run one sweep. Returns the text to deliver ("" = stay silent)."""
@@ -422,11 +486,12 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
             jobs = []
     lf = langfuse if langfuse is not None else langfuse_error_incidents(now=now)
     bc = blocked if blocked is not None else blocked_commit_incidents()
+    cd = checkout_drift if checkout_drift is not None else checkout_drift_incidents()
 
     incidents = (cron_failure_incidents(jobs, now=now)
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
-                 + list(lf) + list(bc))
+                 + list(lf) + list(bc) + list(cd))
     new = [i for i in incidents if i.id not in seen]
 
     incident_text = ""
@@ -457,6 +522,8 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
         _save_state(state_path, state)
     if not dry_run and blocked is None:
         _prune_blocked(_blocked_path())
+    if not dry_run and checkout_drift is None:
+        _prune_blocked(_checkout_drift_path())
     return output
 
 

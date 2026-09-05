@@ -6,8 +6,8 @@ detect failures, dedup, silent-when-clean, and the 24h heartbeat.
 """
 from datetime import timedelta
 
-from incidents.sweep import (Incident, cron_failure_incidents, cron_stale_incidents,
-                             prompt_drift_incidents, sweep)
+from incidents.sweep import (Incident, checkout_drift_incidents, cron_failure_incidents,
+                             cron_stale_incidents, prompt_drift_incidents, sweep)
 from incidents.sweep import _now as now_fn
 
 
@@ -191,3 +191,38 @@ class TestSweepBehaviour:
         assert not sp.exists()  # nothing written -> next real run still reports it
         out = sweep(jobs=[_failed_job()], langfuse=[], state_path=sp)
         assert "Incident" in out
+
+
+class TestCheckoutDrift:
+    """docker/cont-init.d/03-biglobster-config section 6b writes one JSON line
+    per dirty-and-diverged site checkout to checkout-drift.jsonl. Regression
+    lock for the 2026-09-05 incident: four checkouts sat silently broken for a
+    month because nothing surfaced the boot-time warning."""
+
+    def test_missing_file_yields_no_incidents(self, tmp_path):
+        assert checkout_drift_incidents(path=tmp_path / "missing.jsonl") == []
+
+    def test_drift_signal_becomes_an_incident(self, tmp_path):
+        p = tmp_path / "checkout-drift.jsonl"
+        p.write_text(
+            '{"ts":"2026-09-05T00:00:00Z","checkout":"biglobster-seo","ahead":4,'
+            '"reason":"dirty tracked file + local commits ahead of origin/main"}\n',
+            encoding="utf-8",
+        )
+        incs = checkout_drift_incidents(path=p)
+        assert len(incs) == 1
+        assert "biglobster-seo" in incs[0].title
+        assert "biglobster-seo" in incs[0].handoff
+
+    def test_malformed_lines_are_skipped(self, tmp_path):
+        p = tmp_path / "checkout-drift.jsonl"
+        p.write_text("not json\n\n", encoding="utf-8")
+        assert checkout_drift_incidents(path=p) == []
+
+    def test_checkout_drift_incident_flows_through_sweep(self, tmp_path):
+        cd = [Incident(id="checkout-drift:biglobster-seo:4", kind="checkout_drift",
+                       title="Site checkout 'biglobster-seo' diverged and stopped pulling",
+                       detail="ahead: 4", handoff="inspect biglobster-seo before resetting")]
+        out = sweep(jobs=[_ok_job()], langfuse=[], checkout_drift=cd,
+                   state_path=tmp_path / "s.json")
+        assert "biglobster-seo" in out
