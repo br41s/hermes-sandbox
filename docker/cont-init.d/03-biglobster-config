@@ -508,10 +508,17 @@ def _reconcile_config(config_path, label, is_rented=False):
         # reliable cheap orchestrator instead — tunable from Zeabur via
         # HERMES_AUDITOR_ORCHESTRATOR_MODEL, mirroring the §1c review-model knobs.
         # The reviewer models (auditor/llm.py, §1c) are separate and unaffected.
+        # The default names the DATED slug on purpose: the undated alias
+        # `deepseek/deepseek-v4-flash` resolves to the 0423 snapshot on
+        # OpenRouter ($0.087/M input) while `-0731` is $0.065/M — 25% cheaper
+        # on the input tokens that are ~99% of this orchestrator's bill
+        # (tasks/token-optimization.md). Never let the auditor fall back to the
+        # undated alias.
         eff_model = default_model
         if label == "auditor":
             eff_model = os.environ.get(
-                "HERMES_AUDITOR_ORCHESTRATOR_MODEL", "deepseek/deepseek-v4-flash").strip()
+                "HERMES_AUDITOR_ORCHESTRATOR_MODEL",
+                "deepseek/deepseek-v4-flash-0731").strip()
         if eff_model:
             mv = cfg.get("model")
             if isinstance(mv, dict):
