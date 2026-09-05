@@ -33,7 +33,9 @@ import urllib.request
 from typing import List, Optional
 
 # Known-present, cheap fallbacks (from docker/config.yaml). Override via env.
-SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4-flash"
+# Dated slug on purpose: the undated `deepseek/deepseek-v4-flash` alias resolves
+# to the 0423 snapshot on OpenRouter ($0.087/M input) — `-0731` is $0.065/M.
+SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4-flash-0731"
 CONTENT_MODEL_DEFAULT = "openrouter/owl-alpha"
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
