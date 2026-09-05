@@ -126,16 +126,35 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 ## Model
 
-`tencent/hy3` via OpenRouter (active as of 2026-07-10) — the GA release of Tencent's Hy3 (295B MoE, 21B active, 256K context), replacing the `-preview` slug.
+`openai/gpt-5.6-luna` via OpenRouter — the active default, superseding `tencent/hy3`. Values below verified against the live Zeabur service on 2026-09-05.
 
-Set via `HERMES_DEFAULT_MODEL` env var in Zeabur — the `03-biglobster-config` boot hook updates `config.yaml` on the persistent volume at every boot. The `docker/config.yaml` in the repo also reflects this as the default. `deepseek/deepseek-v4-flash` is kept as the `fallback_model`.
+Set via env vars in Zeabur — the `03-biglobster-config` boot hook reconciles `config.yaml` on the persistent volume at **every boot**. `docker/config.yaml` in the repo is only the *first-boot seed*: an existing volume keeps its own file, so the env var is the source of truth, not the repo.
+
+| Role | Env var | Value |
+|---|---|---|
+| Main | `HERMES_DEFAULT_MODEL` | `openai/gpt-5.6-luna` |
+| Fallback | `HERMES_FALLBACK_MODEL` | `tencent/hy3` |
+| Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4-flash-0731` |
+| Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `deepseek/deepseek-v4-flash-0731` |
+| Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `openai/gpt-5.6-luna` |
+
+Two rules the reconciler enforces, both from incidents:
+
+- **The auditor profile is exempt** from `HERMES_DEFAULT_MODEL` *and* `HERMES_FALLBACK_MODEL`. It drives a tool-calling orchestrator loop, not prose, and has the three separate knobs above. Changing the main model does **not** move the auditor.
+- **`fallback_model` must never equal `model.default`** — a fallback pointing at the same upstream is a no-op retry against the same dead/rate-limited provider. Swapping the main model once clobbered both keys on five profiles, silently disabling fallback account-wide (2026-07-02).
+
+Model env vars are read by a **cont-init hook**, so they take effect on a full Zeabur container restart only — the panel's "Restart Gateway" does not re-run cont-init. See *Three different "restarts"* above.
 
 ### owl-alpha instability window (resolved)
-`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10); deepseek remains the fallback.
+`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10), which was itself superseded by `openai/gpt-5.6-luna`. The chain has since shifted down: hy3 is now the `fallback_model`, and deepseek has left the main chain entirely — it survives only in the auditor's own knobs.
 
-### tencent/ prefix vs. TokenHub provider (still relevant — read before changing this model again)
-In Hermes, the vendor alias table maps the bare provider name `tencent` → the `tencent-tokenhub` provider (TokenHub API), which needs `TOKENHUB_API_KEY` — not set in this deployment. This previously blocked using `tencent/hy3-preview` as the default: any path that *auto-detects* a provider from the model ID's vendor segment (e.g. running `hermes model tencent/hy3-preview` interactively with no explicit `--provider`) resolves straight to TokenHub and fails.
-It's safe here because `HERMES_DEFAULT_MODEL` flows through `03-biglobster-config`'s reconciler, which always pairs it with an explicit `provider: openrouter` in `config.yaml` — verified via `hermes doctor` (all profiles show `tencent/hy3` green) and the OpenRouter connectivity check passing. The hazard is real for *interactive* model switches without `--provider openrouter`, not for this env-var-driven default.
+### Vendor segment vs. provider auto-detection (read before changing any model here)
+Every model above is served **through OpenRouter**, but the vendor segment of a model ID (`tencent/`, `openai/`, `deepseek/`) is also a provider name in Hermes' alias table (`hermes_cli/models.py`). Any path that *auto-detects* a provider from that segment resolves to the direct vendor API, not OpenRouter, and fails on the missing key:
+
+- `tencent` → `tencent-tokenhub` (TokenHub API), needs `TOKENHUB_API_KEY` — not set here.
+- `openai` → the OpenAI provider (Codex CLI / direct API) — same class of hazard, and it now applies to the **main** model.
+
+It's safe for the env-var-driven defaults because they flow through `03-biglobster-config`'s reconciler, which always pairs the model with an explicit `provider: openrouter` in `config.yaml`. The hazard is real for **interactive** switches — `hermes model openai/gpt-5.6-luna` with no `--provider openrouter` — and for any new profile created by hand. Always pass `--provider openrouter`, and confirm with `hermes doctor` (all profiles green) plus the OpenRouter connectivity check.
 
 ---
 
