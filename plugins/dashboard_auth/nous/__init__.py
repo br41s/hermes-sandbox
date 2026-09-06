@@ -228,7 +228,10 @@ class NousDashboardAuthProvider(DashboardAuthProvider):
                     "client_id": self._client_id,
                     "code_verifier": code_verifier,
                 },
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "HermesAgent/1.0",
+                },
                 timeout=_TOKEN_ENDPOINT_TIMEOUT_SEC,
             )
         except httpx.RequestError as exc:
@@ -286,6 +289,7 @@ class NousDashboardAuthProvider(DashboardAuthProvider):
                 },
                 headers={
                     "Accept": "application/json",
+                    "User-Agent": "HermesAgent/1.0",
                     "x-nous-refresh-token": refresh_token,
                 },
                 timeout=_TOKEN_ENDPOINT_TIMEOUT_SEC,
