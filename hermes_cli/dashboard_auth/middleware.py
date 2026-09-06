@@ -21,7 +21,12 @@ import time
 from typing import Awaitable, Callable, Optional
 
 from fastapi import Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 from starlette.concurrency import run_in_threadpool
 
 from hermes_cli.dashboard_auth import list_session_providers
@@ -176,6 +181,32 @@ def _ordered_session_providers(
     if provider_hint:
         providers.sort(key=lambda provider: provider.name != provider_hint)
     return providers
+
+
+def _provider_unreachable_response(request: Request, *, detail: str) -> Response:
+    """503 for a provider that could be neither confirmed nor rejected.
+
+    Mirrors ``_unauth_response``'s API/HTML split, which this path was
+    missing: it returned JSON unconditionally, so a plain document
+    navigation rendered a raw JSON blob where the dashboard should be.
+
+    The HTML branch deliberately does NOT redirect to ``/login``. Unlike
+    ``_unauth_response`` this is not an auth failure — the session cookies
+    are preserved and the session is still valid, so bouncing the user
+    into a fresh OAuth round trip would discard a good session to work
+    around a transient upstream outage, which is the exact outcome this
+    path exists to avoid. The user reloads instead.
+
+    ``detail`` keeps the provider's own message for the ``/api/*`` JSON
+    envelope (unchanged contract). The HTML page never carries it — an
+    upstream response body does not belong in a rendered page.
+    """
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": detail}, status_code=503)
+    from hermes_cli.dashboard_auth.login_page import (
+        render_provider_unreachable_html,
+    )
+    return HTMLResponse(render_provider_unreachable_html(), status_code=503)
 
 
 def _unauth_response(request: Request, *, reason: str) -> Response:
@@ -452,9 +483,9 @@ async def gated_auth_middleware(
             # No provider could verify the token and at least one couldn't be
             # reached — treat as a transient outage rather than forcing a
             # re-login through a (possibly also-unreachable) refresh.
-            return JSONResponse(
-                {"detail": f"Auth provider {unreachable_provider!r} unreachable"},
-                status_code=503,
+            return _provider_unreachable_response(
+                request,
+                detail=f"Auth provider {unreachable_provider!r} unreachable",
             )
 
     if session is None:
@@ -473,9 +504,9 @@ async def gated_auth_middleware(
             # At least one provider could not confirm or reject the RT, and no
             # other provider refreshed it. Preserve the cookies and surface a
             # transient outage instead of turning uncertainty into a logout.
-            return JSONResponse(
-                {"detail": f"Auth provider {str(e)!r} unreachable"},
-                status_code=503,
+            return _provider_unreachable_response(
+                request,
+                detail=f"Auth provider {str(e)!r} unreachable",
             )
         if refreshed is not None:
             new_session, refreshing_provider = refreshed
