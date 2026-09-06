@@ -5526,10 +5526,10 @@ class TestRunConversation:
         mock_hfc.assert_called_once()
         assert result["final_response"] == "Done!"
 
-    def test_truncated_tool_args_detected_when_finish_reason_not_length(self, agent):
+    def test_truncated_tool_args_give_up_after_bounded_retries(self, agent):
         """When a router rewrites finish_reason from 'length' to 'tool_calls',
-        truncated JSON arguments should still be detected and refused rather
-        than wasting 3 retry attempts."""
+        truncated JSON arguments are still never executed — but the turn gets
+        two bounded retries asking for smaller writes before it gives up."""
         self._setup_agent(agent)
         agent.valid_tool_names.add("write_file")
         bad_tc = _mock_tool_call(
@@ -5554,6 +5554,58 @@ class TestRunConversation:
         assert result["partial"] is True
         assert "truncated due to output length limit" in result["error"]
         mock_handle_function_call.assert_not_called()
+        # One initial call + exactly 2 recovery attempts, not an unbounded loop.
+        assert agent.client.chat.completions.create.call_count == 3
+        # The retries told the model to write smaller, and never re-sent the
+        # oversized arguments back to the provider.
+        # (The alternation repairer may merge consecutive user turns, so count
+        # occurrences of the nudge rather than the messages carrying them.)
+        sent = agent.client.chat.completions.create.call_args[1]["messages"]
+        nudge_count = sum(
+            (m.get("content") or "").count("smaller tool calls") for m in sent
+        )
+        assert nudge_count == 2
+        assert not any(m.get("tool_calls") for m in sent)
+
+    def test_truncated_tool_args_recover_when_model_writes_smaller(self, agent):
+        """The nudged retry is a real recovery path: a model that responds to
+        it with a chunked write executes normally instead of losing the run."""
+        self._setup_agent(agent)
+        agent.valid_tool_names.add("write_file")
+        bad_tc = _mock_tool_call(
+            name="write_file",
+            arguments='{"path":"report.md","content":"partial',
+            call_id="c1",
+        )
+        truncated = _mock_response(
+            content="", finish_reason="tool_calls", tool_calls=[bad_tc],
+        )
+        good_tc = _mock_tool_call(
+            name="write_file",
+            arguments='{"path":"report.md","content":"chunk one"}',
+            call_id="c2",
+        )
+        chunked = _mock_response(
+            content="", finish_reason="tool_calls", tool_calls=[good_tc],
+        )
+        final_resp = _mock_response(content="Done!", finish_reason="stop")
+
+        with (
+            patch("run_agent.handle_function_call", return_value='{"success":true}') as mock_hfc,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            agent.client.chat.completions.create.side_effect = [
+                truncated, chunked, final_resp,
+            ]
+            result = agent.run_conversation("write the report")
+
+        assert result["final_response"] == "Done!"
+        mock_hfc.assert_called_once()
+        # The counter resets on the clean turn, so a later oversized write in
+        # the same turn still gets its own full retry budget.
+        assert agent._truncated_tool_args_retries == 0
 
     def test_kanban_block_called_on_iteration_exhaustion(self, agent, monkeypatch):
         """Regression: kanban worker must signal the dispatcher when its
