@@ -495,6 +495,23 @@ _CODEX_INCOMPLETE_NUDGE = (
 )
 
 
+# Recovery nudge for a tool call whose ARGUMENTS were cut off mid-JSON.  The
+# sibling `finish_reason == "length"` path retries with a bigger output budget,
+# but that only helps when the cap was ours; here the router has already
+# rewritten finish_reason (OpenRouter reports "tool_calls"/"error"), so the
+# truncation is usually the model's own ceiling and there is no larger budget
+# to ask for.  The only real recovery is a SMALLER write, so say that instead
+# of re-running the identical request.
+_TRUNCATED_TOOL_ARGS_NUDGE = (
+    "[System: Your previous tool call was cut off mid-argument because it hit "
+    "the maximum output length, so it was discarded and never executed. Do "
+    "NOT retry it with the same large payload — it will be cut off again. "
+    "Write the content in several smaller tool calls instead (create the file "
+    "with the first chunk, then append the rest), keeping each call's "
+    "arguments under ~8K tokens.]"
+)
+
+
 # Shared recovery hint appended to every content-policy refusal message. Both
 # the HTTP-200 refusal path (``finish_reason=content_filter``) and the
 # exception path (a provider moderation error classified as
@@ -4840,12 +4857,45 @@ def run_conversation(
                         if tc.function.name in {n for n, _ in invalid_json_args}
                     )
                     if _truncated:
+                        # A router that rewrites finish_reason hides the
+                        # truncation from the `length` handler above, which
+                        # would have retried.  Landing here used to end the
+                        # turn on the FIRST occurrence, with no recovery at
+                        # all: a cron agent that wrote one oversized file
+                        # simply died (BigLobster gap-hunter, four runs lost
+                        # in a row to a single ~65K-token tool call).  Ask for
+                        # smaller writes and let the model try again.
+                        _trunc_args_retries = getattr(
+                            agent, "_truncated_tool_args_retries", 0
+                        )
+                        if _trunc_args_retries < 2:
+                            agent._truncated_tool_args_retries = _trunc_args_retries + 1
+                            agent._invalid_json_retries = 0
+                            _trunc_names = ", ".join(
+                                sorted({n for n, _ in invalid_json_args})
+                            )
+                            agent._buffer_vprint(
+                                f"⚠️  Tool call ({_trunc_names}) truncated at the "
+                                f"output limit — asking for smaller writes "
+                                f"({agent._truncated_tool_args_retries}/2)..."
+                            )
+                            # Deliberately do NOT append the broken assistant
+                            # message: its arguments ARE the oversized payload,
+                            # so keeping it would re-send hundreds of KB on
+                            # every later call and re-prime the model with the
+                            # very content it must stop reproducing.
+                            messages.append({
+                                "role": "user",
+                                "content": _TRUNCATED_TOOL_ARGS_NUDGE,
+                            })
+                            continue
                         agent._vprint(
                             f"{agent.log_prefix}⚠️  Truncated tool call arguments detected "
                             f"(finish_reason={finish_reason!r}) — refusing to execute.",
                             force=True,
                         )
                         agent._invalid_json_retries = 0
+                        agent._truncated_tool_args_retries = 0
                         agent._cleanup_task_resources(effective_task_id)
                         agent._persist_session(messages, conversation_history)
                         return {
@@ -4897,8 +4947,9 @@ def run_conversation(
                             })
                         continue
                 
-                # Reset retry counter on successful JSON validation
+                # Reset retry counters on successful JSON validation
                 agent._invalid_json_retries = 0
+                agent._truncated_tool_args_retries = 0
 
                 # ── Post-call guardrails ──────────────────────────
                 assistant_message.tool_calls = agent._cap_delegate_task_calls(

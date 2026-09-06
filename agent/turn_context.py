@@ -379,6 +379,7 @@ def build_turn_context(
     # Reset retry counters and iteration budget at the start of each turn.
     agent._invalid_tool_retries = 0
     agent._invalid_json_retries = 0
+    agent._truncated_tool_args_retries = 0
     agent._empty_content_retries = 0
     agent._incomplete_scratchpad_retries = 0
     agent._codex_incomplete_retries = 0
