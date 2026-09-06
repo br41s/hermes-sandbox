@@ -571,6 +571,29 @@ class TestCompleteLogin:
         assert session.email == ""
         assert session.display_name == ""
 
+    def test_auth_code_post_sends_explicit_user_agent(self, provider, rsa_keypair):
+        """Regression: the token-endpoint POST must send an explicit
+        User-Agent. httpx's default (``python-httpx/x.y``) is blocked by the
+        Portal WAF with an HTML 403, which surfaces as a ProviderError and a
+        503 to the browser. Same fix as the JWKS client (see
+        ``test_jwks_client_sends_explicit_http_headers``)."""
+        mock_resp = self._mock_post(
+            200,
+            {"access_token": _mint_token(rsa_keypair), "token_type": "Bearer"},
+        )
+        with patch(
+            "plugins.dashboard_auth.nous.httpx.post", return_value=mock_resp
+        ) as mock_post:
+            provider.complete_login(
+                code="abc",
+                state="state-val",
+                code_verifier="vfy",
+                redirect_uri="https://hermes.fly.dev/auth/callback",
+            )
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["User-Agent"] == "HermesAgent/1.0"
+        assert kwargs["headers"]["Accept"] == "application/json"
+
     def test_happy_path_tolerates_missing_refresh_token(self, provider, rsa_keypair):
         # If Portal omits refresh_token (older deploy), the session is still
         # valid as access-token-only; refresh_token defaults to "".
@@ -812,6 +835,28 @@ class TestRefreshAndRevoke:
         assert kwargs["data"]["grant_type"] == "refresh_token"
         assert kwargs["data"]["client_id"] == "agent:inst123"
         assert kwargs["data"]["refresh_token"] == "rt_old_value"
+        assert kwargs["headers"]["x-nous-refresh-token"] == "rt_old_value"
+
+    def test_refresh_post_sends_explicit_user_agent(self, provider, rsa_keypair):
+        """Regression: the refresh POST must send an explicit User-Agent, and
+        must not lose the ``x-nous-refresh-token`` header while doing so. The
+        refresh path is the one that hits the Portal WAF repeatedly, so a
+        blocked UA here kills a live session seconds after login."""
+        mock_resp = self._mock_post(
+            200,
+            {
+                "access_token": _mint_token(rsa_keypair),
+                "token_type": "Bearer",
+                "refresh_token": "rt_rotated_value",
+            },
+        )
+        with patch(
+            "plugins.dashboard_auth.nous.httpx.post", return_value=mock_resp
+        ) as mock_post:
+            provider.refresh_session(refresh_token="rt_old_value")
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["User-Agent"] == "HermesAgent/1.0"
+        assert kwargs["headers"]["Accept"] == "application/json"
         assert kwargs["headers"]["x-nous-refresh-token"] == "rt_old_value"
 
     def test_refresh_400_raises_refresh_expired(self, provider):
