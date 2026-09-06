@@ -401,6 +401,103 @@ auth gate (not recommended on untrusted networks).</p>
 """
 
 
+# Rendered on the auth gate's 503 path (provider could be neither confirmed
+# nor rejected). Same shell as ``_EMPTY_HTML`` — deliberately static, no JS,
+# no SPA dependency, since the gate may be failing before the SPA loads.
+#
+# Carries NO upstream error text: the provider's raw response body is kept to
+# the ``/api/*`` JSON branch and the audit log rather than echoed into a
+# rendered page.
+_UNREACHABLE_HTML = """\
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provider unavailable — Hermes Agent</title>
+<style>
+  @font-face {
+    font-family: 'Collapse';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/fonts/Collapse-Regular.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'Rules Compressed';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('/fonts/RulesCompressed-Medium.woff2') format('woff2');
+  }
+  :root {
+    --background-base: #170d02;
+    --midground: #ffac02;
+    --foreground: #ffffff;
+    --hairline: color-mix(in srgb, #ffac02 18%, transparent);
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--background-base);
+    color: var(--foreground);
+    font-family: 'Collapse', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: grid; place-items: center;
+    padding: clamp(1.5rem, 6vh, 6rem) 1.25rem;
+  }
+  main {
+    width: 100%; max-width: 32rem;
+    padding: 2.25rem 2rem;
+    background: color-mix(in srgb, #ffffff 2%, var(--background-base));
+    border: 1px solid var(--hairline);
+    box-shadow:
+      inset 1px 1px 0 0 color-mix(in srgb, #ffffff 5%, transparent),
+      inset -1px -1px 0 0 rgba(0, 0, 0, 0.4),
+      0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  }
+  h1 {
+    margin: 0 0 1rem;
+    font-family: 'Rules Compressed', 'Collapse', sans-serif;
+    font-weight: 600; font-size: 1.5rem;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--midground);
+  }
+  p { margin: 0 0 1rem; }
+  code {
+    background: var(--midground);
+    color: var(--background-base);
+    padding: 0.1em 0.35em;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>Provider unavailable</h1>
+<p>The authentication provider could not be reached, so this request could
+not be verified. This is a temporary upstream problem, not a sign-out —
+your session is still valid.</p>
+<p><a href="">Try again</a></p>
+</main>
+</body>
+</html>
+"""
+
+
+def render_provider_unreachable_html() -> str:
+    """Return the HTML body for a 503 provider-unreachable response.
+
+    Used for document navigations only; ``/api/*`` callers keep the JSON
+    envelope so the SPA's error handling is unchanged.
+    """
+    return _UNREACHABLE_HTML
+
+
 # Inline script that wires every password provider form to POST JSON to
 # ``/auth/password-login`` and navigate on success. Emitted ONLY when at
 # least one ``supports_password`` provider is listed (OAuth-only login
