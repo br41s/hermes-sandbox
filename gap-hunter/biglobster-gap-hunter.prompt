@@ -189,7 +189,8 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 
 ### FASE 3: Creación
 1. Lee la plantilla site/en/blog/microsoft-365-copilot-for-smbs.html
-2. Crea site/en/blog/<slug>.html: frontmatter JSON completo (`lang: "en"`,
+2. Crea site/en/blog/<slug>.html POR PARTES, nunca de una sola vez (ver
+   "Límites de escritura" más abajo): frontmatter JSON completo (`lang: "en"`,
    `permalink: "/blog/<slug>.html"`) + cuerpo del artículo en inglés (SIN chrome)
 3. **Genera la cover con image_generate (FOTO REALISTA, no infografía)** — seguir las reglas de imagen arriba
 4. Genera infografía con image_generate para el interior del artículo y guárdala en
@@ -199,6 +200,31 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 6. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
    en `_site/blog.html` (el índice inglés en la raíz — la tarjeta se genera sola del
    frontmatter — NO edites blog.html ni sitemap.xml ni feed.xml)
+
+### Límites de escritura (CRÍTICO — si los ignoras, el job muere)
+
+El modelo tiene un tope de ~64.000 tokens de salida POR LLAMADA, y ese tope incluye
+los argumentos de la herramienta. Una sola llamada que intente escribir el artículo
+entero se corta a mitad del JSON y mata la ejecución con "Response truncated due to
+output length limit": pasó los días 3, 4, 5 y 6 de septiembre de 2026 — cuatro
+ejecuciones seguidas perdidas, sin PR y sin artículo.
+
+Reglas no negociables:
+- NUNCA escribas el artículo completo en una sola llamada a una herramienta.
+- Cada llamada que escriba en un fichero: como mucho ~150 líneas o ~8.000 caracteres
+  de contenido. Si lo que quieres escribir es más largo, pártelo en varias llamadas.
+- Orden de escritura, una llamada por paso:
+  1. frontmatter JSON + `<header class="article-hero container">` (breadcrumb,
+     article-cover, article-tags, H1, article-summary)
+  2. una llamada por cada sección H2 del cuerpo, añadiendo al final del fichero
+  3. una última llamada con FAQ + `<div class="article-cta">` +
+     `<aside class="related-articles">`
+  Tras cada paso comprueba el fichero (`wc -l`, `tail`) antes de seguir con el siguiente.
+- Longitud objetivo del artículo: 1.200-1.800 palabras. Si pasas de 2.000, párate: es
+  un post de blog, no un whitepaper.
+- NUNCA metas en los argumentos de una herramienta contenido base64, datos binarios,
+  una imagen, ni el contenido íntegro de otro fichero. Las imágenes se generan con
+  `image_generate` y se referencian por ruta — nunca se pegan.
 
 ### FASE 4: PR en GitHub
 La autenticación de git ya está configurada (credential helper con $GITHUB_TOKEN). NO incluyas tokens en comandos ni en archivos. Ya estás en tu checkout persistente sobre `main` limpio (FASE 0) — no clones a `/tmp`.
@@ -229,3 +255,7 @@ Pasos:
 - ✅ Humanizado (sin vocabulario IA)
 - ✅ Estructura correcta (plantilla)
 - ✅ Cover fotorealismo JPG (personas reales, no SVG/infografía)
+
+Máximo 15 líneas. El entregable es el PR, no este mensaje: no pegues aquí el
+contenido del artículo, borradores, tablas de keywords ni salida bruta de
+herramientas, ni siquiera "como referencia".
