@@ -75,6 +75,16 @@ Consecuencias prácticas, asúmelas al diseñar:
   dibuja la punta como un `<polygon>` de tres puntos.
 - **No hay gradientes.** Usa relleno plano, `fill-opacity` o `stroke-dasharray`
   para diferenciar.
+- **`var(--…)` NO funciona en los atributos de forma.** `d`, `x`, `y`, `width`,
+  `height`, `rx`, `ry`, `cx`, `cy`, `r`, `x1`, `y1`, `x2`, `y2` y `points` se
+  parsean como tipos de dato SVG, no como valores CSS: `var()` se ignora y el
+  atributo cae a su valor por defecto —`rx="var(--radius)"` dibuja `rx=0`, es
+  decir esquinas rectas— **sin ningún error y sin que el marcado parezca mal**.
+  Escribe siempre un número: `rx="8"`. El radio del sitio lo elige cada cliente
+  (`site.radius_style`), así que no intentes leerlo: usa un valor pequeño y
+  constante. En los atributos de pintura (`fill`, `stroke`) `var()` sí
+  funcionaría, pero aquí el color sale de `currentColor` de todos modos — ver
+  la sección TEMA.
 
 ## TEMA (claro/oscuro) — usa `currentColor`
 
