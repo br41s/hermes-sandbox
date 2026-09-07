@@ -27,7 +27,9 @@ CONFIG  (the only project-specific block — change these to retarget)
                       custom properties. The site themes via a data-theme
                       attribute on <html>; inherit var(--…) and currentColor so
                       the graphic follows light/dark. NEVER hardcode hex colors
-                      or font families.
+                      or font families. BUT var(--…) belongs ONLY in colour and
+                      font attributes — see STEP 3's geometry rule, which this
+                      job has broken twice.
   FIGURE_CLASS      : article-infographic   (mirrors the existing article-cover)
   SENTINEL          : <!-- infographic:auto -->
   BRANCH_PREFIX     : infographic/
@@ -51,6 +53,17 @@ STEP 0 — Run-start hygiene (mandatory; workdir is this job's own checkout):
    git pull --ff-only origin main
    Never hard-reset; untracked files mid-run must survive.
 
+   Use the remote exactly as cloned. Do NOT read GITHUB_TOKEN or GH_TOKEN: in
+   this environment they hold the literal placeholder "proxy-injected", not a
+   credential, and using one yields
+       remote: Invalid username or token. Password authentication is not
+       supported for Git operations.
+   which aborted the 2026-09-07 run before it touched an article. Auth is
+   injected for you at the network layer: never run `git remote set-url`, never
+   embed a token in a URL, never configure a credential helper or
+   http.extraheader. If a git command still fails auth, STOP and report it as an
+   environment failure — do not retry with a hand-built credential.
+
 STEP 1 — Select target (idempotent, deterministic):
    a. List article files under CONTENT_GLOB that contain CONTENT_CONTAINER.
    b. List already-claimed slugs: `git ls-remote --heads origin 'BRANCH_PREFIX*'`.
@@ -73,6 +86,17 @@ STEP 3 — Engineer the infographic:
    - Transparent background. Flat vector shapes, simple geometry.
    - Inherit THEME_SOURCE variables (var(--…)) and currentColor for all color
      and text; never invent a palette. Meet WCAG 2.1 AA contrast.
+   - var(--…) works ONLY in colour and font attributes: fill, stroke,
+     stop-color, font-family. Those are CSS properties, so it resolves there.
+     It does NOT work in geometry attributes — x, y, width, height, rx, ry, cx,
+     cy, r, x1, y1, x2, y2, dx, dy, points, d, viewBox. Those parse as SVG data
+     types, var() is ignored, and the attribute falls back to its default
+     (rx=0 → square corners) with NO browser error and nothing wrong-looking in
+     the markup. Write a plain number: rx="8", never rx="var(--radius-md)".
+     --radius-md is 8, --radius-sm is 4.
+     This is not hypothetical: 40 rects across 7 articles shipped square-
+     cornered this way (PR #488), and this job regenerated the same bug on the
+     very next run. lib/svg-token-guard.mjs now fails the build on it.
    - Self-contained: no script, no external fetch.
    - Wrap it: <figure class="FIGURE_CLASS"> <svg>…</svg> <figcaption>…</figcaption> </figure>
 
@@ -91,6 +115,16 @@ STEP 4 — Insert into the article HTML:
 
 STEP 5 — Commit, PR, verify:
    - Branch: `git checkout -b BRANCH_PREFIX<slug>`
+   - Verify BEFORE committing: run `npm run build` (if node_modules is absent,
+     run `npm ci` first). It MUST exit 0. lib/svg-token-guard.mjs throws on
+     var() in a geometry attribute, naming the file and every offending
+     attribute — fix them and rebuild. Skipping this does not avoid the
+     failure, it only moves it to deploy time, where it blocks every unrelated
+     deploy until a human intervenes. Both _site/ and node_modules/ are
+     gitignored, so building leaves the tree clean for the check below.
+   - Look at the rendered result, not just the markup: valid SVG can still be
+     unreadable. Confirm no text overflows its box or overlaps another label,
+     and that the graphic is legible at ~375px wide.
    - Stage ONLY the one article file. Commit:
        feat(visuals): inline infographic for "<Article Title>"
    - `git push -u origin BRANCH_PREFIX<slug>`
