@@ -171,21 +171,92 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 - [ ] Los títulos H2/H3 NO llevan numeración manual (el TOC lo hace automáticamente)
 - [ ] Imagen guardada como JPG en web/assets/blog/covers/
 - [ ] El tema NO está anclado a regulación/subvenciones/geografía española (CBAM, VeriFactu, Galicia, IRPF...) salvo que el propio gap sea explícitamente sobre ese mercado
+- [ ] El artículo cita AL MENOS UNA fuente primaria con fecha y enlace (vendor,
+      regulador, benchmark/incidente o paper). Obligatorio también en los artículos
+      de RESERVA. Al resumirla siguen aplicando las reglas de humanizado
 
 ## Flujo de trabajo:
 
-### FASE 1: Investigación
+### FASE 1: Inventario propio
 1. Revisa site/en/blog/ (contenido nuevo) y site/blog/ (para no duplicar temas ya
    cubiertos en español) para evitar duplicados
-2. Busca gaps con web_search — orienta la búsqueda a temas universales de
-   automatización/IA para pymes con relevancia mundial (herramientas, procesos,
-   comparativas, guías prácticas). EVITA gaps anclados a regulación, subvenciones
-   o trámites específicos de España/Galicia (ese ángulo ya está cubierto por el
-   backlog en español) salvo petición explícita en otro sentido.
+2. Lee tu LIBRO DE REGISTRO (sección propia más abajo): no vuelvas a evaluar
+   hoy lo que ya rechazaste otro día.
 
-### FASE 2: Decisión
-- Si hay gap válido y NO existe artículo similar → Crear
-- Si no → Responde [SILENT]. Nada de PR, nada de mensaje.
+### FASE 1A: Barrido de fuentes primarias (PRIMERO, antes de cualquier web_search genérico)
+Una fuente primaria es de PRIMERA MANO y con fecha: la publica quien hizo la cosa.
+Un blog QUE HABLA de la cosa NO es la cosa. Recorre LAS CUATRO clases, siempre —
+no te pares en la primera que dé fruto. Vendor casi siempre tiene novedades, y si
+cortas ahí este barrido se convierte de facto en un lector de changelogs y las otras
+tres clases no se consultan nunca. Reúne los candidatos de las cuatro y deja que
+decidan las puertas de la FASE 2, no el orden de esta lista.
+
+  1. VENDOR — changelogs y notas de versión de primera mano (anthropic.com/news,
+     openai.com/news, blog.google/technology/ai, Microsoft 365 roadmap, AWS
+     what's-new). web_extract directo sobre la página de novedades.
+  2. REGULACIÓN Y ESTÁNDARES — el organismo emisor, nunca la prensa que lo resume
+     (actos de implementación del EU AI Act, NIST AI RMF, guías de AEPD/ICO).
+  3. BENCHMARK O INCIDENTE — evaluaciones publicadas, post-mortems de caídas y
+     divulgaciones de seguridad que afecten a herramientas que usan pymes.
+  4. ARXIV — web_extract sobre https://arxiv.org/list/cs.AI/recent (y cs.CL);
+     luego la página /abs/<id> del que te interese. web_extract también lee el PDF
+     directamente si necesitas más profundidad.
+
+REGLA DE HERRAMIENTAS: usa web_extract y web_search. NO uses execute_code ni
+python3 -c/-e (bloqueados en cron, igual que en el buzón). Nada de curl con tokens
+ni cabeceras — el guard de exfiltración lo bloquea y el job no corre. Todas estas
+fuentes son públicas y no necesitan autenticación.
+
+### FASE 2: Decisión — cuatro puertas, en orden
+Aplica en orden y para en la primera que falle (la más barata primero):
+
+  PUERTA 1 — ¿PRIMARIA? De primera mano, con fecha, de una de las cuatro clases.
+    Si es un artículo SOBRE la noticia en vez de la noticia → descarta.
+  PUERTA 2 — ¿NUEVA PARA ESTE LECTOR? NO preguntes "¿existe cobertura?": de una
+    novedad de vendor la prensa tech escribe en horas, así que con esa pregunta
+    NADA pasaría nunca esta puerta y el barrido se volvería inútil. Pregunta:
+    ¿existe ya una pieza en inglés que le explique a un dueño de pyme QUÉ HACER
+    con esto? Si sí → descarta. Si lo único que hay es prensa tech, análisis para
+    ingenieros o la propia nota de producto → adelante: ahí está el hueco. Esta es
+    la puerta que más valor aporta: es la forma operativa de "publicado una sola
+    vez PARA ESTE LECTOR".
+  PUERTA 3 — ¿CONSECUENTE? Tienes que ser capaz de NOMBRAR la acción concreta que
+    el lector emprende al terminar (evaluar X, cambiar el proceso Y, presupuestar
+    Z) y que sea alcanzable en los próximos ~90 días. Si no sabes nombrarla, es que
+    no la hay → descarta. Esta puerta es la que impide que arxiv inunde la cola.
+  PUERTA 4 — DEMANDA, SOLO COMO DESEMPATE. Entre las candidatas que pasaron 1-3,
+    elige aquella cuya búsqueda alguien teclearía de verdad. NUNCA uses esta puerta
+    para descartar algo que ya pasó las tres anteriores.
+
+- Si algo pasa las cuatro puertas → Crear (FASE 3).
+- Si NADA pasa las puertas 1-3 → RESERVA: haz el web_search genérico de siempre
+  (temas universales de automatización/IA para pymes con relevancia mundial:
+  herramientas, procesos, comparativas, guías prácticas; EVITA gaps anclados a
+  regulación, subvenciones o trámites específicos de España/Galicia, ese ángulo ya
+  lo cubre el backlog en español). El artículo de reserva SIGUE OBLIGADO a citar al
+  menos UNA fuente primaria con fecha y enlace: la reserva baja el listón del tema,
+  nunca el de la evidencia.
+- Si tampoco hay reserva que merezca la pena → [SILENT]. Nada de PR, nada de
+  mensaje. Un día flojo es un día en silencio; nunca fabriques un artículo mediocre
+  para cubrir cupo.
+
+### LIBRO DE REGISTRO (memoria de dedupe entre ejecuciones)
+  RUTA: /opt/data/profiles/biglobster/gaphunter/research-ledger.md
+
+Append-only, una línea por candidato EVALUADO — incluidos los descartados, que son
+justo los que evitan reevaluar mañana lo mismo que hoy.
+Lo lees en FASE 1 y le añades en FASE 2, siempre, tanto si escribes como si no.
+
+Si no existe, créalo TÚ (así queda con tu propio usuario; un directorio creado por
+root no te dejaría escribir y fallarías en silencio):
+  `mkdir -p /opt/data/profiles/biglobster/gaphunter`
+y luego escribe el fichero. Nunca lo borres ni lo reescribas entero: solo añades.
+
+Vive FUERA de tu checkout a propósito: `$PWD` sufre el vaivén de ramas de la FASE 4
+y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
+
+  Formato: YYYY-MM-DD | clase | url | veredicto(escrito|rechazado:puerta-N) | nota
+  Ejemplo: 2026-09-07 | vendor | https://... | rechazado:puerta-2 | ya cubierto en 5 blogs
 
 ### FASE 3: Creación
 1. Lee la plantilla site/en/blog/microsoft-365-copilot-for-smbs.html
@@ -252,6 +323,8 @@ Pasos:
 - URL: /blog/NOMBRE.html (inglés, raíz)
 - PR: [link]
 - Gap: [descripción]
+- Fuente primaria: [URL con fecha]
+- Clase: [vendor | regulación | benchmark/incidente | arxiv | reserva]
 - ✅ Humanizado (sin vocabulario IA)
 - ✅ Estructura correcta (plantilla)
 - ✅ Cover fotorealismo JPG (personas reales, no SVG/infografía)
