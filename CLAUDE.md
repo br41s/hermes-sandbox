@@ -81,6 +81,14 @@ geo-block. Static egress IP `43.157.39.241`. Panel at
 
 Gotchas, each of which cost a session. Detail in workspace `memories/decisions/hermes.md`:
 
+- **`scripts/deploy.sh` does the whole sequence.** Pull main, then run it: it
+  derives the SHA itself, refuses a dirty tree (the build uploads the working
+  directory, so uncommitted code would ship under a commit's tag), refuses a
+  non-main branch, warns when the commit was already built (same tag = no spec
+  change = no rollout), builds, moves the tag, and prints how to verify.
+  `--dry-run` prints every command without running one. The rest of this
+  section is what it automates — read it before overriding anything.
+
 - **Deploy by moving the image tag. Everything else is a no-op.** Zeabur only reconciles a
   prebuilt service when its *spec* changes, and `latest` never looks changed — so every
   in-place operation is entitled to answer "nothing to do" and leave old code running under
