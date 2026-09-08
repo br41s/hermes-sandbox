@@ -5,6 +5,7 @@ Expose a single compressed action-oriented tool to avoid schema/context bloat.
 Compatibility wrappers remain for direct Python callers and legacy tests.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -740,6 +741,7 @@ def cronjob(
     no_agent: Optional[bool] = None,
     progress_ping: Optional[bool] = None,
     prompt_source: Optional[str] = None,
+    force: bool = False,
     attach_to_session: Optional[bool] = None,
     task_id: str = None,
 ) -> str:
@@ -957,19 +959,65 @@ def cronjob(
                     },
                     indent=2,
                 )
-            updates: Dict[str, Any] = {"prompt": file_text}
+
+            # Clobber guard. This action only ever pushes repo -> live, so a fix
+            # applied ONLY to the live job (the emergency path: a job is failing
+            # in production and someone edits its prompt in place) is silently
+            # destroyed by the next sync. That is not hypothetical for this repo
+            # — the Gap Hunter's output-limit fix reached the live job days
+            # before it reached the .prompt file.
+            #
+            # `prompt_synced_sha` records what this action last wrote. If the
+            # live prompt no longer hashes to it, someone changed the live side
+            # since, and their edit is what a sync would overwrite. Refuse and
+            # make them look, rather than deciding for them which side wins.
+            #
+            # First sync of a job has no baseline and cannot be judged, so it
+            # proceeds and records one — but says so, because that is exactly
+            # the case an automated caller must not run unattended.
+            live_sha = hashlib.sha256(live_text.strip().encode()).hexdigest()
+            baseline = job.get("prompt_synced_sha")
+            if baseline and live_sha != baseline and not force:
+                return tool_error(
+                    f"Refusing to sync '{job['name']}': the live prompt has been "
+                    f"edited since the last sync, so this would overwrite that "
+                    f"edit with {source}.\n"
+                    f"  live sha256:     {live_sha[:12]}\n"
+                    f"  last synced sha: {baseline[:12]}\n"
+                    "Diff the two before deciding. If the live edit is the fix, "
+                    "port it INTO the repo file and sync that. If the repo is "
+                    "genuinely newer, re-run with force=True.",
+                    success=False,
+                )
+
+            updates: Dict[str, Any] = {
+                "prompt": file_text,
+                "prompt_synced_sha": hashlib.sha256(file_text.strip().encode()).hexdigest(),
+            }
             if job.get("prompt_source") != source:
                 updates["prompt_source"] = source
             updated = update_job(job_id, updates)
-            return json.dumps(
-                {
-                    "success": True,
-                    "changed": True,
-                    "message": f"Job '{job['name']}' prompt synced from {source} ({len(file_text)} chars).",
-                    "job": _format_job(updated),
-                },
-                indent=2,
-            )
+            result = {
+                "success": True,
+                "changed": True,
+                "message": f"Job '{job['name']}' prompt synced from {source} ({len(file_text)} chars).",
+                "job": _format_job(updated),
+            }
+            if not baseline:
+                result["warning"] = (
+                    "No previous sync was recorded for this job, so a live-only "
+                    "edit could not have been detected — this sync was not "
+                    "verified against a baseline. A baseline is recorded now; "
+                    "future syncs are guarded. Automated callers should treat a "
+                    "missing baseline as needing human review."
+                )
+            elif force and live_sha != baseline:
+                result["warning"] = (
+                    f"force=True overrode the clobber guard: the live prompt "
+                    f"({live_sha[:12]}) had been edited since the last sync "
+                    f"({baseline[:12]}) and that edit is now gone."
+                )
+            return json.dumps(result, indent=2)
 
         if normalized == "update":
             updates: Dict[str, Any] = {}
