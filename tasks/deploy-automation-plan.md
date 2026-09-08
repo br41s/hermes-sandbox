@@ -64,12 +64,41 @@ that machinery instead of building a second one:
   remediation class (`gated` → K=5 clean hand-approved runs → `auto`, per
   `tasks/self-remediation-loop.md`'s locked decisions) — never seed a new
   class straight to `auto`.
-- Reversal: trivial and cheap (`sync-prompt` is idempotent — re-running it
-  against an unchanged repo file is a no-op, so there's no real "undo"
-  needed; if a prompt sync went out with a genuinely bad prompt, the fix is
-  the same as today: fix the `.prompt` file and sync again). Note this
-  explicitly in the registry entry per Phase 0's "no reversal = not
-  auto-eligible, ever" guard.
+- Reversal: cheap in the common case, but **not universally** — and the
+  original wording of this bullet ("trivial and cheap") was wrong in a way
+  worth keeping visible, because it is the reasoning that would have made
+  this class unsafe to automate.
+
+  `sync-prompt` is idempotent against the *repo* file, so re-running it is a
+  no-op and a bad repo prompt is fixed by fixing the file and syncing again.
+  That is true. What it misses is that sync only ever pushes **repo → live**.
+  A fix applied ONLY to a live job — the emergency path, where a job is
+  failing in production and someone edits its prompt in place — exists
+  nowhere else. Syncing over it does not "revert" anything; it deletes the
+  only copy. That is unreversible, and it is not hypothetical: the Gap
+  Hunter's output-limit fix reached the live job days before it reached the
+  `.prompt` file (see `docs/runbook-gap-hunter-cron.md` in `br41s/biglobster`).
+
+  **Guard (shipped, 2026-09-08).** `cronjob(action="sync_prompt")` now records
+  `prompt_synced_sha` — the hash of what it last wrote — and refuses to sync
+  when the live prompt no longer matches it, because that means someone
+  changed the live side since and their edit is what would be overwritten.
+  `force=True` overrides and reports what it destroyed.
+
+  Two consequences for this plan, both binding on the remediation class:
+
+  - The class must **never pass `force=True`**. A refusal is the correct
+    outcome and should surface as a human-review item, not be retried around.
+  - A job with **no `prompt_synced_sha` yet** cannot be judged — the guard
+    lets that first sync through and flags it with a `warning`, which is fine
+    for a human but not for an unattended fixer. The class must treat a
+    missing baseline as needing review, so every job's first sync is
+    hand-approved and the baseline is established under supervision.
+
+  With those two rules the class is reversible in the sense Phase 0 requires;
+  without them it is not, and per Phase 0's "no reversal = not auto-eligible,
+  ever" guard it would not qualify for promotion to `auto`. Note this
+  explicitly in the registry entry.
 
 ## Explicitly NOT doing
 
