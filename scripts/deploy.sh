@@ -19,7 +19,15 @@
 # USAGE
 #   scripts/deploy.sh [--dry-run] [--verify-file PATH] [--yes]
 #
-#   --dry-run       print every command, run none of them
+# REQUIRES a GitHub token in $GHCR_TOKEN or $GITHUB_TOKEN: cloudbuild.yaml's
+# step 1 runs `docker login ghcr.io -u br41s --password-stdin` with it, so the
+# build fails immediately without it. Set it with a LEADING SPACE so it stays
+# out of shell history:
+#     export GHCR_TOKEN=ghp_...
+# or source it from a file you keep outside the repo.
+#
+#   --dry-run       print every command, run none of them (the token is never
+#                   printed — it shows as ***)
 #   --verify-file   after deploying, sha256 this repo-relative file inside the
 #                   container and compare against local. Pass a file this
 #                   deploy actually CHANGED — an unchanged file hashes the same
@@ -64,6 +72,20 @@ if [ -n "$(git status --porcelain)" ]; then
   echo "  The build uploads this directory, so uncommitted changes would ship" >&2
   echo "  under $(git rev-parse --short HEAD)'s tag. Commit, stash or clean first:" >&2
   git status --short >&2
+  exit 1
+fi
+
+# ── Guard 0: the build cannot start without a registry credential ────────────
+# cloudbuild.yaml declares a default for _COMMIT_SHA but NOT for _GITHUB_TOKEN,
+# so omitting it fails the whole submit with "key in the template
+# _GITHUB_TOKEN is not matched in the substitution data" — after uploading
+# ~200 MiB of context. Check first, fail in a second instead of a minute.
+GHCR_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
+if [ -z "$GHCR_TOKEN" ]; then
+  echo "✗ No GitHub token in \$GHCR_TOKEN or \$GITHUB_TOKEN." >&2
+  echo "  cloudbuild.yaml logs in to ghcr.io with it; the build cannot start." >&2
+  echo "  Set it with a LEADING SPACE so it stays out of shell history:" >&2
+  echo "      export GHCR_TOKEN=ghp_..." >&2
   exit 1
 fi
 
@@ -117,7 +139,13 @@ if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 echo "→ Building (7-20 min)"
-run gcloud builds submit --substitutions=_COMMIT_SHA="$SHA"
+# Printed redacted on purpose: `run` would echo the token into the terminal,
+# and from there into scrollback and any pasted log.
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] gcloud builds submit --substitutions=_COMMIT_SHA=%s,_GITHUB_TOKEN=***\n' "$SHA"
+else
+  gcloud builds submit --substitutions=_COMMIT_SHA="$SHA",_GITHUB_TOKEN="$GHCR_TOKEN"
+fi
 
 echo "→ Pointing service at $TAG"
 run zeabur service update tag --id "$SERVICE_ID" -t "$TAG" -y -i=false

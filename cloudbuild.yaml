@@ -1,6 +1,13 @@
 substitutions:
-  # SHA corto del commit que se construye. Se pasa en el submit:
-  #   gcloud builds submit --substitutions=_COMMIT_SHA="$(git rev-parse --short HEAD)"
+  # SHA corto del commit que se construye. Se pasa en el submit JUNTO CON
+  # _GITHUB_TOKEN — este fichero usa AMBAS sustituciones (paso 1 hace
+  # `docker login ghcr.io` con el token) pero solo _COMMIT_SHA tiene valor por
+  # defecto aquí, así que omitir el token aborta el submit entero con
+  # "key in the template _GITHUB_TOKEN is not matched in the substitution data"
+  # DESPUÉS de subir ~200 MiB de contexto. Este comentario documentaba solo
+  # _COMMIT_SHA y por eso scripts/deploy.sh nació sin el token (2026-09-09).
+  #   gcloud builds submit --substitutions=_COMMIT_SHA="$(git rev-parse --short HEAD)",_GITHUB_TOKEN="$GHCR_TOKEN"
+  # Mejor: usa scripts/deploy.sh, que lo pasa por ti y nunca lo imprime.
   # `gcloud builds submit` sube un DIRECTORIO local, no un repo, así que las
   # variables automáticas ($SHORT_SHA / $COMMIT_SHA) llegan VACÍAS. De ahí ésta.
   _COMMIT_SHA: ''
