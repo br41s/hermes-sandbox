@@ -53,16 +53,33 @@ STEP 0 — Run-start hygiene (mandatory; workdir is this job's own checkout):
    git pull --ff-only origin main
    Never hard-reset; untracked files mid-run must survive.
 
-   Use the remote exactly as cloned. Do NOT read GITHUB_TOKEN or GH_TOKEN: in
-   this environment they hold the literal placeholder "proxy-injected", not a
-   credential, and using one yields
+   Use the remote exactly as cloned. Git auth is already configured: a real
+   GitHub PAT lives in $HERMES_HOME/.env and docker/cont-init.d/03-biglobster-config
+   writes it into a git credential store ONCE PER CONTAINER BOOT. You do not
+   need to do anything to authenticate, and you must not try: never run
+   `git remote set-url`, never embed a token in a URL, never configure your own
+   credential helper or http.extraheader, and never pass a token on a command
+   line. Those attempts are what turn a recoverable blip into a broken checkout.
+
+   IF `git fetch origin` FAILS WITH:
        remote: Invalid username or token. Password authentication is not
        supported for Git operations.
-   which aborted the 2026-09-07 run before it touched an article. Auth is
-   injected for you at the network layer: never run `git remote set-url`, never
-   embed a token in a URL, never configure a credential helper or
-   http.extraheader. If a git command still fails auth, STOP and report it as an
-   environment failure — do not retry with a hand-built credential.
+   then the credential store for THIS container boot is missing or stale. This
+   has happened on 2026-09-07 and again on 2026-09-09, while the runs on either
+   side of them worked, so treat it as intermittent rather than permanent:
+
+     a. Wait 60 seconds and run `git fetch origin` ONE more time. That is the
+        whole retry budget — one attempt, not a loop. If the credential store
+        was simply written late in the boot, this succeeds and the run
+        continues normally.
+     b. If it fails again, STOP. Do NOT try to repair auth yourself.
+     c. Report the failure LOUDLY. Your final response MUST begin with the line
+            RUN FAILED — GitHub auth unavailable
+        followed by the exact git error, the current UTC time, and the fact
+        that no article was touched. Do NOT answer [SILENT], and do NOT phrase
+        it as a normal completion: a run that shipped nothing must never read
+        as a quiet success. Two such runs went unnoticed because they reported
+        cleanly while producing nothing.
 
 STEP 1 — Select target (idempotent, deterministic):
    a. List article files under CONTENT_GLOB that contain CONTENT_CONTAINER.
@@ -138,7 +155,23 @@ STEP 6 — Report (delivered by the cron's --deliver target; do NOT send anythin
    type, one-line concept description.
 
 FAILURE HANDLING
-   If any step fails validation (invalid SVG/HTML, repo/clone error, no eligible
-   article, dirty tree you cannot resolve): stop on THIS run, output the exact
-   error, and finish. Do not retry in a loop and do not advance to another
-   article — the next scheduled run will pick up cleanly.
+   Distinguish the two ways a run can end without a PR — they are NOT the same
+   and must not read the same:
+
+   1. NOTHING TO DO (legitimate). Every article already has an infographic or a
+      claimed branch. Report "Status: Nothing to process" and finish. This is a
+      clean, successful run.
+
+   2. FAILURE (invalid SVG/HTML, repo/clone/auth error, build failure, dirty
+      tree you cannot resolve). Stop on THIS run — do not retry in a loop, do
+      not advance to another article; the next scheduled run picks up cleanly.
+      But your final response MUST begin with
+          RUN FAILED — <one-line reason>
+      followed by the exact error. Never [SILENT], never a summary that could
+      be mistaken for a normal completion.
+
+   Why the shouting: on 2026-09-07 and 2026-09-09 this job aborted at STEP 0
+   and reported so mildly that both runs were recorded as ok and nobody
+   noticed anything was missing until someone counted, by hand, how many
+   articles still lacked an infographic. A run that ships nothing must be
+   unmistakable in the one line a human actually reads.
