@@ -104,6 +104,13 @@ across repos from a single checkout, so an unqualified `gh` would hit the wrong 
        ("I would merge this — what I checked, why it's safe"). The CEO merges it.
        Do NOT escalate a clean system PR to the thread — the APPROVE comment on the
        PR is the signal; the incidents thread stays quiet (PASO 4).
+       End that APPROVE comment with this exact marker on its own line, using
+       the PR's full `headRefOid` from PASO 1:
+           <!-- hermes-auditor:approve <headRefOid> -->
+       It is invisible when rendered. The merge-on-green watcher reads it: a
+       system PR the CEO has labelled `auto-merge` merges only when this marker
+       names the CURRENT head SHA. No marker = no merge. NEVER add it to any
+       other verdict (blockers, conflicts, escalations, content merges).
      - Merge conflict (`mergeable: CONFLICTING`) → ⚠️ MERGE BLOCKER: state it
        cannot merge as-is, list the conflicting files, give the proposed
        resolution. Never merge a conflicting PR (content included); do NOT push the
