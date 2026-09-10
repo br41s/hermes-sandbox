@@ -16,17 +16,17 @@ from merge_on_green.watcher import run
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="merge_on_green",
-        description="Merge labelled, green PRs under the Hermes autonomy gates.",
+        description="Merge auditor-approved, auto-merge-labelled PRs under the Hermes autonomy gates.",
     )
-    parser.add_argument("repos", nargs="*", help="owner/repo (default: $MERGE_ON_GREEN_REPOS)")
+    parser.add_argument("repos", nargs="*",
+                        help="owner/repo (default: the auditor's review set)")
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would be merged; never merges, never writes the ledger")
     parser.add_argument("--verbose", action="store_true",
-                        help="also report PRs that are waiting (normally silent)")
+                        help="also report PRs that are waiting, and repeat already-reported outcomes")
     args = parser.parse_args(argv)
 
-    lines = run(args.repos or None, dry_run=args.dry_run, verbose=args.verbose)
-    for line in lines:
+    for line in run(args.repos or None, dry_run=args.dry_run, verbose=args.verbose):
         print(line)
     return 0
 
