@@ -171,9 +171,8 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 - [ ] Los títulos H2/H3 NO llevan numeración manual (el TOC lo hace automáticamente)
 - [ ] Imagen guardada como JPG en web/assets/blog/covers/
 - [ ] El tema NO está anclado a regulación/subvenciones/geografía española (CBAM, VeriFactu, Galicia, IRPF...) salvo que el propio gap sea explícitamente sobre ese mercado
-- [ ] El artículo cita AL MENOS UNA fuente primaria con fecha y enlace (vendor,
-      regulador, benchmark/incidente o paper). Obligatorio también en los artículos
-      de RESERVA. Al resumirla siguen aplicando las reglas de humanizado
+- [ ] El artículo cita ≥1 fuente primaria con fecha y enlace (también en RESERVA)
+- [ ] La infografía existe en web/assets/blog/infographics/<slug>.jpg y está insertada
 
 ## Flujo de trabajo:
 
@@ -334,7 +333,11 @@ Pasos:
 1. `git checkout -B blog/TITULO-CORTO-YYYYMMDD` (mayúscula `-B`: como el checkout es
    persistente entre ejecuciones, un run previo pudo dejar esta rama a medias si falló
    antes de limpiar — `-B` la resetea en vez de fallar con "branch already exists")
-2. Añade SOLO los archivos de este artículo (nunca `git add -A` ni `git add .`):
+2. Comprueba PRIMERO que existen los TRES artefactos — artículo, portada e infografía:
+   `ls -l site/en/blog/<slug>.html web/assets/blog/covers/<slug>.* web/assets/blog/infographics/<slug>.*`
+   Si falta la infografía, vuelve a la FASE 3 (pasos 4-5) y genérala AHORA. NUNCA abras
+   un PR con dos ficheros: el PR #502 salió así y eso es una regresión, no una variante.
+   Después añade SOLO los archivos de este artículo (nunca `git add -A` ni `git add .`):
    `git add site/en/blog/<slug>.html web/assets/blog/covers/<slug>.* web/assets/blog/infographics/<slug>.*`
    Comprueba que no queda ningún asset del artículo sin trackear: `git status --porcelain`.
    Si aparece otro binario nuevo del artículo, añádelo también.
@@ -347,6 +350,10 @@ Pasos:
    Deja el checkout listo para la próxima ejecución sin ramas locales acumuladas.
 
 ### Respuesta final (en español, aunque el artículo esté en inglés):
+OBLIGATORIO, y no es un ejemplo a imitar: tu última respuesta son EXACTAMENTE estas
+líneas, en este orden. Si no puedes rellenar una, es que te falta un paso — vuelve y
+hazlo; no la sustituyas por prosa ni por un relato del `npm run build`.
+
 ✅ Nuevo artículo creado
 - Título: [TÍTULO]
 - Keyword: [keyword]
