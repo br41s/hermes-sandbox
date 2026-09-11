@@ -207,6 +207,15 @@ python3 -c/-e (bloqueados en cron, igual que en el buzón). Nada de curl con tok
 ni cabeceras — el guard de exfiltración lo bloquea y el job no corre. Todas estas
 fuentes son públicas y no necesitan autenticación.
 
+PRESUPUESTO DE CONTEXTO: este barrido ocurre ANTES de escribir, y escribir necesita
+margen — la FASE 3 son 8-12 llamadas seguidas (ver "Límites de escritura"). No te
+gastes aquí el margen que vas a necesitar allí:
+- web_extract de 1-2 URLs por llamada, nunca 5 de golpe.
+- Quédate en abstracts, changelogs y notas de versión. El PDF completo de un paper
+  solo si ese candidato ya pasó las puertas y vas a escribir sobre él.
+- En cuanto una clase te dé 1-2 candidatos, pasa a la SIGUIENTE clase. No agotes
+  ninguna: el objetivo es ver las cuatro, no exprimir una.
+
 ### FASE 2: Decisión — cuatro puertas, en orden
 Aplica en orden y para en la primera que falle (la más barata primero):
 
@@ -220,10 +229,31 @@ Aplica en orden y para en la primera que falle (la más barata primero):
     ingenieros o la propia nota de producto → adelante: ahí está el hueco. Esta es
     la puerta que más valor aporta: es la forma operativa de "publicado una sola
     vez PARA ESTE LECTOR".
+    QUIÉN ES ESE LECTOR: un negocio pequeño — desde el autónomo con un par de
+    personas hasta la empresa de ~50 — y el peso está en el extremo PEQUEÑO. Sin
+    departamento de IT, sin presupuesto de consultoría, y quien decide es la misma
+    persona que luego lo ejecuta. Una pieza escrita para una empresa con equipo
+    técnico dedicado NO cubre a tu lector: el hueco sigue abierto.
+    NO CIERRA EL HUECO la guía "para empresas" del propio vendor, ni su página de
+    producto, ni su landing: eso es material de venta, no consejo — nunca te va a
+    decir cuándo NO te conviene, que es justo la mitad que tu lector necesita.
   PUERTA 3 — ¿CONSECUENTE? Tienes que ser capaz de NOMBRAR la acción concreta que
-    el lector emprende al terminar (evaluar X, cambiar el proceso Y, presupuestar
-    Z) y que sea alcanzable en los próximos ~90 días. Si no sabes nombrarla, es que
-    no la hay → descarta. Esta puerta es la que impide que arxiv inunde la cola.
+    el lector emprende al terminar de leer. Vale cualquiera de estas formas:
+      · evaluar o adoptar algo nuevo      · cambiar un proceso que ya tiene
+      · presupuestar o reservar dinero    · renegociar un contrato o un plan
+      · DEJAR de usar algo, migrar o cancelarlo
+      · posponer una decisión a propósito, sabiendo por qué
+    Las acciones de DEJAR DE HACER (una herramienta que sube de precio, un servicio
+    que se discontinúa, una función que ya no hace falta pagar aparte) están entre
+    las más valiosas que puedes escribir: ahorran dinero de verdad y casi nadie las
+    escribe, porque no venden nada. No las descartes por no encajar en "adoptar
+    algo nuevo".
+    EL PLAZO: la acción tiene que poder EMPEZAR en los próximos ~30 días. No exige
+    terminar ahí — prepararse para una obligación que vence dentro de seis meses SÍ
+    cuenta, porque el primer paso se da ya. Lo que no cuenta es aquello que no
+    tiene primer paso.
+    Si no sabes nombrar la acción, es que no la hay → descarta. Esta puerta es la
+    que impide que arxiv inunde la cola.
   PUERTA 4 — DEMANDA, SOLO COMO DESEMPATE. Entre las candidatas que pasaron 1-3,
     elige aquella cuya búsqueda alguien teclearía de verdad. NUNCA uses esta puerta
     para descartar algo que ya pasó las tres anteriores.
