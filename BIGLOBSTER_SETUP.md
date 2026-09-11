@@ -252,18 +252,17 @@ on branch + git identity between the two jobs.
 > hermes cron edit ce583d11dedd --workdir /opt/data/checkouts/biglobster-gaphunter
 > ```
 >
-> **Gotcha — `sync_prompt` reads `/opt/hermes/`, not `/opt/data/hermes-sandbox`.**
-> `/opt/data/hermes-sandbox` is a separate, independent checkout on the data volume
-> (used for `sync_prompt`'s source-of-truth *comparison* origin when you invoke it
-> from that directory, and possibly other tooling) — it is NOT what the running
-> gateway process reads. `sync_prompt`'s `repo_root` resolves relative to
+> **Gotcha — `sync_prompt` reads the repo baked into the image.**
+> There is no checkout on the data volume to pull into: `/opt/data/hermes-sandbox`
+> was described here as one, and **does not exist in the container** (verified
+> 2026-09-11). `sync_prompt`'s `repo_root` resolves relative to
 > `cronjob_tools.py`'s own location, which is `/opt/hermes/` — the repo **baked
 > into the image** at build time (`Dockerfile`'s `COPY . .` under
 > `WORKDIR /opt/hermes`), and declared immutable at runtime. No boot hook
-> refreshes it and nothing on the data volume feeds it. Pulling `main` into
-> `/opt/data/hermes-sandbox` alone does **not** update what `sync_prompt`
-> compares against: it will report `"already matches"` — a false positive —
-> against the stale `/opt/hermes/` copy.
+> refreshes it and nothing on the data volume feeds it. So there is no `git pull`
+> anywhere in the container that changes what `sync_prompt` compares against: it
+> will report `"already matches"` — a false positive — against the `/opt/hermes/`
+> copy from whichever image is running.
 >
 > **Refreshing `/opt/hermes` therefore means deploying.** A `service restart` does
 > not do it either: it re-runs the image already on the node. The sequence to push
@@ -282,9 +281,35 @@ on branch + git identity between the two jobs.
 > the file; `sync_prompt` moves that text into the job. Either step alone changes
 > nothing about the next run.
 >
-> `cp`ing a file into `/opt/hermes` in a running container does work for trying a
-> wording change in place, but it mutates a tree the image declares immutable and
-> the next rollout silently reverts it. It is not a way to land one.
+> **A prompt-only change does not need a rebuild.** The job's live prompt lives in
+> `jobs.json` on the data volume and survives rollouts; the image only supplies the
+> *file* that `sync_prompt` reads. Deliver that file another way and the ~8-minute
+> build buys nothing. Transfer it as base64 — never by pasting the text through
+> `exec → su → sh -c`, where nested quoting silently corrupts accented Spanish,
+> backticks and quotes:
+>
+> ```sh
+> B64=$(git show origin/main:<repo/path.prompt> | base64 | tr -d '\n') && \
+>   zeabur service exec --id <svc> -i=false -- \
+>   sh -c "echo $B64 | base64 -d > /opt/hermes/<repo/path.prompt>"
+> # verify, then sync (note: write as root, sync as hermes)
+> zeabur service exec --id <svc> -i=false -- sha256sum /opt/hermes/<repo/path.prompt>
+> zeabur service exec --id <svc> -i=false -- su hermes -c \
+>   'hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>'
+> ```
+>
+> Compare that sha256 against `git show origin/main:<path> | shasum -a 256` before
+> syncing. The `/opt/hermes` drift is reverted by the next rollout and is harmless:
+> the job already holds the text by then, and the next real deploy restores parity.
+> The only cost is that until then, "what is in `/opt/hermes`" is not answerable
+> from the running image tag. Merge the PR first either way — the repo stays the
+> source of truth.
+>
+> **Do not use `hermes cron edit --prompt` as the shortcut.** It writes the live
+> side directly, so `prompt_synced_sha` no longer matches and the *next*
+> `sync_prompt` refuses (`tools/cronjob_tools.py:963`) — correctly, since it can no
+> longer tell whether it would be discarding someone's emergency fix. Always let
+> `sync_prompt` be the writer.
 
 **`skills/seo-geo/*/SKILL.md` are pointers, not workflows.** These files (under
 `/opt/data/profiles/biglobster/skills/seo-geo/`, not version-controlled — no git
