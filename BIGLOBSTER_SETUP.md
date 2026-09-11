@@ -257,14 +257,34 @@ on branch + git identity between the two jobs.
 > (used for `sync_prompt`'s source-of-truth *comparison* origin when you invoke it
 > from that directory, and possibly other tooling) — it is NOT what the running
 > gateway process reads. `sync_prompt`'s `repo_root` resolves relative to
-> `cronjob_tools.py`'s own location, which is `/opt/hermes/` — a plain directory
-> copy (no `.git`), refreshed by the boot hook, not a live checkout. Pulling
-> `main` into `/opt/data/hermes-sandbox` alone does **not** update what
-> `sync_prompt` compares against: it will report `"already matches"` — a false
-> positive — against the stale `/opt/hermes/` copy. To actually push a prompt fix
-> to a live job: merge to `main`, refresh `/opt/hermes/<path>` from the merged repo
-> (`cp` the file, or wait for a container restart to re-run the boot hook), *then*
-> run `hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>`.
+> `cronjob_tools.py`'s own location, which is `/opt/hermes/` — the repo **baked
+> into the image** at build time (`Dockerfile`'s `COPY . .` under
+> `WORKDIR /opt/hermes`), and declared immutable at runtime. No boot hook
+> refreshes it and nothing on the data volume feeds it. Pulling `main` into
+> `/opt/data/hermes-sandbox` alone does **not** update what `sync_prompt`
+> compares against: it will report `"already matches"` — a false positive —
+> against the stale `/opt/hermes/` copy.
+>
+> **Refreshing `/opt/hermes` therefore means deploying.** A `service restart` does
+> not do it either: it re-runs the image already on the node. The sequence to push
+> a prompt fix to a live job is:
+>
+> 1. merge to `main`;
+> 2. `scripts/deploy.sh --verify-file <repo/path.prompt>` — builds the commit and
+>    moves the image tag, which is the only operation that makes Zeabur roll out;
+> 3. `hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>`;
+> 4. confirm it reports `"changed": true`. `"already matches"` here means step 2
+>    did not land, and you compared the new file against itself in the old image.
+>
+> **Two copies of a prompt exist and only one of them runs**: the file in the
+> image, and the job's own frozen copy in `jobs.json` on the data volume. The cron
+> agent reads only the frozen copy — it never opens the file. The deploy replaces
+> the file; `sync_prompt` moves that text into the job. Either step alone changes
+> nothing about the next run.
+>
+> `cp`ing a file into `/opt/hermes` in a running container does work for trying a
+> wording change in place, but it mutates a tree the image declares immutable and
+> the next rollout silently reverts it. It is not a way to land one.
 
 **`skills/seo-geo/*/SKILL.md` are pointers, not workflows.** These files (under
 `/opt/data/profiles/biglobster/skills/seo-geo/`, not version-controlled — no git
