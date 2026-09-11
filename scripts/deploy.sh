@@ -121,8 +121,22 @@ echo
 # Rebuilding a commit reuses its tag, so the service spec does not change and
 # no rollout happens — the deploy silently does nothing. A new commit is the
 # only way out; there is no force.
+#
+# Ask Cloud Build whether this _COMMIT_SHA has ever built green. NOT
+# `--format="value(images)"`, which is what this guard used to grep: gcloud
+# only fills `images` for builds that declare an `images:` block, and
+# cloudbuild.yaml publishes with an explicit `docker push` step instead (step
+# 3, immutable tag first). So that field is empty on every build in this
+# project and the check it fed could never fire — a same-commit rebuild went
+# through to a no-op deploy with no warning at all.
+#
+# Never widen --format to include substitutions: _GITHUB_TOKEN is stored in
+# them in clear, and printing it here would leak it into the terminal and any
+# pasted log. Filtering on a substitution does not print it; formatting does.
 if [ "$DRY_RUN" -eq 0 ] && command -v gcloud >/dev/null 2>&1; then
-  if gcloud builds list --limit=20 --format="value(images)" 2>/dev/null | grep -q ":$TAG\$"; then
+  if [ -n "$(gcloud builds list --limit=1 \
+        --filter="substitutions._COMMIT_SHA=$SHA AND status=SUCCESS" \
+        --format="value(id)" 2>/dev/null)" ]; then
     echo "⚠ $TAG has been built before — this commit is already published." >&2
     echo "  Re-pointing the service at the same tag changes no spec, so Zeabur" >&2
     echo "  will NOT roll out. If you need new code live, make a commit." >&2
