@@ -57,16 +57,35 @@ export GIT_HTTP_LOW_SPEED_TIME=30
 # Drop to hermes (matching stage2-hook.sh) so files land hermes-owned.
 as_hermes() { [ "$(id -u)" = 0 ] || { "$@"; return; }; s6-setuidgid hermes "$@"; }
 
-# --- GitHub token resolution (single source of truth: $HERMES_HOME/.env) ---
-# GITHUB_TOKEN is NOT a platform-injected process env var in this deployment:
-# Zeabur carries it neither in the container env nor in
-# /run/s6/container_environment, so `with-contenv` hands this script an empty
-# $GITHUB_TOKEN. The only durable copy lives in $HERMES_HOME/.env — historically
-# as DUPLICATE, DIVERGENT lines (a stale classic `ghp_…` PAT alongside the valid
-# fine-grained `github_pat_…` one). Without this block two things silently break
-# every boot:
+# --- GitHub token resolution (process env first, $HERMES_HOME/.env fallback) ---
+# Two sources can carry the shared PAT: an explicit process-env value wins, else
+# the last matching line in $HERMES_HOME/.env (same last-occurrence-wins rule the
+# gateway's own load_dotenv applies).
+#
+# WHICH ONE IS LIVE IS NOT FIXED — check it, do not infer it from this comment.
+# Both halves have flipped once already, and reading a stale version of this
+# block as live state is exactly what got a healthy container misdiagnosed as a
+# dead-credential outage on 2026-09-11 (there was none: the `ls-remote` that
+# "failed" was run as root against a hermes-owned checkout, so git's
+# dubious-ownership guard hid `origin` and emitted its correct-access-rights
+# message; as hermes it returned a SHA):
+#   * until 2026-07-23 Zeabur carried GITHUB_TOKEN nowhere — not the container
+#     env, not /run/s6/container_environment — so `with-contenv` handed this
+#     script an empty $GITHUB_TOKEN and the .env fallback was the only path.
+#     It IS a platform variable now, so the process-env branch is the live one.
+#   * .env once held DUPLICATE, DIVERGENT GITHUB_TOKEN lines (a stale classic
+#     `ghp_…` PAT beside the valid fine-grained `github_pat_…` one). It now holds
+#     a single fine-grained line, identical to the platform variable.
+# Verify with `ls /run/s6/container_environment/GITHUB_TOKEN` and
+# `grep -c '^GITHUB_TOKEN=' "$HERMES_HOME/.env"`. Never tell two PATs apart by
+# the `github_pat_11…` prefix — it encodes the owner, not the token; a revoked
+# one answers 401 and a valid one 200 at api.github.com/user.
+#
+# The .env fallback stays because the platform variable is one dashboard edit
+# away from being absent again, and with no token resolved two things break
+# silently every boot:
 #   * section 1's env sync skips GITHUB_TOKEN (its os.environ lookup is empty),
-#     so the divergent .env lines are never deduped and the gateway's own
+#     so divergent .env lines are never deduped and the gateway's own
 #     load_dotenv (last-occurrence-wins) may load a revoked token.
 #   * section 4 prints "GITHUB_TOKEN not set" and writes no git credential store,
 #     so git/gh auth survives only on hand-placed on-disk files — fragile across
