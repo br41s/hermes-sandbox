@@ -983,6 +983,31 @@ chmod +x "$HERMES_HOME/scripts/upstream_drift.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/upstream_drift.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
 
+# --- 5e: seed the merge-on-green cron script into the AUDITOR profile ---
+# Merges system-tier PRs the auditor has already approved, once the CEO has
+# labelled them `auto-merge` (merge_on_green/). Runs under profile=auditor for
+# two reasons: `gh` then authenticates as hermes-auditor through the hosts.yml
+# §4b writes into the auditor's subprocess HOME, and a profile-scoped job
+# resolves --script under THAT profile's scripts/ dir, not the root one (the
+# "Script not found: /opt/data/profiles/auditor/scripts/..." failure recorded in
+# cron/scheduler.py). Execs from the install dir so `merge_on_green`,
+# `remediation` and `auditor` import. Empty stdout = silent delivery.
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "*/15 * * * *" --profile auditor --no-agent \
+#     --script merge_on_green.sh --deliver "telegram:<chat_id>:1904" --name merge-on-green
+if [ -d "$HERMES_HOME/profiles/auditor" ]; then
+    as_hermes mkdir -p "$HERMES_HOME/profiles/auditor/scripts"
+    cat > "$HERMES_HOME/profiles/auditor/scripts/merge_on_green.sh" <<'MERGE'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+exec .venv/bin/python -m merge_on_green
+MERGE
+    chmod +x "$HERMES_HOME/profiles/auditor/scripts/merge_on_green.sh"
+    chown hermes:hermes "$HERMES_HOME/profiles/auditor/scripts/merge_on_green.sh" 2>/dev/null || true
+    echo "[03-biglobster] Seeded profiles/auditor/scripts/merge_on_green.sh"
+fi
+
 # --- 6: per-profile repo sync (clone on first boot, pull on subsequent boots) ---
 # Any profile with a repos.txt gets its listed GitHub repos cloned into
 # <profile>/workspace/<repo-name>/. Format: one "owner/repo" per line;
