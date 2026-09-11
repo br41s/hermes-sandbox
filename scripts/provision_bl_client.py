@@ -242,7 +242,7 @@ ONBOARDING_CONTENT_DELAY = "5m"
 # has NO base model, and the orchestrator loop then calls OpenRouter with no
 # model → RuntimeError: 400 "No models provided" and the agent silently does
 # nothing (confirmed on bl-shoroban, 2026-07-24). Override with --model.
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 
 SOUL_TEMPLATE = """# {client_name} — Hermes Agent (rented, bl-site-package)
 

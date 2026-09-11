@@ -33,9 +33,11 @@ import urllib.request
 from typing import List, Optional
 
 # Known-present, cheap fallbacks (from docker/config.yaml). Override via env.
-# Dated slug on purpose: the undated `deepseek/deepseek-v4-flash` alias resolves
-# to the 0423 snapshot on OpenRouter ($0.087/M input) — `-0731` is $0.065/M.
-SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4-flash-0731"
+# `deepseek/deepseek-v4.1-flash` has no dated snapshot on OpenRouter yet (as of
+# 2026-09-11) — it's the only slug for this model. Once OpenRouter ships dated
+# snapshots for it, re-pin to the dated one: an undated alias with siblings
+# has previously resolved to the oldest (priciest) snapshot, not the newest.
+SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
 CONTENT_MODEL_DEFAULT = "openrouter/owl-alpha"
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"

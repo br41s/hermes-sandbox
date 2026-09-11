@@ -5,7 +5,7 @@ model:
 providers: {}
 fallback_model:
   provider: openrouter
-  model: deepseek/deepseek-v4-flash
+  model: deepseek/deepseek-v4.1-flash
 fallback_providers: []
 credential_pool_strategies: {}
 toolsets:

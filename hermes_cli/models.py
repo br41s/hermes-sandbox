@@ -63,7 +63,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("x-ai/grok-4.5",                          ""),
     # DeepSeek
     ("deepseek/deepseek-v4-pro",               ""),
-    ("deepseek/deepseek-v4-flash",             ""),
+    ("deepseek/deepseek-v4.1-flash",           ""),
     # Qwen
     ("qwen/qwen3.7-max",                       ""),
     ("qwen/qwen3.7-plus",                      ""),
@@ -213,7 +213,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "x-ai/grok-4.5",
         # DeepSeek
         "deepseek/deepseek-v4-pro",
-        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4.1-flash",
         # Qwen
         "qwen/qwen3.7-max",
         "qwen/qwen3.7-plus",
