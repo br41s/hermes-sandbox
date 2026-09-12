@@ -157,3 +157,77 @@ def test_raw_escape_hatch_still_returns_full_objects(monkeypatch, capsys, tmp_pa
     _patch_repos(monkeypatch, {pending.ENGINE_REPO: [_pr(1, "aaa")]})
     raw = json.loads(_cli(monkeypatch, capsys, tmp_path, ["--raw"]))
     assert raw[0]["files"] == [{"path": "hermes/x.py"}]
+
+
+# --- defect 3: a truncated file list must never tier `content` --------------
+#
+# `gh pr list --json files` caps at 100 and says nothing about it. Real case:
+# br41s/hermes-sandbox#144 reports changedFiles=4524 and returns 100 paths.
+# `classify` fails safe over the paths it is GIVEN, which is not the same as
+# failing safe over the PR — so tiering a truncated list can hand `content`
+# (auto-merge eligible) to a PR with thousands of unseen system files.
+# Inert before the tiering fix (the agent could never tier at all); live after.
+
+def _pr_with_count(number, head, paths, changed_files_total):
+    pr = _pr(number, head, files=tuple(paths))
+    pr["changedFiles"] = changed_files_total
+    return pr
+
+
+def test_truncated_file_list_tiers_system_not_content(monkeypatch, tmp_path):
+    """The exact shape of hermes-sandbox#144: 100 content paths, 4524 real."""
+    hundred_content_paths = [f"docs/guide_{i}.md" for i in range(100)]
+    assert tiers.classify(hundred_content_paths, pending.ENGINE_REPO) == "content", \
+        "precondition: these paths alone genuinely look like content"
+
+    _patch_repos(monkeypatch, {
+        pending.ENGINE_REPO: [_pr_with_count(144, "sha144", hundred_content_paths, 4524)],
+    })
+    pr = pending.pending_prs(None, tmp_path / "s.json")[0]
+    assert pr["tier"] == "system", "truncated list tiered content — auto-merge hole"
+    assert "truncated" in pr["tier_reason"]
+
+
+def test_empty_file_list_tiers_system_not_content(monkeypatch, tmp_path):
+    """``classify([])`` is 'content' by design ("nothing to break"). A PR whose
+    file list failed to come back is not the same thing as a PR that changes
+    nothing, and must not be auto-merge eligible."""
+    assert tiers.classify([], pending.ENGINE_REPO) == "content", "precondition"
+    _patch_repos(monkeypatch, {pending.ENGINE_REPO: [_pr_with_count(1, "a", [], 12)]})
+    pr = pending.pending_prs(None, tmp_path / "s.json")[0]
+    assert pr["tier"] == "system"
+
+
+def test_missing_changed_files_count_tiers_system(monkeypatch, tmp_path):
+    """No authoritative count = no way to prove the list is complete. Over-review
+    is the safe degradation; trusting an unverifiable list is not."""
+    pr_obj = _pr(1, "a", files=("docs/x.md",))
+    pr_obj.pop("changedFiles", None)
+    _patch_repos(monkeypatch, {pending.ENGINE_REPO: [pr_obj]})
+    pr = pending.pending_prs(None, tmp_path / "s.json")[0]
+    assert pr["tier"] == "system"
+    assert "changedFiles" in pr["tier_reason"]
+
+
+def test_complete_content_list_still_tiers_content(monkeypatch, tmp_path):
+    """The fail-safe must not swallow every content PR — auto-merge still works
+    when the list is provably complete."""
+    _patch_repos(monkeypatch, {
+        "br41s/biglobster": [_pr_with_count(9, "b", ["site/blog/p.html"], 1)],
+    })
+    pr = pending.pending_prs(None, tmp_path / "s.json")[0]
+    assert pr["tier"] == "content"
+    assert pr["tier_reason"] == ""
+
+
+def test_payload_reports_the_real_file_count_and_why(monkeypatch, capsys, tmp_path):
+    """The agent must see 4524, not 100, and be told why the tier is system —
+    otherwise it 'corrects' the fail-safe tier from the paths it can see."""
+    _patch_repos(monkeypatch, {
+        pending.ENGINE_REPO: [
+            _pr_with_count(144, "s", [f"docs/g_{i}.md" for i in range(100)], 4524)],
+    })
+    pr = json.loads(_cli(monkeypatch, capsys, tmp_path, []))["prs"][0]
+    assert pr["changed_files_count"] == 4524
+    assert pr["tier"] == "system"
+    assert "truncated" in pr["tier_reason"]
