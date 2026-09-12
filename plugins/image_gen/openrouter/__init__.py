@@ -87,6 +87,35 @@ _REQUEST_TIMEOUT = 300.0
 _MODALITY_REFUSAL = "support the requested output modalities"
 _IMAGE_ONLY_MODELS: set = set()
 
+# OpenRouter serves dedicated image models from a SEPARATE endpoint, not from
+# /chat/completions at all:
+#
+#   meta/muse-image is an image generation model and cannot be used with the
+#   chat/completions endpoint. Use the /api/v1/images endpoint instead.
+#
+# That, not the modality list above, is what actually kept meta/muse-image and
+# bytedance-seed/seedream-* out of reach. The two endpoints differ in request
+# shape (prompt + aspect_ratio + input_references, instead of chat messages)
+# and in response shape (data[].b64_json + media_type, instead of
+# choices[].message.images[]) — both handled below.
+#
+# Which endpoint a model wants is learned from this error rather than from a
+# hardcoded list, so a model added to OpenRouter tomorrow needs no code change.
+_IMAGES_API_REDIRECT = "cannot be used with the chat/completions endpoint"
+_IMAGES_API_MODELS: set = set()
+
+
+def _is_images_api_redirect(exc: "requests.HTTPError") -> bool:
+    """True when OpenRouter says this model belongs to the Image API."""
+    resp = exc.response
+    if resp is None:
+        return False
+    try:
+        message = (resp.json().get("error") or {}).get("message") or ""
+    except Exception:  # noqa: BLE001 - a non-JSON body is still worth scanning
+        message = resp.text or ""
+    return _IMAGES_API_REDIRECT in message.lower()
+
 
 def _is_modality_refusal(exc: "requests.HTTPError") -> bool:
     """True when OpenRouter refused because we asked for text output."""
@@ -148,12 +177,25 @@ def _to_image_url_part(ref: str) -> Optional[str]:
 
 
 def _extract_images(payload: Dict[str, Any]) -> List[str]:
-    """Pull generated image URLs from a chat-completions response.
+    """Pull generated images out of either OpenRouter response shape.
 
-    OpenRouter returns generated images under
+    ``/chat/completions`` returns them under
     ``choices[0].message.images[].image_url.url`` (typically a base64 data URI).
+    ``/api/v1/images`` returns ``data[].b64_json`` with a ``media_type``; that
+    is normalised to the same ``data:`` URI here so everything downstream —
+    including the save path — stays shape-agnostic.
     """
     out: List[str] = []
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        for item in payload["data"]:
+            if not isinstance(item, dict):
+                continue
+            b64 = item.get("b64_json")
+            if isinstance(b64, str) and b64.strip():
+                media = item.get("media_type") or "image/png"
+                out.append(f"data:{media};base64,{b64.strip()}")
+        if out:
+            return out
     choices = payload.get("choices") if isinstance(payload, dict) else None
     if not isinstance(choices, list):
         return out
@@ -315,20 +357,70 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
             return [top.strip()]
         return _dedupe_models(list(_DEFAULT_MODEL_CHAIN))
 
-    def _post_image_request(self, base_url, headers, model_id, content, or_aspect):
-        """POST one generation request, asking for modalities this model returns.
+    def _post_images_api(self, base_url, headers, model_id, content, or_aspect):
+        """POST to ``/api/v1/images`` — OpenRouter's dedicated Image API.
 
-        Tries ``["image", "text"]`` first because the multimodal chat models
-        need text in the list, then falls back to ``["image"]`` on the
-        distinctive refusal that dedicated image models produce. The outcome is
-        remembered per model id, so only the first call in a process pays the
-        extra round trip — a modality refusal never reaches a provider and
-        fails in tens of milliseconds.
-
-        Raises the original ``HTTPError`` for anything that is not a modality
-        refusal, so the caller's existing fallback-chain handling is unchanged.
+        Different request shape from chat: a flat ``prompt`` plus
+        ``aspect_ratio``, with references passed as ``input_references``. The
+        reference parts are already in the exact shape that field wants
+        (``{"type": "image_url", "image_url": {"url": ...}}``), so they are
+        reused as-is rather than rebuilt.
         """
         import requests  # lazy, matching generate()'s own deferred import
+
+        prompt_text = ""
+        references = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text" and not prompt_text:
+                prompt_text = str(part.get("text") or "")
+            elif part.get("type") == "image_url":
+                references.append(part)
+
+        payload: Dict[str, Any] = {
+            "model": model_id,
+            "prompt": prompt_text,
+            "aspect_ratio": or_aspect,
+        }
+        if references:
+            payload["input_references"] = references
+
+        response = requests.post(
+            f"{base_url}/images",
+            headers=headers,
+            json=payload,
+            timeout=_REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response
+
+    def _post_image_request(self, base_url, headers, model_id, content, or_aspect):
+        """POST one generation request to whichever endpoint this model uses.
+
+        OpenRouter splits image generation across two incompatible endpoints:
+        multimodal chat models answer on ``/chat/completions``, dedicated image
+        models only on ``/api/v1/images``. Which one a model wants is learned
+        from OpenRouter's own error rather than a hardcoded list, so a model
+        added tomorrow needs no code change here.
+
+        Within the chat path, modalities are negotiated the same way: try
+        ``["image", "text"]`` (the multimodal models need text in the list),
+        then ``["image"]`` on the distinctive refusal. Both outcomes are
+        remembered per model id, so only the first call in a process pays an
+        extra round trip — neither refusal reaches a provider, and both fail in
+        tens of milliseconds.
+
+        Raises the original ``HTTPError`` for anything that is neither a
+        modality refusal nor an Image API redirect, so the caller's existing
+        fallback-chain handling is unchanged.
+        """
+        import requests  # lazy, matching generate()'s own deferred import
+
+        if model_id in _IMAGES_API_MODELS:
+            return self._post_images_api(
+                base_url, headers, model_id, content, or_aspect
+            )
 
         last_exc = None
         for modalities in _modality_attempts(model_id):
@@ -349,6 +441,17 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
                 return response
             except requests.HTTPError as exc:
                 last_exc = exc
+                if _is_images_api_redirect(exc):
+                    # Not a chat model at all — OpenRouter told us where it lives.
+                    _IMAGES_API_MODELS.add(model_id)
+                    logger.info(
+                        "%s: %s is served by the Image API; switching endpoint",
+                        self._name,
+                        model_id,
+                    )
+                    return self._post_images_api(
+                        base_url, headers, model_id, content, or_aspect
+                    )
                 if modalities == ["image"] or not _is_modality_refusal(exc):
                     raise
                 _IMAGE_ONLY_MODELS.add(model_id)
