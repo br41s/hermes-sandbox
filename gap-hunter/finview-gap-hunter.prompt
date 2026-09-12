@@ -135,7 +135,35 @@ git diff --cached --name-only
 git commit -m "blog(articles): nuevo artículo sobre [tema]"
 git push origin blog/SLUG-YYYYMMDD
 La autenticación de git ya está configurada (credential helper con $GITHUB_TOKEN). NO incluyas tokens en comandos ni en archivos.
-Crea el PR con: gh pr create --base main --head blog/SLUG-YYYYMMDD --title "…" --body "…" (gh ya está autenticado). No uses curl ni la API cruda.
+Crea el PR con `gh pr create` (gh ya está autenticado). No uses curl ni la API cruda.
+
+**El cuerpo del PR va SIEMPRE en un fichero, nunca en `--body "…"`.** Dentro de una
+cadena entrecomillada la shell no interpreta `\n`, así que acaba como texto literal:
+el PR #245 se publicó como un párrafo corrido con `\n` a la vista y los backticks
+vacíos. Escribe el cuerpo con un heredoc y pásalo con `--body-file`. Usa la shell
+(`cat > …`), no `write_file`: el workdir está fuera de HERMES_WRITE_SAFE_ROOT y la
+herramienta rechazaría la escritura.
+
+    cat > /tmp/finview-gap-hunter/pr-body.md <<'EOF'
+    ## Gap de contenido
+    [qué faltaba y por qué merecía un artículo]
+
+    ## Fuentes
+    [enlaces con fecha — de primera mano cuando existan]
+
+    ## Qué incluye
+    - [los puntos que aporta el artículo]
+
+    ## Verificación
+    - `npm test` — N tests pasados
+    - `npm run build` — build de producción correcto
+    EOF
+    gh pr create --base main --head blog/SLUG-YYYYMMDD --title "…" \
+      --body-file /tmp/finview-gap-hunter/pr-body.md
+
+Comillas simples en `<<'EOF'` para que la shell no toque backticks ni `$`. Si algún
+comando de verificación no lo ejecutaste, NO lo pongas: un checklist inventado es
+peor que uno ausente.
 Si gh falla: reporta URL manual https://github.com/br41s/FinView/pull/new/blog/SLUG-YYYYMMDD
 
 OUTPUT
