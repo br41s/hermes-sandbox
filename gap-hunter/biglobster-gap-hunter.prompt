@@ -142,6 +142,26 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 - Genera con image_generate (datos visuales del tema, estilo oscuro con acentos #B8391C y #D4622A)
 - Inserta infografía con `<figure class="article-infographic">` en el contenido
 
+#### Si `image_generate` falla (REGLA DURA)
+Reinténtalo UNA vez: muchos fallos son transitorios del proveedor. Si vuelve a
+fallar:
+
+- **NUNCA copies, dupliques ni reutilices una imagen que ya exista en el repo** —
+  ni de otro artículo, ni de `covers/`, ni de `infographics/`. Ni con `cp`, ni
+  renombrando, ni "provisionalmente hasta que alguien la cambie". Cada imagen de
+  este artículo la genera `image_generate` en ESTA ejecución o no existe.
+- **No abras el PR.** El hero de la plantilla necesita la portada; un artículo
+  sin ella no está terminado.
+- **Reporta el fallo** citando el error literal de la herramienta. NUNCA
+  respondas [SILENT]: el silencio es para los días sin tema que merezca la pena,
+  no para las averías.
+
+Por qué es regla dura y no una preferencia: una portada prestada hace que el PR
+PAREZCA completo — el artículo tiene su fichero, su imagen y su commit — así que
+nadie la detecta al revisar. Cinco artículos llegaron a publicarse con la foto de
+cabecera de otro y solo se descubrió comparando hashes de los ficheros, meses
+después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
+
 ### SEO
 - Meta description de 1-2 frases naturales (campo `description` del frontmatter)
 - OG tags, canonical y JSON-LD Article/Breadcrumb se GENERAN del frontmatter —
@@ -173,6 +193,8 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
 - [ ] El tema NO está anclado a regulación/subvenciones/geografía española (CBAM, VeriFactu, Galicia, IRPF...) salvo que el propio gap sea explícitamente sobre ese mercado
 - [ ] El artículo cita ≥1 fuente primaria con fecha y enlace (también en RESERVA)
 - [ ] La infografía existe en web/assets/blog/infographics/<slug>.jpg y está insertada
+- [ ] Cover e infografía las generaste TÚ en esta ejecución con image_generate —
+      ninguna copiada, renombrada ni reutilizada de otro artículo
 
 ## Flujo de trabajo:
 
@@ -333,7 +355,9 @@ Pasos:
 1. `git checkout -B blog/TITULO-CORTO-YYYYMMDD` (mayúscula `-B`: como el checkout es
    persistente entre ejecuciones, un run previo pudo dejar esta rama a medias si falló
    antes de limpiar — `-B` la resetea en vez de fallar con "branch already exists")
-2. Comprueba PRIMERO que existen los TRES artefactos — artículo, portada e infografía:
+2. Comprueba PRIMERO que existen los TRES artefactos — artículo, portada e
+   infografía — y que las dos imágenes salieron de `image_generate` en esta
+   misma ejecución (si no, vuelve arriba: no vale reutilizar una existente):
    `ls -l site/en/blog/<slug>.html web/assets/blog/covers/<slug>.* web/assets/blog/infographics/<slug>.*`
    Si falta la infografía, vuelve a la FASE 3 (pasos 4-5) y genérala AHORA. NUNCA abras
    un PR con dos ficheros: el PR #502 salió así y eso es una regresión, no una variante.
