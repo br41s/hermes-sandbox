@@ -378,6 +378,11 @@ class _ThreadedProcessHandle:
 # ---------------------------------------------------------------------------
 
 
+# Env vars Hermes computes per spawn and the session snapshot must never
+# override -- see the pin/restore block in ``_wrap_command``.
+_SNAPSHOT_PINNED_VARS: tuple[str, ...] = ("HOME", "HERMES_HOME")
+
+
 def _cwd_marker(session_id: str) -> str:
     return f"__HERMES_CWD_{session_id}__"
 
@@ -621,9 +626,36 @@ class BaseEnvironment(ABC):
         # vars into every tool response (issue #15459).  Linux bash is
         # silent here, but the redirect is harmless.
         if self._snapshot_ready:
+            # Hermes owns HOME and HERMES_HOME: they are recomputed for every
+            # spawn from the ACTIVE profile (``_make_run_env`` ->
+            # ``_inject_context_hermes_home`` + ``apply_subprocess_home_env``).
+            # The snapshot is a record of what the USER's commands exported, so
+            # it must not be able to overwrite that computation with a value
+            # captured when the environment was created -- possibly by a
+            # different profile's job, possibly before an operator changed
+            # ``terminal.home_mode``.  In the terminal lane HOME is the entire
+            # git/gh identity (GITHUB_TOKEN/GH_TOKEN are stripped from every
+            # spawn, so ``~/.git-credentials`` and ``~/.config/gh/hosts.yml``
+            # are the credentials), which is how a stale snapshot signed and
+            # pushed FinView PR #245 as ``hermes-auditor`` on 2026-09-12.
+            #
+            # Capture the spawn-time values, source, then put them back. Doing
+            # it in-shell keeps this backend-agnostic: for a container backend
+            # the pinned value is the sandbox's own HOME, not the host's. The
+            # emptiness guard means an unset var stays unset rather than being
+            # exported as "". The re-dump below then persists the pinned value,
+            # so the snapshot converges instead of re-leaking on the next call.
+            for _pin in _SNAPSHOT_PINNED_VARS:
+                parts.append(f'__hermes_pin_{_pin}="${{{_pin}-}}"')
             parts.append(
                 f"source {_quoted_snap} >/dev/null 2>&1 || true"
             )
+            for _pin in _SNAPSHOT_PINNED_VARS:
+                parts.append(
+                    f'if [ -n "${{__hermes_pin_{_pin}}}" ]; then '
+                    f'export {_pin}="${{__hermes_pin_{_pin}}}"; fi'
+                )
+                parts.append(f"unset __hermes_pin_{_pin}")
 
         # Preserve bare ``~`` expansion, but rewrite ``~/...`` through
         # ``$HOME`` so suffixes with spaces remain a single shell word.

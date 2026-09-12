@@ -31,6 +31,7 @@ Usage:
     result = terminal_tool("python server.py", background=True)
 """
 
+import hashlib
 import importlib.util
 import json
 import logging
@@ -1184,6 +1185,14 @@ def _resolve_container_task_id(task_id: Optional[str]) -> str:
     ``"default"`` here so subagents share the parent's long-lived container
     (one bash, one /workspace, one set of installed packages).
 
+    The collapsed key is scoped to the active Hermes profile -- ``"default"``
+    under the default home, ``"default-<profile>"`` otherwise.  Profiles are a
+    credential boundary and a reused sandbox carries ``$HOME`` (the whole
+    git/gh identity in the terminal lane) across every call, so the sharing
+    above stops at the profile edge.  See
+    :func:`_shared_container_profile_suffix` for the production incident that
+    pins this.
+
     Exception: RL / benchmark environments (TerminalBench2, HermesSweEnv, ...)
     call ``register_task_env_overrides(task_id, {...})`` to request a
     per-task Docker/Modal image. When an override is registered for a
@@ -1204,7 +1213,69 @@ def _resolve_container_task_id(task_id: Optional[str]) -> str:
         overrides = _task_env_overrides[task_id]
         if set(overrides.keys()) & _ISOLATION_KEYS:
             return task_id
-    return "default"
+    return "default" + _shared_container_profile_suffix()
+
+
+def _shared_container_profile_suffix() -> str:
+    """Return the profile discriminator appended to the shared container key.
+
+    ``""`` under the default Hermes home — single-profile installs keep the
+    literal ``"default"`` key they have always had — and ``"-<profile>"``
+    otherwise.  A dash (not ``@``) because backends embed this key in container
+    names and labels.
+
+    Why the shared key must not span profiles: a sandbox is reused across tool
+    calls and carries live shell state, including the ``export -p`` snapshot
+    that every command sources and therefore ``$HOME``.  In the terminal lane
+    ``$HOME`` IS the git/gh identity: ``GITHUB_TOKEN``/``GH_TOKEN`` are
+    Tier-1 stripped from every spawned subprocess (see
+    ``local._ALWAYS_STRIP_KEYS``), so ``~/.gitconfig``,
+    ``~/.git-credentials`` and ``~/.config/gh/hosts.yml`` are the only
+    credentials a command can reach.  Two profiles sharing one sandbox is
+    therefore a credential-boundary violation, not a convenience.
+
+    Cron proved it in production on 2026-09-12.  The auditor job created the
+    ``default`` local environment at 07:04:24 and its snapshot captured
+    ``HOME=/opt/data/profiles/auditor/home``; the environment was NOT reaped
+    when the job ended at 07:05:04 (per-turn ``cleanup_vm`` is called with the
+    agent's ``session_id``, which never matches the ``"default"`` key, so only
+    the 5-minute idle reaper collects it).  The FinView content job started at
+    07:06:31, reused that environment, and committed and pushed FinView
+    PR #245 as ``hermes-auditor`` — which the auditor then skipped as its own
+    work, so the PR silently left the review queue altogether.  The jobs did not
+    overlap; nothing in ``os.environ`` had leaked.  The leak lived entirely in
+    this cache being profile-blind.
+
+    Note the Docker backend already labels containers with
+    ``hermes-profile`` and reuses per ``(task_id, profile)``, so this brings
+    the in-process cache into agreement with the layer beneath it rather than
+    introducing a new isolation rule.  Subagents still collapse onto their
+    parent's key — they run under the same profile, which is the sharing the
+    collapse exists for.
+    """
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+        from hermes_constants import get_hermes_home
+
+        name = get_active_profile_name() or "default"
+        if name == "custom":
+            # "custom" is that helper's catch-all for a HERMES_HOME outside
+            # ~/.hermes/profiles/. Two unrelated homes must not land in one
+            # bucket — a catch-all that silently merges credential boundaries
+            # is the very bug this function exists to close — so discriminate
+            # by the home itself.
+            name = "custom-" + hashlib.sha256(
+                str(get_hermes_home().resolve()).encode("utf-8", "replace")
+            ).hexdigest()[:12]
+    except Exception:
+        # Fail OPEN to the historical key: a profile lookup that raises must
+        # not strand every terminal call, and on a single-profile install
+        # there is no boundary to cross.
+        return ""
+    if name == "default":
+        return ""
+    # Keep the key usable as a container-name / label component.
+    return "-" + (re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:63] or "unknown")
 
 
 def resolve_task_overrides(task_id: Optional[str]) -> Dict[str, Any]:
