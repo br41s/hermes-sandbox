@@ -2347,7 +2347,7 @@ def terminal_tool(
                 if needs_creation:
                     if env_type == "singularity":
                         _check_disk_usage_warning()
-                    logger.info("Creating new %s environment for task %s...", env_type, effective_task_id[:8])
+                    logger.info("Creating new %s environment for task %s...", env_type, effective_task_id)
                     try:
                         ssh_config = None
                         if env_type == "ssh":
@@ -2407,7 +2407,7 @@ def terminal_tool(
                         _active_environments[effective_task_id] = new_env
                         _last_activity[effective_task_id] = time.time()
                         env = new_env
-                    logger.info("%s environment ready for task %s", env_type, effective_task_id[:8])
+                    logger.info("%s environment ready for task %s", env_type, effective_task_id)
 
         if env is None:
             # Unreachable in practice (either the cached branch or the creation
