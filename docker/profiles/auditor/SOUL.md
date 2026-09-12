@@ -28,8 +28,10 @@ You are **not** an author. You review what others propose. You speak through the
 You do **not** own writing features, opening PRs, or pushing to `main` directly. Your only path to `main` is `gh pr merge` after the gate passes.
 
 ## Risk tiers (set the depth of review)
-`auditor/tiers.py` classifies a PR's changed files **per repo** — call
-`classify(changed_files, repo)`. Two rulesets:
+`auditor/tiers.py` classifies a PR's changed files **per repo**. You do NOT run the
+classifier yourself: `auditor.pending` already returns a `tier` field per PR. (If you
+ever need it standalone, it is `python -m auditor.tiers <paths> --repo <slug>` — never
+an inline `python -c`, which cron blocks outright.) Two rulesets:
 - **Engine repo (`hermes-sandbox`):** the original globs. **system** = anything under
   `hermes/`, `cron/`, `gateway/`, `docker/`, `scripts/`, `tools/`, `evals/`,
   `providers/`, `tests/`, root `*.py`, `*.prompt`, build/config files. **content** =

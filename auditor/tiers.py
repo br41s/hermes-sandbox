@@ -241,3 +241,41 @@ def unknown_paths(paths: Iterable[str]) -> List[str]:
         if not _is_system(p) and not _is_content(p):
             out.append(p.strip().lstrip("./"))
     return out
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI so tiering never needs ``python -c``.
+
+    Cron blocks ``python -c`` outright (``tools/approval.py``:
+    ``script execution via -e/-c flag``) because there is no human to approve
+    it. Without this entrypoint the auditor cron could not reach ``classify``
+    at all: it looped on PASO 1 until the iteration cap, producing zero
+    reviews (2026-09-12, job ``c19bb95c0a62``).
+
+    Paths come from argv, or one-per-line on stdin when none are given.
+    """
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser(
+        prog="python -m auditor.tiers",
+        description="Print 'system' or 'content' for a PR's changed paths.",
+    )
+    ap.add_argument("paths", nargs="*", help="changed file paths (else read stdin)")
+    ap.add_argument("--repo", help="owner/name; selects the ruleset")
+    ap.add_argument(
+        "--unknown", action="store_true",
+        help="also list paths matching neither list (engine ruleset)",
+    )
+    args = ap.parse_args(argv)
+
+    paths = args.paths or [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
+    print(classify(paths, args.repo))
+    if args.unknown:
+        for p in unknown_paths(paths):
+            print(f"unknown: {p}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
