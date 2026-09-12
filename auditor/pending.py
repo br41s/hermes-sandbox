@@ -45,7 +45,10 @@ from auditor.tiers import classify
 
 _SEEN_CAP = 2000
 # Fields pulled per PR. ``files`` lets us tier in-process, without a second call.
-_PR_FIELDS = "number,title,headRefName,headRefOid,author,isDraft,files,url"
+# ``changedFiles`` is the AUTHORITATIVE count: ``gh`` caps ``files`` at 100 and
+# says nothing about it (br41s/hermes-sandbox#144 reports 4524 and returns 100).
+# Without the count we cannot tell a complete list from a truncated one.
+_PR_FIELDS = "number,title,headRefName,headRefOid,author,isDraft,files,changedFiles,url"
 
 # Per-run review cap. The agent loop stops at ``max_iterations`` (90, see
 # run_agent.py); a PR costs roughly 6-8 iterations, so an uncapped list cannot
@@ -159,11 +162,35 @@ def pending_prs(repo: Optional[str], state_path: Path, include_drafts: bool = Fa
             # Tier here, not in the agent. Shelling out to ``classify`` needs
             # ``python -c``, which cron blocks unconditionally (no approver) —
             # the auditor livelocked on exactly that for 90 iterations a run.
-            pr["tier"] = classify(pr["changed_files"], r)
+            pr["tier"], pr["tier_reason"] = _tier(pr, r)
             result.append(pr)
     # Deterministic, oldest-first: a PR can never be starved by newer arrivals.
     result.sort(key=lambda p: (p["repo"], p["number"]))
     return result
+
+
+def _tier(pr: dict, repo: str) -> tuple:
+    """``(tier, reason)`` — fail-safe to ``system`` on an untrustworthy file list.
+
+    ``classify`` fails safe over the paths it is GIVEN, which is not the same as
+    failing safe over the PR. ``gh`` caps ``files`` at 100 without saying so, so a
+    4,000-file PR arrives as 100 paths; if those happen to be docs and assets
+    (``docs/`` sorts early) the PR tiers ``content`` and becomes auto-merge
+    eligible with thousands of system files unseen.
+
+    So: trust the tier only when the list is provably complete — ``changedFiles``
+    equals the number of paths we actually got, and there is at least one.
+    Anything else is ``system``: over-review, never wrong-auto-merge.
+    """
+    paths = pr.get("changed_files") or []
+    total = pr.get("changedFiles")
+    if not paths:
+        return "system", "no file list returned — cannot verify what changed"
+    if not isinstance(total, int):
+        return "system", "no changedFiles count — cannot verify the list is complete"
+    if total != len(paths):
+        return "system", f"file list truncated ({len(paths)} of {total}) — cannot verify"
+    return classify(paths, repo), ""
 
 
 def compact(pr: dict) -> dict:
@@ -184,12 +211,15 @@ def compact(pr: dict) -> dict:
         "headRefOid": pr.get("headRefOid"),
         "author": (pr.get("author") or {}).get("login"),
         "tier": pr.get("tier"),
-        "changed_files_count": len(paths),
+        "changed_files_count": pr.get("changedFiles", len(paths)),
         "changed_files": paths[:_MAX_PATHS_SHOWN],
         "url": pr.get("url"),
     }
     if len(paths) > _MAX_PATHS_SHOWN:
         out["changed_files_truncated"] = True
+    if pr.get("tier_reason"):
+        # Say WHY it is system, so the agent does not "correct" a fail-safe tier.
+        out["tier_reason"] = pr["tier_reason"]
     return out
 
 

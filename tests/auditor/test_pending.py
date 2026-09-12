@@ -22,6 +22,8 @@ def _pr(number, head, login="claude-code", draft=False, files=("hermes/x.py",)):
         "author": {"login": login},
         "isDraft": draft,
         "files": [{"path": p} for p in files],
+        # gh always returns this; it is how we detect its 100-file cap.
+        "changedFiles": len(files),
         "url": f"https://github.com/o/r/pull/{number}",
     }
 
