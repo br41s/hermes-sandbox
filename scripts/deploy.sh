@@ -89,6 +89,39 @@ if [ -z "$GHCR_TOKEN" ]; then
   exit 1
 fi
 
+# Presence is not validity, and the difference costs a whole build. A revoked
+# or expired token passes the check above, uploads ~200 MiB of context, builds
+# the image, and only then dies in step 1 on `docker login ghcr.io` with
+# "denied: denied" — which is exactly what happened on 2026-09-12.
+#
+# So perform the real handshake here. `docker login` does not send basic auth
+# to the registry: it exchanges the credential at ghcr.io's token endpoint for
+# a bearer token, and that exchange is what actually fails for a dead PAT.
+# (A plain `curl -u .../v2/<name>/tags/list` is NOT a valid check — the
+# registry v2 protocol answers 401 there even for good credentials, to point
+# the client at this same token service.)
+#
+# Derived from $IMAGE rather than hardcoded: the GHCR namespace has changed
+# once already with the braisntext → br41s rename, and a check pinned to a
+# stale owner would pass while the build still failed.
+GHCR_REPO="${IMAGE#ghcr.io/}"
+GHCR_USER="${GHCR_REPO%%/*}"
+if command -v curl >/dev/null 2>&1; then
+  if ! curl -fsS --max-time 15 -u "$GHCR_USER:$GHCR_TOKEN" \
+        "https://ghcr.io/token?service=ghcr.io&scope=repository:${GHCR_REPO}:pull,push" \
+        2>/dev/null | grep -q '"token"'; then
+    echo "✗ GHCR rejected the token in \$GHCR_TOKEN/\$GITHUB_TOKEN." >&2
+    echo "  It is present but not valid for pushing $IMAGE, so cloudbuild's" >&2
+    echo "  step 1 would fail after uploading ~200 MiB and building." >&2
+    echo "  Generate a CLASSIC PAT (not fine-grained) with write:packages," >&2
+    echo "  read:packages and repo, then re-export it:" >&2
+    echo "      https://github.com/settings/tokens" >&2
+    echo "      export GHCR_TOKEN=ghp_...   # leading space keeps it out of history" >&2
+    echo "  Do NOT reuse \$HERMES_AUDITOR_GITHUB_TOKEN — different account." >&2
+    exit 1
+  fi
+fi
+
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$BRANCH" != "main" ]; then
   echo "✗ On branch '$BRANCH', not main. Deploy from main." >&2
