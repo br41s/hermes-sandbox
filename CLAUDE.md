@@ -163,6 +163,47 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   rsync of `/opt/data` works. `project clone --region` carries services and volumes, but
   not volumes large enough to exceed the S3 backup limit.
 
+## Diagnosing an agent run — Langfuse first, logs second
+
+`/opt/data/logs/agent.log` is an **infrastructure** log, not a record of what an
+agent did. It emits `agent.tool_executor: tool X completed` for tool calls issued
+one at a time, but a **parallel batch of tool calls produces no such line at all** —
+the results just appear as a jump in the next API call's input tokens. Diagnosing a
+run from the log therefore undercounts tool use, and it fails in the dangerous
+direction: it looks like the agent skipped work it actually did.
+
+That misread happened on 2026-09-12. A Gap Hunter run showed "4 terminal calls, zero
+web calls" in `agent.log`, and was one step away from being reported as having
+fabricated its research ledger. The Langfuse trace for the same session showed **nine**
+web calls — four `web_extract` in one parallel batch, four `web_search` in the next —
+every one matching a ledger line. The `[SILENT]` it returned was correct behaviour.
+
+**Langfuse is the source of truth for agent behaviour**: the full tool-call sequence
+with arguments and outputs. Traces are keyed by the cron session id, which is
+`cron_<job_id>_<YYYYMMDD>_<HHMMSS>` and appears in every `agent.log` line for the run:
+
+```bash
+curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+  "$LANGFUSE_BASE_URL/api/public/traces?sessionId=<session_id>&limit=10"
+curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
+  "$LANGFUSE_BASE_URL/api/public/observations?traceId=<trace_id>&limit=100"
+```
+
+Observations of type `TOOL` carry the arguments; sort by `startTime` and a shared
+timestamp across several tools means they were issued as one parallel batch.
+
+| Question | Where |
+|---|---|
+| Did the run start, and when? | `agent.log` / `hermes cron runs <job_id>` |
+| Which model, cache-hit rate, token counts | `agent.log` |
+| Did it deliver, or return `[SILENT]`? | `agent.log` (`cron.scheduler` line) |
+| Container restarts, scheduler state | `agent.log` |
+| **What the agent actually did** | **Langfuse** |
+| **Which tools, with what arguments** | **Langfuse** |
+| **Whether it really visited a source** | **Langfuse** |
+
+Never conclude an agent skipped a step from `agent.log` alone. Pull the trace.
+
 ## Secrets
 
 Keys live in Zeabur env vars and propagate to profile `.env` files. **Never print a variable
