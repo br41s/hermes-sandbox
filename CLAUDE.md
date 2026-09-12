@@ -73,6 +73,29 @@ Consequences to hold in mind:
   runtime** — it is read by Claude Code only. Adding a `.hermes.md` here would not be:
   it would outrank AGENTS.md and change the agent's own context. Don't, without a reason.
 
+### One long agent run starves every other agent
+
+`cron/scheduler.py` dispatches every job that sets `profile` or `workdir` on a
+**single-thread sequential pool** — profile execution mutates `os.environ` and a
+context-local `HERMES_HOME`, so two cannot safely overlap. One slow job therefore
+blocks all the others, and from outside a queued run is indistinguishable from a
+dead one: the waiting job sits in `claimed` with no log output at all.
+
+Seen on 2026-09-12 — a 38-minute auditor run held the thread while the BigLobster
+Gap Hunter (`ce583d11dedd`) sat silent for 20+ minutes, which read on Telegram
+exactly like a crash.
+
+The defence is **bounding each agent, not widening the pool**. The agent loop
+already hard-stops at `max_iterations=90` (`run_agent.py:434`), so the ceiling is
+~90 tool calls; what matters is that a job's queue fits inside it —
+`auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that. Widening the pool
+would mean removing the env mutation first; treat that as a separate, riskier
+piece of work and do not fold it into a bug fix.
+
+Corollary when triaging: before calling a quiet cron job dead, check whether
+another profile/workdir job is running. `hermes cron runs <job_id>` shows the
+holder.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk

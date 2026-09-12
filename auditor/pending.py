@@ -20,9 +20,15 @@ profile repos are needed (or made) for this.
 PR data comes from ``gh pr list`` (no GitHub Actions involved — this is plain
 API polling, the only path available on a Free private account).
 
+The CLI payload is deliberately COMPACT: the agent gets the fields it reviews
+with (including a pre-computed ``tier``) and not ``gh``'s per-file blob, which
+overran the terminal output cap and came back truncated — see ``compact()``.
+
 CLI:
     python -m auditor.pending                      # PRs needing review, ALL repos
     python -m auditor.pending --repo owner/name     # one repo only
+    python -m auditor.pending --limit 5             # cap the queue (default 10)
+    python -m auditor.pending --raw                 # full gh objects, for humans
     python -m auditor.pending --mark 42 <sha> --repo owner/name   # record reviewed
 """
 from __future__ import annotations
@@ -35,9 +41,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
+from auditor.tiers import classify
+
 _SEEN_CAP = 2000
-# Fields pulled per PR. ``files`` lets the agent tier without a second call.
+# Fields pulled per PR. ``files`` lets us tier in-process, without a second call.
 _PR_FIELDS = "number,title,headRefName,headRefOid,author,isDraft,files,url"
+
+# Per-run review cap. The agent loop stops at ``max_iterations`` (90, see
+# run_agent.py); a PR costs roughly 6-8 iterations, so an uncapped list cannot
+# finish and the run dies mid-review having marked only some of it. Cap the
+# queue instead, and let the next run take the rest.
+DEFAULT_LIMIT = 10
+# Per-PR path cap in the CLI payload. Tiering already happened in-process, so
+# the paths are only context for the agent; a 400-file PR must not blow the
+# terminal output cap (tools/tool_output_limits.py) and get truncated.
+_MAX_PATHS_SHOWN = 25
 
 # Liveness: the auditor's Telegram channel (incidents thread) carries only
 # escalations. To prove the gate is still running on quiet days, it emits one
@@ -138,8 +156,41 @@ def pending_prs(repo: Optional[str], state_path: Path, include_drafts: bool = Fa
                 continue
             pr["repo"] = r
             pr["changed_files"] = [f.get("path") for f in (pr.get("files") or []) if f.get("path")]
+            # Tier here, not in the agent. Shelling out to ``classify`` needs
+            # ``python -c``, which cron blocks unconditionally (no approver) —
+            # the auditor livelocked on exactly that for 90 iterations a run.
+            pr["tier"] = classify(pr["changed_files"], r)
             result.append(pr)
+    # Deterministic, oldest-first: a PR can never be starved by newer arrivals.
+    result.sort(key=lambda p: (p["repo"], p["number"]))
     return result
+
+
+def compact(pr: dict) -> dict:
+    """The slim view the agent actually needs to review one PR.
+
+    ``gh``'s raw PR object carries a full per-file blob (path + additions +
+    deletions each). For a normal pending queue that JSON overran the terminal
+    output cap and came back truncated mid-array, so the agent re-ran
+    ``auditor.pending`` dozens of times trying to get a parseable list. Every
+    field here is one the agent uses; ``files`` is not one of them.
+    """
+    paths = pr.get("changed_files") or []
+    out = {
+        "repo": pr.get("repo"),
+        "number": pr.get("number"),
+        "title": pr.get("title"),
+        "headRefName": pr.get("headRefName"),
+        "headRefOid": pr.get("headRefOid"),
+        "author": (pr.get("author") or {}).get("login"),
+        "tier": pr.get("tier"),
+        "changed_files_count": len(paths),
+        "changed_files": paths[:_MAX_PATHS_SHOWN],
+        "url": pr.get("url"),
+    }
+    if len(paths) > _MAX_PATHS_SHOWN:
+        out["changed_files_truncated"] = True
+    return out
 
 
 def mark_reviewed(repo: str, number: int, head_sha: str, state_path: Path) -> None:
@@ -203,6 +254,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--repo", help="owner/name (default: gh infers from cwd)")
     ap.add_argument("--include-drafts", action="store_true")
     ap.add_argument(
+        "--limit", type=int, default=DEFAULT_LIMIT,
+        help=f"max PRs to return (default {DEFAULT_LIMIT}); the rest wait for the next run",
+    )
+    ap.add_argument(
+        "--raw", action="store_true",
+        help="emit the full gh objects instead of the compact review payload",
+    )
+    ap.add_argument(
         "--mark", nargs=2, metavar=("NUMBER", "SHA"),
         help="record a PR head as reviewed instead of listing",
     )
@@ -231,7 +290,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     prs = pending_prs(args.repo, state_path, include_drafts=args.include_drafts)
-    print(json.dumps(prs, indent=2))
+    total = len(prs)
+    if args.limit > 0:
+        prs = prs[: args.limit]
+    if args.raw:
+        print(json.dumps(prs, indent=2))
+        return 0
+    payload = {
+        "count": len(prs),
+        "total_pending": total,
+        "deferred_to_next_run": max(0, total - len(prs)),
+        "prs": [compact(p) for p in prs],
+    }
+    print(json.dumps(payload, indent=2))
     return 0
 
 
