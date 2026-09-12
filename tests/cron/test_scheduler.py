@@ -5369,3 +5369,163 @@ class TestDispatchJobAsync:
         assert res["queued"] is True
         assert calls == {"seq": 0, "par": 1}                 # parallel pool
         sched._running_job_ids.discard("j3")
+
+
+class TestJobSubprocessIdentityTripwire:
+    """A profile job must never start under another profile's ``HOME``.
+
+    In the terminal lane ``HOME`` is the whole git/gh identity
+    (``GITHUB_TOKEN``/``GH_TOKEN`` are stripped from every spawned subprocess,
+    so ``~/.gitconfig`` / ``~/.git-credentials`` / ``~/.config/gh/hosts.yml``
+    are the only credentials a command can reach). On 2026-09-12 a FinView
+    content job ran with the auditor's ``HOME`` and opened FinView PR #245 as
+    ``hermes-auditor``; the auditor skips PRs it appears to have authored, so
+    the PR silently left the review queue.
+
+    The leak itself is fixed in the terminal layer (a sandbox is no longer
+    shared across profiles, and the shell snapshot can no longer override the
+    per-spawn ``HOME``). This is the independent backstop: each run checks the
+    identity it is about to act under rather than trusting the previous run to
+    have cleaned up.
+    """
+
+    @staticmethod
+    def _profiles(tmp_path, monkeypatch, active: str):
+        root = tmp_path / "profiles"
+        for name in ("auditor", "finview"):
+            (root / name / "home").mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env",
+            lambda name: str(root / name),
+        )
+        monkeypatch.setattr(
+            "hermes_cli.profiles.normalize_profile_name", lambda name: name
+        )
+        return root / active
+
+    def test_sibling_profile_home_fails_closed(self, tmp_path, monkeypatch):
+        from cron.scheduler import _job_profile_context, ProfileIdentityError
+
+        root = self._profiles(tmp_path, monkeypatch, "finview").parent
+        # Exactly the production shape: the previous (auditor) run's HOME
+        # survived into this one.
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home",
+            lambda env=None: str(root / "auditor" / "home"),
+        )
+
+        with pytest.raises(ProfileIdentityError) as exc:
+            with _job_profile_context("finview-job", "finview"):
+                pytest.fail("the job body must not run under another identity")
+        assert "another profile" in str(exc.value)
+
+    def test_own_profile_home_is_accepted(self, tmp_path, monkeypatch):
+        from cron.scheduler import _job_profile_context
+
+        own = self._profiles(tmp_path, monkeypatch, "finview")
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home",
+            lambda env=None: str(own / "home"),
+        )
+
+        with _job_profile_context("finview-job", "finview") as resolved:
+            assert resolved == "finview"
+
+    def test_host_install_real_home_is_accepted(self, tmp_path, monkeypatch):
+        """The ``auto`` home policy keeps the real OS-user home on non-container
+        installs. That is not another profile's identity, so it must not fail —
+        demanding a profile home here would break every host deployment."""
+        from cron.scheduler import _job_profile_context
+
+        self._profiles(tmp_path, monkeypatch, "finview")
+        real_home = tmp_path / "home" / "brais"
+        real_home.mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home", lambda env=None: str(real_home)
+        )
+
+        with _job_profile_context("finview-job", "finview") as resolved:
+            assert resolved == "finview"
+
+    def test_no_subprocess_home_override_is_accepted(self, tmp_path, monkeypatch):
+        from cron.scheduler import _job_profile_context
+
+        self._profiles(tmp_path, monkeypatch, "finview")
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home", lambda env=None: None
+        )
+
+        with _job_profile_context("finview-job", "finview") as resolved:
+            assert resolved == "finview"
+
+    def test_unprovisioned_profile_fails_closed_when_siblings_pin_identity(
+        self, tmp_path, monkeypatch
+    ):
+        """``earthsaver`` exists in production as a bare directory — no
+        ``SOUL.md``, no ``.env``, no ``home/`` — because ``resolve_profile_env``
+        accepts any directory under ``profiles/`` as a profile. Its sibling
+        profiles all have a ``home/``, so this install pins identity per
+        profile and a job under ``earthsaver`` would silently run as the owner
+        account."""
+        from cron.scheduler import _job_profile_context, ProfileIdentityError
+
+        root = tmp_path / "profiles"
+        (root / "earthsaver").mkdir(parents=True)
+        (root / "finview" / "home").mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(root / name)
+        )
+        monkeypatch.setattr(
+            "hermes_cli.profiles.normalize_profile_name", lambda name: name
+        )
+
+        with pytest.raises(ProfileIdentityError) as exc:
+            with _job_profile_context("es-job", "earthsaver"):
+                pytest.fail("an unprovisioned profile must not run")
+        assert "never fully" in str(exc.value)
+
+    def test_host_install_without_any_profile_homes_still_runs(
+        self, tmp_path, monkeypatch
+    ):
+        """The same check must stay silent on a laptop: with the ``auto`` home
+        policy no profile has a ``home/`` and the real OS-user home is the
+        correct answer. Calibrating off the siblings is what allows one check
+        to be strict in production and quiet here."""
+        from cron.scheduler import _job_profile_context
+
+        root = tmp_path / "profiles"
+        (root / "finview").mkdir(parents=True)
+        (root / "biglobster").mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_cli.profiles.resolve_profile_env", lambda name: str(root / name)
+        )
+        monkeypatch.setattr(
+            "hermes_cli.profiles.normalize_profile_name", lambda name: name
+        )
+
+        with _job_profile_context("fv-job", "finview") as resolved:
+            assert resolved == "finview"
+
+    def test_environment_is_restored_even_when_the_tripwire_fires(
+        self, tmp_path, monkeypatch
+    ):
+        """The tripwire raises from inside the context manager's ``try``, so
+        the env snapshot/restore and the Hermes-home override reset must still
+        run — otherwise the guard against leaking identity would itself leak."""
+        import os
+
+        from hermes_constants import get_hermes_home_override
+        from cron.scheduler import _job_profile_context, ProfileIdentityError
+
+        root = self._profiles(tmp_path, monkeypatch, "finview").parent
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home",
+            lambda env=None: str(root / "auditor" / "home"),
+        )
+
+        before = dict(os.environ)
+        with pytest.raises(ProfileIdentityError):
+            with _job_profile_context("finview-job", "finview"):
+                pass
+        assert dict(os.environ) == before
+        assert get_hermes_home_override() is None

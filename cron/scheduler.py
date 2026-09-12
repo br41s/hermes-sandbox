@@ -647,6 +647,32 @@ def _job_run_lock(job_id: str):
         fh.close()
 
 
+class ProfileIdentityError(RuntimeError):
+    """Raised when a profile job's runtime identity would not be its own.
+
+    Sibling of :class:`ProfileResolutionError`, and fail-closed for the same
+    reason: in the terminal lane ``$HOME`` IS the git/gh identity —
+    ``GITHUB_TOKEN``/``GH_TOKEN`` are stripped from every spawned subprocess,
+    so ``~/.gitconfig``, ``~/.git-credentials`` and ``~/.config/gh/hosts.yml``
+    are the only credentials a command can reach. A job whose subprocess
+    ``HOME`` resolves outside its own profile will commit, push and open PRs
+    as somebody else. That is strictly worse than not running: on 2026-09-12
+    a FinView content job ran with the auditor's ``HOME`` and opened
+    FinView PR #245 as ``hermes-auditor``, which the auditor then skipped as
+    its own work, so the PR silently left the review queue altogether.
+
+    The auditor drops such a PR on BOTH sides — ``auditor.prompt`` step 1a
+    skips any PR whose author is ``hermes-auditor`` ("never review your own
+    work") and ``docker/profiles/auditor/SOUL.md`` forbids merging one — so
+    the observable symptom is not an unreviewed auto-merge but the review gate
+    quietly disappearing, with no error and no alert. The PR then merges only
+    if a human merges it, which is exactly what happened to the earlier
+    mis-attributed content PRs (FinView #95/#97/#100/#144/#173/#190/#200/
+    #202/#204/#205, biglobster #467/#476/#479/#490/#492/#493 — all merged by
+    ``br41s`` by hand, none carrying an auditor review).
+    """
+
+
 class ProfileResolutionError(RuntimeError):
     """Raised when a job's configured profile can't be resolved.
 
@@ -659,6 +685,102 @@ class ProfileResolutionError(RuntimeError):
     (job stays due, retried on the job's normal schedule) instead of executing
     under an unintended identity.
     """
+
+
+def _iter_sibling_profiles(profile_home: Path):
+    """Yield the profile directories alongside *profile_home*, or nothing if
+    that listing is unavailable. Never raises — a failed scandir must not be
+    able to wedge a job."""
+    try:
+        return list(profile_home.parent.iterdir())
+    except OSError:
+        return []
+
+
+def _assert_own_subprocess_identity(
+    job_id: str, profile: str, profile_home: Path
+) -> None:
+    """Verify this run will not act under a DIFFERENT profile's identity.
+
+    Cheap (a couple of path comparisons, no subprocess) and runs once per
+    profile job, immediately after the Hermes-home override is installed — so
+    it checks the identity the job is about to act under instead of trusting
+    the previous job to have cleaned up after itself.
+
+    ``get_subprocess_home()`` is the exact function the terminal and file lanes
+    call to pick ``HOME`` for every command they spawn, so asking it here asks
+    the real question. In that lane ``HOME`` IS the git/gh identity:
+    ``GITHUB_TOKEN``/``GH_TOKEN`` are stripped from every spawned subprocess,
+    leaving ``~/.gitconfig``, ``~/.git-credentials`` and
+    ``~/.config/gh/hosts.yml`` as the only credentials a command can reach.
+
+    The assertion is deliberately narrow — *not another profile's home* rather
+    than *this profile's home* — because the ``auto`` home policy legitimately
+    keeps the real OS-user home on host (non-container) installs, and demanding
+    a profile home there would fail every job on every host deployment. A
+    sibling profile's home is never a legitimate answer under any policy, which
+    makes this the one check that is both universally safe and sufficient to
+    catch the 2026-09-12 class.
+
+    A profile with no ``home/`` directory falls back to the OS user's home, so
+    its jobs would commit as the *default* identity rather than their own.
+    Whether that is a bug depends on the install, and the answer is readable
+    straight off the disk: if any SIBLING profile has a ``home/``, this
+    deployment pins identity per profile (``docker/cont-init.d/03-biglobster-config``
+    creates one for every profile carrying a ``SOUL.md``) and a profile without
+    one is mis-provisioned — fail closed. If no sibling has one, this is a host
+    install running the ``auto`` home policy, where the real OS-user home is the
+    correct and only answer — carry on.
+
+    Calibrating off the siblings rather than hardcoding "container => required"
+    is what lets the same check be strict in production and silent on a laptop.
+    It also closes the ``earthsaver`` shape: a bare directory under
+    ``profiles/`` is accepted as a profile by ``resolve_profile_env`` even when
+    nothing ever onboarded it (no ``SOUL.md``, no ``.env``, no ``home/``), so
+    without this a half-created profile silently runs as the owner account.
+    """
+    from hermes_constants import get_subprocess_home
+
+    expected = profile_home / "home"
+    if not expected.is_dir():
+        siblings_pin_identity = any(
+            sibling.is_dir()
+            and sibling.name != profile_home.name
+            and (sibling / "home").is_dir()
+            for sibling in _iter_sibling_profiles(profile_home)
+        )
+        if siblings_pin_identity:
+            raise ProfileIdentityError(
+                f"profile {profile!r} has no subprocess home at {expected}, but "
+                f"other profiles on this install do — it was never fully "
+                f"provisioned and its jobs would run as the OS user"
+            )
+        logger.debug(
+            "Job '%s': profile '%s' has no subprocess home; no sibling has one "
+            "either, so this install does not pin identity per profile",
+            job_id, profile,
+        )
+        return
+    try:
+        resolved = get_subprocess_home()
+    except Exception as exc:  # pragma: no cover - defensive
+        raise ProfileIdentityError(
+            f"could not resolve the subprocess home for profile {profile!r}: {exc}"
+        ) from exc
+    if resolved is None:
+        return
+    resolved_path = Path(resolved).resolve()
+    siblings_root = profile_home.parent.resolve()
+    own = profile_home.resolve()
+    if resolved_path.is_relative_to(siblings_root) and not resolved_path.is_relative_to(own):
+        raise ProfileIdentityError(
+            f"profile {profile!r} resolves its subprocess home to "
+            f"{str(resolved_path)!r}, which belongs to another profile — "
+            f"git/gh in this run would authenticate as somebody else"
+        )
+    logger.debug(
+        "Job '%s': subprocess home %r is not another profile's", job_id, resolved
+    )
 
 
 @contextmanager
@@ -722,6 +844,7 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
     override_token = None
     try:
         override_token = set_hermes_home_override(profile_home)
+        _assert_own_subprocess_identity(job_id, normalized_profile, profile_home)
         logger.info(
             "Job '%s': using Hermes profile '%s' (%s)",
             job_id,
