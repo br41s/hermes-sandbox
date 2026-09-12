@@ -1,9 +1,10 @@
 """OpenRouter-compatible image generation backend (OpenRouter + Nous Portal).
 
 Both OpenRouter and the Nous Portal inference endpoint speak the same
-OpenAI-style ``/chat/completions`` image-generation protocol: send
-``modalities: ["image", "text"]`` with an image-output model (e.g.
-``google/gemini-3-pro-image``), pass reference images as ``image_url``
+OpenAI-style ``/chat/completions`` image-generation protocol: send the
+``modalities`` the model can actually return (see ``_modality_attempts`` —
+multimodal chat models want ``["image", "text"]``, dedicated image models
+accept ``["image"]`` only), pass reference images as ``image_url``
 content parts for grounding, and read the generated images back from
 ``choices[0].message.images[].image_url.url`` (a ``data:image/...;base64`` URI).
 
@@ -69,6 +70,41 @@ _MAX_REFERENCE_IMAGES = 3
 # is genuinely slow — a single cold row can run well past 3 minutes — so give
 # each call real headroom before we treat it as hung and fall back / retry.
 _REQUEST_TIMEOUT = 300.0
+
+# OpenRouter's dedicated image models — meta/muse-image, bytedance-seed/
+# seedream-*, and every future one — advertise output_modalities ["image"]
+# with NO text. Asking for ["image", "text"] therefore matches no endpoint and
+# 404s before any provider is reached:
+#   "No endpoints found that support the requested output modalities: image, text"
+# That one hardcoded list made every purpose-built image model on the platform
+# unusable, while looking like a dead model id whenever one was tried.
+#
+# The multimodal chat models (Gemini, GPT-5 Image) DO advertise text and some
+# need it in the list, so always asking for image alone is not safe either.
+# Ask for both, and learn the exception from the refusal itself: no model
+# registry to keep in sync with OpenRouter's catalogue, and no extra round trip
+# once a model has been classified.
+_MODALITY_REFUSAL = "support the requested output modalities"
+_IMAGE_ONLY_MODELS: set = set()
+
+
+def _is_modality_refusal(exc: "requests.HTTPError") -> bool:
+    """True when OpenRouter refused because we asked for text output."""
+    resp = exc.response
+    if resp is None:
+        return False
+    try:
+        message = (resp.json().get("error") or {}).get("message") or ""
+    except Exception:  # noqa: BLE001 - a non-JSON body is still worth scanning
+        message = resp.text or ""
+    return _MODALITY_REFUSAL in message.lower()
+
+
+def _modality_attempts(model_id: str) -> list:
+    """Modality lists to try for ``model_id``, best guess first."""
+    if model_id in _IMAGE_ONLY_MODELS:
+        return [["image"]]
+    return [["image", "text"], ["image"]]
 
 
 def _load_image_gen_config() -> Dict[str, Any]:
@@ -279,6 +315,51 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
             return [top.strip()]
         return _dedupe_models(list(_DEFAULT_MODEL_CHAIN))
 
+    def _post_image_request(self, base_url, headers, model_id, content, or_aspect):
+        """POST one generation request, asking for modalities this model returns.
+
+        Tries ``["image", "text"]`` first because the multimodal chat models
+        need text in the list, then falls back to ``["image"]`` on the
+        distinctive refusal that dedicated image models produce. The outcome is
+        remembered per model id, so only the first call in a process pays the
+        extra round trip — a modality refusal never reaches a provider and
+        fails in tens of milliseconds.
+
+        Raises the original ``HTTPError`` for anything that is not a modality
+        refusal, so the caller's existing fallback-chain handling is unchanged.
+        """
+        import requests  # lazy, matching generate()'s own deferred import
+
+        last_exc = None
+        for modalities in _modality_attempts(model_id):
+            payload: Dict[str, Any] = {
+                "model": model_id,
+                "modalities": modalities,
+                "messages": [{"role": "user", "content": content}],
+                "image_config": {"aspect_ratio": or_aspect},
+            }
+            try:
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=_REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+                return response
+            except requests.HTTPError as exc:
+                last_exc = exc
+                if modalities == ["image"] or not _is_modality_refusal(exc):
+                    raise
+                _IMAGE_ONLY_MODELS.add(model_id)
+                logger.info(
+                    "%s: %s returns image output only; retrying without the "
+                    "text modality",
+                    self._name,
+                    model_id,
+                )
+        raise last_exc
+
     def generate(
         self,
         prompt: str,
@@ -342,21 +423,11 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         }
         last_error: Optional[Dict[str, Any]] = None
         for i, model_id in enumerate(model_chain):
-            payload: Dict[str, Any] = {
-                "model": model_id,
-                "modalities": ["image", "text"],
-                "messages": [{"role": "user", "content": content}],
-                "image_config": {"aspect_ratio": or_aspect},
-            }
             is_last = i == len(model_chain) - 1
             try:
-                response = requests.post(
-                    f"{base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=_REQUEST_TIMEOUT,
+                response = self._post_image_request(
+                    base_url, headers, model_id, content, or_aspect
                 )
-                response.raise_for_status()
             except requests.HTTPError as exc:
                 resp = exc.response
                 status = resp.status_code if resp is not None else 0
