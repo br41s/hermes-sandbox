@@ -13,6 +13,7 @@ extracted functions reach back through the ``run_agent`` module via
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 from pathlib import Path
 import logging
@@ -74,6 +75,86 @@ _MAX_TOOL_WORKERS = 8
 # Keep this above the stock auxiliary.web_extract timeout (360s) so the batch
 # guard does not preempt a slow-but-valid summarization attempt.
 _DEFAULT_CONCURRENT_TOOL_TIMEOUT_S = 420.0
+
+
+# Cross-turn duplicate detection. The registry lives on the AIAgent instance
+# (per-run, discarded with it) and is guarded by this module-level lock rather
+# than a per-agent one: the critical section is a dict lookup plus a hash
+# compare, so contention between concurrent agents is irrelevant, and a single
+# lock avoids the double-checked-locking subtlety of lazily creating a
+# per-agent lock from inside a parallel tool batch.
+#
+# Deliberately NOT a process-global registry keyed by task_id. A shared
+# mutable keyed on anything coarser than the agent leaks one run's state into
+# another's — the class of bug that let one cron profile's sandbox carry its
+# git identity into the next profile's job (see
+# ``terminal_tool._shared_container_profile_suffix``).
+_DUP_REGISTRY_LOCK = threading.Lock()
+
+_DUP_NOTICE = (
+    "\n\n[note: this exact tool call was already made earlier in this run "
+    "(occurrence {count}) and returned an identical result]"
+)
+
+
+def _duplicate_call_notice(agent, tool_call, args, result) -> str:
+    """Return a one-line notice when this call repeats an earlier identical one.
+
+    Fires only when BOTH the arguments and the result are byte-identical to a
+    previous call in the same run. Requiring the result to match is what makes
+    this safe to append unconditionally: re-running a test suite after a fix
+    has identical arguments but different output, and must not be flagged as
+    redundant — that is the agent verifying its own work, which is the
+    behaviour we want.
+
+    The comparison is against the PREVIOUS identical-argument call, not the
+    first, so an alternating result (fail, pass, fail) is never reported as
+    stable.
+
+    Returns "" whenever anything is off — a non-string result (multimodal
+    blocks are never compared), an agent object without a ``__dict__``, or an
+    unreadable argument payload. This is advisory output appended to a tool
+    result; it must never be able to fail a tool call.
+
+    Why a notice and not a block: the within-turn deduplicator
+    (``AIAgent._deduplicate_tool_calls``) already removes repeats inside one
+    batch, and measured production data shows zero within-turn duplicates but
+    14-44% cross-turn ones. Blocking those would break every agent that
+    legitimately re-runs a command to verify a change.
+    """
+    if not isinstance(result, str) or not result:
+        return ""
+    try:
+        raw_args = getattr(getattr(tool_call, "function", None), "arguments", None)
+        if not isinstance(raw_args, str):
+            raw_args = json.dumps(args, sort_keys=True, default=str)
+        name = getattr(getattr(tool_call, "function", None), "name", "") or ""
+        arg_sig = hashlib.sha256(
+            (name + "\x00" + raw_args).encode("utf-8", "replace")
+        ).hexdigest()
+        res_sig = hashlib.sha256(result.encode("utf-8", "replace")).hexdigest()
+    except Exception:
+        return ""
+
+    with _DUP_REGISTRY_LOCK:
+        registry = getattr(agent, "_cross_turn_tool_calls", None)
+        if registry is None:
+            registry = {}
+            try:
+                agent._cross_turn_tool_calls = registry
+            except Exception:
+                return ""
+        entry = registry.get(arg_sig)
+        if entry is None:
+            registry[arg_sig] = [1, res_sig]
+            return ""
+        entry[0] += 1
+        count = entry[0]
+        prior_res, entry[1] = entry[1], res_sig
+
+    if prior_res != res_sig:
+        return ""
+    return _DUP_NOTICE.format(count=count)
 
 
 def _parse_tool_arguments(raw_arguments: Any) -> tuple[dict, Optional[str]]:
@@ -949,6 +1030,20 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
             except Exception as cb_err:
                 logging.debug(f"Tool complete callback error: {cb_err}")
 
+        # Compute the duplicate signature on the RAW result, before
+        # persistence. maybe_persist_tool_result replaces an oversized result
+        # with a pointer string built from ``tool_use_id``, which is unique per
+        # call — hashing that would make two identical large results look
+        # different and silently disable the notice for exactly the results
+        # whose repetition costs the most (the auditor's duplicates included
+        # 3947-byte payloads). The notice text is appended further down, after
+        # persistence and the subdirectory hints.
+        _dup_notice = (
+            ""
+            if _is_multimodal_tool_result(function_result)
+            else _duplicate_call_notice(agent, tc, args, function_result)
+        )
+
         function_result = maybe_persist_tool_result(
             content=function_result,
             tool_name=name,
@@ -965,6 +1060,17 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 _append_subdir_hint_to_multimodal(function_result, subdir_hints)
             else:
                 function_result += subdir_hints
+
+        # Tell the model when it has just repeated itself. It cannot reliably
+        # see this from its own history: the reasoning that drove the earlier
+        # call is replayed but evidently not acted on, and production traces
+        # show 14-44% of tool calls in long runs are exact cross-turn repeats
+        # (auditor: 172 of 387). Signature computed above, on the raw result.
+        if _dup_notice and not _is_multimodal_tool_result(function_result):
+            function_result += _dup_notice
+            logger.info(
+                "Duplicate tool call: %s repeated with an identical result", name
+            )
 
         # Unwrap _multimodal dicts to an OpenAI-style content list so any
         # vision-capable provider receives [{type:text},{type:image_url}]
@@ -1645,6 +1751,14 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             except Exception as cb_err:
                 logging.debug(f"Tool complete callback error: {cb_err}")
 
+        # Signature on the raw result, before persistence — see the parallel
+        # path for why the post-persistence pointer string is unusable here.
+        _dup_notice = (
+            ""
+            if _is_multimodal_tool_result(function_result)
+            else _duplicate_call_notice(agent, tool_call, function_args, function_result)
+        )
+
         function_result = maybe_persist_tool_result(
             content=function_result,
             tool_name=function_name,
@@ -1660,6 +1774,17 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 _append_subdir_hint_to_multimodal(function_result, subdir_hints)
             else:
                 function_result += subdir_hints
+
+        # Cross-turn duplicate notice — see the parallel path for rationale.
+        # Both paths need it: `execute_tool_calls_segmented` dispatches to one
+        # or the other, so covering only one would make the notice depend on
+        # which executor a given turn happened to take.
+        if _dup_notice and not _is_multimodal_tool_result(function_result):
+            function_result += _dup_notice
+            logger.info(
+                "Duplicate tool call: %s repeated with an identical result",
+                function_name,
+            )
 
         # Unwrap _multimodal dicts to an OpenAI-style content list
         # (see parallel path for rationale). String results pass through.
