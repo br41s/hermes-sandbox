@@ -20,6 +20,7 @@ from incidents.sweep import (
     RUNAWAY_DEFAULT_MAX_TURNS,
     Incident,
     runaway_incidents,
+    _recent_runs,
     _session_dbs,
 )
 
@@ -113,3 +114,52 @@ def test_session_dbs_includes_profile_homes(tmp_path):
 
 def test_missing_home_is_silent(tmp_path):
     assert _session_dbs(tmp_path / "nope") == []
+
+
+# --- the signal must not go silently blind (auditor review, PR #237) ---------
+
+
+def test_unreadable_db_is_reported_not_swallowed(tmp_path):
+    """A read-only sqlite open still attaches the WAL ``-shm`` segment, so an
+    ownership or permissions change on a profile's state.db makes every read
+    fail. Swallowing that would leave the watcher reporting "all clean" forever
+    — the exact failure this signal exists to catch, one level up."""
+    (tmp_path / "state.db").write_text("this is not a database")
+    out = runaway_incidents(home=tmp_path)
+    assert len(out) == 1
+    assert "blind" in out[0].title.lower()
+    assert "state.db" in out[0].detail
+
+
+def test_blind_incident_id_is_stable_within_a_day(tmp_path):
+    """Dedup must stop it paging hourly, but let it re-page tomorrow if the
+    breakage is still there."""
+    (tmp_path / "state.db").write_text("not a database")
+    a = runaway_incidents(home=tmp_path)[0]
+    b = runaway_incidents(home=tmp_path)[0]
+    assert a.id == b.id
+
+
+def test_partial_read_failure_does_not_cry_blind(tmp_path):
+    """One broken profile DB while another still reads is degraded, not blind —
+    reporting it as blind would be a false alarm on every sweep."""
+    import sqlite3
+
+    good = tmp_path / "state.db"
+    con = sqlite3.connect(good)
+    con.execute("CREATE TABLE sessions (id TEXT, started_at REAL,"
+                " ended_at REAL, api_call_count INTEGER, model TEXT)")
+    con.execute("INSERT INTO sessions VALUES ('cron_x_1', 99999999999, 99999999999, 90, 'm')")
+    con.commit(); con.close()
+    (tmp_path / "profiles" / "broken").mkdir(parents=True)
+    (tmp_path / "profiles" / "broken" / "state.db").write_text("nope")
+
+    out = runaway_incidents(home=tmp_path)
+    assert [i for i in out if "blind" in i.title.lower()] == []
+    assert [i for i in out if "iteration budget" in i.title]
+
+
+def test_recent_runs_returns_rows_and_failures(tmp_path):
+    rows, unreadable = _recent_runs([tmp_path / "missing.db"], since_epoch=0)
+    assert rows == []
+    assert len(unreadable) == 1

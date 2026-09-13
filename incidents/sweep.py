@@ -326,14 +326,24 @@ def _session_dbs(home: Optional[Path] = None) -> List[Path]:
     return [d for d in dbs if d.exists()]
 
 
-def _recent_runs(dbs: List[Path], *, since_epoch: float) -> List[tuple]:
-    """(session_id, started_at, api_call_count, model) for recent cron sessions.
+def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
+    """((session_id, started_at, api_call_count, model) rows, unreadable_dbs).
 
     Read-only and best-effort: a missing table, a locked DB or a schema change
-    yields nothing rather than breaking the whole sweep. The watcher must never
-    fail because one signal could not read its source.
+    degrades to nothing rather than breaking the whole sweep. The watcher must
+    never fail because one signal could not read its source.
+
+    But "degrades to nothing" is precisely how a watcher goes silently blind —
+    the failure mode this whole signal exists to catch. A read-only sqlite open
+    still needs to create/attach the WAL ``-shm`` segment, so a permissions or
+    ownership change on a profile's ``state.db`` would make every read fail
+    while the sweep kept reporting "all clean" forever. So the unreadable paths
+    are returned rather than swallowed, and the caller reports them.
+    (Raised by the auditor reviewing PR #237 — the review this signal's own fix
+    made possible.)
     """
     rows: List[tuple] = []
+    unreadable: List[str] = []
     for db in dbs:
         try:
             import sqlite3
@@ -346,9 +356,10 @@ def _recent_runs(dbs: List[Path], *, since_epoch: float) -> List[tuple]:
                 ).fetchall())
             finally:
                 con.close()
-        except Exception:
+        except Exception as exc:
+            unreadable.append(f"{db}: {type(exc).__name__}: {exc}")
             continue
-    return rows
+    return rows, unreadable
 
 
 def runaway_incidents(*, now: Optional[datetime] = None,
@@ -375,11 +386,27 @@ def runaway_incidents(*, now: Optional[datetime] = None,
     """
     now = now or _now()
     threshold = max(1, int(max_turns * RUNAWAY_FRACTION))
+    out: List[Incident] = []
     if rows is None:
         since = (now - timedelta(hours=RUNAWAY_WINDOW_HOURS)).timestamp()
-        rows = _recent_runs(_session_dbs(home), since_epoch=since)
+        dbs = _session_dbs(home)
+        rows, unreadable = _recent_runs(dbs, since_epoch=since)
+        if unreadable and not rows:
+            # Every source failed: the signal is blind, not clean. Report that
+            # rather than staying quiet, which is the failure this signal exists
+            # to catch, one level up.
+            out.append(Incident(
+                id="runaway-blind:" + now.strftime("%Y-%m-%d"),
+                kind="cron",
+                title="Runaway-agent signal is blind — no session database could be read",
+                detail=("unreadable sources:\n  " + "\n  ".join(unreadable[:5])
+                        + "\n\nUntil this is fixed the watcher cannot tell a healthy "
+                          "agent from one burning its whole iteration budget."),
+                handoff=("The Hermes incident watcher cannot read any session DB. "
+                         "Check ownership/permissions on $HERMES_HOME/state.db and "
+                         "$HERMES_HOME/profiles/*/state.db for the sweep user."),
+            ))
 
-    out: List[Incident] = []
     for sid, _started, calls, model in rows:
         if not isinstance(calls, int) or calls < threshold:
             continue
