@@ -136,7 +136,21 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
   - SIEMPRE ambos géneros (hombres Y mujeres). NUNCA 1 persona sola.
   - Si 2 personas → 1 hombre + 1 mujer.
   - Si 3 personas → 2 de un género + 1 del otro.
-- **Prompt de ejemplo para image_generate**: "Photorealistic photo of [descripción de escena con personas], modern office environment, natural lighting, professional atmosphere, subtle blue-cyan holographic AI interface elements floating in the air, 16:9 landscape, high quality, web-optimized"
+- **Pantallas de portátiles/monitores/móviles: NUNCA de frente a cámara.** Si hay
+  una pantalla visible, debe estar de perfil, en ángulo o de espaldas a cámara —
+  la persona la mira a ella, no a nosotros. Una pantalla encarada al espectador
+  como si posara para la foto es la señal más obvia de imagen generada por IA y
+  se rechaza.
+- **Cada cover debe ser visiblemente distinta de las anteriores.** Antes de
+  generar, mira 2-3 artículos recientes (`ls web/assets/blog/covers/`) y elige
+  una combinación que NO se repita: entorno (oficina ↔ almacén ↔ tienda ↔
+  exterior ↔ sala de reuniones ↔ mesa de coworking), actividad concreta
+  (mirando una tablet, en videollamada, revisando papeles, de pie ante una
+  pizarra, caminando por un pasillo), encuadre de cámara (plano medio, plano
+  general, ángulo alto/bajo) y luz (natural de día, interior de oficina,
+  atardecer). La escena sale del CONTENIDO del artículo (qué proceso o sector
+  describe), no de una fórmula genérica repetida artículo tras artículo.
+- **Prompt de ejemplo para image_generate**: "Photorealistic photo of [escena y actividad específica inspirada en el tema del artículo], [entorno concreto], [hora/luz], camera angle: [encuadre], people looking at their own [device] not at camera, screen turned away from viewer, subtle blue-cyan holographic AI interface elements floating in the air, 16:9 landscape, high quality, web-optimized"
 
 #### Infografía del artículo
 - Genera con image_generate (datos visuales del tema, estilo oscuro con acentos #B8391C y #D4622A)
@@ -179,6 +193,8 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] NO añadiste entrada en site/_data/langmap.json (no hay traducción real que mapear)
 - [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía)
 - [ ] La cover tiene mínimo 2 personas de ambos géneros
+- [ ] Ninguna pantalla de dispositivo mira directamente a cámara (de perfil/ángulo/espaldas)
+- [ ] La escena de la cover (entorno, actividad, encuadre) es distinta a la de los últimos artículos y está inspirada en el contenido de este artículo
 - [ ] article-body container (no max-width custom)
 - [ ] No hay CSS inline en style (solo referencias a archivos)
 - [ ] article-cta con link a contact.html
