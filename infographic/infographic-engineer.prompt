@@ -101,6 +101,29 @@ STEP 3 — Engineer the infographic:
    - Inline <svg> with a responsive `viewBox` (no fixed pixel width/height);
      scales fluidly mobile→desktop. Include <title>/<desc> or aria-label.
    - Transparent background. Flat vector shapes, simple geometry.
+
+   TEXT FITTING (mandatory — you cannot render the SVG to check this visually,
+   so replace "make sure it looks right" with this calculation):
+     a. Every <text>/<tspan> gets its own explicit font-size — never omit it.
+        An unset font-size inherits the page's body size (usually larger than
+        what a fixed-width box can hold), not a safe minimum. Use 12-13 for
+        primary cell text, 11-12 for secondary; never go below 12.
+     b. Per box: usable width = box width - 24 (12 padding each side).
+        Average character width ≈ 0.55 × font-size. Max characters per line =
+        usable width ÷ average character width.
+     c. If a real string exceeds that, do not force it onto one line: split it
+        across multiple <tspan x="same-x" dy="1.2em"> elements, one per line.
+        If it still doesn't fit in 2-3 lines at font-size=12, shorten the cell
+        text instead — never let it spill into a neighboring box, and never
+        drop font-size below 12.
+     d. Box height follows content, not the other way around: before fixing
+        any y-coordinate, count how many lines the longest cell in a row
+        needs, then size that row's box (and the next row's y) from that line
+        count × 1.2em + padding — not from a height picked before you knew the
+        actual text.
+     e. Before moving to STEP 4, redo the calculation in (b) for every string
+        you're about to write, with its real character count, and confirm
+        each one fits. Fix anything that doesn't right there.
    - Inherit THEME_SOURCE variables (var(--…)) and currentColor for all color
      and text; never invent a palette. Meet WCAG 2.1 AA contrast.
    - var(--…) works ONLY in colour and font attributes: fill, stroke,
@@ -140,8 +163,9 @@ STEP 5 — Commit, PR, verify:
      deploy until a human intervenes. Both _site/ and node_modules/ are
      gitignored, so building leaves the tree clean for the check below.
    - Look at the rendered result, not just the markup: valid SVG can still be
-     unreadable. Confirm no text overflows its box or overlaps another label,
-     and that the graphic is legible at ~375px wide.
+     unreadable. Confirm no text overflows its box or overlaps another label —
+     using the TEXT FITTING calculation from STEP 3, not eyeballing it — and
+     that the graphic is legible at ~375px wide.
    - Stage ONLY the one article file. Commit:
        feat(visuals): inline infographic for "<Article Title>"
    - `git push -u origin BRANCH_PREFIX<slug>`
@@ -152,7 +176,8 @@ STEP 5 — Commit, PR, verify:
 
 STEP 6 — Report (delivered by the cron's --deliver target; do NOT send anything
    yourself): output a short final summary — article title, PR URL, schematic
-   type, one-line concept description.
+   type, one-line concept description, and confirmation that the STEP 3 text
+   fitting calculation was done for every string.
 
 FAILURE HANDLING
    Distinguish the two ways a run can end without a PR — they are NOT the same
