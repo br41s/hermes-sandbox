@@ -17,6 +17,9 @@ Signals:
     observations grouped by trace). Degrades to nothing if the API/keys are absent.
   * Blocked agent commits — the git-guard pre-commit hook appends a JSON line to
     ``blocked-commits.jsonl`` when it blocks a mass-deletion commit.
+  * Runaway agent runs — an agent cron run that burned its whole iteration
+    budget. These report ``last_status: ok`` (the loop exits cleanly at the cap),
+    so every failure-shaped signal above stays silent while the job does no work.
   * Site-checkout drift — docker/cont-init.d/03-biglobster-config section 6b
     appends a JSON line to ``checkout-drift.jsonl`` when a BigLobster site
     checkout is both dirty and carries local commits origin/main doesn't have
@@ -50,6 +53,9 @@ HEARTBEAT_HOURS = 24
 CRON_FAILURE_WINDOW_HOURS = 26  # a failure stays "current" until the job runs again
 STALE_GRACE_HOURS = 1  # slack past the expected next run before a job counts as stalled
 LANGFUSE_WINDOW_HOURS = 2
+RUNAWAY_WINDOW_HOURS = 26  # one daily cycle + slack, matching CRON_FAILURE_WINDOW_HOURS
+RUNAWAY_DEFAULT_MAX_TURNS = 90  # run_agent's hard stop; see AIAgent(max_iterations=...)
+RUNAWAY_FRACTION = 0.95  # a run this close to the cap did not choose to stop
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
 
@@ -301,6 +307,134 @@ def langfuse_error_incidents(*, now: Optional[datetime] = None,
     return out
 
 
+def _session_dbs(home: Optional[Path] = None) -> List[Path]:
+    """Every session DB an agent cron run could have written to.
+
+    A profile-scoped job runs under ``HERMES_HOME=<profile>``, so its session
+    lands in that profile's ``state.db`` — NOT the default one the watcher runs
+    under. Scanning only the default home would miss exactly the profile jobs
+    (auditor, gap hunters, SEO) this signal exists to catch.
+    """
+    home = home or Path(os.getenv("HERMES_HOME") or (Path.home() / ".hermes"))
+    dbs = [home / "state.db"]
+    try:
+        for prof in sorted((home / "profiles").iterdir()):
+            if prof.is_dir():
+                dbs.append(prof / "state.db")
+    except OSError:
+        pass
+    return [d for d in dbs if d.exists()]
+
+
+def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
+    """((session_id, started_at, api_call_count, model) rows, unreadable_dbs).
+
+    Read-only and best-effort: a missing table, a locked DB or a schema change
+    degrades to nothing rather than breaking the whole sweep. The watcher must
+    never fail because one signal could not read its source.
+
+    But "degrades to nothing" is precisely how a watcher goes silently blind —
+    the failure mode this whole signal exists to catch. A read-only sqlite open
+    still needs to create/attach the WAL ``-shm`` segment, so a permissions or
+    ownership change on a profile's ``state.db`` would make every read fail
+    while the sweep kept reporting "all clean" forever. So the unreadable paths
+    are returned rather than swallowed, and the caller reports them.
+    (Raised by the auditor reviewing PR #237 — the review this signal's own fix
+    made possible.)
+    """
+    rows: List[tuple] = []
+    unreadable: List[str] = []
+    for db in dbs:
+        try:
+            import sqlite3
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            try:
+                rows.extend(con.execute(
+                    "SELECT id, started_at, api_call_count, model FROM sessions"
+                    " WHERE id LIKE 'cron_%' AND started_at > ? AND ended_at IS NOT NULL",
+                    (since_epoch,),
+                ).fetchall())
+            finally:
+                con.close()
+        except Exception as exc:
+            unreadable.append(f"{db}: {type(exc).__name__}: {exc}")
+            continue
+    return rows, unreadable
+
+
+def runaway_incidents(*, now: Optional[datetime] = None,
+                      rows: Optional[List[tuple]] = None,
+                      max_turns: int = RUNAWAY_DEFAULT_MAX_TURNS,
+                      home: Optional[Path] = None) -> List[Incident]:
+    """Agent cron runs that exhausted their iteration budget instead of finishing.
+
+    This is the blind spot that let the auditor die unnoticed for four days
+    (2026-09-09 to 2026-09-13). Its provider routing silently fell through to
+    arbitrary third-party providers, and the agent stopped following its own
+    protocol — re-running ``auditor.pending`` forty-plus times per run until the
+    90-iteration hard stop. Every run still recorded ``last_status: ok``, because
+    hitting the cap is a clean exit, so ``cron_failure_incidents`` saw nothing;
+    the job kept running on schedule, so ``cron_stale_incidents`` saw nothing;
+    the prompt never changed, so ``prompt_drift_incidents`` saw nothing. The
+    review gate was simply gone, and the only symptom was the absence of work.
+
+    Hitting the cap is the signal: an agent that finishes chooses to stop, and
+    across ~200 healthy auditor runs the maximum was 60 calls against a cap of
+    90. A run at the ceiling has stopped making progress by definition.
+
+    ``rows`` and ``home`` are injectable so this is testable without a database.
+    """
+    now = now or _now()
+    threshold = max(1, int(max_turns * RUNAWAY_FRACTION))
+    out: List[Incident] = []
+    if rows is None:
+        since = (now - timedelta(hours=RUNAWAY_WINDOW_HOURS)).timestamp()
+        dbs = _session_dbs(home)
+        rows, unreadable = _recent_runs(dbs, since_epoch=since)
+        if unreadable and not rows:
+            # Every source failed: the signal is blind, not clean. Report that
+            # rather than staying quiet, which is the failure this signal exists
+            # to catch, one level up.
+            out.append(Incident(
+                id="runaway-blind:" + now.strftime("%Y-%m-%d"),
+                kind="cron",
+                title="Runaway-agent signal is blind — no session database could be read",
+                detail=("unreadable sources:\n  " + "\n  ".join(unreadable[:5])
+                        + "\n\nUntil this is fixed the watcher cannot tell a healthy "
+                          "agent from one burning its whole iteration budget."),
+                handoff=("The Hermes incident watcher cannot read any session DB. "
+                         "Check ownership/permissions on $HERMES_HOME/state.db and "
+                         "$HERMES_HOME/profiles/*/state.db for the sweep user."),
+            ))
+
+    for sid, _started, calls, model in rows:
+        if not isinstance(calls, int) or calls < threshold:
+            continue
+        job_id = ""
+        parts = str(sid).split("_")
+        if len(parts) >= 2:
+            job_id = parts[1]
+        out.append(Incident(
+            id=f"runaway:{sid}",
+            kind="cron",
+            title=f"Agent run burned its full iteration budget ({calls}/{max_turns})",
+            detail=(
+                f"session: {sid}\n"
+                f"job: {job_id or 'unknown'}\n"
+                f"model: {model or 'unknown'}\n"
+                "The run exited at the iteration cap rather than finishing, so it "
+                "reports success while having done little or no work. Check whether "
+                "it repeated the same tool calls, and whether the model or provider "
+                "routing changed."
+            ),
+            handoff=(
+                f"Hermes cron run {sid} hit the {max_turns}-iteration cap. Pull its "
+                "tool-call sequence from the session DB and find what it looped on."
+            ),
+        ))
+    return out
+
+
 def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
     """Read the git-guard signal file and surface each blocked agent commit.
 
@@ -491,6 +625,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     incidents = (cron_failure_incidents(jobs, now=now)
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
+                 + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd))
     new = [i for i in incidents if i.id not in seen]
 
