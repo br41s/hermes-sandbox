@@ -32,6 +32,7 @@ Directory layout for user skills:
             └── SKILL.md
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -48,9 +49,27 @@ from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
 
-_background_review_read_paths: "_ctxvars.ContextVar[frozenset[str]]" = _ctxvars.ContextVar(
-    "background_review_read_paths", default=frozenset()
+# Maps resolved skill-file path -> sha256 of the content the review fork was
+# shown. The digest (rather than a bare path set) is what lets a write
+# invalidate an earlier read: see _background_review_read_is_current.
+_background_review_read_paths: "_ctxvars.ContextVar[dict]" = _ctxvars.ContextVar(
+    "background_review_read_paths", default={}
 )
+
+
+def _skill_file_digest(path: Path) -> str:
+    """sha256 of a skill file's bytes; empty string when unreadable."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return ""
+
+
+def _resolved_str(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except Exception:
+        return str(path)
 
 
 def mark_background_review_skill_read(path: Path) -> None:
@@ -61,6 +80,9 @@ def mark_background_review_skill_read(path: Path) -> None:
     skill_view tool calls this after returning file content to the model; write
     paths below require the corresponding target path to be present when the
     current origin is ``background_review``.
+
+    The content digest is recorded alongside the path so a later write can tell
+    whether the model is still working from the bytes it was actually shown.
     """
     try:
         from tools.skill_provenance import is_background_review
@@ -69,26 +91,34 @@ def mark_background_review_skill_read(path: Path) -> None:
     except Exception:
         return
 
-    try:
-        resolved = str(path.resolve())
-    except Exception:
-        resolved = str(path)
-    current = set(_background_review_read_paths.get())
-    current.add(resolved)
-    _background_review_read_paths.set(frozenset(current))
+    marks = dict(_background_review_read_paths.get())
+    marks[_resolved_str(path)] = _skill_file_digest(path)
+    _background_review_read_paths.set(marks)
 
 
 def _background_review_has_read(path: Path) -> bool:
-    try:
-        resolved = str(path.resolve())
-    except Exception:
-        resolved = str(path)
-    return resolved in _background_review_read_paths.get()
+    return _resolved_str(path) in _background_review_read_paths.get()
+
+
+def _background_review_read_is_current(path: Path) -> bool:
+    """True when the file on disk still matches what the fork was shown.
+
+    Anchored writes (``patch``) tolerate a stale mark because fuzzy
+    find-and-replace fails closed when its ``old_string`` no longer matches.
+    Whole-file writes (``edit``, ``write_file``) have no such anchor: a second
+    one composed from a pre-patch view silently reverts the first. Those
+    require a mark that is still current.
+    """
+    marks = _background_review_read_paths.get()
+    resolved = _resolved_str(path)
+    if resolved not in marks:
+        return False
+    return marks[resolved] == _skill_file_digest(path)
 
 
 def _reset_background_review_read_marks() -> None:
     """Test helper: clear read-before-write marks for the current context."""
-    _background_review_read_paths.set(frozenset())
+    _background_review_read_paths.set({})
 
 # Import security scanner — external hub installs always get scanned;
 # agent-created skills only get scanned when skills.guard_agent_created is on.
@@ -392,21 +422,46 @@ def _background_review_write_guard(
         # from archiving skills the user placed manually (e.g. via URL
         # install or direct SKILL.md authoring), which lack the
         # `created_by: "agent"` marker.
+        #
+        # FAIL CLOSED on a missing record. This used to require a record to
+        # exist before refusing, which let the first curator write through on
+        # any skill that had none — precisely the manually authored ones this
+        # guard exists to protect, since only `mark_agent_created()` (review
+        # fork creations) ever writes the marker. It was also self-inconsistent:
+        # that first write calls bump_patch(), which creates a bare record with
+        # no created_by, so write #2 onward WAS refused. Absence of a record
+        # cannot distinguish agent-owned from user-owned, so it must refuse.
+        # Bundled / hub / external skills are already handled above, so the
+        # remaining unrecorded skills are local and user-owned.
         usage_data = skill_usage.load_usage()
         usage_rec = usage_data.get(name)
-        if isinstance(usage_rec, dict) and not skill_usage._is_curator_managed_record(usage_rec):
+        if not skill_usage._is_curator_managed_record(usage_rec):
+            if isinstance(usage_rec, dict):
+                why = (
+                    f"the skill records show it is not agent-created "
+                    f"(created_by={usage_rec.get('created_by')!r})"
+                )
+            else:
+                why = (
+                    "the skill has no usage record, so it cannot be shown to be "
+                    "agent-created"
+                )
             return {
                 "success": False,
                 "error": (
                     f"Refusing background curator {action} for skill "
-                    f"'{name}': the skill records show it is not agent-created "
-                    f"(created_by={usage_rec.get('created_by')!r}). Manually authored "
-                    f"skills are off-limits to autonomous curation."
+                    f"'{name}': {why}. Manually authored skills are "
+                    f"off-limits to autonomous curation."
                 ),
             }
     except Exception:
         logger.debug("owned skill guard lookup failed for %s", name, exc_info=True)
     return None
+
+
+# Actions that replace a file wholesale rather than patching an anchored
+# region. These cannot tolerate a stale read mark.
+_WHOLE_FILE_WRITE_ACTIONS = frozenset({"edit", "write_file"})
 
 
 def _background_review_read_before_write_guard(
@@ -423,19 +478,38 @@ def _background_review_read_before_write_guard(
     except Exception:
         return None
 
-    if _background_review_has_read(target):
-        return None
+    # ``edit`` and ``write_file`` replace the whole file, so a mark that was
+    # invalidated by an earlier write in the same turn is not good enough —
+    # writing from it would silently revert that earlier write.
+    if action in _WHOLE_FILE_WRITE_ACTIONS:
+        if _background_review_read_is_current(target):
+            return None
+        stale = _background_review_has_read(target)
+    else:
+        if _background_review_has_read(target):
+            return None
+        stale = False
 
+    if stale:
+        detail = (
+            f"the {file_label} content loaded earlier in this review turn is "
+            "STALE — the file has changed since (most likely an earlier write "
+            "of your own). Re-run skill_view"
+        )
+    else:
+        detail = (
+            f"the current {file_label} content has not been loaded in this "
+            "review turn. Call skill_view(name) for SKILL.md, or "
+            "skill_view(name, file_path=...) for a supporting file"
+        )
     return {
         "success": False,
         "error": (
             f"Refusing background curator {action} for skill '{name}': "
-            f"the current {file_label} content has not been loaded in this "
-            "review turn. Call skill_view(name) for SKILL.md, or "
-            "skill_view(name, file_path=...) for a supporting file, then "
-            "retry the write using the content just returned."
+            f"{detail}, then retry the write using the content just returned."
         ),
         "_read_before_write_required": True,
+        "_read_before_write_stale": stale,
     }
 
 
@@ -593,19 +667,51 @@ def _validate_frontmatter(content: str) -> Optional[str]:
     return None
 
 
-def _validate_content_size(content: str, label: str = "SKILL.md") -> Optional[str]:
+def _validate_content_size(
+    content: str,
+    label: str = "SKILL.md",
+    previous: Optional[str] = None,
+) -> Optional[str]:
     """Check that content doesn't exceed the character limit for agent writes.
+
+    The cap gates GROWTH, not maintenance. A skill that is already over the
+    limit would otherwise be frozen: every patch — including the ones that
+    trim it back under — writes a result that is still oversized, so the
+    naive check rejects them all and the only file agents actually load can
+    never be corrected again. Observed in production on auditor-cron
+    (100,529 chars against a 100,000 cap), whose stale instructions stayed
+    live while the review fork diverted every fix into references/.
+
+    So: when the file was ALREADY over budget, allow a write that makes it
+    strictly smaller. Everything else over the cap is refused.
 
     Returns an error message or None if within bounds.
     """
-    if len(content) > MAX_SKILL_CONTENT_CHARS:
+    if len(content) <= MAX_SKILL_CONTENT_CHARS:
+        return None
+
+    was_over = previous is not None and len(previous) > MAX_SKILL_CONTENT_CHARS
+    if was_over and len(content) < len(previous):
+        # Shrinking an already-oversized file — this is the remediation path.
+        return None
+
+    overage = len(content) - MAX_SKILL_CONTENT_CHARS
+    if was_over:
         return (
-            f"{label} content is {len(content):,} characters "
-            f"(limit: {MAX_SKILL_CONTENT_CHARS:,}). "
-            f"Consider splitting into a smaller SKILL.md with supporting files "
-            f"in references/ or templates/."
+            f"{label} is already over budget at {len(previous):,} characters "
+            f"(limit: {MAX_SKILL_CONTENT_CHARS:,}) and this write does not "
+            f"shrink it. While a skill is over budget the only accepted "
+            f"writes are ones that make it smaller: move sections into "
+            f"references/ or templates/ and patch them out of {label}. "
+            f"Trim at least {overage:,} characters."
         )
-    return None
+    return (
+        f"{label} content is {len(content):,} characters "
+        f"(limit: {MAX_SKILL_CONTENT_CHARS:,}, over by {overage:,}). "
+        f"Split it: keep the class-level instructions in {label} and move "
+        f"session-specific detail into supporting files in references/ or "
+        f"templates/."
+    )
 
 
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
@@ -897,13 +1003,16 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
     if err:
         return {"success": False, "error": err}
 
-    err = _validate_content_size(content)
-    if err:
-        return {"success": False, "error": err}
-
     existing = _find_skill(name)
     if not existing:
         return {"success": False, "error": _skill_not_found_error(name)}
+
+    _prev_md = existing["path"] / "SKILL.md"
+    _prev = _prev_md.read_text(encoding="utf-8") if _prev_md.exists() else None
+    err = _validate_content_size(content, previous=_prev)
+    if err:
+        return {"success": False, "error": err}
+
     guard = _background_review_write_guard(name, existing["path"], "edit")
     if guard:
         return guard
@@ -1023,7 +1132,7 @@ def _patch_skill(
 
     # Check size limit on the result
     target_label = "SKILL.md" if not file_path else file_path
-    err = _validate_content_size(new_content, label=target_label)
+    err = _validate_content_size(new_content, label=target_label, previous=content)
     if err:
         return {"success": False, "error": err}
 

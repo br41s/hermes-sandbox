@@ -1442,3 +1442,66 @@ def test_review_fork_merges_slot_extra_body_over_runtime(curator_env, monkeypatc
         },
         "service_tier": "priority",
     }
+
+
+# ---------------------------------------------------------------------------
+# Intra-skill bloat signals
+# ---------------------------------------------------------------------------
+
+def test_candidate_list_flags_over_budget_skill_md(curator_env, monkeypatch):
+    """A skill whose SKILL.md passed the write cap must be visible to the pass.
+
+    Consolidation was scored skill-to-skill only, so auditor-cron could grow to
+    100,529 chars against a 100,000 cap — frozen to every ordinary patch — and
+    still read as a healthy single skill in the candidate list.
+    """
+    from tools.skill_manager_tool import MAX_SKILL_CONTENT_CHARS
+
+    c = curator_env["curator"]
+    u = curator_env["usage"]
+    skills_dir = curator_env["home"] / "skills"
+    obese = _write_skill(skills_dir, "obese")
+    (obese / "SKILL.md").write_text(
+        f"---\nname: obese\ndescription: x\n---\n" + "y" * MAX_SKILL_CONTENT_CHARS,
+        encoding="utf-8",
+    )
+    _write_skill(skills_dir, "lean")
+    _backdate(u, "obese", 1)
+    _backdate(u, "lean", 1)
+    monkeypatch.setattr(c, "_cron_referenced_skills", lambda: set())
+
+    listing = c._render_candidate_list()
+    obese_line = next(l for l in listing.splitlines() if l.startswith("- obese"))
+    lean_line = next(l for l in listing.splitlines() if l.startswith("- lean"))
+    assert "OVER-BUDGET" in obese_line
+    assert "OVER-BUDGET" not in lean_line
+    assert "BLOATED SKILLS" in listing
+    assert "obese (OVER-BUDGET)" in listing
+
+
+def test_candidate_list_flags_reference_pileup(curator_env, monkeypatch):
+    """references/ accretes duplicates because nothing downstream merges them."""
+    c = curator_env["curator"]
+    u = curator_env["usage"]
+    skills_dir = curator_env["home"] / "skills"
+    packed = _write_skill(skills_dir, "packed")
+    refs = packed / "references"
+    refs.mkdir()
+    for i in range(c.REFS_WARN_COUNT):
+        (refs / f"blocked-commands-{i}.md").write_text("same topic\n", encoding="utf-8")
+    _backdate(u, "packed", 1)
+    monkeypatch.setattr(c, "_cron_referenced_skills", lambda: set())
+
+    listing = c._render_candidate_list()
+    line = next(l for l in listing.splitlines() if l.startswith("- packed"))
+    assert f"refs={c.REFS_WARN_COUNT}" in line
+    assert "REFS-BLOATED" in line
+
+
+def test_size_metrics_survive_a_missing_skill(curator_env):
+    """Metrics are decoration on the candidate list — never a crash source."""
+    c = curator_env["curator"]
+    m = c._skill_size_metrics("does-not-exist")
+    assert m["skill_md_chars"] == 0
+    assert m["refs"] == 0
+    assert m["over_budget"] is False

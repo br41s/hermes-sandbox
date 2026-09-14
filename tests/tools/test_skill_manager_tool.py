@@ -963,6 +963,9 @@ class TestExternalSkillMutations:
                 with patch(
                     "tools.skill_usage.get_record",
                     side_effect=lambda n: {"pinned": False},
+                ), patch(
+                    "tools.skill_usage.load_usage",
+                    return_value={"my-skill": {"created_by": "agent"}},
                 ):
                     raw = skill_manage(
                         action="patch",
@@ -1274,6 +1277,21 @@ def _skill_content(name: str) -> str:
     )
 
 
+def _create_curated_skill(name: str, content: str = None):
+    """Create a skill AND mark it curator-managed, as production does.
+
+    ``skill_manage(action="create")`` calls ``mark_agent_created()`` when the
+    background-review fork is the caller; the internal ``_create_skill()``
+    helper these tests use does not. Without the marker the ownership guard
+    correctly refuses every curator write, so tests exercising curator
+    behaviour must set up the skill the way production leaves it.
+    """
+    from tools import skill_usage
+    result = _create_skill(name, content if content is not None else _skill_content(name))
+    skill_usage.mark_agent_created(name)
+    return result
+
+
 class TestCuratorConsolidationDeleteGuard:
     """The curator's LLM consolidation pass must fail CLOSED on unverified
     deletes — it may only archive a skill it absorbed into an umbrella.
@@ -1287,7 +1305,7 @@ class TestCuratorConsolidationDeleteGuard:
 
     def test_bare_prune_during_curator_pass_refused(self, tmp_path, monkeypatch):
         with _curator_pass(tmp_path, monkeypatch=monkeypatch) as skills_root:
-            _create_skill("active-skill", VALID_SKILL_CONTENT)
+            _create_curated_skill("active-skill", VALID_SKILL_CONTENT)
             result = _delete_skill("active-skill", absorbed_into="")
         assert result["success"] is False
         assert result.get("_fail_closed") is True
@@ -1296,7 +1314,7 @@ class TestCuratorConsolidationDeleteGuard:
 
     def test_omitted_absorbed_into_during_curator_pass_refused(self, tmp_path, monkeypatch):
         with _curator_pass(tmp_path, monkeypatch=monkeypatch) as skills_root:
-            _create_skill("active-skill", VALID_SKILL_CONTENT)
+            _create_curated_skill("active-skill", VALID_SKILL_CONTENT)
             result = _delete_skill("active-skill")  # absorbed_into omitted
         assert result["success"] is False
         assert result.get("_fail_closed") is True
@@ -1304,7 +1322,7 @@ class TestCuratorConsolidationDeleteGuard:
 
     def test_whitespace_absorbed_into_during_curator_pass_refused(self, tmp_path, monkeypatch):
         with _curator_pass(tmp_path, monkeypatch=monkeypatch) as skills_root:
-            _create_skill("active-skill", VALID_SKILL_CONTENT)
+            _create_curated_skill("active-skill", VALID_SKILL_CONTENT)
             result = _delete_skill("active-skill", absorbed_into="   ")
         assert result["success"] is False
         assert result.get("_fail_closed") is True
@@ -1312,8 +1330,8 @@ class TestCuratorConsolidationDeleteGuard:
 
     def test_verified_consolidation_archives_recoverably(self, tmp_path, monkeypatch):
         with _curator_pass(tmp_path, monkeypatch=monkeypatch) as skills_root:
-            _create_skill("umbrella", _skill_content("umbrella"))
-            _create_skill("narrow", _skill_content("narrow"))
+            _create_curated_skill("umbrella")
+            _create_curated_skill("narrow")
             result = _delete_skill("narrow", absorbed_into="umbrella")
         assert result["success"] is True, result
         assert result.get("_archived") is True
@@ -1328,7 +1346,7 @@ class TestCuratorConsolidationDeleteGuard:
         # The pre-existing target-existence check fires before the recoverable
         # archive — a hallucinated umbrella is refused and the skill stays put.
         with _curator_pass(tmp_path, monkeypatch=monkeypatch) as skills_root:
-            _create_skill("narrow", VALID_SKILL_CONTENT)
+            _create_curated_skill("narrow", VALID_SKILL_CONTENT)
             result = _delete_skill("narrow", absorbed_into="ghost-umbrella")
         assert result["success"] is False
         assert "does not exist" in result["error"]
@@ -1351,8 +1369,8 @@ class TestCuratorConsolidationDeleteGuard:
         # `hermes curator restore` can bring it back.
         from tools import skill_usage
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
-            _create_skill("umbrella", _skill_content("umbrella"))
-            _create_skill("narrow", _skill_content("narrow"))
+            _create_curated_skill("umbrella")
+            _create_curated_skill("narrow")
             skill_usage.mark_agent_created("narrow")
             raw = skill_manage("delete", "narrow", absorbed_into="umbrella")
             result = json.loads(raw)
@@ -1367,7 +1385,7 @@ class TestCuratorConsolidationDeleteGuard:
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
-            _create_skill("reviewed", _skill_content("reviewed"))
+            _create_curated_skill("reviewed")
 
             blocked = json.loads(skill_manage(
                 action="patch",
@@ -1397,7 +1415,7 @@ class TestCuratorConsolidationDeleteGuard:
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
-            _create_skill("reviewed", _skill_content("reviewed"))
+            _create_curated_skill("reviewed")
             ref = tmp_path / ".hermes" / "skills" / "reviewed" / "references"
             ref.mkdir()
             (ref / "workflow.md").write_text("old workflow\n", encoding="utf-8")
@@ -1423,3 +1441,232 @@ class TestCuratorConsolidationDeleteGuard:
             assert allowed["success"] is True, allowed
 
         _reset_background_review_read_marks()
+
+
+class TestStaleReadMark:
+    """A write invalidates the read mark it was authorized by.
+
+    The read-before-write guard used to track only *that* a path had been
+    viewed, never *what* was viewed. One skill_view therefore authorized an
+    unlimited number of later writes — including whole-file writes composed
+    from the pre-write snapshot, which silently revert everything written in
+    between. Observed in Langfuse trace 23f26b18…: one skill_view at 03:00:28
+    stood behind three separate patches.
+    """
+
+    def test_whole_file_write_refused_after_earlier_write(self, tmp_path, monkeypatch):
+        from tools.skills_tool import skill_view
+        from tools.skill_manager_tool import _reset_background_review_read_marks
+
+        _reset_background_review_read_marks()
+        with _curator_pass(tmp_path, monkeypatch=monkeypatch):
+            _create_curated_skill("reviewed")
+            ref_dir = tmp_path / ".hermes" / "skills" / "reviewed" / "references"
+            ref_dir.mkdir()
+            (ref_dir / "workflow.md").write_text("one\ntwo\n", encoding="utf-8")
+
+            assert json.loads(skill_view("reviewed", "references/workflow.md"))["success"] is True
+
+            first = json.loads(skill_manage(
+                action="patch",
+                name="reviewed",
+                file_path="references/workflow.md",
+                old_string="one",
+                new_string="ONE",
+            ))
+            assert first["success"] is True, first
+
+            # The view that authorized the patch no longer describes the file,
+            # so a whole-file write built from it must be refused.
+            stale = json.loads(skill_manage(
+                action="write_file",
+                name="reviewed",
+                file_path="references/workflow.md",
+                file_content="one\nTWO\n",
+            ))
+            assert stale["success"] is False
+            assert stale.get("_read_before_write_stale") is True
+            assert "STALE" in stale["error"]
+
+            # Re-reading clears it.
+            assert json.loads(skill_view("reviewed", "references/workflow.md"))["success"] is True
+            ok = json.loads(skill_manage(
+                action="write_file",
+                name="reviewed",
+                file_path="references/workflow.md",
+                file_content="ONE\nTWO\n",
+            ))
+            assert ok["success"] is True, ok
+            assert (ref_dir / "workflow.md").read_text(encoding="utf-8") == "ONE\nTWO\n"
+
+        _reset_background_review_read_marks()
+
+    def test_anchored_patch_still_allowed_after_earlier_patch(self, tmp_path, monkeypatch):
+        """patch keeps working from one read — fuzzy matching fails closed."""
+        from tools.skills_tool import skill_view
+        from tools.skill_manager_tool import _reset_background_review_read_marks
+
+        _reset_background_review_read_marks()
+        with _curator_pass(tmp_path, monkeypatch=monkeypatch):
+            _create_curated_skill("reviewed")
+            ref_dir = tmp_path / ".hermes" / "skills" / "reviewed" / "references"
+            ref_dir.mkdir()
+            (ref_dir / "workflow.md").write_text("alpha\nbeta\n", encoding="utf-8")
+
+            assert json.loads(skill_view("reviewed", "references/workflow.md"))["success"] is True
+            for old, new in (("alpha", "ALPHA"), ("beta", "BETA")):
+                res = json.loads(skill_manage(
+                    action="patch",
+                    name="reviewed",
+                    file_path="references/workflow.md",
+                    old_string=old,
+                    new_string=new,
+                ))
+                assert res["success"] is True, res
+            assert (ref_dir / "workflow.md").read_text(encoding="utf-8") == "ALPHA\nBETA\n"
+
+        _reset_background_review_read_marks()
+
+
+class TestOverBudgetSkillRemediation:
+    """An oversized SKILL.md must stay repairable.
+
+    auditor-cron reached 100,529 chars against a 100,000 cap, at which point
+    every patch — including the ones that would trim it — was rejected for
+    producing oversized content. The file that agents actually load was frozen
+    with wrong instructions in it while fixes piled up in references/.
+    """
+
+    def test_growing_past_cap_is_refused(self):
+        from tools.skill_manager_tool import _validate_content_size, MAX_SKILL_CONTENT_CHARS
+
+        err = _validate_content_size("x" * (MAX_SKILL_CONTENT_CHARS + 10))
+        assert err is not None
+        assert "over by 10" in err
+
+    def test_shrinking_an_oversized_file_is_allowed(self):
+        from tools.skill_manager_tool import _validate_content_size, MAX_SKILL_CONTENT_CHARS
+
+        previous = "x" * (MAX_SKILL_CONTENT_CHARS + 500)
+        still_over_but_smaller = "x" * (MAX_SKILL_CONTENT_CHARS + 100)
+        assert _validate_content_size(still_over_but_smaller, previous=previous) is None
+
+    def test_growing_an_already_oversized_file_is_refused(self):
+        from tools.skill_manager_tool import _validate_content_size, MAX_SKILL_CONTENT_CHARS
+
+        previous = "x" * (MAX_SKILL_CONTENT_CHARS + 100)
+        bigger = "x" * (MAX_SKILL_CONTENT_CHARS + 900)
+        err = _validate_content_size(bigger, previous=previous)
+        assert err is not None
+        assert "already over budget" in err
+        assert "Trim at least 900 characters" in err
+
+    def test_patch_that_trims_an_oversized_skill_md_succeeds(self, tmp_path, monkeypatch):
+        from tools.skill_manager_tool import MAX_SKILL_CONTENT_CHARS
+
+        skills_root = tmp_path / ".hermes" / "skills"
+        skills_root.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        with patch("tools.skill_manager_tool.SKILLS_DIR", skills_root), \
+             patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
+            skill_dir = skills_root / "obese"
+            skill_dir.mkdir()
+            filler = "y" * MAX_SKILL_CONTENT_CHARS
+            (skill_dir / "SKILL.md").write_text(
+                _skill_content("obese") + "STALE BLOCK\n" + filler, encoding="utf-8"
+            )
+
+            # Growing it further is still refused...
+            grow = json.loads(skill_manage(
+                action="patch", name="obese",
+                old_string="STALE BLOCK", new_string="STALE BLOCK" + "z" * 50,
+            ))
+            assert grow["success"] is False
+            assert "already over budget" in grow["error"]
+
+            # ...but the fix that trims it goes through.
+            fix = json.loads(skill_manage(
+                action="patch", name="obese",
+                old_string="STALE BLOCK\n", new_string="",
+            ))
+            assert fix["success"] is True, fix
+            assert "STALE BLOCK" not in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+
+class TestUnrecordedSkillOwnership:
+    """A skill with no usage record is not provably agent-created.
+
+    The guard used to require a record to EXIST before refusing, so the first
+    curator write against an unrecorded skill went through — and unrecorded is
+    exactly the state of the manually authored skills the guard protects, since
+    only mark_agent_created() (review-fork creations) ever writes the marker.
+    It was self-inconsistent too: that first write calls bump_patch(), which
+    creates a bare record, so every write after it was refused.
+    """
+
+    def test_first_write_to_unrecorded_skill_is_refused(self, tmp_path, monkeypatch):
+        from tools.skills_tool import skill_view
+        from tools.skill_manager_tool import _reset_background_review_read_marks
+
+        _reset_background_review_read_marks()
+        with _curator_pass(tmp_path, monkeypatch=monkeypatch):
+            # Placed on disk directly, as a user authoring a SKILL.md would —
+            # no skill_manage(create), so no usage record.
+            skill_dir = tmp_path / ".hermes" / "skills" / "handwritten"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                _skill_content("handwritten"), encoding="utf-8"
+            )
+
+            assert json.loads(skill_view("handwritten"))["success"] is True
+            blocked = json.loads(skill_manage(
+                action="patch",
+                name="handwritten",
+                old_string="Step 1: Do the thing.",
+                new_string="Step 1: Curated without permission.",
+            ))
+            assert blocked["success"] is False
+            assert "no usage record" in blocked["error"]
+            # Untouched on disk.
+            assert "Do the thing." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+        _reset_background_review_read_marks()
+
+    def test_agent_created_skill_is_still_curatable(self, tmp_path, monkeypatch):
+        from tools.skills_tool import skill_view
+        from tools.skill_manager_tool import _reset_background_review_read_marks
+
+        _reset_background_review_read_marks()
+        with _curator_pass(tmp_path, monkeypatch=monkeypatch):
+            _create_curated_skill("owned")
+
+            assert json.loads(skill_view("owned"))["success"] is True
+            ok = json.loads(skill_manage(
+                action="patch",
+                name="owned",
+                old_string="Step 1: Do the thing.",
+                new_string="Step 1: Do the thing safely.",
+            ))
+            assert ok["success"] is True, ok
+
+        _reset_background_review_read_marks()
+
+    def test_foreground_writes_are_unaffected(self, tmp_path, monkeypatch):
+        """The guard only fires inside the background-review fork."""
+        skills_root = tmp_path / ".hermes" / "skills"
+        skills_root.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        with patch("tools.skill_manager_tool.SKILLS_DIR", skills_root), \
+             patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
+            skill_dir = skills_root / "handwritten"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                _skill_content("handwritten"), encoding="utf-8"
+            )
+            ok = json.loads(skill_manage(
+                action="patch",
+                name="handwritten",
+                old_string="Step 1: Do the thing.",
+                new_string="Step 1: Edited by the user's own agent.",
+            ))
+            assert ok["success"] is True, ok

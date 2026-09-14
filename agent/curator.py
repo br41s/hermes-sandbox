@@ -520,6 +520,35 @@ CURATOR_REVIEW_PROMPT = (
     "5. Iterate. After one consolidation round, scan the remaining set "
     "and look for the NEXT umbrella opportunity. Don't stop after 3 "
     "merges.\n\n"
+    "INTRA-SKILL BLOAT — the other half of your job:\n"
+    "Merging skills together is only one failure mode. The opposite one is "
+    "a single skill that grew until it stopped working, and it is invisible "
+    "to cluster-scanning. The candidate list carries `skillmd=<chars>` and "
+    "`refs=<count>` per skill, plus flags:\n"
+    "  • `OVER-BUDGET` — SKILL.md is past the hard write cap. This is "
+    "URGENT and takes priority over any merge. While a skill is over "
+    "budget the ONLY writes accepted against it are ones that make it "
+    "smaller, so nothing in it can be corrected until you trim it. Split "
+    "it: keep class-level instructions and the workflow spine in "
+    "SKILL.md, move worked examples, transcripts, and session-specific "
+    "detail into `references/<topic>.md`, and patch them OUT of SKILL.md "
+    "in the same pass. Leave a one-line pointer where each block was.\n"
+    "  • `SKILL.md-BLOATED` — heading for the same wall. Split it now, "
+    "while ordinary patches still work.\n"
+    "  • `REFS-BLOATED` — `references/` has accreted near-duplicates. The "
+    "per-session review fork only ever ADDS reference files; nothing else "
+    "ever collapses them, so a long-lived skill ends up with a dozen files "
+    "on one subject under a dozen names. `skill_view` each one, merge the "
+    "cluster into a single canonical `references/<topic>.md`, remove the "
+    "absorbed files with skill_manage action=remove_file, and fix the "
+    "SKILL.md pointers. Do this INSIDE one skill — it is not a "
+    "consolidation and does not belong in the structured summary below.\n"
+    "CONTRADICTION CHECK when you touch a bloated skill: a reference file "
+    "that corrects a procedure is worthless while SKILL.md still teaches "
+    "the old one, and SKILL.md is the part that gets loaded. When a "
+    "reference says 'X is blocked / X does not work / use Y instead', grep "
+    "SKILL.md for X and fix it there too. Reality lives in SKILL.md; "
+    "references are detail, not errata.\n\n"
     "Your toolset:\n"
     "  - skills_list, skill_view        — read the current landscape\n"
     "  - skill_manage action=patch      — add sections to the umbrella\n"
@@ -527,6 +556,9 @@ CURATOR_REVIEW_PROMPT = (
     "  - skill_manage action=write_file — add a references/, templates/, "
     "or scripts/ file under an existing skill (the skill must already "
     "exist)\n"
+    "  - skill_manage action=remove_file — delete a support file after its "
+    "content has been merged into the canonical one. This is how you "
+    "collapse a REFS-BLOATED references/ directory\n"
     "  - skill_manage action=delete     — archive a skill. MUST pass "
     "`absorbed_into=<umbrella>` when you've merged its content into another "
     "skill, or `absorbed_into=\"\"` when you're truly pruning with no "
@@ -1469,14 +1501,72 @@ def _render_report_markdown(p: Dict[str, Any]) -> str:
 # Orchestrator — spawn a forked AIAgent for the LLM review pass
 # ---------------------------------------------------------------------------
 
+def _skill_size_metrics(name: str) -> Dict[str, Any]:
+    """SKILL.md size and support-file counts for one skill.
+
+    Consolidation has always been scored skill-to-skill, so a single skill
+    growing past the point of usefulness was invisible to this pass. These
+    numbers make intra-skill bloat a first-class candidate signal.
+    """
+    metrics = {"skill_md_chars": 0, "refs": 0, "support_chars": 0, "over_budget": False}
+    try:
+        from tools.skill_manager_tool import _find_skill, MAX_SKILL_CONTENT_CHARS
+        found = _find_skill(name)
+        if not found:
+            return metrics
+        skill_dir = found["path"]
+        skill_md = skill_dir / "SKILL.md"
+        if skill_md.exists():
+            metrics["skill_md_chars"] = len(skill_md.read_text(encoding="utf-8", errors="replace"))
+        for sub in ("references", "templates", "scripts"):
+            sub_dir = skill_dir / sub
+            if not sub_dir.is_dir():
+                continue
+            for f in sub_dir.iterdir():
+                if not f.is_file():
+                    continue
+                if sub == "references":
+                    metrics["refs"] += 1
+                try:
+                    metrics["support_chars"] += f.stat().st_size
+                except OSError:
+                    pass
+        metrics["over_budget"] = metrics["skill_md_chars"] > MAX_SKILL_CONTENT_CHARS
+    except Exception:
+        logger.debug("size metrics failed for skill %s", name, exc_info=True)
+    return metrics
+
+
+# A SKILL.md past this fraction of the hard write cap is worth splitting
+# before it hits the wall and needs remediation instead of maintenance.
+SKILL_MD_WARN_FRACTION = 0.6
+# references/ past this count has almost always accreted near-duplicates.
+REFS_WARN_COUNT = 15
+
+
 def _render_candidate_list() -> str:
     """Human/agent-readable list of agent-created skills with usage stats."""
     rows = skill_usage.agent_created_report()
     if not rows:
         return "No agent-created skills to review."
     cron_referenced = _cron_referenced_skills()
+    try:
+        from tools.skill_manager_tool import MAX_SKILL_CONTENT_CHARS as _cap
+    except Exception:
+        _cap = 100_000
     lines = [f"Agent-created skills ({len(rows)}):\n"]
+    bloated: List[str] = []
     for r in rows:
+        m = _skill_size_metrics(r["name"])
+        flags = []
+        if m["over_budget"]:
+            flags.append("OVER-BUDGET")
+        elif m["skill_md_chars"] > _cap * SKILL_MD_WARN_FRACTION:
+            flags.append("SKILL.md-BLOATED")
+        if m["refs"] >= REFS_WARN_COUNT:
+            flags.append("REFS-BLOATED")
+        if flags:
+            bloated.append(f"{r['name']} ({', '.join(flags)})")
         lines.append(
             f"- {r['name']}  "
             f"state={r['state']}  "
@@ -1486,7 +1576,15 @@ def _render_candidate_list() -> str:
             f"use={r.get('use_count', 0)}  "
             f"view={r.get('view_count', 0)}  "
             f"patches={r.get('patch_count', 0)}  "
-            f"last_activity={r.get('last_activity_at') or 'never'}"
+            f"skillmd={m['skill_md_chars']}  "
+            f"refs={m['refs']}  "
+            + (f"[{' '.join(flags)}]  " if flags else "")
+            + f"last_activity={r.get('last_activity_at') or 'never'}"
+        )
+    if bloated:
+        lines.append(
+            "\nBLOATED SKILLS — these need the intra-skill pass, not a merge:\n  "
+            + "\n  ".join(bloated)
         )
     return "\n".join(lines)
 
