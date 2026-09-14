@@ -308,10 +308,11 @@ observability = [
     # langfuse>=4: v3's trace-level attribute format is no longer honored by
     # current Langfuse cloud (server >=3.187.0) — trace roots render as
     # "Unnamed span" with null I/O and the UI shows an "upgrade your SDK"
-    # banner. v4 keeps the same API surface the plugin uses
-    # (Langfuse, propagate_attributes, create_trace_id,
-    # start_as_current_observation, observation.update/set_trace_io) and emits
-    # langfuse.trace.name / langfuse.trace.input/output that the server reads.
+    # banner. v4 keeps the same API surface the plugin uses (Langfuse,
+    # propagate_attributes, create_trace_id, start_as_current_observation,
+    # start_observation, observation.update/end) and sets input/output on the
+    # root observation directly rather than the deprecated trace-level
+    # set_trace_io() (no legacy trace-level evaluator relies on it).
     "langfuse>=4,<5",
 ]
 

@@ -808,7 +808,10 @@ class _RecordingObservation:
     Stands in for langfuse's ``LangfuseChain`` / ``LangfuseGeneration`` so the
     test doesn't need the optional SDK installed (the default test env omits
     the ``observability`` extra).  Mirrors the v4 span surface the plugin
-    uses: ``set_trace_io``, ``update``, ``start_observation``, ``end``."""
+    uses: ``update``, ``start_observation``, ``end``. ``set_trace_io`` is kept
+    on this fake only because ``_RecordingLangfuse.start_as_current_observation``
+    below uses it to record the input passed at creation — the plugin itself
+    no longer calls it (deprecated trace-level I/O; see TestRootTraceIO)."""
 
     def __init__(self, name=None):
         self.name = name
@@ -880,7 +883,14 @@ class TestRootTraceIO:
     created with name="Hermes turn" plus the user message as input, and the
     final reply must land as the root's output on finish.  This is the
     trace-level data that rendered as "Unnamed span" / null I/O before the SDK
-    bump (server >= 3.187.0 no longer honored the v3 trace-attribute format)."""
+    bump (server >= 3.187.0 no longer honored the v3 trace-attribute format).
+
+    Root input/output must flow through ``start_as_current_observation(input=)``
+    / ``root_span.update(output=)`` only — not the deprecated
+    ``set_trace_io()`` escape hatch, which exists solely for legacy
+    trace-level LLM-as-a-judge evaluators. The hermes Langfuse project has
+    none (verified via the Evaluators/Evaluation Rules API), so retaining it
+    would be dead compatibility code."""
 
     def _make_mod(self, monkeypatch):
         sys.modules.pop("plugins.observability.langfuse", None)
@@ -919,8 +929,9 @@ class TestRootTraceIO:
             assistant_response="2+2 = 4",
         )
 
-        assert root.trace_output == {"content": "2+2 = 4", "reasoning": None, "tool_calls": []}
         assert any(u.get("output") for u in root.updates), "root.update(output=...) not called"
+        assert root.updates[-1]["output"] == {"content": "2+2 = 4", "reasoning": None, "tool_calls": []}
+        assert root.trace_output is None, "set_trace_io(output=...) must not be called (deprecated, no legacy evaluators)"
         assert root.ended is True
         assert client.flushed >= 1
 

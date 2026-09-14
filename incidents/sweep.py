@@ -279,7 +279,11 @@ def langfuse_error_incidents(*, now: Optional[datetime] = None,
     import urllib.request
 
     frm = (now - timedelta(hours=window_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    url = f"{base}/api/public/observations?level=ERROR&fromStartTime={frm}&limit=50"
+    to = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # GET /observations is deprecated (served until 2026-11-16) in favor of
+    # GET /v2/observations — same query params, response shape unchanged for
+    # the core+basic fields this reads (traceId, statusMessage, name).
+    url = f"{base}/api/public/v2/observations?level=ERROR&fromStartTime={frm}&toStartTime={to}&limit=50"
     token = base64.b64encode(f"{pub}:{sec}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     try:
