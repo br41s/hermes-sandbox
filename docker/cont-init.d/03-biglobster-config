@@ -774,6 +774,54 @@ if [ -n "$GITHUB_TOKEN" ]; then
         echo "[03-biglobster] git HTTPS credential configured (x-access-token)"
     fi
 
+    # Default profile's subprocess home ($HERMES_HOME/home) — reconciled by
+    # NEITHER branch around it, which is the gap this block closes.
+    # get_subprocess_home() resolves the DEFAULT profile's terminal/cron lane to
+    # "$HERMES_HOME/home", but the block above refreshes "$HERMES_HOME" itself
+    # and the loop below only walks "$HERMES_HOME/profiles/*/" — there is no
+    # profiles/default dir. So this one directory kept whatever a past
+    # `gh auth login` left in it: on 2026-09-14 a revoked 40-char token in
+    # home/.config/gh/hosts.yml (written 2026-07-27), handed to git by a
+    # `[credential "https://github.com"] helper = !gh auth git-credential`
+    # override in home/.gitconfig — which is MORE SPECIFIC than a plain
+    # `helper = store` and therefore wins over it. Every default-profile cron
+    # job that touched GitHub died on "Invalid username or token"; the
+    # Infographic Engineer (job 2988bba27c73) at 03:05 UTC was the one that
+    # reported it. Refreshing hosts.yml re-points that override at the live
+    # token, and .git-credentials covers the plain-store path.
+    #
+    # user.name/user.email are deliberately NOT written here: this home carries
+    # a BigLobster commit identity and the bug is auth, not authorship.
+    if [ "$gh_login" != "hermes-auditor" ]; then
+        default_home="$HERMES_HOME/home"
+        as_hermes mkdir -p "$default_home"
+        # Drop the `gh auth login` credential override before (re)writing the
+        # store helper. A `[credential "https://github.com"]` section is a MORE
+        # SPECIFIC match than the generic `helper = store`, so while it exists it
+        # wins outright and .git-credentials below is dead weight for github.com.
+        # It also does `helper =` first, clearing the store fallback, so github
+        # auth hangs entirely off /usr/local/bin/gh. Removing it makes
+        # .git-credentials the single source of truth, exactly as in every
+        # profiles/*/home. Non-fatal: git exits 128 when the section is absent,
+        # which is the steady state on every boot after the first.
+        HOME="$default_home" as_hermes git config --global --remove-section \
+            "credential.https://github.com" 2>/dev/null || true
+        HOME="$default_home" as_hermes git config --global --remove-section \
+            "credential.https://gist.github.com" 2>/dev/null || true
+        HOME="$default_home" as_hermes git config --global credential.helper store \
+            || echo "[03-biglobster] Warning: git config failed for default subprocess home (non-fatal)"
+        printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$default_home/.git-credentials"
+        chmod 600 "$default_home/.git-credentials"
+        chown hermes:hermes "$default_home/.git-credentials" 2>/dev/null || true
+
+        as_hermes mkdir -p "$default_home/.config/gh"
+        printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n    user: %s\n' \
+            "$GITHUB_TOKEN" "$gh_login" > "$default_home/.config/gh/hosts.yml"
+        chmod 600 "$default_home/.config/gh/hosts.yml"
+        chown -R hermes:hermes "$default_home/.config" 2>/dev/null || true
+        echo "[03-biglobster] git+gh credentials configured for default subprocess home"
+    fi
+
     # Per-profile subprocess homes — run as hermes (profile homes are
     # hermes-owned). Idempotent + non-fatal, matching the script's contract.
     # We CREATE the home/ dir for every real profile (SOUL.md present) rather
