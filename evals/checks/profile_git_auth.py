@@ -25,6 +25,17 @@ Failure modes detected (each one actually occurred):
   2. credentials not in ``https://x-access-token:<token>@github.com`` form.
   3. a workspace repo remote uses SSH or embeds a token instead of tokenless https.
   4. ``credential.helper`` not set to ``store`` for the profile HOME.
+  5. a url-scoped ``[credential "https://github.com"]`` override (left by a past
+     ``gh auth login``) shadowing the store helper — it is a MORE SPECIFIC match
+     than the generic one, so it wins outright and the stored token is never
+     consulted. Caught by rule 4, because the bare ``[credential]`` section it
+     reads is then absent or unused.
+
+Scope note: this audits ``$HERMES_HOME/home`` (the DEFAULT profile's subprocess
+home) as well as every ``profiles/<name>/home``. The default home is not under
+``profiles/`` — there is no ``profiles/default`` dir — so an audit that walks
+only ``profiles/*/`` silently skips the home used by every default-profile cron
+job. That gap let a revoked token sit there from 2026-07-27 until 2026-09-14.
 """
 from __future__ import annotations
 
@@ -189,10 +200,22 @@ def _discover_profile_homes() -> List[Path]:
         root = get_default_hermes_root()
     except Exception:
         return []
+    homes: List[Path] = []
+
+    # The DEFAULT profile's subprocess home is "$HERMES_HOME/home" — it does NOT
+    # live under profiles/ (there is no profiles/default dir), so the loop below
+    # never reaches it. Checking only profiles/*/home left the busiest home in
+    # the deployment unaudited: on 2026-09-14 it was found serving a revoked
+    # token to every default-profile cron job via a `gh auth login` override,
+    # which the helper!="store" rule here would have caught on day one. Same
+    # resolution as hermes_constants.get_subprocess_home() for that profile.
+    default_home = Path(root) / "home"
+    if default_home.is_dir():
+        homes.append(default_home)
+
     profiles = Path(root) / "profiles"
     if not profiles.is_dir():
-        return []
-    homes: List[Path] = []
+        return homes
     for prof_dir in sorted(profiles.iterdir()):
         if not (prof_dir / "SOUL.md").is_file():
             continue
@@ -200,6 +223,25 @@ def _discover_profile_homes() -> List[Path]:
         if home.is_dir():
             homes.append(home)
     return homes
+
+
+def _profile_label(home: Path) -> str:
+    """Name the profile owning *home* — ``"default"`` for ``$HERMES_HOME/home``.
+
+    Every other home is ``<root>/profiles/<name>/home``, where the parent dir IS
+    the profile name. The default profile's home sits directly under the hermes
+    root, so ``home.parent.name`` would report the root's basename ("data") and
+    read as a profile that does not exist. Matched against the live root only,
+    so synthetic ``tmp_path`` homes in the regression tests keep their own names.
+    """
+    try:
+        from hermes_constants import get_default_hermes_root
+
+        if Path(home) == Path(get_default_hermes_root()) / "home":
+            return "default"
+    except Exception:
+        pass
+    return Path(home).parent.name
 
 
 def audit_profile_git_auth(
@@ -217,7 +259,7 @@ def audit_profile_git_auth(
         home = Path(home)
         hz = git_auth_hazard(home)
         if hz:
-            flagged.append((home.parent.name, hz))
+            flagged.append((_profile_label(home), hz))
     return flagged
 
 

@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 
 from evals.checks.profile_git_auth import (
+    _discover_profile_homes,
+    _profile_label,
     audit_profile_git_auth,
     audit_summary,
     git_auth_hazard,
@@ -193,3 +195,72 @@ class TestEvalHarnessAgreement:
         output, results = evaluate(case, use_llm=False)
         assert "OK" in output or "FAIL" in output
         assert results
+
+
+class TestDefaultSubprocessHomeIsAudited:
+    """The default profile's home is $HERMES_HOME/home, not profiles/default/home.
+
+    Regression lock for the 2026-09-14 gap: discovery walked only profiles/*/ ,
+    so the home every default-profile cron job actually uses was never audited
+    and carried a revoked token from 2026-07-27 unnoticed.
+    """
+
+    def _fake_root(self, tmp_path, monkeypatch, *, make_default_home=True):
+        root = tmp_path / "hermes_root"
+        (root / "profiles").mkdir(parents=True)
+        if make_default_home:
+            (root / "home").mkdir()
+        monkeypatch.setattr(
+            "hermes_constants.get_default_hermes_root", lambda: str(root)
+        )
+        return root
+
+    def test_discovery_includes_the_default_home(self, tmp_path, monkeypatch):
+        root = self._fake_root(tmp_path, monkeypatch)
+        assert root / "home" in _discover_profile_homes()
+
+    def test_discovery_still_includes_real_profiles(self, tmp_path, monkeypatch):
+        root = self._fake_root(tmp_path, monkeypatch)
+        prof = root / "profiles" / "finview"
+        (prof / "home").mkdir(parents=True)
+        (prof / "SOUL.md").write_text("soul")
+        homes = _discover_profile_homes()
+        assert root / "home" in homes
+        assert prof / "home" in homes
+
+    def test_absent_default_home_is_not_invented(self, tmp_path, monkeypatch):
+        root = self._fake_root(tmp_path, monkeypatch, make_default_home=False)
+        assert root / "home" not in _discover_profile_homes()
+
+    def test_default_home_is_labelled_default_not_the_root_basename(
+        self, tmp_path, monkeypatch
+    ):
+        root = self._fake_root(tmp_path, monkeypatch)
+        # Without the label rule this reports the root's basename ("hermes_root"),
+        # naming a profile that does not exist.
+        assert _profile_label(root / "home") == "default"
+
+    def test_other_homes_keep_their_profile_name(self, tmp_path, monkeypatch):
+        self._fake_root(tmp_path, monkeypatch)
+        home = _make_home(tmp_path, "grow-shop")
+        assert _profile_label(home) == "grow-shop"
+
+
+class TestGhCredentialOverrideIsFlagged:
+    """A `gh auth login` url-scoped override shadows `helper = store` and wins.
+
+    This is the exact shape that broke every default-profile push: git resolves
+    the MOST SPECIFIC credential section, so the stored token is never consulted.
+    """
+
+    def test_url_scoped_gh_override_is_a_hazard(self, tmp_path):
+        home = _make_home(tmp_path, "default")
+        (home / ".gitconfig").write_text(
+            '[user]\n\tname = BigLobster\n'
+            '[credential "https://github.com"]\n'
+            "\thelper = \n"
+            "\thelper = !/usr/local/bin/gh auth git-credential\n"
+        )
+        hz = git_auth_hazard(home)
+        assert hz is not None
+        assert "credential.helper" in hz
