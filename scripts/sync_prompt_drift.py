@@ -21,9 +21,14 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
 
     # Apply without the confirmation prompt (e.g. from another script)
     .venv/bin/python3 scripts/sync_prompt_drift.py --yes
+
+A job whose live prompt was edited in place since its last sync is reported as
+blocked rather than overwritten (same guard as `cronjob_tools.sync_prompt`);
+--force overrides that.
 """
 
 import argparse
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -41,11 +46,21 @@ def _read_source(source: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def find_drift(sources: list[str] | None) -> dict:
+def _prompt_sha(text: str) -> str:
+    """Baseline hash, identical to the one cronjob_tools.sync_prompt records."""
+    return hashlib.sha256(text.strip().encode()).hexdigest()
+
+
+def find_drift(sources: list[str] | None, *, force: bool = False) -> dict:
     """Group jobs with a prompt_source by drift status.
 
     Returns {"unchanged": [...], "changed": [...], "blocked": [...], "missing_file": [...]}
     keyed lists of (job, source, new_text_or_None, detail).
+
+    Carries the same clobber guard as ``cronjob_tools.sync_prompt``: a job whose
+    live prompt no longer hashes to ``prompt_synced_sha`` was edited in place
+    since its last sync, and syncing would destroy that edit. Those land in
+    "blocked" so the rest of the sweep still runs. ``force`` skips the check.
     """
     result = {"unchanged": [], "changed": [], "blocked": [], "missing_file": []}
     for job in list_jobs(include_disabled=True):
@@ -67,7 +82,22 @@ def find_drift(sources: list[str] | None) -> dict:
         if scan_error:
             result["blocked"].append((job, source, None, scan_error))
             continue
-        result["changed"].append((job, source, file_text, None))
+        baseline = job.get("prompt_synced_sha")
+        live_sha = _prompt_sha(live_text)
+        if baseline and live_sha != baseline and not force:
+            result["blocked"].append((job, source, None, (
+                "the live prompt was edited since the last sync, so syncing would "
+                f"overwrite that edit (live {live_sha[:12]}, last synced "
+                f"{baseline[:12]}). Diff both sides: if the live edit is the fix, "
+                "port it INTO the repo file and sync that; if the repo is genuinely "
+                "newer, re-run with --force."
+            )))
+            continue
+        # No baseline means this job has never been synced, so there is nothing to
+        # judge the live side against. It proceeds and records one, but says so —
+        # that is exactly the case an automated caller must not run unattended.
+        note = None if baseline else "first sync — no baseline to check"
+        result["changed"].append((job, source, file_text, note))
     return result
 
 
@@ -81,9 +111,17 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would change, apply nothing")
     parser.add_argument("--yes", action="store_true", help="Apply without an interactive confirmation")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Sync even jobs whose live prompt was edited since the last sync, "
+            "overwriting that edit. Diff both sides first."
+        ),
+    )
     args = parser.parse_args()
 
-    drift = find_drift(args.sources)
+    drift = find_drift(args.sources, force=args.force)
 
     for job, source, _, _ in drift["unchanged"]:
         print(f"  = {job['id']}  {job['name']!r}  (up to date with {source})")
@@ -91,8 +129,9 @@ def main() -> int:
         print(f"  ! {job['id']}  {job['name']!r}  prompt_source {source} unreadable: {detail}")
     for job, source, _, detail in drift["blocked"]:
         print(f"  x {job['id']}  {job['name']!r}  BLOCKED syncing from {source}: {detail}")
-    for job, source, _, _ in drift["changed"]:
-        print(f"  ~ {job['id']}  {job['name']!r}  drifted from {source} — will sync")
+    for job, source, _, detail in drift["changed"]:
+        note = f" ({detail})" if detail else ""
+        print(f"  ~ {job['id']}  {job['name']!r}  drifted from {source} — will sync{note}")
 
     if not drift["changed"]:
         print("\nNothing to sync.")
@@ -109,11 +148,18 @@ def main() -> int:
             return 1
 
     for job, source, file_text, _ in drift["changed"]:
-        update_job(job["id"], {"prompt": file_text, "prompt_source": source})
+        update_job(job["id"], {
+            "prompt": file_text,
+            "prompt_source": source,
+            # Without this the next cronjob_tools.sync_prompt compares the live
+            # prompt against a baseline this script never advanced, reads its own
+            # write as a hand-edit, and refuses.
+            "prompt_synced_sha": _prompt_sha(file_text),
+        })
         print(f"  synced {job['id']} ({job['name']!r}) from {source}")
 
     if drift["blocked"]:
-        print(f"\n{len(drift['blocked'])} job(s) blocked by the prompt scanner — fix and re-run.")
+        print(f"\n{len(drift['blocked'])} job(s) blocked — see the reasons above, fix and re-run.")
         return 1
     return 0
 
