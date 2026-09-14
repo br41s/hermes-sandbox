@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,10 +27,19 @@ _MAX_SOURCE_CHARS = 16000
 
 
 def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[Dict[str, Any]]:
-    """Fetch a trace by id via the Langfuse public read API, or None.
+    """Fetch a trace's span tree via the Langfuse public read API, or None.
 
     Uses the same env credentials as the Langfuse tracing plugin. The plugin
     only *writes* traces; this is the read side the self-repair loop needs.
+
+    ``GET /traces/{id}`` is deprecated (served until 2026-11-16); v4 has no
+    trace-level object, so this fetches the trace's observation rows via
+    ``GET /v2/observations?traceId=...`` and reconstructs trace-level
+    input/output from the row Langfuse marks ``isRootObservation``. Verified
+    against live traces from this plugin: the root ("Hermes turn" chain) can
+    carry a non-null ``parentObservationId`` (its physical OTel parent lives
+    outside this trace_id), so ``isRootObservation`` — not "no parent" — is
+    the only reliable root marker here.
     """
     if not trace_id:
         return None
@@ -39,14 +49,30 @@ def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[Dict[s
     if not (public and secret):
         return None
 
-    url = f"{base}/api/public/traces/{trace_id}"
+    params = urllib.parse.urlencode({
+        "traceId": trace_id,
+        "fields": "core,basic,io,trace_context",
+        "limit": 100,
+    })
+    url = f"{base}/api/public/v2/observations?{params}"
     token = base64.b64encode(f"{public}:{secret}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted Langfuse host)
-            return json.loads(resp.read().decode())
+            payload = json.loads(resp.read().decode())
     except (urllib.error.URLError, OSError, ValueError):
         return None
+
+    observations = payload.get("data") or []
+    if not observations:
+        return None
+    root = next((o for o in observations if o.get("isRootObservation")), None)
+    return {
+        "traceId": trace_id,
+        "input": root.get("input") if root else None,
+        "output": root.get("output") if root else None,
+        "observations": observations,
+    }
 
 
 def _read_source(rel_paths: List[str]) -> str:
