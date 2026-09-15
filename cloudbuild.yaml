@@ -40,11 +40,21 @@ steps:
   # Paso 2: Compilar la imagen (¡CON BUILDKIT ACTIVO!)
   # Se etiqueta DOS veces sobre la MISMA imagen: `:latest` (lo que tira Zeabur)
   # y `:sha-<commit>` (inmutable, el ancla de rollback).
+  #
+  # --build-arg HERMES_GIT_SHA: el Dockerfile ya declara ese ARG y escribe
+  # /opt/hermes/.hermes_build_sha (hermes_cli/build_info.py lo lee para
+  # `hermes dump` y el banner de arranque). El mecanismo venía cableado para
+  # GitHub Actions — que esta cuenta NO tiene — así que nuestras imágenes
+  # salían SIN el fichero y nada dentro del contenedor sabía de qué commit
+  # era. Sin eso, "¿está producción al día?" sólo se puede responder
+  # hasheando ficheros contra el historial de git. Ver scripts/deploy.sh
+  # --status.
   - name: 'gcr.io/cloud-builders/docker'
     env:
       - 'DOCKER_BUILDKIT=1' # <--- ESTO ACTIVA EL MOTOR MODERNO
     args: [
       'build',
+      '--build-arg', 'HERMES_GIT_SHA=$_COMMIT_SHA',
       '-t', 'ghcr.io/br41s/hermes-sandbox:latest',
       '-t', 'ghcr.io/br41s/hermes-sandbox:sha-$_COMMIT_SHA',
       '.'

@@ -17,7 +17,7 @@
 # script derives it once and reuses it, and the value is never typed.
 #
 # USAGE
-#   scripts/deploy.sh [--dry-run] [--verify-file PATH] [--yes]
+#   scripts/deploy.sh [--status] [--dry-run] [--verify-file PATH] [--yes]
 #
 # REQUIRES a GitHub token in $GHCR_TOKEN or $GITHUB_TOKEN: cloudbuild.yaml's
 # step 1 runs `docker login ghcr.io -u br41s --password-stdin` with it, so the
@@ -26,6 +26,10 @@
 #     export GHCR_TOKEN=ghp_...
 # or source it from a file you keep outside the repo.
 #
+#   --status        read-only: report which commit production is running and
+#                   how far behind origin/main it is, then exit. Needs no
+#                   token and no clean tree. `git pull` CANNOT answer this —
+#                   it reports on your checkout, never on the image.
 #   --dry-run       print every command, run none of them (the token is never
 #                   printed — it shows as ***)
 #   --verify-file   after deploying, sha256 this repo-relative file inside the
@@ -41,9 +45,11 @@ IMAGE="ghcr.io/br41s/hermes-sandbox"
 
 DRY_RUN=0
 ASSUME_YES=0
+STATUS_ONLY=0
 VERIFY_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --status) STATUS_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --verify-file) VERIFY_FILE="${2:-}"; [ -n "$VERIFY_FILE" ] || { echo "--verify-file needs a path" >&2; exit 2; }; shift 2 ;;
@@ -61,6 +67,58 @@ run() {
 }
 
 cd "$(dirname "$0")/.."
+
+# ── --status: what is actually running out there? ────────────────────────────
+# The question `git pull` cannot answer. A clean pull means your CHECKOUT
+# matches origin/main; it says nothing about the image, and the two drift
+# apart silently — on 2026-09-14 a build ran three minutes after one PR merged
+# and 83 minutes before the next, so main was ahead of production while the
+# laptop reported "Already up to date" and a deploy was skipped.
+#
+# The image carries its commit at /opt/hermes/.hermes_build_sha (Dockerfile
+# ARG HERMES_GIT_SHA, fed by cloudbuild.yaml). Images built before that arg
+# was wired have no file — report that honestly rather than guessing, because
+# a wrong "up to date" here is exactly the failure this flag exists to stop.
+if [ "$STATUS_ONLY" -eq 1 ]; then
+  echo "→ Fetching origin/main"
+  git fetch origin main --quiet
+  LOCAL_MAIN="$(git rev-parse --short origin/main)"
+
+  RUNNING="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
+    sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
+    | tr -d "[:space:]")" || true
+
+  echo
+  echo "  origin/main : $LOCAL_MAIN  $(git log -1 --format=%s origin/main)"
+  if [ -z "$RUNNING" ]; then
+    echo "  production  : UNKNOWN — no /opt/hermes/.hermes_build_sha in the image"
+    echo
+    echo "  That image predates the HERMES_GIT_SHA build-arg, so it cannot say"
+    echo "  which commit it is. Date it by hashing a file recent commits touched:"
+    echo "      git show <commit>:<path> | shasum -a256"
+    echo "      zeabur service exec --id $SERVICE_ID -i=false -- sha256sum /opt/hermes/<path>"
+    echo "  The next deploy from this script bakes the SHA in and ends the guessing."
+    exit 2
+  fi
+
+  echo "  production  : $RUNNING"
+  echo
+  if git merge-base --is-ancestor "$RUNNING" origin/main 2>/dev/null; then
+    BEHIND="$(git rev-list --count "$RUNNING"..origin/main 2>/dev/null || echo "?")"
+    if [ "$BEHIND" = "0" ]; then
+      echo "✓ Production is at origin/main. Nothing to deploy."
+      exit 0
+    fi
+    echo "⚠ Production is $BEHIND commit(s) behind origin/main:"
+    git log --oneline --no-decorate "$RUNNING"..origin/main | sed "s/^/      /"
+    echo
+    echo "  Deploy with: scripts/deploy.sh"
+    exit 1
+  fi
+  echo "⚠ $RUNNING is not an ancestor of origin/main — production is running code"
+  echo "  that is not on main (a rollback, or a build from another branch)."
+  exit 1
+fi
 
 # ── Guard 1: the build uploads THIS DIRECTORY, not the repo ──────────────────
 # `gcloud builds submit` tars the working directory and ships that. A dirty
