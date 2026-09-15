@@ -255,8 +255,41 @@ fi
 echo "→ Pointing service at $TAG"
 run zeabur service update tag --id "$SERVICE_ID" -t "$TAG" -y -i=false
 
-echo "→ Waiting 60s for the pod to cycle"
-run sleep 60
+# ── Wait for the NEW pod, not for 60 seconds ─────────────────────────────────
+# A flat sleep is a guess, and it guessed wrong on 2026-09-15: the rollout
+# finished at 08:32:59 and the verify exec had already fired, dying with
+# CONTAINER_NOT_FOUND on a deploy that had in fact succeeded. Under `set -e`
+# that failed command substitution aborts the script, so a healthy deploy
+# reports as a failure.
+#
+# "exec works" is NOT readiness either — during a rolling update the OLD pod
+# answers perfectly well, and hashing a file against it would confirm the
+# previous image. The baked-in build SHA is what distinguishes them, so poll
+# until the container reports the commit THIS run deployed.
+echo "→ Waiting for the pod to report $SHA (up to 5 min)"
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '  [dry-run] poll .hermes_build_sha until it reports %s\n' "$SHA"
+else
+  DEADLINE=$(( $(date +%s) + 300 ))
+  POD_READY=0
+  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    sleep 10
+    RUNNING_SHA="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
+      sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
+      | tr -d '[:space:]')" || true
+    if [ "$RUNNING_SHA" = "$SHA" ]; then
+      POD_READY=1
+      echo "  pod is serving $SHA"
+      break
+    fi
+  done
+  if [ "$POD_READY" -eq 0 ]; then
+    echo "⚠ Pod did not report $SHA within 5 min (last seen: ${RUNNING_SHA:-none})." >&2
+    echo "  The tag was moved, so the rollout may still be in progress. Check with:" >&2
+    echo "      scripts/deploy.sh --status" >&2
+    exit 1
+  fi
+fi
 
 # ── Verification ─────────────────────────────────────────────────────────────
 # Deliberately not automatic without a file: the only cheap in-container proof
