@@ -31,7 +31,8 @@
 #                   token and no clean tree. `git pull` CANNOT answer this —
 #                   it reports on your checkout, never on the image.
 #   --dry-run       print every command, run none of them (the token is never
-#                   printed — it shows as ***)
+#                   printed — it shows as ***). Needs no credential: it warns
+#                   about a missing token rather than refusing to rehearse.
 #   --verify-file   after deploying, sha256 this repo-relative file inside the
 #                   container and compare against local. Pass a file this
 #                   deploy actually CHANGED — an unchanged file hashes the same
@@ -138,13 +139,27 @@ fi
 # so omitting it fails the whole submit with "key in the template
 # _GITHUB_TOKEN is not matched in the substitution data" — after uploading
 # ~200 MiB of context. Check first, fail in a second instead of a minute.
+#
+# A --dry-run builds nothing and logs in to nothing — it prints the token as
+# *** and never reads the value — so requiring a valid credential to REHEARSE
+# a deploy made the flag useless exactly when it is most wanted: checking what
+# the script would do from a machine that has no token to hand. Warn and carry
+# on instead, so the rehearsal still reports the real blocker.
 GHCR_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
 if [ -z "$GHCR_TOKEN" ]; then
-  echo "✗ No GitHub token in \$GHCR_TOKEN or \$GITHUB_TOKEN." >&2
-  echo "  cloudbuild.yaml logs in to ghcr.io with it; the build cannot start." >&2
-  echo "  Set it with a LEADING SPACE so it stays out of shell history:" >&2
-  echo "      export GHCR_TOKEN=ghp_..." >&2
-  exit 1
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "⚠ No GitHub token in \$GHCR_TOKEN or \$GITHUB_TOKEN."
+    echo "  Fine for --dry-run, but a real run stops here. Set it with a"
+    echo "  LEADING SPACE so it stays out of shell history:"
+    echo "      export GHCR_TOKEN=ghp_..."
+    echo
+  else
+    echo "✗ No GitHub token in \$GHCR_TOKEN or \$GITHUB_TOKEN." >&2
+    echo "  cloudbuild.yaml logs in to ghcr.io with it; the build cannot start." >&2
+    echo "  Set it with a LEADING SPACE so it stays out of shell history:" >&2
+    echo "      export GHCR_TOKEN=ghp_..." >&2
+    exit 1
+  fi
 fi
 
 # Presence is not validity, and the difference costs a whole build. A revoked
@@ -164,7 +179,9 @@ fi
 # stale owner would pass while the build still failed.
 GHCR_REPO="${IMAGE#ghcr.io/}"
 GHCR_USER="${GHCR_REPO%%/*}"
-if command -v curl >/dev/null 2>&1; then
+# Skipped on --dry-run: with no token there is nothing to validate, and probing
+# a credential over the network is not part of rehearsing a command.
+if [ "$DRY_RUN" -eq 0 ] && command -v curl >/dev/null 2>&1; then
   if ! curl -fsS --max-time 15 -u "$GHCR_USER:$GHCR_TOKEN" \
         "https://ghcr.io/token?service=ghcr.io&scope=repository:${GHCR_REPO}:pull,push" \
         2>/dev/null | grep -q '"token"'; then
@@ -224,14 +241,14 @@ echo
 # Never widen --format to include substitutions: _GITHUB_TOKEN is stored in
 # them in clear, and printing it here would leak it into the terminal and any
 # pasted log. Filtering on a substitution does not print it; formatting does.
-if [ "$DRY_RUN" -eq 0 ] && command -v gcloud >/dev/null 2>&1; then
+if command -v gcloud >/dev/null 2>&1; then
   if [ -n "$(gcloud builds list --limit=1 \
         --filter="substitutions._COMMIT_SHA=$SHA AND status=SUCCESS" \
         --format="value(id)" 2>/dev/null)" ]; then
     echo "⚠ $TAG has been built before — this commit is already published." >&2
     echo "  Re-pointing the service at the same tag changes no spec, so Zeabur" >&2
     echo "  will NOT roll out. If you need new code live, make a commit." >&2
-    if [ "$ASSUME_YES" -eq 0 ]; then
+    if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
       read -r -p "  Continue anyway? [y/N] " reply
       [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
     fi
