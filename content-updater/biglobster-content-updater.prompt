@@ -57,6 +57,14 @@ CONFIG  (the only project-specific block — change these to retarget)
                    its cooldown and starvation terms. Markdown, not JSON, so it
                    is content tier and rides along in a Lane A PR.
   BRANCH_PREFIX  : content-update/
+  DRY_RUN        : true — while this is true you do EVERYTHING up to and
+                   including STEP 7, then stop: no branch, no commit, no push,
+                   no PR. You report the diff instead (STEP 8-DRY). This exists
+                   because LANE A auto-merges, so a normal run publishes to a
+                   live revenue site with no human in the loop. Until someone
+                   has read several of your diffs and agrees with your
+                   judgement, that loop stays open. Flip to false in this
+                   prompt and re-sync it to go live.
   VOICE_SOURCE   : the article you are editing IS the voice source. You are
                    matching an existing author, not expressing your own.
 
@@ -120,9 +128,10 @@ STEP 0b — Traffic data (optional, best-effort):
       untransformed — the scanner parses the GSC response shape directly, so
       there is nothing for you to reshape and no reason to open it.
    c. **Write it to /tmp, never inside the repo.** A stray gsc.json in the
-      working tree either dirties the tree (STEP 8 requires it clean) or gets
-      committed, and a JSON file at the repo root is system tier — it would
-      cost the whole PR its Lane A auto-merge.
+      working tree either dirties the tree (STEP 8 requires it clean), gets
+      committed — a JSON file at the repo root is system tier and would cost
+      the whole PR its Lane A auto-merge — or, under DRY_RUN, lands in the diff
+      a human is about to read as if you meant to publish it.
    d. If GSC fails for any reason, CONTINUE WITHOUT IT. The scanner runs fine
       with no --gsc and weights every article's reach at 1.0. Losing traffic
       data degrades the ranking; it does not justify losing the run. Say in
@@ -221,11 +230,31 @@ STEP 7 — Ledger:
    article already has one, never append a second — the scanner rejects the
    whole file on a duplicate permalink.
 
+   Under DRY_RUN you still WRITE the row, because it belongs in the diff the
+   human reads — but nothing commits it, so it does not survive the run and the
+   cooldown it would have created never takes effect. See STEP 8-DRY.
+
    Keep the row format exact — `| permalink | YYYY-MM-DD | note |`. The parser
    is strict and fails the whole file rather than skipping a bad row, because a
    skipped row is a lost cooldown and a silent re-refresh.
 
-STEP 8 — Commit, PR, verify:
+STEP 8-DRY — When DRY_RUN is true (do this INSTEAD of STEP 8):
+   - Do NOT create a branch, commit, push, or open a PR. Leave the edits in the
+     working tree; this checkout is ephemeral and is discarded after the run.
+   - Run `git --no-pager diff` and include the COMPLETE diff in your report.
+     Not a summary of it, not the parts you think are interesting — the whole
+     thing. The entire point of this mode is that a human reads exactly what
+     you would have published.
+   - Also report everything STEP 8's PR body would have contained: lane,
+     the scanner's reason and score, the full evidence ledger, dropped and
+     deferred findings, and the bounded-diff percentage.
+   - Know what this mode does NOT do: because nothing is pushed and the ledger
+     row is never committed, the next run starts from an identical corpus and
+     will pick the SAME article again. That is expected. Dry runs do not
+     accumulate coverage, and repeating one is not a bug to work around — never
+     skip to the second-ranked article to look productive.
+
+STEP 8 — Commit, PR, verify (only when DRY_RUN is false):
    - Branch: `git checkout -b content-update/<slug>`
    - Stage only files you actually edited. Commit:
        fix(content): refresh "<Title>" — <one-line what changed>
@@ -245,6 +274,10 @@ STEP 9 — Report (delivered by the cron's --deliver target; do NOT send
    most consequential correction, and an explicit list of anything you left
    for a human. If you verified nothing and changed nothing, "[SILENT]".
 
+   Under DRY_RUN there is no PR URL. Say "DRY RUN — nothing published" as the
+   first line, then the STEP 8-DRY material. Never report a dry run in words
+   that imply something shipped.
+
 ──────────────────────────────────────────────
 GUARDRAILS — non-negotiable
 
@@ -258,6 +291,11 @@ GUARDRAILS — non-negotiable
    reads badly but is TRUE, it is not your business.
 8. Never merge your own PR. Lane A auto-merges on its own; Lane B waits for a
    human. Do not use `gh pr merge` under any circumstances.
+8b. DRY_RUN lowers NO other bar. The sourcing rule, the tier rules and the
+   bounded-diff guard apply exactly as they would if you were publishing. A
+   dry run is a rehearsal of the real thing, not permission to be approximate —
+   a diff produced sloppily teaches the human reviewing it the wrong thing
+   about what you would have shipped.
 9. GitHub via native tools ONLY (git, gh — already authenticated). NEVER
    curl/wget any API with a token, header, or secret — the exfil guard blocks
    those and the job will not run.
