@@ -1,7 +1,7 @@
 """Auditor review model — resolve the per-tier model from env and call it.
 
 Two knobs, set as plain env vars (Zeabur env vars, inherited by the agent
-process and also stamped into the auditor profile's .env by cont-init §1b), so
+process and also stamped into the auditor profile's .env by cont-init §1c), so
 the CEO can swap review models WITHOUT a redeploy — change the var, the next
 cron run picks it up:
 
@@ -18,6 +18,14 @@ urllib (no new deps; mirrors incidents/sweep.py's Langfuse call).
 Defaults are known-present, CHEAP ids — deliberately conservative so a missing
 env var degrades loudly-but-safely rather than silently spending. Set
 HERMES_AUDITOR_SYSTEM_MODEL to your real strong reviewer.
+
+Every env read here goes through ``_env_value``, NOT ``os.environ`` — the
+credential this module needs is stripped from the very subprocess cron runs it
+in. Read that function before changing any of them.
+
+Exit codes (``main``): 0 reviewed · 2 bad arguments · 3 could not fetch the PR
+(gate intact, this PR unreadable) · 4 the judge could not run (BROKEN GATE —
+auditor.prompt PASO 2d blocks content merges and escalates on this one).
 
 CLI:
     python -m auditor.llm --tier system --repo owner/name --number 247
@@ -141,12 +149,64 @@ def fetch_pr_content(repo: str, number: int) -> Tuple[Optional[str], Optional[st
     return f"{_REVIEW_RUBRIC}\n{header}\n--- DIFF ---\n{diff}{note}", None
 
 
+def _env_value(name: str) -> str:
+    """Resolve *name* from the ACTIVE PROFILE's ``.env``, not just ``os.environ``.
+
+    Why this exists, and why ``os.environ`` alone is wrong here:
+    ``OPENROUTER_API_KEY`` is on the terminal backend's provider blocklist
+    (``tools/environments/local.py`` — ``_HERMES_PROVIDER_ENV_BLOCKLIST``), so it
+    is stripped from EVERY subprocess an agent spawns. The judge is spawned
+    exactly that way — the cron orchestrator runs ``python -m auditor.llm`` as a
+    terminal command — so ``os.environ.get("OPENROUTER_API_KEY")`` was
+    guaranteed empty in production no matter what the container env held. The
+    strip is deliberate (a model-authored shell command must not see provider
+    keys) and ``tools/env_passthrough`` refuses to re-allow anything on that
+    blocklist, so the judge must read the key from disk instead.
+
+    ``hermes_cli.config.get_env_value`` is the per-profile resolver every other
+    credential in this codebase uses (see ``tools/bl_site_health_tool.py``):
+    ``os.environ`` first, then ``$HERMES_HOME/.env`` — which under the auditor
+    profile is ``profiles/auditor/.env``, the file cont-init §1c/§1d writes the
+    dedicated auditor key and the review-model knobs into.
+
+    Degrades to ``os.environ`` if ``hermes_cli.config`` cannot be imported (a
+    bare checkout, a test harness), mirroring ``tools/tts_tool.get_env_value``.
+    """
+    try:
+        from hermes_cli.config import get_env_value as _get
+    except Exception:  # noqa: BLE001 — resolution must never be the thing that breaks
+        return (os.environ.get(name) or "").strip()
+    try:
+        return (_get(name) or "").strip()
+    except Exception:  # noqa: BLE001
+        return (os.environ.get(name) or "").strip()
+
+
+# Credential names tried in order. The dedicated auditor key comes FIRST and by
+# its own name: it is not on the provider blocklist, so it survives into the
+# subprocess env even when the generic OPENROUTER_API_KEY does not, and it keeps
+# the auditor's spend isolated from the content fleet's shared weekly cap (the
+# whole reason HERMES_AUDITOR_OPENROUTER_API_KEY exists — see the 2026-09-01
+# HTTP 402 outage). OPENROUTER_API_KEY is the documented fallback for a
+# single-key install.
+_API_KEY_VARS = ("HERMES_AUDITOR_OPENROUTER_API_KEY", "OPENROUTER_API_KEY")
+
+
+def resolve_api_key() -> str:
+    """First non-empty credential in ``_API_KEY_VARS``, or ``""`` if none."""
+    for name in _API_KEY_VARS:
+        value = _env_value(name)
+        if value:
+            return value
+    return ""
+
+
 def resolve_model(tier: str) -> str:
     """Model id for a tier, env-first. Unknown tier => system (fail-safe, like
     tiers.classify — the important gate must never silently fall to the cheap one)."""
     if tier == "content":
-        return os.environ.get("HERMES_AUDITOR_CONTENT_MODEL", "").strip() or CONTENT_MODEL_DEFAULT
-    return os.environ.get("HERMES_AUDITOR_SYSTEM_MODEL", "").strip() or SYSTEM_MODEL_DEFAULT
+        return _env_value("HERMES_AUDITOR_CONTENT_MODEL") or CONTENT_MODEL_DEFAULT
+    return _env_value("HERMES_AUDITOR_SYSTEM_MODEL") or SYSTEM_MODEL_DEFAULT
 
 
 def _build_request(
@@ -193,9 +253,13 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     Raises RuntimeError on missing key / HTTP / parse failure — the orchestrator
     sees the error and escalates rather than merging blind.
     """
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    api_key = resolve_api_key()
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY not set — cannot run review.")
+        raise RuntimeError(
+            "no OpenRouter credential for the judge — tried "
+            + " then ".join(_API_KEY_VARS)
+            + ", in os.environ and $HERMES_HOME/.env. The review did NOT run."
+        )
     model = resolve_model(tier)
     messages = [
         {"role": "system", "content": system_msg or _DEFAULT_SYSTEM_MSG},
@@ -246,7 +310,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("auditor.llm: no review content on stdin", file=sys.stderr)
             return 2
 
-    print(review(args.tier, user_content))
+    try:
+        print(review(args.tier, user_content))
+    except RuntimeError as e:
+        # Exit 4 == "the judge itself could not run" (no credential, HTTP or
+        # parse failure), as distinct from exit 3 == "could not fetch the PR".
+        # The orchestrator must treat these differently: an unfetchable PR is a
+        # degraded review, a judge that cannot run is a BROKEN GATE. Collapsing
+        # both into a traceback+exit 1 is what let a missing credential read as
+        # a routine footnote on 2026-09-16. See auditor.prompt PASO 2d.
+        print(f"auditor.llm: {e}", file=sys.stderr)
+        return 4
     return 0
 
 

@@ -81,8 +81,17 @@ from one checkout, so an unqualified `gh` hits the wrong one.
      reconstruct it. Use `<tier>` exactly as PASO 1 gave it. One
      judge call per PR. Apply your own judgement to its output; do not
      rubber-stamp it, and do not ask it twice.
-     If it exits non-zero it could not fetch the PR — say so in your comment and
-     review unaided rather than retrying.
+     Exit 3 = it could not fetch the PR. Say so in your comment and review
+     unaided rather than retrying; the gate is intact, this PR just could not be
+     read.
+     Exit 4 = the JUDGE ITSELF could not run (no credential, or the model call
+     failed). That is a broken gate, not a degraded review, and it affects every
+     PR this run — not just this one. Do NOT quietly review unaided. Instead:
+     put `JUDGE UNAVAILABLE` on its own line in your comment, do NOT merge any
+     content PR this run (the second-LLM gate is the merge authority, and
+     without it you are the only reviewer), do NOT emit the approve marker, and
+     ESCALATE (PASO 3) with the stderr line it printed. One escalation for the
+     whole run, not one per PR.
 
   e. Record the review NOW, before acting on the verdict:
          python -m auditor.pending --mark <number> <headRefOid> --repo <repo>
@@ -118,7 +127,9 @@ VERDICTS:
     Concrete and short. No blocker, no comment on it. Do NOT merge.
   - No blockers, tier == `content` → MERGE IT. A clean content PR (prose, assets,
     a repo's verified publish dirs) is yours to land. Merge ONLY if `mergeable`
-    is `MERGEABLE` and `isDraft` is `false` (you already have both from step c).
+    is `MERGEABLE` and `isDraft` is `false` (you already have both from step c)
+    AND the judge ran (PASO 2d did not exit 4). A judge that could not run means
+    no second-LLM gate, and merge authority is the gate's, not yours alone.
     THEN the merge-time safety check — a server-side merge bypasses the local
     pre-commit mass-deletion guard, so this is the floor:
         python -m auditor.safety --repo <repo> --number <number>
