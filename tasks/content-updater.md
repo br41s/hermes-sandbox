@@ -428,14 +428,58 @@ where being wrong actually costs someone money, and grant deadlines really do mo
 Do not re-tune the weights against this run. The ranking changes character in
 October (S2) and again in January (S1). Tune then, with real data.
 
+## Wiring it up
+
+`hermes cron create` does **not** expose `enabled_toolsets` or `prompt_source`,
+so the job goes through the same `cron.jobs.create_job()` API that
+`scripts/provision_bl_client.py:632` uses:
+
+```python
+from cron.jobs import create_job
+from pathlib import Path
+
+job = create_job(
+    prompt=Path("<hermes-sandbox clone>/content-updater/biglobster-content-updater.prompt").read_text(encoding="utf-8"),
+    schedule="<a slot no other profile/workdir job occupies>",
+    name="Content Updater — BigLobster",
+    deliver="telegram",
+    profile="biglobster",
+    workdir="<the biglobster clone>",
+    prompt_source="content-updater/biglobster-content-updater.prompt",
+    enabled_toolsets=["file", "terminal", "web", "skills", "todo", "gsc"],
+)
+```
+
+Run it as `hermes`, never root — root flips `jobs.json` ownership.
+
+Four things that will bite otherwise:
+
+- **The prompt and the workdir are in DIFFERENT repos.** `workdir` is the
+  biglobster clone; `prompt_source` is a path inside hermes-sandbox. A later
+  `hermes cron sync-prompt <job_id> --prompt-source …` therefore has to run from
+  the *hermes-sandbox* clone, because that flag resolves relative to cwd.
+- **There is no `§6d` for this prompt.** The boot-time resync at
+  `docker/cont-init.d/03-biglobster-config:1297` is hardcoded to the auditor
+  (`job.get("profile") == "auditor"`). Nothing propagates this one automatically,
+  so a prompt change reaches the live job only via an explicit `sync-prompt`.
+  That also means a deploy is NOT required for a prompt-only change here.
+- **Naming `gsc` makes the MCP list an allowlist.** Per
+  `cron/scheduler.py:181`, a per-job `enabled_toolsets` that names no MCP server
+  gets every globally-enabled one unioned in; naming one restricts it to exactly
+  that. Listing `gsc` gives this job GSC and no other MCP server, which is
+  intended.
+- **Pick the schedule against the other jobs.** Every job setting `profile` or
+  `workdir` runs on a single-thread sequential pool, so this one blocks all the
+  others while it runs, and a queued job is indistinguishable from a dead one.
+  `hermes cron list` shows what is already scheduled.
+
 ## Next
 
-1. ~~Decide the ledger tiering question~~ — DONE, Markdown ledger. One manual
-   step left: `git rm --cached content-updater-ledger.json` on the branch (the
-   orphaned JSON from the first commit; deleting files is a human action here).
-2. Wire GSC clicks into the scanner (`--gsc`), BigLobster-only.
-3. Push the scanner branch and open its PR (system tier — human merge).
-4. Create the cron job on the biglobster profile: git workdir, daily,
-   one article per run.
-5. Dry-run on a branch and read the first diffs by hand before letting Lane A
-   auto-merge anything.
+1. ~~Ledger tiering~~ — DONE, Markdown ledger.
+2. ~~Wire GSC clicks into the scanner~~ — DONE, `--gsc` takes the raw response.
+3. ~~Scanner PR~~ — DONE, merged.
+4. Merge this PR, then create the cron job (above).
+5. First run with `DRY_RUN: true` — read the diff by hand. Note that consecutive
+   dry runs re-pick the SAME article, because nothing is pushed and the ledger
+   row never commits.
+6. Flip `DRY_RUN` to false and `sync-prompt` once the diffs look right.
