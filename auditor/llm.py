@@ -194,11 +194,24 @@ _API_KEY_VARS = ("HERMES_AUDITOR_OPENROUTER_API_KEY", "OPENROUTER_API_KEY")
 
 def resolve_api_key() -> str:
     """First non-empty credential in ``_API_KEY_VARS``, or ``""`` if none."""
+    key, _ = resolve_api_key_source()
+    return key
+
+
+def resolve_api_key_source() -> tuple:
+    """``(key, var_name)`` — which variable actually supplied the credential.
+
+    The name matters for diagnosis: ``OPENROUTER_API_KEY`` is on the subprocess
+    env blocklist (tools/environments/local.py), so a judge resolving from THAT
+    name is reading the profile ``.env`` and would find nothing if it were ever
+    run as a bare agent subprocess. Resolving from the dedicated name is the
+    healthy path. ``("", "")`` when nothing resolves.
+    """
     for name in _API_KEY_VARS:
         value = _env_value(name)
         if value:
-            return value
-    return ""
+            return value, name
+    return "", ""
 
 
 def resolve_model(tier: str) -> str:
@@ -320,12 +333,40 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--tier", choices=["system", "content"], required=True)
     ap.add_argument("--show-model", action="store_true",
                     help="print the resolved model id and exit (verify env vars took effect)")
+    ap.add_argument("--check", action="store_true",
+                    help="report whether the judge COULD run (credential + model) and exit "
+                         "0/4, without calling the model. Never prints the credential.")
     ap.add_argument("--repo", help="owner/name — fetch the PR's diff instead of reading stdin")
     ap.add_argument("--number", type=int, help="PR number; requires --repo")
     args = ap.parse_args(argv)
 
     if args.show_model:
         print(resolve_model(args.tier))
+        return 0
+
+    if args.check:
+        # A full review is an LLM round-trip with a 120s timeout, which outlives
+        # the Zeabur exec gateway — it answers 504 and tells you nothing. This
+        # resolves the credential and the model and returns in milliseconds, so
+        # "is the gate able to run at all" is answerable from a shell.
+        #
+        # Prints the VARIABLE NAME and length, never the value: keys have leaked
+        # into transcripts in this repo before.
+        key, source = resolve_api_key_source()
+        model = resolve_model(args.tier)
+        print(f"tier:       {args.tier}")
+        print(f"model:      {model}")
+        if not key:
+            print("credential: NOT RESOLVED — tried " + ", ".join(_API_KEY_VARS)
+                  + " in os.environ and $HERMES_HOME/.env")
+            print("result:     FAIL — the judge cannot run; reviews would be unaided")
+            return 4
+        print(f"credential: resolved from {source} (len {len(key)})")
+        if source == "OPENROUTER_API_KEY":
+            print("note:       resolved from the SHARED key, which is on the subprocess "
+                  "env blocklist — this works only because it came from the profile .env. "
+                  "Set HERMES_AUDITOR_OPENROUTER_API_KEY to isolate auditor spend.")
+        print("result:     OK — the judge can run")
         return 0
 
     if bool(args.repo) != (args.number is not None):

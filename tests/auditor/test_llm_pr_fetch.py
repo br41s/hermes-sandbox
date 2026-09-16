@@ -201,3 +201,60 @@ def test_prompt_branches_on_the_judge_exit_codes():
     text = PROMPT.read_text(encoding="utf-8")
     assert "Exit 4" in text and "JUDGE UNAVAILABLE" in text, (
         "PASO 2d no longer tells the agent that a dead judge is a broken gate")
+
+
+class TestCheckFlag:
+    """`--check` answers 'can the gate run at all' without an LLM round-trip.
+
+    A real review is a model call with a 120s timeout, which outlives the Zeabur
+    exec gateway — it answers 504 and tells you nothing about the judge. That is
+    how the credential outage stayed unverifiable from a shell.
+    """
+
+    def _run(self, monkeypatch, capsys, env):
+        import auditor.llm as llm
+
+        monkeypatch.setattr(llm, "_env_value", lambda name: env.get(name, ""))
+        monkeypatch.setattr(llm, "resolve_model", lambda tier: "test/model")
+        code = llm.main(["--tier", "content", "--check"])
+        return code, capsys.readouterr().out
+
+    def test_exit_0_when_the_dedicated_key_resolves(self, monkeypatch, capsys):
+        code, out = self._run(
+            monkeypatch, capsys, {"HERMES_AUDITOR_OPENROUTER_API_KEY": "sk-dedicated"}
+        )
+        assert code == 0
+        assert "HERMES_AUDITOR_OPENROUTER_API_KEY" in out
+        assert "OK" in out
+
+    def test_exit_4_when_nothing_resolves(self, monkeypatch, capsys):
+        code, out = self._run(monkeypatch, capsys, {})
+        assert code == 4, "exit 4 is the agreed 'judge cannot run' code"
+        assert "NOT RESOLVED" in out
+
+    def test_never_prints_the_credential(self, monkeypatch, capsys):
+        secret = "sk-do-not-print-me-12345"
+        code, out = self._run(
+            monkeypatch, capsys, {"HERMES_AUDITOR_OPENROUTER_API_KEY": secret}
+        )
+        assert code == 0
+        assert secret not in out, "the credential must never reach a transcript"
+        assert f"len {len(secret)}" in out
+
+    def test_shared_key_resolves_but_is_flagged(self, monkeypatch, capsys):
+        # Works, but warns: that name is on the subprocess env blocklist, so it
+        # only resolved because it came from the profile .env.
+        code, out = self._run(monkeypatch, capsys, {"OPENROUTER_API_KEY": "sk-shared"})
+        assert code == 0
+        assert "blocklist" in out
+
+    def test_check_makes_no_model_call(self, monkeypatch, capsys):
+        import auditor.llm as llm
+
+        def _boom(*a, **k):
+            raise AssertionError("--check must not call the model")
+
+        monkeypatch.setattr(llm, "_build_request", _boom)
+        monkeypatch.setattr(llm, "_env_value", lambda n: "sk-x" if "OPENROUTER" in n else "")
+        monkeypatch.setattr(llm, "resolve_model", lambda tier: "test/model")
+        assert llm.main(["--tier", "content", "--check"]) == 0

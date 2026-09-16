@@ -85,7 +85,9 @@ from one checkout, so an unqualified `gh` hits the wrong one.
      unaided rather than retrying; the gate is intact, this PR just could not be
      read.
      Exit 4 = the JUDGE ITSELF could not run (no credential, or the model call
-     failed). That is a broken gate, not a degraded review, and it affects every
+     failed). `python -m auditor.llm --tier <tier> --check` answers the same
+     question in milliseconds without calling the model, if you need to confirm
+     it before escalating. That is a broken gate, not a degraded review, and it affects every
      PR this run — not just this one. Do NOT quietly review unaided. Instead:
      put `JUDGE UNAVAILABLE` on its own line in your comment, do NOT merge any
      content PR this run (the second-LLM gate is the merge authority, and
