@@ -108,3 +108,96 @@ def test_oversized_diff_is_truncated_and_says_so(monkeypatch):
     assert err is None
     assert "TRUNCATED" in text, "silent truncation would have the judge grade a fragment"
     assert len(text) < len(big) + 5000
+
+
+# --- Credential resolution (2026-09-16 outage) -------------------------------
+#
+# The judge read OPENROUTER_API_KEY straight from os.environ. That variable is on
+# the terminal backend's provider blocklist, so it is stripped from EVERY
+# subprocess an agent spawns — and the cron orchestrator runs the judge as
+# exactly such a subprocess. The key was therefore guaranteed absent no matter
+# what the container env held, and the orchestrator degraded to an unaided
+# review with a one-line footnote. These lock the resolution path and the loud
+# exit code.
+
+def test_openrouter_key_is_stripped_from_agent_subprocesses():
+    """The premise of the bug, asserted against the real blocklist.
+
+    If this ever fails, the strip was relaxed upstream and the .env fallback
+    below stops being load-bearing — but it must still not regress to a bare
+    os.environ read, so the other tests here stay valid either way.
+    """
+    from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
+    assert "OPENROUTER_API_KEY" in _HERMES_PROVIDER_ENV_BLOCKLIST
+    # The dedicated auditor key is NOT blocklisted — that is why it is tried
+    # first: it survives into the subprocess env on its own name.
+    assert "HERMES_AUDITOR_OPENROUTER_API_KEY" not in _HERMES_PROVIDER_ENV_BLOCKLIST
+
+
+def test_key_resolves_from_profile_dotenv_when_env_is_stripped(monkeypatch, tmp_path):
+    """os.environ stripped + profile .env populated => the judge still runs."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_AUDITOR_OPENROUTER_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-from-profile-dotenv\n",
+                                   encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from hermes_cli import config as hermes_config
+    hermes_config.invalidate_env_cache()
+    try:
+        assert llm.resolve_api_key() == "sk-from-profile-dotenv"
+    finally:
+        hermes_config.invalidate_env_cache()
+
+
+def test_dedicated_auditor_key_wins_over_the_shared_one(monkeypatch):
+    """Spend isolation: the auditor's own key must beat the fleet's shared key.
+
+    The shared key hitting its weekly cap 402'd the whole auditor cron for a day
+    on 2026-09-01; HERMES_AUDITOR_OPENROUTER_API_KEY exists to prevent that, so
+    it must be preferred wherever both are visible.
+    """
+    seen = {"HERMES_AUDITOR_OPENROUTER_API_KEY": "sk-dedicated",
+            "OPENROUTER_API_KEY": "sk-shared"}
+    monkeypatch.setattr(llm, "_env_value", lambda name: seen.get(name, ""))
+    assert llm.resolve_api_key() == "sk-dedicated"
+
+
+def test_shared_key_is_the_documented_fallback(monkeypatch):
+    seen = {"OPENROUTER_API_KEY": "sk-shared"}
+    monkeypatch.setattr(llm, "_env_value", lambda name: seen.get(name, ""))
+    assert llm.resolve_api_key() == "sk-shared"
+
+
+def test_no_credential_exits_4_not_a_traceback(monkeypatch):
+    """Exit 4 is 'the gate is broken', distinct from exit 3 'could not fetch'.
+
+    The orchestrator branches on this (auditor.prompt PASO 2d): exit 3 degrades
+    to an unaided review, exit 4 blocks content merges and escalates.
+    """
+    monkeypatch.setattr(llm, "_gh", _fake_gh({"view": META, "diff": "diff --git a/x b/x\n+1\n"}))
+    monkeypatch.setattr(llm, "_env_value", lambda _name: "")
+    assert llm.main(["--tier", "system", "--repo", "o/n", "--number", "5"]) == 4
+
+
+def test_model_knobs_also_resolve_through_the_profile_dotenv(monkeypatch, tmp_path):
+    """cont-init §1c stamps the model knobs into the auditor .env for exactly
+    this reason. os.environ still wins when set."""
+    monkeypatch.delenv("HERMES_AUDITOR_SYSTEM_MODEL", raising=False)
+    monkeypatch.delenv("HERMES_AUDITOR_CONTENT_MODEL", raising=False)
+    (tmp_path / ".env").write_text("HERMES_AUDITOR_SYSTEM_MODEL=vendor/from-dotenv\n",
+                                   encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    from hermes_cli import config as hermes_config
+    hermes_config.invalidate_env_cache()
+    try:
+        assert llm.resolve_model("system") == "vendor/from-dotenv"
+    finally:
+        hermes_config.invalidate_env_cache()
+
+
+def test_prompt_branches_on_the_judge_exit_codes():
+    """A silent degrade is what hid this for months — the prompt must
+    distinguish 'could not fetch the PR' from 'the judge could not run'."""
+    text = PROMPT.read_text(encoding="utf-8")
+    assert "Exit 4" in text and "JUDGE UNAVAILABLE" in text, (
+        "PASO 2d no longer tells the agent that a dead judge is a broken gate")

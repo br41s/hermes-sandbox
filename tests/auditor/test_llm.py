@@ -37,11 +37,15 @@ def test_unknown_tier_uses_system(monkeypatch):
 
 
 def test_missing_api_key_raises(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Patch the resolver, not just os.environ: the key now also resolves from
+    # $HERMES_HOME/.env, so a delenv alone would false-pass on any machine that
+    # happens to have one.
+    monkeypatch.setattr(llm, "_env_value", lambda _name: "")
     try:
         llm.review("system", "review this diff")
     except RuntimeError as e:
         assert "OPENROUTER_API_KEY" in str(e)
+        assert "did NOT run" in str(e)
     else:
         raise AssertionError("expected RuntimeError when API key is absent")
 

@@ -102,9 +102,9 @@ class TestStaleDetection:
     def test_stall_is_reported_once_then_deduped(self, tmp_path):
         sp = tmp_path / "s.json"
         job = _recurring_job(last_run_ago_hours=3)  # stable last_run_at
-        first = sweep(jobs=[job], langfuse=[], state_path=sp)
+        first = sweep(jobs=[job], langfuse=[], judge_liveness=[], state_path=sp)
         assert "silently stalled" in first
-        assert sweep(jobs=[job], langfuse=[], state_path=sp) == ""
+        assert sweep(jobs=[job], langfuse=[], judge_liveness=[], state_path=sp) == ""
 
     def test_stall_does_not_classify_as_remediable(self):
         # A silent stall must stay a human-handled incident: blindly
@@ -155,41 +155,41 @@ class TestPromptDrift:
 class TestSweepBehaviour:
     def test_clean_first_run_emits_heartbeat(self, tmp_path):
         # No incidents, no prior state -> first run proves it's alive.
-        out = sweep(jobs=[_ok_job()], langfuse=[], state_path=tmp_path / "s.json")
+        out = sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], state_path=tmp_path / "s.json")
         assert "still running" in out
 
     def test_clean_run_after_recent_heartbeat_is_silent(self, tmp_path):
         sp = tmp_path / "s.json"
-        sweep(jobs=[_ok_job()], langfuse=[], state_path=sp)          # emits heartbeat, records ts
-        out = sweep(jobs=[_ok_job()], langfuse=[], state_path=sp)    # within 24h -> silent
+        sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], state_path=sp)          # emits heartbeat, records ts
+        out = sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], state_path=sp)    # within 24h -> silent
         assert out == ""
 
     def test_heartbeat_returns_after_24h_of_silence(self, tmp_path):
         sp = tmp_path / "s.json"
-        sweep(jobs=[_ok_job()], langfuse=[], state_path=sp)
+        sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], state_path=sp)
         later = now_fn() + timedelta(hours=25)
-        out = sweep(jobs=[_ok_job()], langfuse=[], state_path=sp, now=later)
+        out = sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], state_path=sp, now=later)
         assert "still running" in out
 
     def test_incident_is_reported_then_deduped(self, tmp_path):
         sp = tmp_path / "s.json"
         job = _failed_job()  # same record (stable last_run_at) across both sweeps
-        first = sweep(jobs=[job], langfuse=[], state_path=sp)
+        first = sweep(jobs=[job], langfuse=[], judge_liveness=[], state_path=sp)
         assert "Incident" in first and "finview-cron" in first
-        second = sweep(jobs=[job], langfuse=[], state_path=sp)  # same failure, same run
+        second = sweep(jobs=[job], langfuse=[], judge_liveness=[], state_path=sp)  # same failure, same run
         assert second == ""  # deduped, and not yet heartbeat-due
 
     def test_langfuse_incident_is_included(self, tmp_path):
         lf = [Incident(id="trace:abc", kind="langfuse", title="Langfuse error trace abc…",
                        detail="signal: boom", handoff="trace-id abc")]
-        out = sweep(jobs=[_ok_job()], langfuse=lf, state_path=tmp_path / "s.json")
+        out = sweep(jobs=[_ok_job()], langfuse=lf, judge_liveness=[], state_path=tmp_path / "s.json")
         assert "trace-id abc" in out
 
     def test_dry_run_does_not_persist_state(self, tmp_path):
         sp = tmp_path / "s.json"
-        sweep(jobs=[_failed_job()], langfuse=[], state_path=sp, dry_run=True)
+        sweep(jobs=[_failed_job()], langfuse=[], judge_liveness=[], state_path=sp, dry_run=True)
         assert not sp.exists()  # nothing written -> next real run still reports it
-        out = sweep(jobs=[_failed_job()], langfuse=[], state_path=sp)
+        out = sweep(jobs=[_failed_job()], langfuse=[], judge_liveness=[], state_path=sp)
         assert "Incident" in out
 
 
@@ -223,6 +223,6 @@ class TestCheckoutDrift:
         cd = [Incident(id="checkout-drift:biglobster-seo:4", kind="checkout_drift",
                        title="Site checkout 'biglobster-seo' diverged and stopped pulling",
                        detail="ahead: 4", handoff="inspect biglobster-seo before resetting")]
-        out = sweep(jobs=[_ok_job()], langfuse=[], checkout_drift=cd,
+        out = sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], checkout_drift=cd,
                    state_path=tmp_path / "s.json")
         assert "biglobster-seo" in out
