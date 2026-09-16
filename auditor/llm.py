@@ -246,6 +246,40 @@ def _build_request(
     )
 
 
+def _liveness_path() -> "Path":
+    from pathlib import Path  # local: keep module import cost down
+    from hermes_constants import get_hermes_home
+    return Path(get_hermes_home()) / "incidents" / "judge-liveness.json"
+
+
+def record_judge_success(now: Optional[str] = None) -> None:
+    """Stamp the moment the judge last actually produced a verdict.
+
+    This exists because the two obvious alarms — "the judge errored" and "the
+    judge exited non-zero" — are FAILURE detectors, and the judge's real outage
+    produced no failure to detect. It shipped on 2026-06-24 invoked through a
+    pipe the cron approval gate refused, so for twelve weeks it was never
+    invoked at all: nothing raised, nothing exited non-zero, and every content
+    PR auto-merged on the cheap orchestrator model alone.
+
+    Only a LIVENESS signal catches that shape. The incident watcher reads this
+    file and raises when the judge has not SUCCEEDED recently
+    (incidents/sweep.py::judge_liveness_incidents), which is true whether the
+    judge is failing or was simply never called.
+
+    Best-effort: a write failure must never fail a review that did run.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+    try:
+        path = _liveness_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = now or datetime.now(timezone.utc).isoformat()
+        path.write_text(_json.dumps({"last_success_at": stamp}) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
 def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
            timeout: int = 120) -> str:
     """Run a one-shot review at the tier's model. Returns the assistant text.
@@ -274,9 +308,11 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     except Exception as e:  # noqa: BLE001 — surface any failure to the caller
         raise RuntimeError(f"auditor.llm review failed (model={model}): {e}") from e
     try:
-        return payload["choices"][0]["message"]["content"]
+        text = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
         raise RuntimeError(f"auditor.llm: unexpected response shape from {model}: {e}") from e
+    record_judge_success()
+    return text
 
 
 def main(argv: Optional[List[str]] = None) -> int:

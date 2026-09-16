@@ -479,6 +479,74 @@ def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
     return out
 
 
+JUDGE_LIVENESS_HOURS = 48
+
+
+def _judge_liveness_path() -> Path:
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "incidents" / "judge-liveness.json"
+
+
+def judge_liveness_incidents(
+    path: Optional[Path] = None, *, now: Optional[datetime] = None
+) -> List[Incident]:
+    """Raise when the auditor's second-LLM judge has not SUCCEEDED recently.
+
+    This is a liveness check, not an error check, and the distinction is the
+    whole point. The judge shipped on 2026-06-24 wired through a pipe the cron
+    approval gate refused, so it was never invoked at all for twelve weeks:
+    nothing threw, nothing exited non-zero, and every content-tier PR
+    auto-merged on the cheap orchestrator model alone. An error detector had
+    nothing to detect. Only "it has not worked lately" catches that shape.
+
+    ``auditor/llm.py::record_judge_success`` stamps the file on every verdict.
+    A missing file therefore means the judge has never produced one, which is
+    exactly the condition that went unnoticed — so it alerts rather than
+    staying quiet.
+
+    The dedup id carries the last-success stamp, so a NEW stall after a
+    recovery is a new incident rather than being swallowed as already-seen.
+    """
+    path = path or _judge_liveness_path()
+    now = now or datetime.now(timezone.utc)
+
+    last_raw = "never"
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        last_raw = str(rec.get("last_success_at") or "never")
+    except Exception:
+        pass
+
+    if last_raw != "never":
+        last = _parse_iso(last_raw)
+        if last is None:
+            last_raw = "never"
+        else:
+            age_h = (now - last).total_seconds() / 3600.0
+            if age_h < JUDGE_LIVENESS_HOURS:
+                return []
+            detail_age = f"{age_h:.0f}h ago ({last_raw})"
+    if last_raw == "never":
+        detail_age = "never — no successful judge run has ever been recorded"
+
+    return [Incident(
+        id=f"judge_liveness:{last_raw}",
+        kind="judge_liveness",
+        title="Auditor judge has not run — PR reviews are unaided",
+        detail=(
+            f"last successful judge verdict: {detail_age}\n"
+            f"threshold: {JUDGE_LIVENESS_HOURS}h\n"
+            "Every auditor verdict since then is the orchestrator model alone, "
+            "including content-tier PRs that AUTO-MERGE."
+        ),
+        handoff=(
+            "the auditor's second-LLM gate is not running — check "
+            "`python -m auditor.llm --tier content --repo <r> --number <n>`; "
+            "exit 4 means the credential is not resolving"
+        ),
+    )]
+
+
 def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     """Read the site-checkout drift signal and surface each one.
 
@@ -605,7 +673,9 @@ def _reconcile_text(jobs: List[dict], *, now: datetime, dry_run: bool,
 def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           langfuse: Optional[List[Incident]] = None,
           blocked: Optional[List[Incident]] = None,
-          checkout_drift: Optional[List[Incident]] = None, state_path: Optional[Path] = None,
+          checkout_drift: Optional[List[Incident]] = None,
+          judge_liveness: Optional[List[Incident]] = None,
+          state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
     """Run one sweep. Returns the text to deliver ("" = stay silent)."""
@@ -625,12 +695,13 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     lf = langfuse if langfuse is not None else langfuse_error_incidents(now=now)
     bc = blocked if blocked is not None else blocked_commit_incidents()
     cd = checkout_drift if checkout_drift is not None else checkout_drift_incidents()
+    jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
 
     incidents = (cron_failure_incidents(jobs, now=now)
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
-                 + list(lf) + list(bc) + list(cd))
+                 + list(lf) + list(bc) + list(cd) + list(jl))
     new = [i for i in incidents if i.id not in seen]
 
     incident_text = ""
