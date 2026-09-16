@@ -483,3 +483,56 @@ Four things that will bite otherwise:
    dry runs re-pick the SAME article, because nothing is pushed and the ledger
    row never commits.
 6. Flip `DRY_RUN` to false and `sync-prompt` once the diffs look right.
+
+---
+
+## First live dry runs — 2026-09-16
+
+Job `4a0ebe8779ca`, profile `biglobster`, `0 8 * * *`, workdir
+`/opt/data/profiles/biglobster/workspace/biglobster`.
+
+**Run 1** died on `web_search`: Exa returned 503 "temporarily over capacity",
+the agent retried 5 times in ~2 seconds with no backoff, and the
+`same_tool_failure_halt` guardrail stopped it. With no sources it changed
+nothing and said so — **the sourcing rule working under real conditions**, which
+is the first thing you would want to see fail safely.
+
+**Run 2** completed: `finish_reason=stop`, 28/90 API calls, 26 tool turns,
+`last_status=ok`. It edited exactly three files — the ES article, its EN
+counterpart (a pair whose slugs differ, resolved through langmap), and the
+ledger. Corrected `46.000` → `46.230` with a five-year delta, fixed an
+attribution, mirrored all of it in English, left `permalink` and `date`
+untouched, set `dateModified`, and came in at a **1.1–1.3% bounded diff**. It
+verified 0 occurrences of the old figures remained, and ran `npm ci` +
+`npm run build` to prove the Eleventy build stayed green — neither of which the
+prompt asked for.
+
+### Four defects the runs exposed, all now fixed
+
+1. **GSC data never reached the scanner.** STEP 0b said to write
+   `/tmp/gsc.json`; `/tmp` is outside `HERMES_WRITE_SAFE_ROOT` (/opt/data), so
+   `write_file` denied it, no file existed, no `--gsc` was passed, and every
+   article ranked at reach 1.0. The MCP call itself worked fine — the data just
+   never arrived. Now written under `$HERMES_HOME/tmp/`, and the agent is told
+   to CHECK the scanner's GSC line rather than let a silent no-op pass.
+2. **`python -c` / `node -e` are blocked in cron** and the prompt never said so,
+   so the agent burned iterations discovering it on every run. Now stated up
+   front, along with the fact that the checkout ships without `node_modules`.
+3. **The dry-run diff did not survive.** The ephemeral checkout is deleted after
+   the run and the delivery channel truncates, so the one artefact the mode
+   exists to produce was lost. DRY_RUN now **pushes the branch and opens no PR**:
+   permanent, reviewable in the GitHub UI, and unpublishable, because auto-merge
+   acts on PRs and there is none.
+4. **`web_search` has no backoff.** Exa's own 503 says to retry with exponential
+   backoff; the agent fired five calls in two seconds instead. Not specific to
+   this agent — it affects every agent that searches. Not fixed here.
+
+### Still open
+
+- Langfuse spans throw `TypeError: isinstance() arg 2 must be a type` on every
+  run (`langfuse/_client/client.py:1297` → `opentelemetry/trace/__init__.py:597`),
+  almost certainly from the v4 migration in PR #241. "Exception ignored", so runs
+  survive — but Langfuse is the documented source of truth for agent behaviour,
+  so this compromises the ability to audit any agent, not just this one.
+- The biglobster workspace clone's origin is still `braisntext/biglobster`, the
+  pre-rename username. Works via GitHub's redirect; one of the ~60 stale refs.
