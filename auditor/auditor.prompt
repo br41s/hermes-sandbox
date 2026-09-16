@@ -76,9 +76,9 @@ from one checkout, so an unqualified `gh` hits the wrong one.
          python -m auditor.llm --tier <tier> --repo <repo> --number <number>
      It fetches the PR title, description and diff itself and applies its own
      rubric — you compose nothing and pipe nothing. A pipe into an interpreter is
-     BLOCKED in cron with no human to approve it, so the old
-     `printf ... | python -m auditor.llm` form never ran and the judge was never
-     consulted; do not reconstruct it. Use `<tier>` exactly as PASO 1 gave it. One
+     BLOCKED in cron with no human to approve it, so the earlier piped form of
+     this step never ran at all and the judge was never consulted; do not
+     reconstruct it. Use `<tier>` exactly as PASO 1 gave it. One
      judge call per PR. Apply your own judgement to its output; do not
      rubber-stamp it, and do not ask it twice.
      If it exits non-zero it could not fetch the PR — say so in your comment and

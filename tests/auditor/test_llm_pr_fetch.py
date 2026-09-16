@@ -39,13 +39,17 @@ def test_paso_2d_command_passes_the_cron_security_scanner():
     """The bug in one assertion: the command in the prompt must be allowed."""
     from tools.tirith_security import check_command_security
     text = PROMPT.read_text(encoding="utf-8")
-    cmds = re.findall(r"^\s+(python -m auditor\.llm .*)$", text, re.MULTILINE)
-    assert cmds, "PASO 2d no longer contains an auditor.llm command — update this test"
+    # Match the WHOLE line any auditor.llm invocation sits on, so a reintroduced
+    # `printf ... | python -m auditor.llm` is caught as a pipe rather than slipping
+    # past a regex anchored on `python`.
+    cmds = [ln.strip() for ln in text.splitlines() if "python -m auditor.llm" in ln]
+    assert cmds, "PASO 2d no longer invokes auditor.llm — update this test"
     for cmd in cmds:
         concrete = (cmd.replace("<tier>", "system")
                        .replace("<repo>", "br41s/hermes-sandbox")
                        .replace("<number>", "247"))
-        assert "|" not in concrete, f"PASO 2d reintroduced a pipe: {concrete}"
+        assert "|" not in concrete, (
+            f"PASO 2d pipes into the interpreter again — cron blocks this: {concrete}")
         verdict = check_command_security(concrete).get("action")
         assert verdict == "allow", f"cron would refuse PASO 2d: {verdict} for {concrete}"
 
