@@ -109,8 +109,24 @@ slug — úsalo solo si lo has leído en ESTA misma ejecución:
 - Páginas fijas: `/`, `/quienes-somos`, `/servicios`, `/contacto`, `/blog`,
   `/productos`.
 
-Si `facets` devuelve listas vacías, este cliente no tiene catálogo: entonces un
-enlace a `/productos` es lo correcto y no hay nada más profundo a lo que apuntar.
+**`facets` vacío y `facets` caído no son lo mismo, y confundirlos destroza
+enlaces buenos.** Solo puedes QUITAR profundidad, nunca devolverla: si rebajas
+un `/productos/categoria/papeleria/` a `/productos` porque creías que la
+categoría ya no existe, ninguna ejecución futura lo repara. Por eso, antes de
+dar por muerta una ruta de catálogo:
+
+- **Si la llamada falla** — no responde, da 5xx, o devuelve algo que no puedas
+  parsear — NO trates ninguna ruta profunda como muerta y NO repuntes ningún
+  `/productos/categoria/...`, `/productos/marca/...` ni `/productos/<slug>` que
+  ya esté en el cuerpo. Un 500 pasajero o un resync a medias se te presenta
+  exactamente igual que "el catálogo entero ha desaparecido". Anótalo en el
+  informe, sáltate la parte de catálogo y sigue con el resto.
+- **Si responde 200 con `categories` y `brands` vacíos**, trátalo igual de
+  cauto: puede ser un cliente sin catálogo, pero también un catálogo a medio
+  sincronizar, y desde `facets` no se distinguen. Apuntar a `/productos` un
+  enlace cuyo texto promete catálogo y hoy va a `/servicios` sigue siendo
+  correcto — eso es ganar precisión. Rebajar a `/productos` un enlace profundo
+  que YA existía, no: déjalo y repórtalo.
 
 ### Cómo se repara
 
@@ -135,9 +151,19 @@ enlace a `/productos` es lo correcto y no hay nada más profundo a lo que apunta
 4. Para cada uno, `bl_site_publish(action: "get_post", post_id: <id>)` y lee su
    `content`. Localiza los enlaces Markdown `[texto](RUTA)`.
 5. Por cada enlace mal puesto, decide la RUTA correcta con el criterio de arriba.
-6. `bl_site_publish(action: "update_blog_post", post_id: <id>, content: <el
-   cuerpo completo ya corregido>)`. El artículo sigue publicado: esta acción
-   nunca cambia el estado.
+6. **Antes de escribir, vuelve a leer.** Llama otra vez a
+   `bl_site_publish(action: "get_post", post_id: <id>)` y compara ese
+   `content` con el que leíste en el paso 4. Si difieren aunque sea en un
+   carácter, **NO llames a `update_blog_post`**: otro agente escribió ese
+   cuerpo mientras tú decidías — el Infographic Engineer edita el mismo campo
+   a diario — y tu copia ya está vieja. Como `update_blog_post` reemplaza el
+   cuerpo ENTERO, enviarla ahora borraría lo que el otro acaba de insertar, y
+   eso no se recupera. Anótalo como aviso, deja ese artículo y pasa al
+   siguiente: volverá a tocarle en un barrido posterior.
+7. `bl_site_publish(action: "update_blog_post", post_id: <id>, content: <el
+   cuerpo completo ya corregido>)`, inmediatamente después de la relectura del
+   paso 6 — sin más llamadas ni más análisis en medio. El artículo sigue
+   publicado: esta acción nunca cambia el estado.
 
 **REGLA CRÍTICA — `content` se reemplaza entero.** Reenvía el cuerpo EXACTAMENTE
 igual que lo leíste, con el único cambio de las RUTAS dentro de los paréntesis.
@@ -221,8 +247,10 @@ alguna diga "nada").
 - Artículos revisados: [N]
 - Artículos corregidos: [N] — por cada uno: slug del artículo y, por cada enlace,
   `texto del enlace`: RUTA vieja → RUTA nueva (motivo en ≤8 palabras). O "ninguno"
-- Avisos: [artículo y motivo — p.ej. cuerpo no reproducible intacto, destino sin
-  equivalente claro — una por línea, o "ninguno"]
+- Avisos: [artículo y motivo — p.ej. cuerpo no reproducible intacto, cuerpo
+  cambiado por otro agente entre la lectura y la escritura, `facets` no
+  disponible (rutas de catálogo sin revisar), destino sin equivalente claro —
+  una por línea, o "ninguno"]
 🔀 Redirecciones 404
 - Auto-aplicadas: [N] — [origen → destino (gtin/mpn), una por línea, o "ninguna"]
 - Avisos: [URL y motivo (find_target's `reason`, o el motivo de rechazo de propose/publish), una por línea, o "ninguno"]
