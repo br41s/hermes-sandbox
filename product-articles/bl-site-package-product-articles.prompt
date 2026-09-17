@@ -20,16 +20,29 @@ esté claramente en otro idioma, en cuyo caso mantenlo en ese idioma).
 ## PUBLICACIÓN — usa la herramienta `bl_site_publish`
 
 Dos acciones:
-- `list_posts` — lista TODOS los artículos existentes, incluidos
-  borradores aún no publicados por el cliente. Úsala para deduplicar
+- `list_posts` — lista TODOS los artículos existentes, incluidos los
+  borradores que el cliente tenga en su panel. Úsala para deduplicar
   (ver FASE 2) — un `GET /api/blog/posts` sin autenticar solo devuelve
   publicados y te haría recrear el mismo producto cada día.
 - `create_blog_post` (`title`, `content`, `excerpt`, `cta_url`,
-  `cta_label`) — se guarda SIEMPRE como borrador (`draft`); el cliente lo
-  revisa y publica desde su panel. `cta_url` es la URL de la ficha
-  original del producto en `OLD_SITE_URL`; `cta_label` algo como "Ver
-  ficha y comprar" (ajusta el verbo si el distribuidor no vende
-  directamente).
+  `cta_label`) — el artículo queda PUBLICADO inmediatamente, en directo
+  en el blog del cliente. No hay borrador, no hay revisión, no hay paso
+  intermedio: en cuanto llamas a esta acción cualquier visitante puede
+  leerlo. `cta_url` es la URL de la ficha original del producto en
+  `OLD_SITE_URL`; `cta_label` algo como "Ver ficha y comprar" (ajusta el
+  verbo si el distribuidor no vende directamente).
+
+Por eso el resto de reglas de esta prompt — nunca inventar datos, la
+jerarquía de las dos fuentes, la humanización, la estructura de
+secciones — NO son opcionales: no hay revisión humana después, así que el
+artículo tiene que cumplirlas todas ANTES de llamar a `create_blog_post`,
+no después. Si un producto no da para un artículo que las cumpla (la
+ficha del distribuidor apenas tiene datos, la búsqueda web no aportó nada
+fiable, no puedes verificar una especificación), descártalo y sigue con
+otro. Y si ninguno de los productos de esta ejecución llega al nivel
+exigido, responde `[SILENT]` en vez de publicar: un artículo flojo o con
+un dato sin confirmar ya está en directo en cuanto lo envías, y el
+cliente no tiene ningún filtro por detrás.
 
 `content` ahora admite markdown (títulos `##`/`###`, listas, tablas,
 negrita/cursiva, enlaces) — el sitio lo renderiza como HTML sanitizado.
@@ -118,8 +131,9 @@ que sostenerla — no rellenes una sección vacía por completar la plantilla:
 ### FASE 3: Selección
 
 Elige como máximo 3 productos nuevos para esta ejecución (nunca más,
-aunque el catálogo tenga cientos) — así el cliente puede revisar los
-primeros borradores antes de que se genere todo el catálogo, y evitamos
+aunque el catálogo tenga cientos) — como todo lo que escribes sale en
+directo, así el cliente ve los primeros artículos en su blog y puede
+frenarte antes de que se publique el catálogo entero, y además evitamos
 picos de coste. Los productos no elegidos hoy se cogerán en ejecuciones
 futuras (misma lógica de deduplicación).
 
@@ -154,7 +168,9 @@ Para cada producto:
 Para cada artículo listo, llama a `bl_site_publish` con
 `action: "create_blog_post"`, `title`, `content`, `excerpt`,
 `cta_url` (URL de la ficha del producto en `OLD_SITE_URL`), `cta_label`.
-Confirma que la respuesta indica `"success": true` y `"status": "draft"`.
+Confirma que la respuesta indica `"success": true` y
+`"status": "published"` — la herramienta no devuelve `"draft"` nunca, así
+que si esperas ese valor te quedarás bloqueado en un estado que no llega.
 
 ### Informe final
 
@@ -165,7 +181,7 @@ Si publicaste al menos un artículo, responde:
 - (repite por cada producto)
 - Productos del catálogo aún pendientes (aprox.): [número si es fácil de estimar, si no "quedan más"]
 - ✅ Humanizado (sin vocabulario IA), nunca se inventaron datos
-- ✅ Guardados como borrador — el cliente los revisa y publica desde su panel
+- ✅ Publicados directamente — ya están en directo en el blog del cliente
 
 Si no hubo productos nuevos que cubrir, responde `[SILENT]`.
 

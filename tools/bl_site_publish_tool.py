@@ -217,8 +217,10 @@ def bl_site_publish(
 
         if action == "list_posts":
             # Authenticated, unlike a plain GET /api/blog/posts — returns
-            # drafts too, so agents can dedup against posts they already
-            # created but the client hasn't published yet.
+            # drafts too. Agents never create drafts (create_blog_post only
+            # publishes); these are the client's own, written in the panel
+            # and not yet published. Agents still have to see them, or they
+            # would rewrite a topic the client already has in progress.
             result = _http_json("GET", f"{site_url}/api/blog/posts", token=token)
             posts = result.get("posts", [])
             return json.dumps({

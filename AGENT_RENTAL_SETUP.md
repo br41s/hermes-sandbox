@@ -54,10 +54,15 @@ redirect work its own prompt actually documents.
 **There is no draft step.** `create_blog_post` hardcodes `"status":
 "published"` (`tools/bl_site_publish_tool.py`), so everything these agents
 write is live on the client's public blog the moment the call returns — no
-human reads it first. Note that the Product Article Agent's prompt still tells
-its agent the opposite ("se guarda SIEMPRE como borrador", and to confirm
-`"status": "draft"`, which never comes back). That prompt is wrong and needs
-fixing; the tool's behaviour is the truth.
+human reads it first.
+
+Every prompt that calls it says so, and ties its quality rules to it: since
+nothing catches a bad article afterwards, the rules have to hold *before* the
+call. The daily agents fall back to `[SILENT]`; the two one-shot agents
+(`site-setup`, `onboarding-content`) cannot, so they omit the field or the
+article and declare it in their final report instead. If you edit these
+prompts, keep that framing — a prompt that implies a human reviewer is asking
+its agent for a lower bar than the one production actually needs.
 
 Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
 recurring daily job like the other two. It runs once, scans the client's old
@@ -70,8 +75,8 @@ Product Article Agent is for clients whose real storefront is still a
 distributor-hosted catalog (`--old-site-url`, same flag as onboarding-content)
 that they can't sell from directly (e.g. Shoroban's Grupo Solutex catalog
 pages) — it crawls that catalog for individual product pages, skips ones it's
-already written about (`bl_site_publish(action="list_posts")`, which sees
-drafts too, not just published posts), and writes up to 3 new product
+already written about (`bl_site_publish(action="list_posts")`, which sees the
+client's own drafts too, not just published posts), and writes up to 3 new product
 articles per run (description, specs, usage tutorial, comparison with real
 catalog products, FAQ, CTA button back to the original product page) until
 the catalog is covered, then goes quiet (`[SILENT]`). Needs
