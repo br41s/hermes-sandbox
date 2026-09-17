@@ -258,3 +258,90 @@ class TestCheckFlag:
         monkeypatch.setattr(llm, "_env_value", lambda n: "sk-x" if "OPENROUTER" in n else "")
         monkeypatch.setattr(llm, "resolve_model", lambda tier: "test/model")
         assert llm.main(["--tier", "content", "--check"]) == 0
+
+
+class TestJudgeDeadline:
+    """A hung judge must become a fast, clean exit 4.
+
+    `urlopen(timeout=...)` bounds each socket read, not the request. On
+    br41s/biglobster#526 (2026-09-17) a judge call with `timeout=120` ran 300s,
+    then 590s, and produced no verdict — holding the single-thread cron pool
+    while the auditor waited. Exit 4 already means "gate broken"; these tests
+    pin that a hang reaches it instead of hanging forever.
+    """
+
+    def test_default_deadline(self, monkeypatch):
+        import auditor.llm as llm
+
+        monkeypatch.setattr(llm, "_env_value", lambda n: "")
+        assert llm.judge_deadline_seconds() == llm.JUDGE_DEADLINE_DEFAULT
+
+    def test_deadline_is_configurable(self, monkeypatch):
+        import auditor.llm as llm
+
+        monkeypatch.setattr(
+            llm, "_env_value",
+            lambda n: "45" if n == "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS" else "",
+        )
+        assert llm.judge_deadline_seconds() == 45
+
+    def test_garbage_and_tiny_values_are_floored(self, monkeypatch):
+        import auditor.llm as llm
+
+        monkeypatch.setattr(
+            llm, "_env_value",
+            lambda n: "banana" if n == "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS" else "",
+        )
+        assert llm.judge_deadline_seconds() == llm.JUDGE_DEADLINE_DEFAULT
+        monkeypatch.setattr(
+            llm, "_env_value",
+            lambda n: "1" if n == "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS" else "",
+        )
+        assert llm.judge_deadline_seconds() == 10, "a typo must not disable reviews"
+
+    def test_deadline_fires_on_a_slow_block(self):
+        import time
+
+        import auditor.llm as llm
+
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            with llm.wall_clock_deadline(1, "test block"):
+                time.sleep(5)
+        assert time.monotonic() - started < 4, "it must cut the block short, not wait it out"
+
+    def test_deadline_does_not_fire_on_a_fast_block(self):
+        import auditor.llm as llm
+
+        with llm.wall_clock_deadline(30, "test block"):
+            pass  # must not raise
+
+    def test_alarm_is_cleared_afterwards(self):
+        import signal
+        import time
+
+        import auditor.llm as llm
+
+        with llm.wall_clock_deadline(1, "test block"):
+            pass
+        # A leaked alarm would kill an unrelated later call.
+        assert signal.alarm(0) == 0
+        time.sleep(1.2)  # would have fired by now if it leaked
+
+    def test_a_hung_judge_exits_4(self, monkeypatch, capsys):
+        import time
+
+        import auditor.llm as llm
+
+        monkeypatch.setattr(llm, "fetch_pr_content", lambda r, n: ("diff", None))
+        # Patch the resolver, not the env: judge_deadline_seconds() floors at
+        # 10s, and a test that sleeps for the floor races it.
+        monkeypatch.setattr(llm, "judge_deadline_seconds", lambda: 1)
+
+        def _hang(*a, **k):
+            time.sleep(30)
+
+        monkeypatch.setattr(llm, "review", _hang)
+        code = llm.main(["--tier", "system", "--repo", "o/r", "--number", "1"])
+        assert code == 4, "a hang is a broken gate, not a degraded review"
+        assert "deadline" in capsys.readouterr().err
