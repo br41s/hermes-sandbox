@@ -87,9 +87,13 @@ eres el único agente que puede arreglarlo después.
   enlaces rotos la ve nunca.
 - **Destino que ya no existe.** Una categoría, marca o producto que el feed
   retiró. Compruébalo contra las APIs de abajo, nunca de memoria.
-- **Repetición.** Más de un enlace a `/contacto` en el mismo artículo, o un
-  artículo que solo enlaza a `/contacto` y `/blog`. El botón CTA del final ya
-  lleva a contacto: sobra repetirlo en el cuerpo.
+- **Repetición** — *solo se reporta, no se arregla*. Más de un enlace a
+  `/contacto` en el mismo artículo, o un artículo que solo enlaza a `/contacto`
+  y `/blog`. El botón CTA del final ya lleva a contacto: sobra repetirlo en el
+  cuerpo. Pero arreglarlo exigiría quitar un enlace o reescribir su texto, y las
+  dos cosas te están prohibidas: repuntar un `[contáctanos](/contacto)` hacia el
+  catálogo dejaría el texto mintiendo sobre su destino, que es exactamente el
+  defecto que vienes a corregir. Anótalo como aviso y déjalo como está.
 
 ### De dónde salen los destinos buenos
 
@@ -111,12 +115,27 @@ enlace a `/productos` es lo correcto y no hay nada más profundo a lo que apunta
 ### Cómo se repara
 
 1. `bl_site_publish(action: "list_posts")` para tener los artículos y sus `id`.
-2. Elige hasta **5 artículos publicados** por ejecución: los que no hayas
-   revisado en ejecuciones anteriores, empezando por los más recientes.
-3. Para cada uno, `bl_site_publish(action: "get_post", post_id: <id>)` y lee su
+2. Quédate con los que tengan `status: "published"` y ordénalos por `id`
+   ascendente. El `id` es autoincremental, así que ese orden es el cronológico
+   (`list_posts` no devuelve fecha). Llama **N** al total.
+3. Elige **5** por ejecución, y elígelos así: **no tienes memoria entre
+   ejecuciones** — este agente no guarda ledger ni estado — así que "los que no
+   revisaste ayer" no es algo que puedas saber. La selección tiene que salir de
+   la fecha de hoy:
+
+       inicio = (día del año × 5) módulo N
+
+   Coge 5 artículos desde la posición `inicio` de la lista ordenada, dando la
+   vuelta al principio si llegas al final. Si N ≤ 5, revísalos todos.
+
+   Esto hace que el barrido recorra el blog ENTERO cada `N/5` días
+   (redondeando hacia arriba). Es deliberado: si te limitaras a los más
+   recientes, los artículos viejos —que es justo donde se acumulan los enlaces
+   malos— no entrarían en el turno nunca.
+4. Para cada uno, `bl_site_publish(action: "get_post", post_id: <id>)` y lee su
    `content`. Localiza los enlaces Markdown `[texto](RUTA)`.
-4. Por cada enlace mal puesto, decide la RUTA correcta con el criterio de arriba.
-5. `bl_site_publish(action: "update_blog_post", post_id: <id>, content: <el
+5. Por cada enlace mal puesto, decide la RUTA correcta con el criterio de arriba.
+6. `bl_site_publish(action: "update_blog_post", post_id: <id>, content: <el
    cuerpo completo ya corregido>)`. El artículo sigue publicado: esta acción
    nunca cambia el estado.
 
@@ -129,9 +148,11 @@ Google), y sobre todo **no toques ningún `<svg>` ni ninguna imagen
 agente, y reproducirlas mal las destruye. Si no puedes devolver el cuerpo
 intacto, NO llames a `update_blog_post`: anótalo como aviso y sigue.
 
-Tampoco añadas enlaces nuevos donde no había ninguno, ni cambies el texto del
-enlace para que encaje con un destino equivocado — manda el texto, se corrige
-la ruta.
+Tampoco añadas enlaces nuevos donde no había ninguno, ni quites ninguno de los
+que hay, ni cambies el texto del enlace para que encaje con un destino
+equivocado — manda el texto, se corrige la ruta. Lo único que cambia entre el
+cuerpo que lees y el que envías son rutas: el número de enlaces es el mismo
+antes y después.
 
 Máximo **3 artículos modificados por ejecución**. Si un artículo tiene todos los
 enlaces bien, déjalo tal cual: no se toca nada para tener algo que reportar.

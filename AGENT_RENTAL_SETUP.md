@@ -148,9 +148,21 @@ with no review, the two writing agents above are prevention only — they cannot
 help a client whose blog already carries bad links. The onsite SEO agent now
 audits published posts each run (up to 5 read, 3 modified) and rewrites link
 destinations in place via `update_blog_post`, using the same discovery
-endpoints. It changes **only the route inside `[texto](RUTA)`** — never the
+endpoints.
+
+Which 5 it reads is **derived from the run date**, not from what it did last
+time: posts sorted by `id` (autoincrement, so chronological — `list_posts` does
+not project `created_at`), starting at `(day-of-year × 5) mod N` and wrapping.
+This agent keeps no ledger, so anything phrased as "the ones you haven't
+reviewed yet" is unknowable to it and collapses into re-reading the newest few
+forever — which would never reach the back catalogue where the bad links
+actually are. The rotation covers every post within `ceil(N/5)` days for any N. It changes **only the route inside `[texto](RUTA)`** — never the
 prose, the title, the FAQ block, or any `<svg>` / `/uploads/` image the
-Infographic Engineer put in the body. That last constraint is the sharp edge:
+Infographic Engineer put in the body, and the link count is identical before and
+after. One consequence worth knowing: a post that simply repeats `/contacto` is
+reported, not fixed, because every available repair (dropping a link, or
+repointing it so its text no longer matches) is itself the defect this agent
+exists to remove. That last constraint is the sharp edge:
 `update_blog_post` replaces `content` wholesale, so an agent that cannot
 reproduce the body intact is told to skip the post and report it rather than
 risk destroying an infographic.
