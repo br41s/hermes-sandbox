@@ -169,7 +169,18 @@ def cron_list(show_all: bool = False):
 
         # Execution history
         last_status = job.get("last_status")
-        if last_status:
+        if last_status == "interrupted":
+            # last_run_at still points at the last run that actually COMPLETED,
+            # so don't pair it with this status — print the two clocks apart or
+            # the line reads as "the 09:25 run was interrupted", which is wrong.
+            print(f"    Last run:  {job.get('last_run_at') or 'never'}  (completed)")
+            print(
+                f"    {color('⚠ Interrupted:', Colors.RED)} "
+                f"{job.get('last_interrupted_at', '?')} — killed before it finished; "
+                f"not retried"
+            )
+            print(f"      inspect: hermes cron runs {job.get('id', '?')}")
+        elif last_status:
             last_run = job.get("last_run_at", "?")
             if last_status == "ok":
                 status_display = color("ok", Colors.GREEN)

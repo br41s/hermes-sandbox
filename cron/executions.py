@@ -153,10 +153,25 @@ def finish_execution(
         ).fetchone())
 
 
-def recover_interrupted_executions() -> int:
-    """Mark provably abandoned attempts unknown without scheduling retries."""
+INTERRUPTED_REASON = (
+    "Scheduler restarted after this execution's owner exited before a durable "
+    "terminal state; whether side effects ran is unknown."
+)
+
+
+def recover_interrupted_executions() -> List[Dict[str, Any]]:
+    """Mark provably abandoned attempts unknown without scheduling retries.
+
+    Returns the recovered rows (newest-first) rather than a bare count so the
+    caller can reconcile the *job* record too: the ledger is the truth about an
+    attempt, but operators and the incident watcher read jobs.json, and a run
+    killed mid-flight otherwise leaves ``last_status`` pointing at an older
+    success. Reconciliation deliberately lives in the provider lifecycle hook
+    (``CronScheduler.recover_interrupted``), not here — this module stays a
+    pure ledger with no dependency on the job store.
+    """
     now = _hermes_now().isoformat()
-    changed = 0
+    recovered: List[Dict[str, Any]] = []
     with _lock, _connect() as conn:
         rows = conn.execute(
             """SELECT id, process_id, pid, process_started_at FROM executions
@@ -170,15 +185,15 @@ def recover_interrupted_executions() -> int:
             cur = conn.execute(
                 """UPDATE executions SET status='unknown', finished_at=?, error=?
                    WHERE id=? AND status IN ('claimed','running')""",
-                (now,
-                 "Scheduler restarted after this execution's owner exited before a durable "
-                 "terminal state; whether side effects ran is unknown.",
-                 row["id"]),
+                (now, INTERRUPTED_REASON, row["id"]),
             )
-            changed += cur.rowcount
-        if changed:
+            if cur.rowcount:
+                recovered.append(dict(conn.execute(
+                    "SELECT * FROM executions WHERE id=?", (row["id"],)
+                ).fetchone()))
+        if recovered:
             _prune_unlocked(conn)
-    return changed
+    return recovered
 
 
 def list_executions(
