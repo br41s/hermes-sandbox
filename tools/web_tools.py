@@ -720,7 +720,51 @@ def web_search_tool(query: str, limit: int = 5) -> str:
                 "Web search via %s: '%s' (limit: %d)",
                 provider.name, query, limit,
             )
-            response_data = provider.search(query, limit)
+            # Backoff + provider fallback live INSIDE this one tool call.
+            # Retrying between tool calls is what lost the 2026-09-16 Content
+            # Updater run: five bare 503s in ~2s tripped the agent loop's
+            # same_tool_failure_halt guardrail, which was correct — it cannot
+            # tell a retry from a loop. See tools/web_search_resilience.py.
+            from tools.web_search_resilience import (
+                resolve_search_fallbacks,
+                search_with_resilience,
+            )
+
+            outcome = search_with_resilience(
+                provider,
+                query,
+                limit,
+                fallbacks=resolve_search_fallbacks(provider.name),
+            )
+            response_data = outcome.response
+            debug_call_data["providers_tried"] = [r.as_dict() for r in outcome.trail]
+            debug_call_data["total_wait_s"] = round(outcome.total_wait_s, 2)
+
+            if outcome.succeeded and outcome.fell_back:
+                # Only a DEGRADED success annotates the payload. The normal
+                # success shape is left byte-for-byte as documented in
+                # agent/web_search_provider.py — a fallback firing is the
+                # exceptional case the caller actually needs told about, and
+                # which backend served a normal search is already in the log
+                # line above.
+                #
+                # Key names here deliberately avoid the literals '"error"' and
+                # '"failed"' that agent.tool_guardrails.classify_tool_failure
+                # scans for, so a degraded-but-successful search is not
+                # mislabelled a failure and does not burn guardrail budget.
+                primary_trail = outcome.trail[0]
+                response_data["search_provider"] = outcome.provider_used
+                response_data["degraded"] = {
+                    "reason": "primary_search_provider_failed",
+                    "primary": primary_trail.provider,
+                    "primary_attempts": primary_trail.attempts,
+                    "detail": primary_trail.detail[:400],
+                    "note": (
+                        f"{primary_trail.provider} was unreachable; these results "
+                        f"came from {outcome.provider_used} instead. Result quality "
+                        "and ranking may differ from the usual backend."
+                    ),
+                }
 
         debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
         result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
