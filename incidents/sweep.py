@@ -117,7 +117,21 @@ def _within(iso: Optional[str], hours: int, now: datetime) -> bool:
 
 def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
                            window_hours: int = CRON_FAILURE_WINDOW_HOURS) -> List[Incident]:
-    """Flag jobs whose most recent run recorded an error within the window."""
+    """Flag jobs whose most recent run recorded an error within the window.
+
+    Also covers runs killed mid-flight by a container restart. Those never
+    reach ``mark_job_run``, so the scheduler's restart recovery stamps
+    ``last_status='interrupted'`` plus ``last_interrupted_at`` WITHOUT
+    advancing ``last_run_at`` (see ``cron.jobs.mark_job_interrupted``). The
+    window and dedup key therefore have to read the interruption's own clock —
+    keying off ``last_run_at`` would date the incident to the previous
+    *successful* run and could age it straight out of the window.
+
+    This is additive to :func:`cron_stale_incidents`, which is left untouched:
+    the stall check still fires on the job's own schedule and stays the
+    backstop for a drop that recovery never observed (e.g. the ledger row was
+    pruned, or the process died before it could claim).
+    """
     now = now or _now()
     out: List[Incident] = []
     for job in jobs:
@@ -126,16 +140,27 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
         err = job.get("last_error") or job.get("last_delivery_error")
         if not err:
             continue
-        last_run = job.get("last_run_at")
-        if not _within(last_run, window_hours, now):
+        interrupted = job.get("last_status") == "interrupted"
+        when = job.get("last_interrupted_at") if interrupted else job.get("last_run_at")
+        if not _within(when, window_hours, now):
             continue
         jid = str(job.get("id") or job.get("name") or "unknown")
-        err_kind = "agent error" if job.get("last_error") else "delivery error"
+        if interrupted:
+            err_kind = "interrupted by restart"
+        else:
+            err_kind = "agent error" if job.get("last_error") else "delivery error"
+        detail = f"when: {when}\nerror: {str(err)[:500]}"
+        if interrupted:
+            detail += (
+                f"\nlast completed run: {job.get('last_run_at') or 'never'}\n"
+                "this run was NOT retried — side effects may be partial; "
+                f"inspect with `hermes cron runs {jid}` before re-running it"
+            )
         out.append(Incident(
-            id=f"cron:{jid}:{last_run}",
+            id=f"cron:{jid}:{when}",
             kind="cron",
             title=f"Cron job '{job.get('name') or jid}' failed ({err_kind})",
-            detail=f"when: {last_run}\nerror: {str(err)[:500]}",
+            detail=detail,
             handoff=f"cron job id {jid}",
         ))
     return out

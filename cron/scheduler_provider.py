@@ -83,10 +83,55 @@ class CronScheduler(ABC):
         return None
 
     def recover_interrupted(self) -> int:
-        """Run profile-local attempt recovery for every provider lifecycle."""
+        """Run profile-local attempt recovery for every provider lifecycle.
+
+        Two stores have to agree for an interrupted run to be *visible*: the
+        ledger (truth about the attempt) and jobs.json (what `hermes cron list`
+        and the incident watcher read). Recovery reconciles both here, in the
+        one hook every provider calls at startup, so neither the built-in
+        ticker nor an external provider can get only half of it.
+
+        It deliberately does NOT re-queue anything. A recovered attempt is
+        ``unknown``, not ``failed``: the owner died between dispatch and a
+        durable result, so whether the side effects ran is genuinely unknown.
+        Several of these agents write to live client sites, which makes the
+        cost asymmetric — a missed run loses one slot until the next schedule,
+        while a duplicated run puts junk in front of a customer. Recovery
+        therefore makes the drop loud and leaves the re-run to a human
+        (``hermes cron run <job_id>``) who can check what the dead run did.
+
+        Returns the number of attempts recovered.
+        """
+        import logging
+
         from cron.executions import recover_interrupted_executions
 
-        return recover_interrupted_executions()
+        recovered = recover_interrupted_executions()
+        if not recovered:
+            return 0
+
+        logger = logging.getLogger("cron.scheduler_provider")
+        from cron.jobs import mark_job_interrupted
+
+        for row in recovered:
+            job_id = row.get("job_id")
+            if not job_id:
+                continue
+            # Never let a bookkeeping failure on one job abort recovery for the
+            # rest — this runs on the startup path of the whole scheduler.
+            try:
+                mark_job_interrupted(
+                    job_id,
+                    reason=row.get("error") or "Interrupted by a scheduler restart.",
+                    at=row.get("finished_at") or row.get("claimed_at") or "",
+                    not_before=row.get("claimed_at"),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not mark cron job '%s' interrupted after restart: %s",
+                    job_id, e,
+                )
+        return len(recovered)
 
     def fire_due(self, job_id: str, *, adapters: Any = None, loop: Any = None) -> bool:
         """Run a single job NOW via the shared orchestrator. Called by the
