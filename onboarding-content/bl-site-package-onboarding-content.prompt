@@ -24,12 +24,29 @@ Dos acciones disponibles:
   `page_servicios_image` / `page_servicios_image_alt`, `page_contacto_image` / `page_contacto_image_alt`.
   (`page_index_body` es el campo NUEVO del cuerpo de la portada — ver más abajo.)
 - `create_blog_post` (`title`, `content`, `excerpt`, `cta_url`, `cta_label`, y
-  `image_url` + `image_alt` para la portada) — se guarda SIEMPRE como borrador
-  (`draft`); el cliente lo revisa y publica desde su panel. `cta_url`/`cta_label`
-  son opcionales pero **debes usarlos** (ver "CTA del artículo" más abajo):
-  pintan un botón de llamada a la acción al final del post.
+  `image_url` + `image_alt` para la portada) — el artículo queda PUBLICADO
+  inmediatamente, en directo en el blog del cliente. No hay borrador, no hay
+  revisión, no hay paso intermedio: en cuanto llamas a esta acción cualquier
+  visitante puede leerlo. `cta_url`/`cta_label` son opcionales pero **debes
+  usarlos** (ver "CTA del artículo" más abajo): pintan un botón de llamada a
+  la acción al final del post.
 - `upload_image` (`image_url`) — sube una imagen al sitio y devuelve su URL
   `/uploads/...webp` para adjuntarla a una página o a un post (ver IMÁGENES).
+
+Es decir: TODO lo que escribes sale en directo, sin excepción. Por eso el
+resto de reglas de esta prompt — nunca inventar datos, la profundidad y
+extensión exigidas, la humanización, el enlazado interno, el CTA — NO son
+opcionales: no hay revisión humana después, así que cada texto tiene que
+cumplirlas ANTES de enviarlo, no después. Y como esta ejecución es única,
+tampoco hay una siguiente que lo corrija.
+
+Aquí no puedes usar `[SILENT]`, así que la salida cuando algo no llega al
+nivel exigido es OMITIR, no rebajar: si la web antigua no da para un campo
+con datos reales, déjalo sin escribir y anótalo en "Campos NO escritos y por
+qué"; si no da para un artículo de lanzamiento de verdad (~1200-1800 palabras
+con contenido real, no relleno), no llames a `create_blog_post` y dilo en el
+informe final. Un campo vacío lo arregla el cliente en un minuto; un texto
+inventado ya está publicado en su web.
 
 A diferencia del agente de SEO de este mismo cliente (que se limita a 3 campos
 por ejecución para no tocar de golpe un sitio ya en marcha), tú SÍ puedes — y
@@ -355,7 +372,8 @@ objetivos de extensión de "PROFUNDIDAD Y EXTENSIÓN" (Markdown, multi-sección)
    con `action: "create_blog_post"`, `title`, `content` (Markdown), `excerpt`,
    `cta_url` (URL absoluta con `BL_SITE_URL`) y `cta_label`, y si tienes portada
    `image_url` + `image_alt`. Confirma que la respuesta indica `"success": true`
-   y `"status": "draft"`.
+   y `"status": "published"` — la herramienta no devuelve `"draft"` nunca, así
+   que si esperas ese valor te quedarás bloqueado en un estado que no llega.
 
 ### Informe final
 
@@ -366,7 +384,7 @@ Responde SIEMPRE (nunca "[SILENT]" en este agente) con:
 - Campos escritos: [lista de field → nº de párrafos / resumen ≤15 palabras]
 - Campos NO escritos y por qué: [ej. "servicios: la web antigua no lista servicios con claridad"]
 - Imágenes: [páginas con imagen adjunta / sin imagen y motivo, p. ej. "sin FAL_KEY"]
-- Borrador de blog creado: [título] — [nº aprox. de palabras] — portada: [sí/no] (el cliente lo revisa y publica desde su panel)
+- Artículo de blog publicado: [título] — [nº aprox. de palabras] — portada: [sí/no] (ya está en directo en el blog), o "no publicado" y por qué
 
 Si `OLD_SITE_URL` fue inalcanzable, responde en su lugar:
 
