@@ -138,6 +138,59 @@ class TestClassifySearchFailure:
             'Request failed with status code 403: {"detail":"upstream HTTP 503"}'
         ) == wsr.PERMANENT
 
+    def test_requests_HTTPError_shape_is_transient(self):
+        """The single commonest real 5xx shape. An anchored `\\bhttp\\b` pattern
+        missed `HTTPError 503` and classified the module's own reason-for-
+        existing as PERMANENT — zero retries, zero fallback, silently."""
+        assert wsr.classify_search_failure(
+            "exa search raised: HTTPError 503 Server Error for url https://api.exa.ai/search"
+        ) == wsr.TRANSIENT
+
+    def test_HTTPError_code_is_read_without_help_from_prose(self):
+        """Isolates the status pattern itself.
+
+        The fuller `HTTPError 503 Server Error` string also matches the
+        "server error" phrase, so it passes even with a broken code pattern.
+        This variant carries the code and NO transient prose, so only a
+        pattern that reads the digits after `HTTPError` can classify it.
+        """
+        assert wsr.classify_search_failure(
+            "exa search raised: HTTPError 503 for https://api.exa.ai/search"
+        ) == wsr.TRANSIENT
+
+    def test_HTTPError_auth_code_is_still_permanent(self):
+        assert wsr.classify_search_failure(
+            "exa search raised: HTTPError 401 for https://api.exa.ai/search"
+        ) == wsr.PERMANENT
+
+    def test_echoed_query_digits_cannot_veto_a_real_outage(self):
+        """Trailing context must not outrank the error's own leading verdict.
+
+        A permanent-wins-anywhere rule let an error echoing a user query
+        ("what does HTTP 404 mean") turn a genuine capacity outage into a
+        no-retry-no-fallback permanent failure.
+        """
+        assert wsr.classify_search_failure(
+            'Exa search failed: {"error": "over capacity"} '
+            "for query 'what does HTTP 404 mean'"
+        ) == wsr.TRANSIENT
+
+    @pytest.mark.parametrize("text", [
+        "connection interrupted by peer",
+        "exa search raised: Interrupted system call",   # EINTR
+    ])
+    def test_the_word_interrupted_does_not_forge_a_user_abort(self, text):
+        """Only the providers' exact sentinel means "the user stopped us".
+
+        Substring matching laundered transient network errors into an abort,
+        which skips retry AND fallback — the worst possible misread.
+        """
+        assert wsr.classify_search_failure(text) == wsr.TRANSIENT
+
+    def test_exact_sentinel_is_still_an_interrupt(self):
+        assert wsr.classify_search_failure("Interrupted") == wsr.INTERRUPTED
+        assert wsr.classify_search_failure("Interrupted.") == wsr.INTERRUPTED
+
     def test_query_text_is_not_read_as_a_status_code(self):
         """Narrow status patterns — a bare 3-digit run in prose is not a status."""
         assert wsr.classify_search_failure(
@@ -209,6 +262,95 @@ class TestBackoff:
         assert outcome.total_wait_s <= 5.0
         assert not outcome.succeeded
 
+    def test_total_deadline_bounds_slow_provider_CALLS_not_just_sleeps(self):
+        """The wait budget caps sleeping; the deadline caps everything.
+
+        ddgs self-caps at 30s per call and a ddgs timeout classifies as
+        TRANSIENT, so without an absolute deadline a chain could spend
+        ~210s inside provider.search() alone while sleeping almost nothing —
+        holding the single-thread cron pool the whole time.
+        """
+        clock = {"t": 0.0}
+
+        def fake_monotonic():
+            return clock["t"]
+
+        class SlowProvider(FakeProvider):
+            def search(self, query, limit=5):
+                clock["t"] += 30.0  # each call burns 30s of wall clock
+                return super().search(query, limit)
+
+        primary = SlowProvider("exa", [fail(EXA_503)])
+        secondary = SlowProvider("ddgs", [fail(EXA_503)])
+
+        outcome = wsr.search_with_resilience(
+            primary, "q", 5,
+            fallbacks=[secondary],
+            max_attempts=3,
+            total_wait_budget_s=30.0,
+            total_deadline_s=90.0,
+            sleep_fn=lambda s: 0.0,   # sleeping is free; only CALLS burn time
+            # Must be POSITIVE: a 0.0 backoff makes the retry loop break early
+            # on its own, so the test would pass without the deadline doing
+            # anything at all (caught by mutation testing).
+            backoff_fn=lambda a: 1.0,
+            monotonic=fake_monotonic,
+        )
+
+        total_calls = len(primary.calls) + len(secondary.calls)
+        assert total_calls <= 3, (
+            f"deadline did not bound provider call time: {total_calls} calls "
+            f"= {total_calls * 30}s of wall clock"
+        )
+        assert not outcome.succeeded
+        assert outcome.response["error_kind"] == "search_provider_unavailable"
+
+    def test_sleep_is_clamped_to_the_remaining_deadline(self):
+        """Never sleep past the deadline — the wait budget alone doesn't know
+        how much wall clock the provider calls already consumed."""
+        clock = {"t": 0.0}
+        slept: List[float] = []
+
+        class SlowProvider(FakeProvider):
+            def search(self, query, limit=5):
+                clock["t"] += 20.0  # each call eats 20s of the 25s deadline
+                return super().search(query, limit)
+
+        wsr.search_with_resilience(
+            SlowProvider("exa", [fail(EXA_503)]), "q", 5,
+            max_attempts=3,
+            total_wait_budget_s=30.0,   # budget alone would allow a long sleep
+            total_deadline_s=25.0,      # but only 5s of wall clock is left
+            sleep_fn=lambda s: (slept.append(s), 0.0)[1],
+            backoff_fn=lambda a: 30.0,  # backoff WANTS 30s
+            monotonic=lambda: clock["t"],
+        )
+
+        assert slept, "expected at least one backoff sleep"
+        assert max(slept) <= 5.0, (
+            f"slept {max(slept)}s past a deadline with only 5s left"
+        )
+
+    def test_permanent_failure_short_circuits_before_the_deadline_matters(self):
+        """A non-transient failure returns verbatim even if the call was slow —
+        the deadline governs retrying, not the shape of a completed answer."""
+        clock = {"t": 0.0}
+        original = fail("EXA_API_KEY is not set")
+
+        class SlowProvider(FakeProvider):
+            def search(self, query, limit=5):
+                clock["t"] += 100.0
+                return super().search(query, limit)
+
+        outcome = wsr.search_with_resilience(
+            SlowProvider("exa", [original]), "q", 5,
+            total_deadline_s=50.0,
+            sleep_fn=lambda s: 0.0,
+            monotonic=lambda: clock["t"],
+        )
+        assert outcome.response == original
+        assert "error_kind" not in outcome.response
+
     def test_default_backoff_grows_and_is_jittered(self):
         """Uses agent.retry_utils.jittered_backoff rather than a fixed sleep."""
         provider = FakeProvider("exa", [fail(EXA_503)])
@@ -226,6 +368,33 @@ class TestBackoff:
 # ---------------------------------------------------------------------------
 # Fallback
 # ---------------------------------------------------------------------------
+class TestDegenerateTuning:
+    """The public helper is callable from outside web_tools; degenerate
+    numbers must fail safe rather than silently disabling a bound."""
+
+    def test_nan_deadline_does_not_silently_disable_the_deadline(self):
+        provider = FakeProvider("exa", [fail(EXA_503)])
+        outcome = wsr.search_with_resilience(
+            provider, "q", 5,
+            max_attempts=2,
+            total_deadline_s=float("nan"),
+            sleep_fn=lambda s: 0.0,
+            backoff_fn=lambda a: 0.0,
+        )
+        # NaN > 0 is False, so a naive check yields deadline=None. Either way
+        # the attempt cap must still bound the call.
+        assert len(provider.calls) <= 2
+        assert not outcome.succeeded
+
+    def test_zero_or_negative_attempts_still_makes_one_attempt(self):
+        provider = FakeProvider("exa", [ok(1)])
+        outcome = wsr.search_with_resilience(
+            provider, "q", 5, max_attempts=0, sleep_fn=lambda s: 0.0,
+        )
+        assert outcome.succeeded
+        assert len(provider.calls) == 1
+
+
 class TestFallback:
     def test_falls_back_when_primary_stays_down(self):
         primary = FakeProvider("exa", [fail(EXA_503)])
@@ -296,6 +465,37 @@ class TestFallback:
             sleep_fn=lambda s: s, backoff_fn=lambda a: 0.0,
         )
         assert outcome.succeeded and outcome.provider_used == "ddgs"
+
+    def test_fallback_exception_does_not_erase_the_primary_outage(self):
+        """Re-raising from a FALLBACK would replace a real outage report with
+        the fallback's own exception and discard the trail, so neither the
+        agent nor Langfuse would learn the primary was down."""
+        primary = FakeProvider("exa", [fail(EXA_503)])
+        secondary = FakeProvider("ddgs", [KeyError("results")])
+
+        outcome = wsr.search_with_resilience(
+            primary, "q", 5, fallbacks=[secondary],
+            sleep_fn=lambda s: 0.0, backoff_fn=lambda a: 0.0,
+        )
+        assert outcome.response["error_kind"] == "search_provider_unavailable"
+        tried = [t["provider"] for t in outcome.response["providers_tried"]]
+        assert tried == ["exa", "ddgs"], tried
+        assert "503" in outcome.response["providers_tried"][0]["detail"]
+
+    def test_fallback_gets_exactly_one_shot(self):
+        """A fallback is a last resort, not a second place to hammer. ddgs
+        re-runs its lazy pip-install on every search() and leaks a worker
+        thread per timeout, so retrying it multiplies both."""
+        primary = FakeProvider("exa", [fail(EXA_503)])
+        secondary = FakeProvider("ddgs", [fail(EXA_503)])
+
+        wsr.search_with_resilience(
+            primary, "q", 5, fallbacks=[secondary],
+            max_attempts=3,
+            sleep_fn=lambda s: 0.0, backoff_fn=lambda a: 0.1,
+        )
+        assert len(primary.calls) == 3, "primary keeps the full retry budget"
+        assert len(secondary.calls) == 1, "fallback must get exactly one shot"
 
     def test_non_transient_exception_propagates_to_the_caller(self):
         """web_search_tool's outer handler owns the sanitised envelope
@@ -375,98 +575,110 @@ class TestOutageIsDistinguishable:
 # Fallback chain resolution against the real registry
 # ---------------------------------------------------------------------------
 class TestResolveSearchFallbacks:
-    def test_excludes_the_primary(self, monkeypatch):
-        register_all_web_providers()
-        monkeypatch.setenv("EXA_API_KEY", "k")
-        monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "k")
+    """The fallback chain is a billing boundary (issue #174), not a preference."""
+
+    @staticmethod
+    def _registry(*provider_classes):
+        from agent.web_search_registry import register_provider, _reset_for_tests
+        _reset_for_tests()
+        for cls in provider_classes:
+            register_provider(cls())
+
+    def test_tenant_on_ddgs_never_falls_back_to_exa_EVEN_WITH_THE_KEY_SET(
+        self, monkeypatch
+    ):
+        """Billing guard, issue #174 — the version that actually holds in prod.
+
+        Rented tenants run ``web.search_backend: ddgs`` and are denied
+        EXA_API_KEY so their searches cannot be billed to BigLobster's Exa
+        account. But that denial only strips the key from the tenant's ``.env``
+        FILE, while ``exa.is_available()`` resolves via
+        ``hermes_cli.config.get_env_value`` which reads ``os.environ`` FIRST —
+        and ``cron/scheduler.py:_job_profile_context`` only adds and restores
+        env keys, never deletes one the parent already had.
+
+        So this test sets EXA_API_KEY **on purpose**. An earlier version of this
+        test deleted it, which made the guard look green while the real tenant
+        runtime resolved ``ddgs -> exa`` and billed BigLobster on every ddgs
+        blip. If this test ever fails, the leak is back.
+        """
+        from plugins.web.exa.provider import ExaWebSearchProvider
+        from plugins.web.ddgs.provider import DDGSWebSearchProvider
+
+        self._registry(ExaWebSearchProvider, DDGSWebSearchProvider)
+        monkeypatch.setenv("EXA_API_KEY", "bl-shared-key")
+        monkeypatch.setattr(
+            "hermes_cli.config.get_env_value",
+            lambda name: "bl-shared-key" if name == "EXA_API_KEY" else None,
+            raising=False,
+        )
         try:
-            names = [p.name for p in wsr.resolve_search_fallbacks("exa")]
-            assert "exa" not in names
+            names = [p.name for p in wsr.resolve_search_fallbacks("ddgs")]
+            assert names == [], (
+                f"tenant resolved paid fallback(s) {names} — this bills "
+                "BigLobster (#174)"
+            )
         finally:
             from agent.web_search_registry import _reset_for_tests
             _reset_for_tests()
 
-    def test_skips_providers_without_credentials(self, monkeypatch):
-        register_all_web_providers()
-        for var in ("EXA_API_KEY", "BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY",
-                    "FIRECRAWL_API_KEY", "PARALLEL_API_KEY", "SEARXNG_URL",
-                    "XAI_API_KEY"):
-            monkeypatch.delenv(var, raising=False)
+    def test_no_paid_provider_is_ever_selected_automatically(self, monkeypatch):
+        """Even with every paid key present, the automatic fallback is keyless."""
+        from plugins.web.exa.provider import ExaWebSearchProvider
+        from plugins.web.ddgs.provider import DDGSWebSearchProvider
+        from plugins.web.tavily.provider import TavilyWebSearchProvider
+        from plugins.web.firecrawl.provider import FirecrawlWebSearchProvider
+        from plugins.web.parallel.provider import ParallelWebSearchProvider
+
+        self._registry(
+            ExaWebSearchProvider, DDGSWebSearchProvider, TavilyWebSearchProvider,
+            FirecrawlWebSearchProvider, ParallelWebSearchProvider,
+        )
+        for var in ("EXA_API_KEY", "TAVILY_API_KEY", "FIRECRAWL_API_KEY",
+                    "PARALLEL_API_KEY", "BRAVE_SEARCH_API_KEY"):
+            monkeypatch.setenv(var, "k")
         monkeypatch.setattr(
-            "hermes_cli.config.get_env_value", lambda name: None, raising=False
+            "hermes_cli.config.get_env_value", lambda name: "k", raising=False
         )
         try:
             names = [p.name for p in wsr.resolve_search_fallbacks("exa")]
-            # Nothing has credentials, so only the keyless last resort remains.
             assert names == ["ddgs"], names
         finally:
             from agent.web_search_registry import _reset_for_tests
             _reset_for_tests()
 
-    def test_tenant_on_ddgs_never_falls_back_to_exa(self, monkeypatch):
-        """Billing guard, issue #174.
+    def test_availability_is_deliberately_not_consulted(self, monkeypatch):
+        """ddgs reports unavailable until installed, but self-installs on first
+        search — that is how a fresh tenant gets its first web search today."""
+        from plugins.web.ddgs.provider import DDGSWebSearchProvider
 
-        Rented tenants run web.search_backend: ddgs and are deliberately
-        denied EXA_API_KEY so their searches cannot be billed to BigLobster's
-        Exa account. The ``is_available()`` filter is what enforces that — if
-        this test fails, the fallback has re-opened the leak.
-
-        Registers ONLY exa alongside the primary, so exa is well inside the
-        ``_MAX_FALLBACKS`` cap. An earlier version of this test registered all
-        eight providers and passed even with the availability filter removed,
-        because firecrawl/parallel filled both slots before the walk ever
-        reached exa — it was green for the wrong reason.
-        """
-        from agent.web_search_registry import register_provider, _reset_for_tests
-        from plugins.web.exa.provider import ExaWebSearchProvider
-
-        _reset_for_tests()
-        register_provider(ExaWebSearchProvider())
-        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        self._registry(DDGSWebSearchProvider)
         monkeypatch.setattr(
-            "hermes_cli.config.get_env_value", lambda name: None, raising=False
+            DDGSWebSearchProvider, "is_available", lambda self: False
         )
         try:
-            names = [p.name for p in wsr.resolve_search_fallbacks("ddgs")]
-            assert "exa" not in names, (
-                "a tenant fell back onto Exa — this bills BigLobster (#174)"
+            names = [p.name for p in wsr.resolve_search_fallbacks("exa")]
+            assert names == ["ddgs"], (
+                "an unavailable-but-self-installing ddgs was filtered out"
             )
-        finally:
-            _reset_for_tests()
-
-    def test_exa_is_selectable_as_a_fallback_when_its_key_IS_set(self, monkeypatch):
-        """Control for the guard above: same registry, key present.
-
-        Without this, the #174 test would still pass if fallback resolution
-        were broken outright and returned nothing at all.
-        """
-        from agent.web_search_registry import register_provider, _reset_for_tests
-        from plugins.web.exa.provider import ExaWebSearchProvider
-
-        _reset_for_tests()
-        register_provider(ExaWebSearchProvider())
-        monkeypatch.setenv("EXA_API_KEY", "k")
-        monkeypatch.setattr(
-            "hermes_cli.config.get_env_value",
-            lambda name: "k" if name == "EXA_API_KEY" else None,
-            raising=False,
-        )
-        try:
-            names = [p.name for p in wsr.resolve_search_fallbacks("firecrawl")]
-            assert names == ["exa"], names
-        finally:
-            _reset_for_tests()
-
-    def test_chain_is_capped(self, monkeypatch):
-        register_all_web_providers()
-        for var in ("EXA_API_KEY", "BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY",
-                    "FIRECRAWL_API_KEY", "PARALLEL_API_KEY"):
-            monkeypatch.setenv(var, "k")
-        try:
-            assert len(wsr.resolve_search_fallbacks("exa")) <= wsr._MAX_FALLBACKS
         finally:
             from agent.web_search_registry import _reset_for_tests
             _reset_for_tests()
+
+    def test_primary_is_never_its_own_fallback(self):
+        from plugins.web.ddgs.provider import DDGSWebSearchProvider
+
+        self._registry(DDGSWebSearchProvider)
+        try:
+            assert wsr.resolve_search_fallbacks("ddgs") == []
+        finally:
+            from agent.web_search_registry import _reset_for_tests
+            _reset_for_tests()
+
+    def test_empty_registry_yields_no_fallback(self):
+        from agent.web_search_registry import _reset_for_tests
+        _reset_for_tests()
+        assert wsr.resolve_search_fallbacks("exa") == []
 
 
 # ---------------------------------------------------------------------------
@@ -537,11 +749,19 @@ class TestWebSearchToolIntegration:
 
         raw = web_tools.web_search_tool("hermes", limit=5)
         failed, _tag = classify_tool_failure("web_search", raw)
+        # agent/display._detect_tool_failure is what agent/tool_executor.py
+        # ACTUALLY calls per tool result; classify_tool_failure is only the
+        # standalone fallback. Pin the production one too — they must agree.
+        from agent.display import _detect_tool_failure
+        prod_failed, _prod_tag = _detect_tool_failure("web_search", raw)
 
         assert json.loads(raw)["success"] is True
         assert failed is False, (
             "degraded-but-successful search was mislabelled a failure; it would "
             "burn same_tool_failure_halt budget"
+        )
+        assert prod_failed is False, (
+            "PRODUCTION classifier marked a recovered search as failed"
         )
 
     def test_total_outage_surfaces_the_typed_error(self, monkeypatch):
@@ -562,6 +782,7 @@ class TestWebSearchToolIntegration:
 
         assert result["success"] is False
         assert result["error_kind"] == "search_provider_unavailable"
-        # A real outage SHOULD still count against the guardrail.
-        failed, _ = classify_tool_failure("web_search", raw)
-        assert failed is True
+        # A real outage SHOULD still count against the guardrail — both classifiers.
+        from agent.display import _detect_tool_failure
+        assert classify_tool_failure("web_search", raw)[0] is True
+        assert _detect_tool_failure("web_search", raw)[0] is True

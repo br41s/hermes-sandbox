@@ -43,6 +43,7 @@ on a freshly provisioned tenant.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -63,6 +64,21 @@ DEFAULT_MAX_ATTEMPTS = 3
 # single-thread pool where one slow tool blocks every other agent — so this
 # stays an order of magnitude below the batch deadline.
 DEFAULT_TOTAL_WAIT_BUDGET_S = 30.0
+
+# Wall-clock ceiling on RETRY SCHEDULING. Checked before each attempt, so it
+# bounds how much total time this function is willing to keep spending — it
+# CANNOT interrupt a call already in flight. Real worst case is therefore
+# ``DEFAULT_TOTAL_DEADLINE_S + (one provider's own timeout)``; providers own
+# their per-call timeouts (ddgs self-caps at 30s, exa's SDK does not, which is
+# a pre-existing gap this module does not close).
+#
+# DEFAULT_TOTAL_WAIT_BUDGET_S alone is not enough because it bounds only
+# sleeping, while a slow-but-failing chain burns wall clock inside
+# provider.search() itself. With one-shot fallbacks the realistic worst case is
+# ~30s of sleeping + one primary call + one fallback call, well inside the
+# tool executor's 420s batch deadline and far short of holding the
+# single-thread cron pool for minutes.
+DEFAULT_TOTAL_DEADLINE_S = 90.0
 
 _BASE_DELAY_S = 1.0
 _MAX_DELAY_S = 8.0
@@ -90,11 +106,20 @@ _PERMANENT_STATUS = frozenset({400, 401, 402, 403, 404, 405, 409, 410, 413, 422,
 # "HTTP 429", "status=502", "Server error (504)"), so match narrowly rather
 # than grabbing any 3-digit run — a query or a result count would otherwise
 # be read as a status.
+# ``\bhttp\w*`` (not ``\bhttp\b``) is deliberate: the single commonest real
+# shape is requests/httpx's ``HTTPError 503 Server Error``, where the code
+# follows the word ``HTTPError``. An earlier anchored version missed it and
+# classified the module's own reason-for-existing as PERMANENT.
+#
+# There is NO unanchored ``\((\d{3})\)`` pattern: because a permanent code
+# wins unconditionally below, any bare 3-digit run in the text could veto a
+# retry — an error echoing a user query like "what does HTTP 404 mean" would
+# turn a real 503 outage into a no-retry. Parenthesised codes are reached via
+# the phrase table instead ("server error", "bad gateway", ...).
 _STATUS_PATTERNS = (
     re.compile(r"status[\s_]*code[\s:=]*\(?\s*(\d{3})\b", re.I),
-    re.compile(r"\bhttp[\s/]?(?:\d\.\d\s+)?(\d{3})\b", re.I),
-    re.compile(r"\bstatus[\s:=]+(\d{3})\b", re.I),
-    re.compile(r"\((\d{3})\)"),
+    re.compile(r"\bhttp\w*[\s:/-]{0,3}(\d{3})\b", re.I),
+    re.compile(r"\bstatus[\s:=]+\(?(\d{3})\b", re.I),
 )
 
 _TRANSIENT_PHRASES = (
@@ -118,8 +143,16 @@ _TRANSIENT_PHRASES = (
     "remote end closed connection",
     "bad gateway",
     "gateway timeout",
+    "server error",
+    "internal server error",
+    "upstream connect error",
+    "temporarily",
+    "capacity",
+    "backoff",
     "temporary failure in name resolution",
     "eof occurred",
+    "connection interrupted",
+    "interrupted system call",
 )
 
 # Checked BEFORE the transient phrases: an auth failure whose body happens to
@@ -149,37 +182,63 @@ def classify_search_failure(error_text: Any) -> str:
 
     Providers flatten every failure into ``{"success": False, "error": str}``
     (see :class:`agent.web_search_provider.WebSearchProvider`), so this reads
-    text rather than exception types. Anything unrecognised is treated as
-    :data:`PERMANENT` — an unknown error is more likely a deterministic bug
-    than a blip, and the caller still falls back to another provider, so the
-    conservative choice costs coverage but never costs the run.
+    text rather than exception types.
+
+    **Earliest evidence wins.** An error message leads with its own nature and
+    trails with context — a URL, a JSON body, an echoed query. Scanning for
+    "any permanent signal anywhere" therefore lets trailing context veto the
+    real verdict: a genuine ``over capacity`` outage whose message happens to
+    echo a user query containing "HTTP 404" would be read as permanent, and a
+    permanent verdict skips BOTH retry and fallback, losing the run. Taking
+    the leftmost signal keeps an auth 401 authoritative over a trailing
+    ``upstream 503`` while refusing to let incidental digits win.
+
+    Ties break to PERMANENT: not retrying a genuine auth failure is cheaper
+    than hammering one. Unrecognised text is PERMANENT for the same reason —
+    an unknown error is likelier a deterministic bug than a blip, and burning
+    the wall-clock budget on it helps nobody.
     """
     text = ("" if error_text is None else str(error_text)).strip().lower()
     if not text:
         return PERMANENT
-    if text == "interrupted" or "interrupted" in text.split():
+
+    # EXACT match only. Providers return the literal sentinel
+    # ``{"success": False, "error": "Interrupted"}`` on a user abort. Substring
+    # or token matching also catches "connection interrupted by peer" and
+    # EINTR's "Interrupted system call" — both TRANSIENT network errors that
+    # would then be laundered into an abort, skipping retry AND fallback.
+    if text.rstrip(".!") == "interrupted":
         return INTERRUPTED
 
-    codes = set()
+    best_pos: Optional[int] = None
+    best_kind = PERMANENT
+
+    def _offer(pos: int, kind: str) -> None:
+        nonlocal best_pos, best_kind
+        if pos < 0:
+            return
+        if best_pos is None or pos < best_pos:
+            best_pos, best_kind = pos, kind
+        elif pos == best_pos and kind == PERMANENT:
+            best_kind = PERMANENT  # tie -> don't retry
+
     for pattern in _STATUS_PATTERNS:
-        for match in pattern.findall(text):
+        for match in pattern.finditer(text):
             try:
-                codes.add(int(match))
+                code = int(match.group(1))
             except (TypeError, ValueError):
                 continue
+            if code in _PERMANENT_STATUS:
+                _offer(match.start(), PERMANENT)
+            elif code in _TRANSIENT_STATUS:
+                _offer(match.start(), TRANSIENT)
 
-    # Permanent first: an unambiguous auth/validation code must win even when
-    # the body also carries retry-ish prose.
-    if codes & _PERMANENT_STATUS:
-        return PERMANENT
-    if codes & _TRANSIENT_STATUS:
-        return TRANSIENT
+    for phrase in _PERMANENT_PHRASES:
+        _offer(text.find(phrase), PERMANENT)
+    for phrase in _TRANSIENT_PHRASES:
+        _offer(text.find(phrase), TRANSIENT)
 
-    if any(phrase in text for phrase in _PERMANENT_PHRASES):
-        return PERMANENT
-    if any(phrase in text for phrase in _TRANSIENT_PHRASES):
-        return TRANSIENT
-    return PERMANENT
+    return best_kind if best_pos is not None else PERMANENT
 
 
 # ── Interruptible sleep ─────────────────────────────────────────────────────
@@ -275,9 +334,11 @@ def search_with_resilience(
     fallbacks: Sequence[Any] = (),
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     total_wait_budget_s: float = DEFAULT_TOTAL_WAIT_BUDGET_S,
+    total_deadline_s: float = DEFAULT_TOTAL_DEADLINE_S,
     is_interrupted: Optional[Callable[[], bool]] = None,
     sleep_fn: Optional[Callable[[float], float]] = None,
     backoff_fn: Optional[Callable[[int], float]] = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> SearchOutcome:
     """Run ``primary.search(query, limit)`` with backoff, then fall back.
 
@@ -298,7 +359,11 @@ def search_with_resilience(
 
     Every provider in ``[primary, *fallbacks]`` gets up to ``max_attempts``
     tries, and ALL of them share the single ``total_wait_budget_s`` sleep
-    budget — the budget, not the attempt count, is what bounds the call.
+    budget. ``total_wait_budget_s`` caps how long we SLEEP; ``total_deadline_s``
+    caps how long we keep SCHEDULING new attempts. Neither can interrupt a call
+    already in flight — providers own their per-call timeouts.
+
+    The primary gets ``max_attempts`` tries; each fallback gets exactly one.
     An empty result set is a successful answer and never triggers a fallback;
     conflating "nobody published anything" with "the provider is down" is the
     failure mode this whole module exists to prevent.
@@ -333,7 +398,12 @@ def search_with_resilience(
     total_waited = 0.0
     attempt_cap = max(1, int(max_attempts))
     saw_transient = False
+    deadline_hit = False
     last_response: Optional[Dict[str, Any]] = None
+    # math.isfinite guards NaN: ``float("nan") > 0`` is False, which would
+    # silently disable the deadline entirely with no log line.
+    _dl = float(total_deadline_s or 0.0)
+    deadline = monotonic() + _dl if math.isfinite(_dl) and _dl > 0 else None
 
     for index, provider in enumerate(chain):
         name = _provider_name(provider)
@@ -341,7 +411,23 @@ def search_with_resilience(
         trail.append(record)
         stop_chain = False
 
-        while record.attempts < attempt_cap:
+        # The primary gets the full retry budget; each fallback gets ONE shot.
+        # A fallback is a last resort, not a second place to hammer. ddgs in
+        # particular re-runs its lazy pip-install on every search() and leaks a
+        # worker thread per timeout (plugins/web/ddgs/provider.py), so retrying
+        # it multiplies both. It also removes a silent docstring/behaviour
+        # mismatch: the shared wait budget already capped later providers at one
+        # attempt once it was exhausted, just non-deterministically.
+        provider_cap = attempt_cap if index == 0 else 1
+
+        while record.attempts < provider_cap:
+            if deadline is not None and monotonic() >= deadline:
+                logger.info(
+                    "web_search: total deadline reached, abandoning %s after %d attempt(s)",
+                    name, record.attempts,
+                )
+                deadline_hit = True
+                break
             if probe():
                 record.kind = INTERRUPTED
                 record.detail = "interrupted before attempt"
@@ -392,22 +478,29 @@ def search_with_resilience(
                     "web_search: %s failed (not transient, no retry or fallback): %s",
                     name, detail[:200],
                 )
-                if raised is not None:
+                # Re-raise ONLY on the pristine pass-through path: the primary,
+                # with nothing transient seen yet. Re-raising from a fallback
+                # would replace a real outage report with the fallback's own
+                # exception and discard the whole trail, so the agent (and
+                # Langfuse) would never learn the primary was down.
+                if raised is not None and index == 0 and not saw_transient:
                     raise raised
                 stop_chain = True
                 break
 
             saw_transient = True
-            if record.attempts >= attempt_cap:
+            if record.attempts >= provider_cap:
                 break
 
             delay = min(_backoff(record.attempts), budget_left)
+            if deadline is not None:
+                delay = min(delay, max(0.0, deadline - monotonic()))
             if delay <= 0:
                 logger.info("web_search: wait budget exhausted while retrying %s", name)
                 break
             logger.info(
                 "web_search: %s transient failure (attempt %d/%d), backing off %.1fs: %s",
-                name, record.attempts, attempt_cap, delay, detail[:200],
+                name, record.attempts, provider_cap, delay, detail[:200],
             )
             slept = _sleep(delay)
             budget_left = max(0.0, budget_left - slept)
@@ -415,10 +508,10 @@ def search_with_resilience(
             if probe():
                 return _interrupted(trail, total_waited)
 
-        if stop_chain:
+        if stop_chain or deadline_hit:
             break
 
-    if not saw_transient and last_response is not None:
+    if not saw_transient and not deadline_hit and last_response is not None:
         # Nothing transient ever happened, so nothing was retried or failed
         # over — preserve the provider's response byte-for-byte.
         return SearchOutcome(
@@ -463,82 +556,65 @@ def build_unavailable_response(trail: Sequence[ProviderAttempt]) -> Dict[str, An
 
 
 # ── Fallback chain resolution ───────────────────────────────────────────────
-# Two fallbacks is the cap. The chain is bounded by the shared wait budget
-# anyway; the cap keeps the worst case legible and stops a long provider list
-# turning one tool call into a tour of every backend.
-_MAX_FALLBACKS = 2
+# The ONLY automatic fallback is the keyless provider. This is a billing
+# boundary, not a preference.
+#
+# The obvious design — walk registered providers filtered by ``is_available()``
+# — is unsafe here, and its unsafety is invisible from this file. Rented
+# tenants run ``web.search_backend: ddgs`` and are denied ``EXA_API_KEY`` so
+# their searches cannot be billed to BigLobster's Exa account (issue #174).
+# But that denial only strips the key from the tenant's ``.env`` FILE
+# (docker/cont-init.d/03-biglobster-config), while ``exa.is_available()``
+# resolves through ``hermes_cli.config.get_env_value``, which reads
+# ``os.environ`` FIRST — and the cron scheduler's profile context
+# (``cron/scheduler.py:_job_profile_context``) only adds and restores env
+# keys, never deletes one the parent process already had. So on a tenant run
+# ``exa.is_available()`` returns True and an availability walk resolves
+# ``ddgs -> exa``: every ddgs blip silently bills BigLobster. Verified by
+# reproduction, not by reading alone.
+#
+# Selecting only a keyless provider makes that class of leak structurally
+# impossible regardless of what leaks into ``os.environ``. A paid provider is
+# never chosen automatically; an operator who wants exa->tavily failover
+# configures it deliberately.
+#
+# Trade-off, accepted: an install holding several paid keys falls back to a
+# free scraper rather than to its second paid backend, so degraded results may
+# rank worse than the primary would have. Losing the run is worse, and the
+# degraded payload says which backend answered.
+_KEYLESS_FALLBACKS = ("ddgs",)
 
-# The free, keyless last resort. Its ``is_available()`` only probes whether
-# the ``ddgs`` package is importable (it must stay I/O-free), but its
-# ``search()`` lazy-installs the package on first use — which is precisely how
-# a freshly provisioned rented tenant already gets its very first web search
-# (docker/cont-init.d/03-biglobster-config forces web.search_backend: ddgs).
-# So an "unavailable" ddgs is still a working fallback, and it is appended
-# explicitly rather than being filtered out by the availability walk.
-_KEYLESS_LAST_RESORT = "ddgs"
 
+def resolve_search_fallbacks(primary_name: str) -> List[Any]:
+    """Return the keyless provider(s) to try after *primary_name* fails.
 
-def resolve_search_fallbacks(primary_name: str, *, max_fallbacks: int = _MAX_FALLBACKS) -> List[Any]:
-    """Return search providers to try after *primary_name* fails.
+    Never returns a provider that requires an API key — see the comment above;
+    this is the #174 billing boundary. A tenant already on ``ddgs`` gets an
+    empty list (backoff only, no fallback), which is the correct and safe
+    outcome: there is nothing free left to try.
 
-    Ordered by the registry's own ``_LEGACY_PREFERENCE`` and filtered by
-    ``is_available()``, so a provider the operator has no credentials for is
-    never attempted.
-
-    That availability filter is load-bearing for billing, not just tidiness:
-    rented tenants are deliberately denied ``EXA_API_KEY``
-    (docker/cont-init.d/03-biglobster-config, issue #174) so that their
-    searches cannot be billed to BigLobster's Exa account. Exa therefore
-    reports unavailable on a tenant and can never be selected as a fallback
-    there. Do not "helpfully" relax this to walk unavailable providers — the
-    explicit ``ddgs`` append below is the one deliberate exception, and it is
-    safe precisely because ddgs needs no key and bills nobody.
+    ``is_available()`` is deliberately NOT consulted. For ``ddgs`` it only
+    probes whether the package is importable, while its ``search()``
+    lazy-installs on first use — which is exactly how a freshly provisioned
+    tenant gets its first web search today.
     """
     try:
-        from agent.web_search_registry import _LEGACY_PREFERENCE, get_provider, list_providers
+        from agent.web_search_registry import get_provider
     except Exception as exc:  # noqa: BLE001 — no registry, no fallback
         logger.debug("fallback resolution unavailable: %s", exc)
         return []
 
     primary = (primary_name or "").strip()
     chosen: List[Any] = []
-    seen = {primary}
-
-    def _consider(provider: Any, *, require_available: bool) -> None:
-        if provider is None or len(chosen) >= max_fallbacks:
-            return
-        name = _provider_name(provider)
-        if name in seen:
-            return
+    for name in _KEYLESS_FALLBACKS:
+        if name == primary:
+            continue
         try:
-            if not provider.supports_search():
-                return
-            if require_available and not provider.is_available():
-                return
+            provider = get_provider(name)
+            if provider is None or not provider.supports_search():
+                continue
         except Exception as exc:  # noqa: BLE001 — a broken provider is skipped
             logger.debug("provider %s probe raised: %s", name, exc)
-            return
-        seen.add(name)
+            continue
         chosen.append(provider)
-
-    try:
-        registered = {_provider_name(p): p for p in list_providers()}
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("provider listing failed: %s", exc)
-        registered = {}
-
-    for name in _LEGACY_PREFERENCE:
-        _consider(registered.get(name), require_available=True)
-
-    # Anything registered but outside the legacy preference order (custom
-    # plugin providers), still availability-gated.
-    for name, provider in sorted(registered.items()):
-        _consider(provider, require_available=True)
-
-    if not chosen:
-        try:
-            _consider(get_provider(_KEYLESS_LAST_RESORT), require_available=False)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("keyless last-resort lookup failed: %s", exc)
-
     return chosen
