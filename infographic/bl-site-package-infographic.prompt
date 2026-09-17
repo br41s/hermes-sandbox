@@ -101,8 +101,8 @@ cuestión de fiabilidad:
 
 - **→ TABLA** si el esquema depende de texto exacto: varias columnas, cifras,
   nombres técnicos, más de 3–4 celdas de contenido. Es la opción por defecto
-  para cualquier comparación o diagnóstico tabular — como el que falló como
-  SVG en Shoroban.
+  para cualquier comparación o diagnóstico tabular — es justo el caso en el
+  que un SVG falla.
 - **→ IMAGEN** sólo si el esquema es una escena, un proceso o una metáfora
   que se entiende con 0–3 etiquetas cortas (1–3 palabras cada una) o sin
   ningún texto en absoluto. Si dudas entre los dos, elige TABLA: es la opción

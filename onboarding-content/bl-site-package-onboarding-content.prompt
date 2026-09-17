@@ -178,7 +178,7 @@ su `slug` y su número de productos:
 
     {
       "categories": [ { "label": "Papelería", "slug": "papeleria", "total": 412 }, ... ],
-      "brands":     [ { "label": "Liderpapel", "slug": "liderpapel", "total": 980 }, ... ]
+      "brands":     [ { "label": "Marca Ejemplo", "slug": "marca-ejemplo", "total": 980 }, ... ]
     }
 
 Con esos `slug` construyes:
@@ -302,8 +302,8 @@ y anótalo en el informe final como "sin imagen".
    parecer escasa en una sola página pero ser rica en todo el catálogo. Sigue los
    enlaces de categoría / producto / sección y lee TANTAS páginas como haga falta
    para tener material real suficiente con el que escribir de verdad. Para una
-   tienda (p.ej. `shoroban.com`), entra en las páginas de categoría de producto y
-   léelas una a una. La herramienta acepta hasta 5 URLs por llamada, así que haz
+   tienda online, entra en las páginas de categoría de producto y léelas una a
+   una. La herramienta acepta hasta 5 URLs por llamada, así que haz
    VARIAS llamadas `web_extract` en tandas hasta cubrir el sitio: portada,
    quiénes somos, todas las categorías/secciones de producto, servicios, contacto
    y el blog si existe. La investigación exhaustiva es la norma ANTES de escribir;

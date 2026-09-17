@@ -99,11 +99,11 @@ Viene con un `kind`:
 - `review` — ficha ya publicada cuyos datos del feed han cambiado. Compara nuestro texto con los datos actuales: si algo ya no cuadra, reescríbelo y republica; si sigue siendo correcto, no lo toques y anótalo en el informe para que el cliente lo confirme desde su panel.
 
 ### 2. Busca el producto en internet
-`web_search` con lo que lo identifica de verdad: la referencia del fabricante y la marca (`4691001 Fellowes`), o el EAN. Buscar solo por el nombre del distribuidor te devolverá productos parecidos, que es justo lo que no quieres.
+`web_search` con lo que lo identifica de verdad: la referencia del fabricante y la marca (`<referencia> <marca>`), o el EAN. Buscar solo por el nombre del distribuidor te devolverá productos parecidos, que es justo lo que no quieres.
 
 Mira los **3 primeros resultados** y prueba a verificarlos todos.
 
-Un aviso por experiencia: **la web del fabricante suele ser la que peor se deja verificar.** Fellowes y Rexel no publican datos estructurados en sus fichas, así que `product_enrich` las rechaza aunque sean la mejor fuente. Los distribuidores grandes sí suelen publicarlos. No te quedes en el primer rechazo: prueba los tres.
+Un aviso por experiencia: **la web del fabricante suele ser la que peor se deja verificar.** Muchos fabricantes no publican datos estructurados en sus fichas, así que `product_enrich` las rechaza aunque sean la mejor fuente. Los distribuidores grandes sí suelen publicarlos. No te quedes en el primer rechazo: prueba los tres.
 
 Es normal que ninguno verifique. Cuando pase, escribe la ficha solo con lo del feed — y si con eso no la mejoras, sáltala.
 

@@ -117,7 +117,7 @@ su `slug` y su número de productos:
 
     {
       "categories": [ { "label": "Papelería", "slug": "papeleria", "total": 412 }, ... ],
-      "brands":     [ { "label": "Liderpapel", "slug": "liderpapel", "total": 980 }, ... ]
+      "brands":     [ { "label": "Marca Ejemplo", "slug": "marca-ejemplo", "total": 980 }, ... ]
     }
 
 Con esos `slug` construyes:
