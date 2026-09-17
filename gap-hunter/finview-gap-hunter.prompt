@@ -26,6 +26,21 @@ cd /tmp && rm -rf finview-gap-hunter && git clone --depth 1 --single-branch http
 # uses `git reset --hard` / `git clean -fd` — están bloqueados en modo cron
 # (requieren aprobación humana que no existe en un job desatendido).
 
+### 0b. Fijar la identidad de commit (OBLIGATORIO, antes de cualquier commit)
+
+Un commit cuyo autor no esté asociado a una cuenta de GitHub hace que Vercel no
+pueda verificar la autoría: **no lanza el preview** y el check del PR queda en
+rojo, bloqueando el merge. El email global del perfil (`hermes@agent.local`) no
+pertenece a ninguna cuenta, así que fija SIEMPRE la identidad antes de commitear:
+
+    git config user.email "82447149+br41s@users.noreply.github.com"
+    git config user.name "Hermes Agent"
+
+Es config LOCAL del clon efímero (`/tmp/finview-gap-hunter/.git/config`), no
+global: no toca el resto del sistema. Ese email es la dirección noreply
+verificada de la cuenta propietaria del repo; no lo sustituyas por otro. Sin
+esto el PR se abre con el check de Vercel en rojo y nadie lo puede mergear.
+
 ### 1. Investigar gaps de contenido
 - Revisa los artículos existentes en `frontend/src/app/blog/` (comprueba slugs y títulos)
 - Busca en la web temas relevantes para inversores en dividendos/fiscalidad española que NO estén cubiertos
@@ -130,6 +145,10 @@ SEO
 DEPLOY
 (Ya estás en el branch blog/SLUG-YYYYMMDD creado en el paso 3a)
 cd /tmp/finview-gap-hunter
+# Identidad de commit: ver §0b. Sin esto Vercel no verifica el autor y el PR
+# se queda sin preview y sin poder mergear.
+git config user.email "82447149+br41s@users.noreply.github.com"
+git config user.name "Hermes Agent"
 git add frontend/src/app/blog/SLUG/page.mdx frontend/src/app/blog/SLUG/layout.tsx frontend/src/app/blog/SLUG/SLUG.module.css frontend/src/app/blog/page.tsx frontend/src/app/blog/blog.module.css
 git diff --cached --name-only
 git commit -m "blog(articles): nuevo artículo sobre [tema]"
