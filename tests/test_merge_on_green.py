@@ -27,6 +27,11 @@ def approval(sha, login=watcher.AUDITOR_LOGIN):
             "body": f"I would merge this — checked X.\n<!-- hermes-auditor:approve {sha} -->"}
 
 
+def review(sha, login=watcher.AUDITOR_LOGIN, state="APPROVED"):
+    """The same marker as ``approval``, carried by a `gh pr review` instead."""
+    return {**approval(sha, login), "state": state}
+
+
 class FakeGh:
     """Minimal ``gh`` stand-in. Records merges instead of performing them.
 
@@ -164,6 +169,29 @@ def test_plain_approve_prose_without_marker_does_not_count():
     assert not watcher.auditor_approved(comments, HEAD)
 
 
+def test_marker_in_an_approve_review_counts():
+    assert watcher.auditor_approved([], HEAD, [review(HEAD)])
+
+
+@pytest.mark.parametrize("state", ["CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "", None])
+def test_marker_in_a_non_approving_review_does_not_count(state):
+    """The prompt forbids the marker outside an APPROVE; the gate enforces it."""
+    assert not watcher.auditor_approved([], HEAD, [review(HEAD, state=state)])
+
+
+def test_review_marker_written_by_anyone_else_is_ignored():
+    assert not watcher.auditor_approved([], HEAD, [review(HEAD, login="random-user")])
+
+
+def test_review_approval_for_an_older_commit_does_not_count():
+    assert not watcher.auditor_approved([], HEAD, [review("0" * 40)])
+
+
+def test_comment_approvals_still_count_after_the_switch_to_reviews():
+    """Approvals posted before 2026-09-17, and the `gh pr review` fallback."""
+    assert watcher.auditor_approved([approval(HEAD)], HEAD, [])
+
+
 def test_the_marker_the_auditor_is_told_to_write_is_the_one_we_parse():
     """Contract between writer (auditor prompt + SOUL) and reader (this regex)."""
     for rel in ("auditor/auditor.prompt", "docker/profiles/auditor/SOUL.md"):
@@ -250,6 +278,19 @@ def test_no_approval_waits_silently(led):
 def test_no_approval_is_explained_when_verbose(led):
     gh = FakeGh(prs=[_pr()], details={7: {"comments": []}})
     assert "no hermes-auditor approval" in _run(gh, led, verbose=True)[0]
+
+
+def test_merges_when_the_approval_arrives_only_as_a_review(led):
+    gh = FakeGh(prs=[_pr()], details={7: {"comments": [], "reviews": [review(HEAD)]}})
+    _run(gh, led)
+    assert gh.merged == ["7"]
+
+
+def test_waits_when_the_only_review_is_a_request_changes(led):
+    gh = FakeGh(prs=[_pr()],
+                details={7: {"comments": [],
+                             "reviews": [review(HEAD, state="CHANGES_REQUESTED")]}})
+    assert _run(gh, led) == [] and gh.merged == []
 
 
 def test_push_after_approval_voids_it(led):
