@@ -42,14 +42,22 @@ redirect work its own prompt actually documents.
 
 | Agent | Prompt file | Publishes via | Schedule |
 |---|---|---|---|
-| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (draft) | daily |
-| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `bl_site_redirect` (verified matches auto-publish) | daily |
+| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (goes live immediately) | daily |
+| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `update_blog_post` (link repairs only), `bl_site_redirect` (verified matches auto-publish) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
-| Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (draft, with CTA) | daily |
+| Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (goes live immediately, with CTA) | daily |
 | Infographic Engineer | `infographic/bl-site-package-infographic.prompt` | `update_blog_post` (inserts one inline SVG) | daily |
 | Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
 | Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | daily |
+
+**There is no draft step.** `create_blog_post` hardcodes `"status":
+"published"` (`tools/bl_site_publish_tool.py`), so everything these agents
+write is live on the client's public blog the moment the call returns — no
+human reads it first. Note that the Product Article Agent's prompt still tells
+its agent the opposite ("se guarda SIEMPRE como borrador", and to confirm
+`"status": "draft"`, which never comes back). That prompt is wrong and needs
+fixing; the tool's behaviour is the truth.
 
 Onboarding Content Agent is the odd one out: it's a **one-shot** job, not a
 recurring daily job like the other two. It runs once, scans the client's old
@@ -93,6 +101,71 @@ bl-site-package now supports AI images: blog posts have a cover
 BYOK) and attach them with `bl_site_publish` `action: "upload_image"`. Image
 generation is billed to the client's `FAL_KEY`; a client who didn't provide one
 just gets text-only content (the agents never block on a missing image).
+
+### Internal links are discovered, not hardcoded
+
+`gap-hunter` and `onboarding-content` write the client's article bodies, so
+they are the two agents that decide where the blog links to. Both build every
+internal link from routes they look up at run time, against the client's own
+site — there is no route allowlist in the prompt any more, and a slug the agent
+did not read during that run is treated as a 404.
+
+| What | Where it comes from | Route it builds |
+|---|---|---|
+| Categories | `GET /api/products/facets` → `categories[].slug` | `/productos/categoria/<slug>/` |
+| Brands | `GET /api/products/facets` → `brands[].slug` | `/productos/marca/<slug>/` |
+| Products | `GET /api/products?q=<words>&limit=10` → `slug` | `/productos/<slug>` |
+| Other articles | `list_posts` / `GET /api/blog/posts` → `slug` | `/blog/<slug>` |
+| Fixed pages | always exist | `/`, `/quienes-somos`, `/servicios`, `/contacto`, `/blog`, `/productos` |
+
+All four endpoints are public. Two details are load-bearing and easy to break
+from the `bl-site-package` side:
+
+- **The trailing slash on category and brand routes is required.** Those pages
+  are built as `.../<slug>/index.html`, so without it the link 301s.
+- **`/api/products/facets` and the page builder must keep sharing one
+  `toSlug`.** They both import it from `src/sync/liderpapel/parse.js`. If those
+  two ever diverge, every category and brand link the agents write becomes a
+  404, silently.
+
+The prompts also skip `/servicios` and `/quienes-somos` when the client's
+`page_servicios_title` / `page_quienes_title` is empty. An unconfigured page
+still answers **200** with a "Página en construcción" placeholder, so a link
+there is a dead end that no 404 scan — including this profile's own
+`bl_site_redirect` — can ever detect.
+
+Rules the prompts enforce on top of discovery: the anchor text decides the
+route (catalogue wording may never resolve to `/servicios`), at least 2 of the
+3–6 links per article must be deep ones, and at most 1 may go to `/contacto` —
+the CTA button already goes there, and repeating it in every body is what
+turned an earlier client's blog into the same two links on every post.
+
+A client with no catalogue gets `{"categories":[],"brands":[]}` and falls back
+to the fixed pages, so none of this is catalogue-only.
+
+**SEO/GEO On-Site repairs what is already published.** Since blog posts go live
+with no review, the two writing agents above are prevention only — they cannot
+help a client whose blog already carries bad links. The onsite SEO agent now
+audits published posts each run (up to 5 read, 3 modified) and rewrites link
+destinations in place via `update_blog_post`, using the same discovery
+endpoints.
+
+Which 5 it reads is **derived from the run date**, not from what it did last
+time: posts sorted by `id` (autoincrement, so chronological — `list_posts` does
+not project `created_at`), starting at `(day-of-year × 5) mod N` and wrapping.
+This agent keeps no ledger, so anything phrased as "the ones you haven't
+reviewed yet" is unknowable to it and collapses into re-reading the newest few
+forever — which would never reach the back catalogue where the bad links
+actually are. The rotation covers every post within `ceil(N/5)` days for any N. It changes **only the route inside `[texto](RUTA)`** — never the
+prose, the title, the FAQ block, or any `<svg>` / `/uploads/` image the
+Infographic Engineer put in the body, and the link count is identical before and
+after. One consequence worth knowing: a post that simply repeats `/contacto` is
+reported, not fixed, because every available repair (dropping a link, or
+repointing it so its text no longer matches) is itself the defect this agent
+exists to remove. That last constraint is the sharp edge:
+`update_blog_post` replaces `content` wholesale, so an agent that cannot
+reproduce the body intact is told to skip the post and report it rather than
+risk destroying an infographic.
 
 Social Shorts is the only agent whose deliverable is **not** on the client's
 site. Each run turns one not-yet-processed blog post into 3–5 vertical MP4s for
@@ -553,6 +626,15 @@ edit to every customer job built from that file in one pass:
 .venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --dry-run   # preview
 .venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --yes       # apply
 ```
+
+**Never name one customer in a shared prompt.** Every `*/bl-site-package-*.prompt`
+is package-wide — one frozen copy per rented client — so a customer's name,
+domain or distributor written into one is that customer's identity leaking into
+the next client's agent run. Use `OLD_SITE_URL` / `BL_SITE_URL` and generic
+examples instead. `tests/scripts/test_bl_prompts_no_customer_names.py` fails on
+a customer identifier or a domain-shaped token in any of these files; **add the
+client to its `CUSTOMER_IDENTIFIERS` list when you onboard them**, since there
+is no machine-readable customer registry to derive that list from.
 
 ## Removing a client
 

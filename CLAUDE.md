@@ -229,11 +229,16 @@ Two rules hold across all of them, and they are what makes unattended writing de
   change-detection fingerprint and publication eligibility are decided server-side, so an
   agent cannot assert a barcode, pin a stale fingerprint, or talk itself into publishing
   something thin.
-- **Nothing an agent writes goes live implicitly.** Blog posts save as drafts; product
-  sheets save as drafts unless publication is explicit and the site's checklist passes;
-  redirects save as pending and only auto-publish on a checksum-verified barcode or
-  manufacturer-reference match — anything resolved by title similarity or human judgement
-  stays pending for a person to publish.
+- **Everything except blog posts waits for a human.** Product sheets save as drafts
+  unless publication is explicit and the site's checklist passes; redirects save as
+  pending and only auto-publish on a checksum-verified barcode or manufacturer-reference
+  match — anything resolved by title similarity or human judgement stays pending for a
+  person to publish. **Blog posts are the exception: `create_blog_post` hardcodes
+  `"status": "published"` (`tools/bl_site_publish_tool.py`) and goes live on the client's
+  public site immediately.** That is deliberate — it is why `gap-hunter`'s prompt says its
+  rules are not optional, since nothing is checked afterwards — but it means a bad blog
+  post is a client-visible incident, not a draft someone catches. Treat any change to what
+  those agents write as shipping straight to production.
 
 `product-sheets` is the exception worth remembering when selling: it only does anything for
 a client whose catalogue comes from a distributor feed, because that feed is the only thing
