@@ -43,6 +43,9 @@ stdin-only path into auditor.prompt.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import signal
+import threading
 import json
 import os
 import subprocess
@@ -214,6 +217,59 @@ def resolve_api_key_source() -> tuple:
     return "", ""
 
 
+JUDGE_DEADLINE_DEFAULT = 300
+
+
+def judge_deadline_seconds() -> int:
+    """Hard wall-clock bound on one judge call, in seconds.
+
+    Override with ``HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS``. Floor of 10s so a
+    typo cannot make every review impossible.
+    """
+    raw = (_env_value("HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS") or "").strip()
+    if not raw:
+        return JUDGE_DEADLINE_DEFAULT
+    try:
+        return max(10, int(raw))
+    except ValueError:
+        return JUDGE_DEADLINE_DEFAULT
+
+
+@contextlib.contextmanager
+def wall_clock_deadline(seconds: int, what: str):
+    """Raise ``TimeoutError`` if the block runs longer than ``seconds``.
+
+    ``urllib.request.urlopen(timeout=...)`` is a PER-SOCKET-READ timeout, not a
+    bound on total request time: a response that trickles bytes, or a connection
+    the server holds open, resets the clock on every read and never trips it.
+    That is how a judge call with ``timeout=120`` hung for 300s and then 590s on
+    br41s/biglobster#526 (2026-09-17) and returned no verdict at all.
+
+    A hung judge is worse than a failed one. Exit 4 is already wired to mean
+    "the gate is broken" and makes the auditor fail closed and escalate; an
+    indefinite hang instead holds the single-thread cron pool and starves every
+    other agent while nobody is told anything.
+
+    SIGALRM is main-thread-and-Unix only. Off that path this yields unchanged
+    rather than pretending to bound anything — the CLI (the cron path) is
+    exactly the supported case.
+    """
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _fire(_signum, _frame):
+        raise TimeoutError(f"{what} exceeded its {seconds}s deadline")
+
+    previous = signal.signal(signal.SIGALRM, _fire)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def resolve_model(tier: str) -> str:
     """Model id for a tier, env-first. Unknown tier => system (fail-safe, like
     tiers.classify — the important gate must never silently fall to the cheap one)."""
@@ -318,6 +374,11 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
+    except TimeoutError:
+        # The wall-clock deadline fired mid-request. Propagate it as-is so the
+        # caller can say "it hung" rather than "it failed", which are different
+        # operational problems.
+        raise
     except Exception as e:  # noqa: BLE001 — surface any failure to the caller
         raise RuntimeError(f"auditor.llm review failed (model={model}): {e}") from e
     try:
@@ -387,8 +448,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("auditor.llm: no review content on stdin", file=sys.stderr)
             return 2
 
+    deadline = judge_deadline_seconds()
     try:
-        print(review(args.tier, user_content))
+        with wall_clock_deadline(deadline, "judge call"):
+            print(review(args.tier, user_content))
+    except TimeoutError as e:
+        print(
+            f"auditor.llm: {e}. No verdict was produced — treat the gate as "
+            f"BROKEN for this run, not as a degraded review. Raise the bound "
+            f"with HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS if the model is "
+            f"legitimately this slow.",
+            file=sys.stderr,
+        )
+        return 4
     except RuntimeError as e:
         # Exit 4 == "the judge itself could not run" (no credential, HTTP or
         # parse failure), as distinct from exit 3 == "could not fetch the PR".
