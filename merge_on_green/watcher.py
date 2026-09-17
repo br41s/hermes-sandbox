@@ -2,13 +2,16 @@
 
 The auditor (``auditor/``, profile ``auditor``) already reviews every open PR on
 every repo, merges clean content-tier PRs itself, and for a clean system-tier PR
-posts an APPROVE comment and leaves the merge to the CEO. This watcher is that
+submits an APPROVE review and leaves the merge to the CEO. This watcher is that
 last, manual step. It merges a PR only when all of these hold:
 
   1. The CEO labelled it ``auto-merge`` — per-PR consent.
-  2. hermes-auditor's APPROVE comment carries the marker
+  2. hermes-auditor's approval carries the marker
      ``<!-- hermes-auditor:approve <sha> -->`` naming the CURRENT head SHA, so a
-     push after the approval voids it.
+     push after the approval voids it. The auditor writes it in an APPROVE
+     review; a plain comment is still read, because that is where every
+     approval before 2026-09-17 lives and where the auditor falls back to when
+     ``gh pr review`` is refused.
   3. GitHub reports it ``MERGEABLE`` and no check is failing or pending.
   4. It touches no protected path and passes ``auditor.safety``'s
      mass-deletion floor — the same floor the auditor's own merges use.
@@ -39,11 +42,16 @@ CLASS_NAME = "merge-on-green"
 LABEL = "auto-merge"
 AUDITOR_LOGIN = "hermes-auditor"
 
-#: Written by the auditor at the end of a system-tier APPROVE comment (see
+#: Written by the auditor at the end of a system-tier APPROVE (see
 #: auditor/auditor.prompt PASO 2f and the auditor SOUL.md). Invisible when
 #: rendered; binds the approval to one head SHA. A prefix of at least 7 hex
 #: chars is accepted so a truncated SHA still binds to exactly one commit.
 APPROVE_MARKER = re.compile(r"<!--\s*hermes-auditor:approve\s+([0-9a-fA-F]{7,40})\s*-->")
+
+#: A review states its verdict as data, so unlike a plain comment it can be
+#: checked. A marker inside a REQUEST_CHANGES, COMMENTED or DISMISSED review
+#: never authorises a merge, whatever the prompt told the auditor to write.
+APPROVING_REVIEW_STATES = {"APPROVED"}
 
 #: Read from each repo, so policy lives with the code it protects while the
 #: mechanism stays here. Absent or empty file => DEFAULT_PROTECTED.
@@ -205,28 +213,44 @@ def candidate_prs(repo: str, *, runner: Optional[Runner] = None) -> list[dict]:
 def pr_details(repo: str, number: int, *, runner: Optional[Runner] = None) -> dict:
     return gh_json(
         ["pr", "view", str(number), "--repo", repo,
-         "--json", "headRefOid,mergeable,comments"],
+         "--json", "headRefOid,mergeable,comments,reviews"],
         runner=runner,
     ) or {}
 
 
-def auditor_approved(comments: Iterable[dict], head_sha: str) -> bool:
+def _marker_binds(item: dict, head: str) -> bool:
+    """True if ``item`` is the auditor's and carries a marker for ``head``.
+
+    Only the auditor's own text counts. On a public repo anyone can comment, so
+    a marker written by any other account is ignored — otherwise approving a PR
+    would be one pasted line away.
+    """
+    if ((item.get("author") or {}).get("login")) != AUDITOR_LOGIN:
+        return False
+    return any(head.startswith(match.group(1).lower())
+               for match in APPROVE_MARKER.finditer(item.get("body") or ""))
+
+
+def auditor_approved(comments: Iterable[dict], head_sha: str,
+                     reviews: Optional[Iterable[dict]] = None) -> bool:
     """True if hermes-auditor approved exactly this head commit.
 
-    Only the auditor's own comments count. On a public repo anyone can comment,
-    so a marker written by any other account is ignored — otherwise approving a
-    PR would be one pasted line away.
+    ``gh pr view`` returns reviews and issue comments as two separate lists, so
+    both are read: the auditor writes the marker in an APPROVE review, and fell
+    back to a plain comment before 2026-09-17 and whenever ``gh pr review`` is
+    refused. A review additionally has to *be* an approval — see
+    ``APPROVING_REVIEW_STATES``.
     """
     head = (head_sha or "").lower()
     if not head:
         return False
-    for comment in comments or []:
-        if ((comment.get("author") or {}).get("login")) != AUDITOR_LOGIN:
-            continue
-        for match in APPROVE_MARKER.finditer(comment.get("body") or ""):
-            if head.startswith(match.group(1).lower()):
-                return True
-    return False
+    if any(_marker_binds(comment, head) for comment in comments or []):
+        return True
+    return any(
+        str(review.get("state") or "").upper() in APPROVING_REVIEW_STATES
+        and _marker_binds(review, head)
+        for review in reviews or []
+    )
 
 
 def checks_ok(repo: str, number: int, *, runner: Optional[Runner] = None) -> tuple[bool, str]:
@@ -371,7 +395,8 @@ def process_repo(
             note(target, "skipped — already acted on this commit")
             continue
 
-        if not auditor_approved(details.get("comments"), head):
+        if not auditor_approved(details.get("comments"), head,
+                                details.get("reviews")):
             note(target, f"waiting — no {AUDITOR_LOGIN} approval at {head[:7]}")
             continue
 

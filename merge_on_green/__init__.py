@@ -1,7 +1,7 @@
 """Merge system-tier PRs the auditor approved, once the CEO has labelled them.
 
 The last manual step of the auditor's system-tier flow: the auditor reviews and
-posts an APPROVE comment carrying a head-SHA marker; the CEO adds the
+submits an APPROVE review carrying a head-SHA marker; the CEO adds the
 ``auto-merge`` label; this watcher merges. See ``watcher.py`` for the full gate.
 
 A sibling of the incident watcher, not a remediation class: a healthy PR is not
