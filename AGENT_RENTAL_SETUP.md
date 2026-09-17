@@ -615,6 +615,15 @@ edit to every customer job built from that file in one pass:
 .venv/bin/python3 scripts/sync_prompt_drift.py --source gap-hunter/bl-site-package-gap-hunter.prompt --yes       # apply
 ```
 
+**Never name one customer in a shared prompt.** Every `*/bl-site-package-*.prompt`
+is package-wide — one frozen copy per rented client — so a customer's name,
+domain or distributor written into one is that customer's identity leaking into
+the next client's agent run. Use `OLD_SITE_URL` / `BL_SITE_URL` and generic
+examples instead. `tests/scripts/test_bl_prompts_no_customer_names.py` fails on
+a customer identifier or a domain-shaped token in any of these files; **add the
+client to its `CUSTOMER_IDENTIFIERS` list when you onboard them**, since there
+is no machine-readable customer registry to derive that list from.
+
 ## Removing a client
 
 Still manual — this is destructive and not reversible, confirm before doing it:
