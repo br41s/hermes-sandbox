@@ -153,8 +153,12 @@ Entre 3 y 6 enlaces internos por artículo, repartidos por el cuerpo del texto
   botón CTA del final del artículo ya lleva a contacto: repetirlo en el cuerpo
   de todos los artículos no aporta nada y satura el blog entero con el mismo
   enlace.
-- **Varía los destinos entre artículos.** Mira en `list_posts` a dónde enlazan
-  los últimos posts: si ya van todos a `/productos` y `/contacto`, elige otros.
+- **Varía los destinos entre artículos.** `list_posts` NO devuelve el cuerpo
+  del post, así que ahí no puedes ver a dónde enlaza nadie: coge los 3 `slug`
+  más recientes de `list_posts` y llama a `get_post` con cada uno — eso sí trae
+  `content`. Si los enlaces de esos 3 ya van todos a `/productos` y
+  `/contacto`, elige otros destinos. Si `get_post` falla, sigue sin esta
+  comprobación: es una mejora, no un bloqueo.
 - Nunca uses URLs absolutas de otro dominio, ni una ruta que no salga de esta
   sección.
 
