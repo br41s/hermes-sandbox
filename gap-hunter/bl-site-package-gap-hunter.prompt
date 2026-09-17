@@ -69,9 +69,9 @@ Estructura obligatoria:
   (NO numerados como manual).
 - Dentro de cada sección: párrafos + alguna sub-lista con `-` cuando aporte,
   datos y ejemplos concretos, **negrita con moderación** (2–3 por sección como
-  mucho), y algún enlace interno Markdown `[texto](RUTA)` hacia otra página del
-  propio sitio cuando encaje — usa la ruta REAL del sitio, no inventes una URL:
-  si no la conoces con seguridad, omite el enlace.
+  mucho), y enlaces internos Markdown `[texto](RUTA)` hacia otras páginas del
+  propio sitio, siguiendo la sección «Enlazado interno» de abajo (rutas reales
+  descubiertas por API, y el destino siempre coherente con el texto del enlace).
 - Un bloque **FAQ al final**: `## Preguntas frecuentes` con 3–4 preguntas como
   `### ...` y su respuesta directa debajo. Mantén EXACTAMENTE este formato de
   encabezados (`## Preguntas frecuentes` y cada pregunta en `### ...`): el sitio
@@ -81,20 +81,82 @@ Estructura obligatoria:
 
 ### Enlazado interno (SEO + navegación) — OBLIGATORIO
 
-Mete enlaces internos en Markdown `[texto](RUTA)` hacia otras páginas del propio
-sitio. Usa **solo estas rutas reales** (son fijas; nunca inventes otras):
+Un enlace interno existe para llevar al lector exactamente a donde promete su
+texto. Un enlace cuyo texto dice una cosa y cuyo destino lleva a otra es PEOR
+que no poner enlace: defrauda al visitante y Google lo lee como una señal de
+relevancia falsa.
 
-- `/` — inicio
-- `/quienes-somos`
-- `/servicios`
-- `/productos` — catálogo (NO inventes la URL de un producto concreto: enlaza al
-  catálogo `/productos` salvo que hayas verificado el slug exacto por la API)
-- `/contacto`
-- `/blog`
+**REGLA DE ORO — manda el texto del enlace, no la lista de rutas.** Antes de
+escribir cada `[texto](RUTA)` pregúntate: "si alguien pincha aquí esperando
+<texto>, ¿es eso lo que encuentra?". Si la respuesta no es un sí rotundo,
+corrige la RUTA — nunca dejes el destino que tenías a mano. En concreto:
 
-Cada artículo debe enlazar al menos a `/servicios` o `/productos` (lo que encaje)
-y a `/contacto`, integrados con naturalidad en el texto. Nunca uses URLs de otro
-dominio ni rutas fuera de esta lista.
+- Texto sobre el catálogo, comprar, precios o un tipo de producto → JAMÁS
+  `/servicios`. Va a `/productos` o, mucho mejor, a la categoría concreta.
+- Texto sobre lo que HACE la empresa (asesoramiento, entrega, servicio
+  técnico, presupuestos) → `/servicios`.
+- Texto sobre la empresa, su historia o su equipo → `/quienes-somos`.
+- Texto que invita a hablar, preguntar o visitar → `/contacto`.
+
+#### Rutas fijas (existen siempre)
+
+`/` · `/quienes-somos` · `/servicios` · `/contacto` · `/blog` · `/productos`
+
+**Antes de enlazar a `/servicios` o a `/quienes-somos`, comprueba en
+`GET {BL_SITE_URL}/api/site/config` que `page_servicios_title` o
+`page_quienes_title` NO estén vacíos.** Si lo están, esa página todavía enseña
+un cartel de "Página en construcción": el enlace manda al visitante a una
+página vacía y el sitio responde 200, así que ningún control de enlaces rotos
+lo detecta nunca. Si está vacía, omite el enlace.
+
+#### Rutas profundas (las que aportan SEO) — descúbrelas, no las inventes
+
+**Categorías y marcas** — `GET {BL_SITE_URL}/api/products/facets`. Es público y
+devuelve las categorías y marcas que el catálogo tiene DE VERDAD, cada una con
+su `slug` y su número de productos:
+
+    {
+      "categories": [ { "label": "Papelería", "slug": "papeleria", "total": 412 }, ... ],
+      "brands":     [ { "label": "Liderpapel", "slug": "liderpapel", "total": 980 }, ... ]
+    }
+
+Con esos `slug` construyes:
+
+- `/productos/categoria/{slug}/` — una categoría concreta (con barra final)
+- `/productos/marca/{slug}/` — una marca concreta (con barra final)
+
+**Productos concretos** — `GET {BL_SITE_URL}/api/products?q=<palabras>&limit=10`.
+Es público, busca por texto libre (cada palabra por su cuenta, en cualquier
+orden) y te devuelve productos reales con su `slug`. Busca el tema del artículo
+y enlaza `/productos/{slug}` cuando cites un producto que el cliente vende de
+verdad. **Nunca pidas `/api/products` sin `q` y sin `limit`**: en un catálogo
+real son ~14.500 productos y unos 28 MB de respuesta.
+
+**Otros artículos** — de `list_posts` (o `GET {BL_SITE_URL}/api/blog/posts`)
+sacas los `slug` ya publicados: enlaza `/blog/{slug}` cuando el tema se toque
+de verdad con el del artículo que estás escribiendo.
+
+**Solo puedes usar un `slug` que hayas leído en una de esas respuestas en ESTA
+misma ejecución.** Un slug recordado, deducido del nombre de la categoría o
+traducido a mano es un 404. Si `facets` devuelve listas vacías (cliente sin
+catálogo), no hay rutas profundas de producto: usa solo las fijas.
+
+#### Cuántos enlaces, y de qué tipo
+
+Entre 3 y 6 enlaces internos por artículo, repartidos por el cuerpo del texto
+(nunca como una lista al final), con este reparto:
+
+- **Al menos 2 tienen que ser rutas profundas** — categoría, marca u otro
+  artículo del blog — siempre que el catálogo o el blog den para ello. Son las
+  únicas que aportan SEO real; `/productos` a secas es el mínimo, no el objetivo.
+- **Como mucho 1 enlace a `/contacto`**, y solo si encaja de forma natural. El
+  botón CTA del final del artículo ya lleva a contacto: repetirlo en el cuerpo
+  de todos los artículos no aporta nada y satura el blog entero con el mismo
+  enlace.
+- **Varía los destinos entre artículos.** Mira en `list_posts` a dónde enlazan
+  los últimos posts: si ya van todos a `/productos` y `/contacto`, elige otros.
+- Nunca uses URLs absolutas de otro dominio, ni una ruta que no salga de esta
+  sección.
 
 ### CTA del artículo (`cta_url` / `cta_label`) — OBLIGATORIO
 
@@ -158,8 +220,9 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 
 ### FASE 1: Investigación
 1. Consulta `GET {BL_SITE_URL}/api/blog/posts` (o `bl_site_publish` con `action: "list_posts"` para incluir borradores) para ver los artículos existentes y evitar duplicados
-2. Consulta `GET {BL_SITE_URL}/api/site/config` para conocer el sector y tono del negocio (`company_name`, `sector`, textos de página) — de ahí sale también a qué páginas internas enlazar
-3. Busca gaps con web_search, relevantes para el sector del cliente, y reúne datos/cifras concretos con su fuente para poder citarlos
+2. Consulta `GET {BL_SITE_URL}/api/site/config` para conocer el sector y tono del negocio (`company_name`, `sector`, textos de página) — y de paso para saber qué páginas fijas están configuradas y cuáles siguen "en construcción" (no se enlazan)
+3. Consulta `GET {BL_SITE_URL}/api/products/facets` para tener las categorías y marcas reales del catálogo, con sus `slug`. Es la única fuente válida de rutas profundas de producto (ver «Enlazado interno»). Si devuelve listas vacías, este cliente no tiene catálogo y solo usarás rutas fijas
+4. Busca gaps con web_search, relevantes para el sector del cliente, y reúne datos/cifras concretos con su fuente para poder citarlos
 
 ### FASE 2: Decisión
 - Si hay un gap válido y NO existe un artículo similar → Crear
@@ -179,5 +242,6 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 - Extensión: [nº aprox. de palabras] (mínimo 1200)
 - Badges: [lista de badges usados]
 - Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo, incluye si hubo reintento]
-- ✅ Humanizado (sin vocabulario IA) · Markdown con H2/FAQ · enlaces internos + botón CTA
+- Enlaces internos: [lista de las RUTAS usadas, marcando cuáles son profundas]
+- ✅ Humanizado (sin vocabulario IA) · Markdown con H2/FAQ · enlaces internos verificados + botón CTA
 - ✅ Publicado directamente — ya está en directo en el blog del cliente
