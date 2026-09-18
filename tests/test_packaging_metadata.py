@@ -468,3 +468,72 @@ def test_security_pins_present_in_mirrored_lazy_features():
         "pyproject extras — the lazy install path would not enforce the "
         "CVE-patched floor:\n  " + "\n  ".join(problems)
     )
+
+
+# --- third copy of the pin: test literals -----------------------------------
+# The two guards above check that pyproject.toml and tools/lazy_deps.py agree
+# WITH EACH OTHER. They passed while tests/tools/test_computer_use.py still
+# asserted `mcp==1.26.0`, because that literal is a third copy nothing
+# cross-checks — the bump in PR #288 updated both files, both guards went
+# green, and CI slice 5/8 caught it only after push.
+#
+# Scope rule: only literals naming a package we ACTUALLY pin are checked. A
+# test using `foo==1.0` as throwaway fixture data for a package we do not ship
+# is not drift and must not be flagged, or this guard becomes noise and gets
+# muted — the same failure mode the dependency queue itself hit.
+#
+# Escape hatch: put `pin-literal-ok` in a comment on the same line for a test
+# that deliberately pins an off-version (e.g. exercising upgrade logic).
+
+_PIN_OK_MARKER = "pin-literal-ok"
+
+
+def _test_pin_literals():
+    """(file, lineno, spec) for every `pkg==version` literal under tests/.
+
+    Line-based rather than AST-based on purpose: it also catches pins written
+    inside docstrings, parametrize tables and comments — anywhere a stale
+    version can mislead the next reader, not just where it is asserted.
+    """
+    out = []
+    for path in sorted((REPO_ROOT / "tests").rglob("*.py")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        for lineno, line in enumerate(lines, 1):
+            if _PIN_OK_MARKER in line:
+                continue
+            for spec in re.findall(r'["\']([A-Za-z0-9_.\-]+==[0-9][^"\']*)["\']', line):
+                out.append((path.relative_to(REPO_ROOT), lineno, spec))
+    return out
+
+
+def test_test_pin_literals_match_the_shipped_pins():
+    """A pinned version written into a test must match what we ship.
+
+    Without this, bumping a dependency leaves stale literals asserting the old
+    version, and the only thing that notices is a red CI slice after push.
+    """
+    shipped = _pins_from_specs(_pyproject_pinned_specs() + _lazy_deps_pinned_specs())
+
+    drift = []
+    for relpath, lineno, spec in _test_pin_literals():
+        m = _PIN_RE.match(spec)
+        if not m:
+            continue
+        name = _canonical(m.group(1))
+        expected = shipped.get(name)
+        if not expected:
+            continue  # not a package we pin — throwaway fixture data, fine
+        if m.group(2) not in expected:
+            drift.append(
+                f"{relpath}:{lineno}: {spec} but we ship "
+                f"{sorted(expected)} (pyproject/lazy_deps)"
+            )
+
+    assert not drift, (
+        "a test hardcodes a version that no longer matches the shipped pin. "
+        "Update the literal, or add a `pin-literal-ok` comment on that line if "
+        "the off-version is deliberate:\n  " + "\n  ".join(drift)
+    )

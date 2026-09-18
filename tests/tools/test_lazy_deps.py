@@ -276,7 +276,7 @@ class TestIsSatisfiedVersionAware:
 
     def test_package_not_installed_returns_false(self, monkeypatch):
         self._fake_version(monkeypatch, {})
-        assert ld._is_satisfied("anthropic==0.86.0") is False
+        assert ld._is_satisfied("anthropic==0.86.0") is False  # pin-literal-ok: any version works, package is absent
 
     def test_bare_package_name_presence_is_enough(self, monkeypatch):
         # No version constraint — presence alone counts as satisfied.

@@ -56,7 +56,7 @@ class TestParsePypiPackage:
         assert _parse_pypi_package("requests") == ("requests", None)
 
     def test_with_version(self):
-        assert _parse_pypi_package("requests==2.32.3") == ("requests", "2.32.3")
+        assert _parse_pypi_package("requests==2.32.3") == ("requests", "2.32.3")  # pin-literal-ok: parser input
 
     def test_with_extras(self):
         assert _parse_pypi_package("mcp[cli]==1.2.3") == ("mcp", "1.2.3")

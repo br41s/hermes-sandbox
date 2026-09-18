@@ -19,7 +19,7 @@ from hermes_cli import security_audit as sa
 
 class TestRequirementsParser:
     def test_extracts_pinned_versions(self):
-        text = "requests==2.20.0\nflask==2.0.1\n"
+        text = "requests==2.20.0\nflask==2.0.1\n"  # pin-literal-ok: parser input, versions arbitrary
         assert sa._parse_requirements(text) == [
             ("requests", "2.20.0"),
             ("flask", "2.0.1"),
@@ -92,7 +92,7 @@ class TestPluginDiscovery:
     def test_reads_requirements_txt(self, tmp_path: Path):
         plugin = tmp_path / "plugins" / "myplugin"
         plugin.mkdir(parents=True)
-        (plugin / "requirements.txt").write_text("requests==2.20.0\n")
+        (plugin / "requirements.txt").write_text("requests==2.20.0\n")  # pin-literal-ok: fixture file
         components = sa._discover_plugins(tmp_path)
         assert len(components) == 1
         assert components[0].name == "requests"
@@ -104,7 +104,7 @@ class TestPluginDiscovery:
     def test_skips_hidden_dirs(self, tmp_path: Path):
         (tmp_path / "plugins" / ".hidden").mkdir(parents=True)
         (tmp_path / "plugins" / ".hidden" / "requirements.txt").write_text(
-            "requests==2.20.0\n"
+            "requests==2.20.0\n"  # pin-literal-ok: fixture file
         )
         assert sa._discover_plugins(tmp_path) == []
 
