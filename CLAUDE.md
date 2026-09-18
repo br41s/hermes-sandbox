@@ -104,13 +104,39 @@ geo-block. Static egress IP `43.157.39.241`. Panel at
 
 Gotchas, each of which cost a session. Detail in workspace `memories/decisions/hermes.md`:
 
-- **`scripts/deploy.sh` does the whole sequence.** Pull main, then run it: it
-  derives the SHA itself, refuses a dirty tree (the build uploads the working
-  directory, so uncommitted code would ship under a commit's tag), refuses a
-  non-main branch, warns when the commit was already built (same tag = no spec
-  change = no rollout), builds, moves the tag, and prints how to verify.
-  `--dry-run` prints every command without running one. The rest of this
-  section is what it automates — read it before overriding anything.
+- **GitHub Actions builds; `scripts/deploy.sh` deploys.** `.github/workflows/
+  ghcr-publish.yml` builds every push to main and publishes the same image as
+  both `:latest` and `:sha-<commit>`. By the time you deploy the image already
+  exists, so the script only moves the service tag and verifies — seconds, not
+  the 8-20 minutes a build takes. Pull main, then run it: it derives the SHA
+  itself, refuses a non-main branch, refuses to move the tag to an image that
+  was never published, moves it, polls the pod until it reports that commit,
+  and prints how to verify. `--dry-run` prints every command without running
+  one.
+
+  `--build` restores the old behaviour and builds via Cloud Build first. Keep
+  it for when Actions is unavailable or its GHCR push breaks — it is the only
+  path that needs `$GHCR_TOKEN`, and the only one that refuses a dirty tree
+  (`gcloud builds submit` uploads the working directory, so uncommitted code
+  would ship under a commit's tag; Actions builds the committed ref and cannot
+  do that).
+
+  **The tag contract is `--short=9`, on both sides.** git picks an abbreviation
+  length from the object count: a full clone gives 9, the shallow clone
+  `actions/checkout` makes by default gives 7. If the workflow and the script
+  ever disagree, the deploy points the service at a tag nobody pushed and the
+  rollout dies as "Service Image Pull Failed" (PR #197/#198). Upstream's
+  `docker.yml` stamps the FULL `github.sha` — do not copy it.
+
+  **Actions needs package-level write, not just repo-level.** A GHCR package
+  created by a PAT does not grant the repo's `GITHUB_TOKEN` write access, and
+  the repo's "Workflow permissions → Read and write" setting does not change
+  that — verified 2026-09-18, the push kept failing `permission_denied:
+  write_package` after it was set. The fix is on the package: *Manage Actions
+  access* → add the repo with role **Write**.
+
+  The rest of this section is what the script automates — read it before
+  overriding anything.
 
 - **Deploy by moving the image tag. Everything else is a no-op.** Zeabur only reconciles a
   prebuilt service when its *spec* changes, and `latest` never looks changed — so every
