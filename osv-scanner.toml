@@ -49,7 +49,7 @@ reason = "starlette pinned 1.0.1 for CVE-2026-48710 (BadHost); the suggested upg
 # have to be closed by decision or not at all.
 [[IgnoredVulns]]
 id = "CVE-2026-10224"
-reason = "Targets gateway/platforms/feishu.py::_handle_webhook_request. That file does not exist in this fork — Feishu routes through the generic webhook adapter (gateway/config.py:401). Unreachable; verified 2026-09-18."
+reason = "Uncontrolled resource consumption in the Feishu webhook handler. The code lives at plugins/platforms/feishu/adapter.py::_handle_webhook_request in this fork (NOT the advisory's gateway/platforms/feishu.py path) and is explicitly bounded against this class: per-IP rate limit, Content-Type guard, early Content-Length reject, a bounded reader capped at 1 MB, a 30s read timeout, and aiohttp client_max_size as a backstop. Mitigated in code; re-check if those guards are ever relaxed. Verified 2026-09-18."
 [[IgnoredVulns]]
 id = "CVE-2026-10221"
 reason = "Stated affected range is 'up to 0.12.0'; we ship 0.19.0. OSV records no fixed version, so the range defaults to all-versions and no upgrade clears it. Re-check run_agent.py::_compress_context if the advisory is ever given a concrete fixed version."
