@@ -171,9 +171,15 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   --format="value(substitutions)"` prints `_GITHUB_TOKEN` in clear. The token is stored in
   plaintext in every build's metadata; treat it as exposed and rotate it if it is ever
   printed.
-- **`hermes gateway start/stop/restart` does not work on Zeabur.** `is_container()` detects
-  Docker only (`/.dockerenv`, cgroup `docker`), not Zeabur's k8s pods, so it reports "Not
-  supported on this platform." Use `/command/s6-svc -u /run/service/gateway-<profile>`.
+- **`hermes gateway start/stop/restart` — the old "not supported on this platform" cause is
+  gone; `/command/s6-svc` is still the known-good path.** The original reason no longer
+  holds: `is_container()` detects Kubernetes too (`KUBERNETES_SERVICE_HOST`, the
+  serviceaccount path, `kubepods`/`containerd`/`crio` cgroup markers), and
+  `detect_service_manager()` no longer gates s6 on it at all — `_s6_running()` stands alone
+  on `/proc/1/comm` + `/run/s6/basedir`, so the s6 dispatch path is live in a Zeabur pod.
+  Nobody has re-verified the full lifecycle there since, so reach for
+  `/command/s6-svc -u /run/service/gateway-<profile>` first and treat a working
+  `hermes gateway restart` as a pleasant surprise worth recording here.
 - **Container restarts every 1–2h are benign** — Zeabur deployment rollouts re-serialise the
   env array, producing a new pod-template-hash and a k8s rolling restart. Not a crash, not
   OOM; there are no liveness probes. Self-heals in ~3 min. Do not chase it.
