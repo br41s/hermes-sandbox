@@ -14,7 +14,7 @@ These tests cover the catalog-fallback path: when ``fetch_api_models`` returns
 
 from unittest.mock import patch
 
-from hermes_cli.models import validate_requested_model
+from hermes_cli.models import provider_model_ids, validate_requested_model
 
 
 _UNREACHABLE_PROBE = {
@@ -108,8 +108,20 @@ def test_opencode_go_totally_unknown_model_still_accepted():
 
 @_patched
 def test_opencode_zen_known_model_accepted():
-    """opencode-zen also uses _PROVIDER_MODELS; kimi-k2 is in its catalog."""
-    result = validate_requested_model("kimi-k2", "opencode-zen")
+    """opencode-zen also uses _PROVIDER_MODELS, so any catalog entry is recognized.
+
+    The model is read from the catalog rather than hardcoded. f98ffbc24
+    rewrote this list -- bare ``kimi-k2`` became ``kimi-k2.5``/``.6``/
+    ``.7-code`` -- and updated three other test files but not this one,
+    leaving the assertion pinned to a model that no longer exists. The
+    contract here is "a catalog entry is recognized when /models is
+    unreachable", which is exactly what the catalog itself defines, so
+    reading it keeps the test honest while the model list churns freely.
+    """
+    catalog = provider_model_ids("opencode-zen")
+    assert catalog, "opencode-zen must ship a static catalog to fall back on"
+
+    result = validate_requested_model(catalog[0], "opencode-zen")
     assert result["accepted"] is True
     assert result["recognized"] is True
 
