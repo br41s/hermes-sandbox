@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — build the current commit and point the Hermes service at it.
+# deploy.sh — point the Hermes service at the current commit's image.
 #
 # WHY THIS EXISTS
 # Deploying here means moving the service's image tag to `sha-<commit>`. Zeabur
@@ -12,13 +12,23 @@
 # That leaves a hand-run sequence whose one input is a short SHA typed twice —
 # once into the build, once into the tag move. Getting it wrong has already put
 # "Service Image Pull Failed" into production (PR #197/#198). The SHA is not
-# something to look up: it is whatever `git rev-parse --short HEAD` returns,
-# because that is the value cloudbuild.yaml receives as _COMMIT_SHA. So this
-# script derives it once and reuses it, and the value is never typed.
+# something to look up: it is whatever `git rev-parse --short=9 HEAD` returns,
+# because that is the value cloudbuild.yaml receives as _COMMIT_SHA and the
+# value ghcr-publish.yml tags and stamps with. So this script derives it once
+# and reuses it, and the value is never typed.
 #
 # USAGE
-#   scripts/deploy.sh [--status] [--dry-run] [--verify-file PATH] [--yes]
+#   scripts/deploy.sh [--status] [--dry-run] [--verify-file PATH] [--yes] [--build]
 #
+# THE BUILD NORMALLY IS NOT THIS SCRIPT'S JOB. `.github/workflows/
+# ghcr-publish.yml` builds every push to main and publishes BOTH `:latest` and
+# `:sha-<commit>`, so by the time you deploy the image already exists and this
+# script only has to move the service tag and verify — seconds, not 7-20 min.
+# It refuses to move the tag to an image that was never published, so a failed
+# or still-running Actions build cannot become a broken rollout.
+#
+# `--build` restores the old behaviour and builds via Cloud Build first. Keep
+# it for when Actions is unavailable or its GHCR push is broken. ONLY that path
 # REQUIRES a GitHub token in $GHCR_TOKEN or $GITHUB_TOKEN: cloudbuild.yaml's
 # step 1 runs `docker login ghcr.io -u br41s --password-stdin` with it, so the
 # build fails immediately without it. Set it with a LEADING SPACE so it stays
@@ -38,6 +48,8 @@
 #                   deploy actually CHANGED — an unchanged file hashes the same
 #                   on the old image and would pass a stale deploy.
 #   --yes           skip the confirmation prompt
+#   --build         build via Cloud Build first instead of using the image
+#                   GitHub Actions already published. Needs the token above.
 #
 set -euo pipefail
 
@@ -47,12 +59,14 @@ IMAGE="ghcr.io/br41s/hermes-sandbox"
 DRY_RUN=0
 ASSUME_YES=0
 STATUS_ONLY=0
+DO_BUILD=0
 VERIFY_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --status) STATUS_ONLY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
+    --build) DO_BUILD=1; shift ;;
     --verify-file) VERIFY_FILE="${2:-}"; [ -n "$VERIFY_FILE" ] || { echo "--verify-file needs a path" >&2; exit 2; }; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -146,7 +160,7 @@ fi
 # the script would do from a machine that has no token to hand. Warn and carry
 # on instead, so the rehearsal still reports the real blocker.
 GHCR_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
-if [ -z "$GHCR_TOKEN" ]; then
+if [ "$DO_BUILD" -eq 1 ] && [ -z "$GHCR_TOKEN" ]; then
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "⚠ No GitHub token in \$GHCR_TOKEN or \$GITHUB_TOKEN."
     echo "  Fine for --dry-run, but a real run stops here. Set it with a"
@@ -181,7 +195,7 @@ GHCR_REPO="${IMAGE#ghcr.io/}"
 GHCR_USER="${GHCR_REPO%%/*}"
 # Skipped on --dry-run: with no token there is nothing to validate, and probing
 # a credential over the network is not part of rehearsing a command.
-if [ "$DRY_RUN" -eq 0 ] && command -v curl >/dev/null 2>&1; then
+if [ "$DO_BUILD" -eq 1 ] && [ "$DRY_RUN" -eq 0 ] && command -v curl >/dev/null 2>&1; then
   if ! curl -fsS --max-time 15 -u "$GHCR_USER:$GHCR_TOKEN" \
         "https://ghcr.io/token?service=ghcr.io&scope=repository:${GHCR_REPO}:pull,push" \
         2>/dev/null | grep -q '"token"'; then
@@ -215,7 +229,11 @@ fi
 # `sha-$_COMMIT_SHA`, and we pass this same value as _COMMIT_SHA. Note git
 # chooses the abbreviation length itself (9 chars in this repo, not the 7
 # GitHub displays) — another reason never to copy it from a web page.
-SHA="$(git rev-parse --short HEAD)"
+# `--short=9`, never a bare `--short`: git picks the length from the object
+# count, so a full clone here gives 9 while the shallow clone actions/checkout
+# makes gives 7. The workflow stamps and tags with `--short=9` too; if the two
+# ever disagree this script moves the service to a tag nobody pushed.
+SHA="$(git rev-parse --short=9 HEAD)"
 TAG="sha-$SHA"
 
 echo
@@ -241,7 +259,12 @@ echo
 # Never widen --format to include substitutions: _GITHUB_TOKEN is stored in
 # them in clear, and printing it here would leak it into the terminal and any
 # pasted log. Filtering on a substitution does not print it; formatting does.
-if command -v gcloud >/dev/null 2>&1; then
+#
+# Only meaningful when THIS script builds. In the default path Actions has
+# already built every commit on main, so "has it been built" is always yes and
+# the interesting question is the opposite one — has it been published yet —
+# which is checked below instead.
+if [ "$DO_BUILD" -eq 1 ] && command -v gcloud >/dev/null 2>&1; then
   if [ -n "$(gcloud builds list --limit=1 \
         --filter="substitutions._COMMIT_SHA=$SHA AND status=SUCCESS" \
         --format="value(id)" 2>/dev/null)" ]; then
@@ -255,18 +278,61 @@ if command -v gcloud >/dev/null 2>&1; then
   fi
 fi
 
+# ── Guard 3: never point the service at an image nobody pushed ───────────────
+# Without a build step the image is somebody else's output, so its existence
+# stops being implied and has to be checked. Moving the tag to an absent image
+# is not a no-op — it is a broken rollout ("Service Image Pull Failed", PR
+# #197/#198), and the pod does not come back on its own.
+#
+# Anonymous pull token: the package is public, and this needs no credential in
+# the default path. A registry that cannot be reached at all is reported as
+# unknown rather than treated as absent — refusing to deploy because a network
+# probe failed would be worse than letting the tag move and the poll below
+# catch it.
+if [ "$DO_BUILD" -eq 0 ]; then
+  echo "→ Checking Actions published $TAG"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [dry-run] HEAD https://ghcr.io/v2/%s/manifests/%s\n' "$GHCR_REPO" "$TAG"
+  elif command -v curl >/dev/null 2>&1; then
+    PULL_TOKEN="$(curl -fsS --max-time 15 \
+      "https://ghcr.io/token?service=ghcr.io&scope=repository:${GHCR_REPO}:pull" 2>/dev/null \
+      | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+    if [ -z "$PULL_TOKEN" ]; then
+      echo "  ⚠ could not reach ghcr.io to confirm the tag — continuing" >&2
+    elif curl -fsS -o /dev/null --max-time 20 \
+          -H "Authorization: Bearer $PULL_TOKEN" \
+          -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+          "https://ghcr.io/v2/${GHCR_REPO}/manifests/${TAG}" 2>/dev/null; then
+      echo "  ✓ $IMAGE:$TAG exists"
+    else
+      echo "✗ $IMAGE:$TAG has not been published." >&2
+      echo "  GitHub Actions builds every push to main — it is probably still" >&2
+      echo "  running, or it failed. Check it:" >&2
+      echo "      gh run list --branch main --workflow=ghcr-publish.yml --limit 3" >&2
+      echo "  Then re-run this script, or pass --build to build it here instead." >&2
+      exit 1
+    fi
+  fi
+fi
+
 if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-  read -r -p "Build and deploy $TAG? [y/N] " reply
+  if [ "$DO_BUILD" -eq 1 ]; then
+    read -r -p "Build and deploy $TAG? [y/N] " reply
+  else
+    read -r -p "Deploy $TAG? [y/N] " reply
+  fi
   [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
 fi
 
-echo "→ Building (7-20 min)"
-# Printed redacted on purpose: `run` would echo the token into the terminal,
-# and from there into scrollback and any pasted log.
-if [ "$DRY_RUN" -eq 1 ]; then
-  printf '  [dry-run] gcloud builds submit --substitutions=_COMMIT_SHA=%s,_GITHUB_TOKEN=***\n' "$SHA"
-else
-  gcloud builds submit --substitutions=_COMMIT_SHA="$SHA",_GITHUB_TOKEN="$GHCR_TOKEN"
+if [ "$DO_BUILD" -eq 1 ]; then
+  echo "→ Building (7-20 min)"
+  # Printed redacted on purpose: `run` would echo the token into the terminal,
+  # and from there into scrollback and any pasted log.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '  [dry-run] gcloud builds submit --substitutions=_COMMIT_SHA=%s,_GITHUB_TOKEN=***\n' "$SHA"
+  else
+    gcloud builds submit --substitutions=_COMMIT_SHA="$SHA",_GITHUB_TOKEN="$GHCR_TOKEN"
+  fi
 fi
 
 echo "→ Pointing service at $TAG"

@@ -19,6 +19,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ── The tag contract with scripts/deploy.sh ───────────────────────────
+      # deploy.sh derives `sha-$(git rev-parse --short=9 HEAD)` and then POLLS
+      # /opt/hermes/.hermes_build_sha until the running pod reports that exact
+      # string. Both sides must agree on the abbreviation length, or the deploy
+      # points the service at a tag that was never pushed and the rollout dies
+      # as "Service Image Pull Failed" (PR #197/#198).
+      #
+      # The length cannot be left to git: it picks one from the repository's
+      # object count, so a full local clone abbreviates to 9 while the shallow
+      # clone actions/checkout makes by default abbreviates to 7. Same commit,
+      # different tag. `--short=9` pins it on both sides.
+      - name: Derive short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -36,6 +51,21 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          # Two tags, ONE image — mirrors cloudbuild.yaml: `:latest` is mutable
+          # and overwritten every build; `:sha-<commit>` is immutable and is
+          # both the rollback anchor and the tag deploy.sh moves the service to.
+          # Publishing only `:latest` (as this workflow used to) cannot deploy
+          # anything: Zeabur reconciles on a spec change, and a floating tag
+          # never looks changed.
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:sha-${{ steps.sha.outputs.short }}
+          # Stamps /opt/hermes/.hermes_build_sha. Without it that file is absent
+          # and `deploy.sh --status` reports "production : UNKNOWN" — the only
+          # mechanism that can say which commit is live. cloudbuild.yaml passes
+          # the same arg; upstream's docker.yml passes the FULL github.sha,
+          # which would not match deploy.sh's short form.
+          build-args: |
+            HERMES_GIT_SHA=${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
