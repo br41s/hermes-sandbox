@@ -40,13 +40,18 @@ class FakeGh:
     """
 
     def __init__(self, *, prs=None, details=None, checks=None, checks_error=None,
-                 files=None, protected=None, fail=None):
+                 files=None, protected=None, fail=None, baseline=None,
+                 baseline_error=None):
         self.prs = prs if prs is not None else []
         self.details = details or {}
         self.checks = checks if checks is not None else []
         self.checks_error = checks_error
         self.files = files if files is not None else ["backend/app/routes.py"]
         self.protected = protected  # None => 404 => defaults
+        #: check-runs on main's head. None => the API read fails => baseline
+        #: unknown => a failing check blocks.
+        self.baseline = baseline
+        self.baseline_error = baseline_error
         self.fail = fail or {}
         self.merged: list[str] = []
 
@@ -74,6 +79,12 @@ class FakeGh:
             self.merged.append(args[2])
             return ""
         if args[:1] == ["api"]:
+            if "check-runs" in args[1]:
+                if self.baseline_error:
+                    raise watcher.GhError(self.baseline_error)
+                if self.baseline is None:
+                    raise watcher.GhError("Not Found (HTTP 404)")
+                return json.dumps({"check_runs": self.baseline})
             if self.protected is None:
                 raise watcher.GhError("Not Found (HTTP 404)")
             return json.dumps(base64.b64encode(self.protected.encode()).decode())
@@ -229,6 +240,79 @@ def test_skipped_and_neutral_do_not_veto():
                         {"name": "b", "state": "SKIPPED"},
                         {"name": "c", "state": "NEUTRAL"}])
     assert watcher.checks_ok("br41s/demo", 1, runner=gh)[0] is True
+
+
+# --------------------------------------------------- baseline ("red on main") --
+
+def _baseline_run(name, conclusion="failure", status="completed"):
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+def test_check_red_on_main_too_does_not_veto():
+    """The biglobster jam: a dead workflow fails on every PR and on main."""
+    gh = FakeGh(checks=[{"name": "eval", "state": "FAILURE"},
+                        {"name": "build", "state": "SUCCESS"}],
+                baseline=[_baseline_run("eval"), _baseline_run("build", "success")])
+    ok, detail = watcher.checks_ok("br41s/biglobster", 1, runner=gh)
+    assert ok is True
+    assert "already red on main" in detail
+
+
+def test_check_green_on_main_still_vetoes():
+    """FinView #101: the preview was green on main and red only on the PR."""
+    gh = FakeGh(checks=[{"name": "preview", "state": "FAILURE"}],
+                baseline=[_baseline_run("preview", "success")])
+    ok, detail = watcher.checks_ok("br41s/finview", 1, runner=gh)
+    assert ok is False and "preview=FAILURE" in detail
+
+
+def test_check_absent_from_main_vetoes():
+    """No baseline for a PR-only workflow => unknown => block."""
+    gh = FakeGh(checks=[{"name": "pr-only", "state": "FAILURE"}],
+                baseline=[_baseline_run("something-else", "success")])
+    assert watcher.checks_ok("br41s/demo", 1, runner=gh)[0] is False
+
+
+def test_unreadable_baseline_vetoes():
+    """A flaky API read must never become a merge path."""
+    gh = FakeGh(checks=[{"name": "eval", "state": "FAILURE"}],
+                baseline_error="502 Bad Gateway")
+    ok, detail = watcher.checks_ok("br41s/demo", 1, runner=gh)
+    assert ok is False and "unreadable" in detail
+
+
+def test_pending_is_never_excused_by_the_baseline():
+    """Red on main says nothing about a run that has not finished."""
+    gh = FakeGh(checks=[{"name": "eval", "state": "PENDING"}],
+                baseline=[_baseline_run("eval")])
+    ok, detail = watcher.checks_ok("br41s/demo", 1, runner=gh)
+    assert ok is False and "pending" in detail
+
+
+def test_incomplete_baseline_run_is_not_a_failure():
+    """A still-running check on main is not proof that main is red."""
+    gh = FakeGh(checks=[{"name": "eval", "state": "FAILURE"}],
+                baseline=[_baseline_run("eval", conclusion=None, status="in_progress")])
+    assert watcher.checks_ok("br41s/demo", 1, runner=gh)[0] is False
+
+
+def test_bucket_is_preferred_over_state_when_present():
+    gh = FakeGh(checks=[{"name": "a", "state": "SOMETHING_NEW", "bucket": "pass"}])
+    assert watcher.checks_ok("br41s/demo", 1, runner=gh)[0] is True
+
+
+def test_the_soul_states_the_same_baseline_rule_this_code_enforces():
+    """The auditor applies the gate by hand; this watcher applies it in code.
+
+    They were allowed to drift once already — the SOUL said "any FAILING check
+    is a merge blocker" while the premise underneath both was that checks never
+    ran at all. Lock the rule to the branch the code compares against.
+    """
+    soul = (REPO_ROOT / "docker/profiles/auditor/SOUL.md").read_text(encoding="utf-8")
+    gate = next(l for l in soul.splitlines() if "CI/status gate" in l)
+    assert f"commits/{watcher._BASELINE_REF}/check-runs" in gate, \
+        "SOUL no longer tells the auditor how to read the baseline"
+    assert "PENDING" in gate, "SOUL no longer distinguishes pending from failing"
 
 
 # -------------------------------------------------------------- happy path --
