@@ -682,16 +682,41 @@ def _dep_alert_packages(alert: dict) -> List[tuple]:
     return out
 
 
+class DependencyAlertBlind(Exception):
+    """The alerts API refused us, and will keep refusing until someone acts.
+
+    Distinct from a network blip on purpose. A transient failure resolves
+    itself and deserves silence; a 401/403/404 is a standing condition that
+    makes the whole signal report "nothing new" forever while the queue grows
+    behind it. That is indistinguishable from healthy, which is how the
+    auditor judge went twelve weeks without running.
+    """
+
+    def __init__(self, status: int, detail: str = ""):
+        self.status = status
+        self.detail = detail
+        super().__init__(f"HTTP {status}: {detail}")
+
+
+# HTTP statuses that mean "someone must change something", not "try again".
+_BLIND_STATUSES = {401, 403, 404}
+
+
 def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
     """Every OPEN code-scanning alert, following pagination.
 
-    Returns None (not []) on any failure, so the caller can tell "the API said
-    there is nothing" from "we could not ask" — the difference between staying
-    correctly silent and silently going blind.
+    Three outcomes, and the difference between them is the whole point:
+      * list  — the API answered.
+      * None  — a transient failure (network, timeout, 5xx). Stay quiet; the
+                next sweep is an hour away and it will probably work.
+      * raise DependencyAlertBlind — the API refused us (401/403/404). This
+                never fixes itself, so it has to be reported as an incident
+                rather than swallowed into a reassuring silence.
 
     Pagination is not optional: an unpaginated query caps at 30 and would have
     reported 30 of the 242 alerts as the whole truth.
     """
+    import urllib.error
     import urllib.request
 
     alerts: List[dict] = []
@@ -706,6 +731,15 @@ def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
         try:
             with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
                 batch = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            if exc.code in _BLIND_STATUSES:
+                detail = ""
+                try:
+                    detail = (json.loads(exc.read().decode()) or {}).get("message", "")
+                except Exception:
+                    pass
+                raise DependencyAlertBlind(exc.code, detail) from None
+            return None
         except Exception:
             return None
         if not isinstance(batch, list) or not batch:
@@ -716,9 +750,46 @@ def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
     return alerts
 
 
+def _blind_incident(blind: "DependencyAlertBlind", repo: str, *,
+                    now: Optional[datetime] = None) -> Incident:
+    """One incident saying the signal cannot see, not that there is nothing.
+
+    The id carries the UTC date, so this repeats once a day until someone
+    fixes it rather than once ever. A single alert months ago is not a
+    functioning signal, and being substantive output it also resets the
+    heartbeat clock — otherwise the 24h "all clean" heartbeat would keep
+    reassuring everyone while the watcher is blind.
+    """
+    now = now or _now()
+    if blind.status == 404:
+        why = ("code scanning may be disabled on the repo, or the token cannot see it. "
+               "Check the Security tab still has an osv-scanner category.")
+    else:
+        why = ("the token lacks the `Code scanning alerts: Read` permission. "
+               "Grant it on the fine-grained PAT, or set "
+               "HERMES_DEP_ALERT_GITHUB_TOKEN to one that has it "
+               "(the detector prefers that variable).")
+    return Incident(
+        id=f"depalert-blind:{blind.status}:{now.strftime('%Y-%m-%d')}",
+        kind="dependency",
+        title=f"Dependency alert signal is BLIND (HTTP {blind.status})",
+        detail=(f"repo: {repo}\n"
+                f"status: {blind.status}\n"
+                f"api said: {blind.detail or '(no message)'}\n"
+                f"why: {why}\n"
+                f"Until this is fixed the dependency signal reports nothing new "
+                f"every hour regardless of what is actually in the queue."),
+        handoff=("fix the token permission, then confirm with: "
+                 "python -c \"from incidents.sweep import dependency_alert_incidents as d; "
+                 "print(len(d()))\" — a working signal returns a non-zero count "
+                 "while critical/high alerts are open"),
+    )
+
+
 def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
                                repo: Optional[str] = None,
-                               token: Optional[str] = None) -> List[Incident]:
+                               token: Optional[str] = None,
+                               now: Optional[datetime] = None) -> List[Incident]:
     """Open critical/high dependency advisories, grouped by package.
 
     Best-effort in the same sense as ``langfuse_error_incidents``: returns []
@@ -734,6 +805,7 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
     picks up a NEW advisory re-reports once with its current state, while an
     unchanged package stays silent forever.
     """
+    now = now or _now()
     if alerts is None:
         repo = repo or (os.environ.get("HERMES_DEP_ALERT_REPO")
                         or os.environ.get("GITHUB_REPOSITORY")
@@ -743,7 +815,10 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
                           or os.environ.get("GH_TOKEN") or "").strip()
         if not token:
             return []
-        alerts = _fetch_dependency_alerts(repo, token)
+        try:
+            alerts = _fetch_dependency_alerts(repo, token)
+        except DependencyAlertBlind as blind:
+            return [_blind_incident(blind, repo, now=now)]
         if alerts is None:
             return []
 
@@ -916,7 +991,14 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     # backlog is not news) and a rollup (one scanner run publishes a whole
     # lockfile's alerts at once).
     da_raw = (dependency_alerts if dependency_alerts is not None
-              else dependency_alert_incidents())
+              else dependency_alert_incidents(now=now))
+    # A "signal is blind" incident is never backlog, so it must not be eligible
+    # for baselining — otherwise the very first sweep on a fresh state adopts it
+    # as part of the starting queue and the watcher goes quiet about being
+    # unable to see. It is also exempt from the rollup: it is one fact about the
+    # watcher itself, not one of N packages.
+    da_blind = [i for i in da_raw if i.id.startswith("depalert-blind:")]
+    da_raw = [i for i in da_raw if not i.id.startswith("depalert-blind:")]
     da_new = [i for i in da_raw if i.id not in seen]
     baseline_established = False
     if da_new and not state.get("dep_alerts_baselined"):
@@ -930,7 +1012,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
         baseline_established = True
         da_new = []
     da_covered = [i.id for i in da_new]
-    da_new = _dep_rollup(da_new)
+    da_new = _dep_rollup(da_new) + [i for i in da_blind if i.id not in seen]
 
     incidents = (cron_failure_incidents(jobs, now=now)
                  + cron_stale_incidents(jobs, now=now)
