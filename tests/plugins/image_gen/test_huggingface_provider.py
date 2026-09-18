@@ -1,4 +1,4 @@
-"""Tests for the HuggingFace image_gen plugin (FLUX.1-schnell via HF Inference API)."""
+"""Tests for the HuggingFace image_gen plugin (seedream-4.5 via HF Inference API)."""
 
 from __future__ import annotations
 
@@ -29,8 +29,18 @@ class TestMetadata:
         assert provider.display_name == "HuggingFace"
 
     def test_default_model(self):
+        """The default is pinned deliberately, so a silent change is visible.
+
+        622b98095 switched it to seedream-4.5 and 44342ada3 revisited the
+        provider, but this literal stayed on the old FLUX default. Asserting
+        membership in _MODELS instead would have let both changes through
+        unnoticed -- the point of this test is to be a change-detector, so the
+        literal stays and gets updated with intent.
+        """
         provider = hf_plugin.HuggingFaceImageGenProvider()
-        assert provider.default_model() == "black-forest-labs/FLUX.1-schnell"
+        assert provider.default_model() == "bytedance-seed/seedream-4.5"
+        # ...and the default must actually be offered by the provider.
+        assert provider.default_model() in {e["id"] for e in provider.list_models()}
 
     def test_list_models_has_required_fields(self):
         provider = hf_plugin.HuggingFaceImageGenProvider()
