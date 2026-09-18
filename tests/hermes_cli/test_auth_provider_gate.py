@@ -188,5 +188,31 @@ def test_provider_not_in_registry_but_in_models_dev(tmp_path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     (tmp_path / "hermes").mkdir(parents=True, exist_ok=True)
 
+    # Pin the models.dev lookup instead of relying on ambient state.
+    # get_provider() sources openrouter's env-var names from that catalog,
+    # which it reaches via the disk cache under HERMES_HOME or a network
+    # fetch. This test deliberately uses an isolated HERMES_HOME (no cache)
+    # and the suite's autouse guard blocks outbound sockets, so the real
+    # lookup returns None; get_provider() then falls back to the Hermes
+    # overlay, whose extra_env_vars for openrouter is empty. The provider
+    # ends up with no API-key env var to check and the assertion fails for
+    # reasons unrelated to the gate under test -- while passing on a dev
+    # machine whose cache happens to be warm.
+    from agent.models_dev import ProviderInfo
+
+    monkeypatch.setattr(
+        "agent.models_dev.get_provider_info",
+        lambda name: (
+            ProviderInfo(
+                id="openrouter",
+                name="OpenRouter",
+                env=("OPENROUTER_API_KEY",),
+                api="https://openrouter.ai/api/v1",
+            )
+            if name == "openrouter"
+            else None
+        ),
+    )
+
     from hermes_cli.auth import is_provider_explicitly_configured
     assert is_provider_explicitly_configured("openrouter") is True
