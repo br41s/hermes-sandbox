@@ -174,28 +174,70 @@ def test_deploy_never_prints_cloud_build_substitutions() -> None:
     )
 
 
-def test_the_dirty_tree_guard_is_unconditional() -> None:
-    """Both deploy paths refuse a dirty tree, not just ``--build``.
-
-    The *reason* in the comment is ``--build``-specific (``gcloud builds
-    submit`` uploads the working directory), which reads as though the guard
-    were gated on it — ``CLAUDE.md`` claimed exactly that until this test was
-    written. It is not: the check runs before the paths diverge, so a plain
-    ``scripts/deploy.sh`` also wants a clean checkout.
-
-    Locked because the two readings differ in what an operator expects at the
-    moment they are trying to ship, and nothing else would notice a change.
-    """
+def _dirty_tree_block() -> list[str]:
+    """The dirty-tree branch of deploy.sh, as instruction lines."""
     lines = _uncommented(DEPLOY_SH)
-
-    guard = [
+    starts = [
         i
         for i, line in enumerate(lines)
-        if 'git status --porcelain' in line and line.lstrip().startswith("if ")
+        if "git status --porcelain" in line and line.lstrip().startswith("if ")
     ]
-    assert len(guard) == 1, "expected exactly one dirty-tree guard in deploy.sh"
+    assert len(starts) == 1, "expected exactly one dirty-tree branch in deploy.sh"
 
-    assert "DO_BUILD" not in lines[guard[0]], (
-        "the dirty-tree guard must stay unconditional, or CLAUDE.md's "
-        "description of which paths refuse a dirty tree goes stale again"
+    start = starts[0]
+    depth = 0
+    for end in range(start, len(lines)):
+        stripped = lines[end].strip()
+        if stripped.startswith("if "):
+            depth += 1
+        elif stripped == "fi":
+            depth -= 1
+            if depth == 0:
+                return lines[start : end + 1]
+    raise AssertionError("unterminated dirty-tree branch")
+
+
+def test_only_the_build_path_refuses_a_dirty_tree() -> None:
+    """``--build`` refuses; the default path warns and carries on.
+
+    The hazard is specific to ``--build``: ``gcloud builds submit`` tars the
+    working directory, so uncommitted code would ship under a commit's tag and
+    the tag is immutable, so the lie sticks. The default path uploads nothing —
+    Actions built the committed ref and this script moves a tag to it, so the
+    deployed bits do not depend on the working tree at all.
+
+    Refusing on both paths (which is what the code did until this change) meant
+    a stash was needed to deploy main with unrelated edits open, for a risk
+    that path does not carry.
+    """
+    block = _dirty_tree_block()
+    text = "\n".join(block)
+
+    assert "DO_BUILD" in block[1], (
+        "the refusal must be gated on --build — it is the only path that "
+        "uploads the working directory"
+    )
+    assert "exit 1" in text, "the --build path must still refuse"
+
+
+def test_the_default_path_still_says_the_edits_are_not_shipping() -> None:
+    """A dirty tree is the shape of "I want my changes live".
+
+    Dropping the refusal must not drop the signal: an operator with edits open
+    should be told plainly that this deploy does not contain them, rather than
+    watching a clean-looking deploy go out and assuming it does.
+    """
+    block = _dirty_tree_block()
+
+    # Everything after the --build refusal's `fi` is the default-path branch.
+    closes = [i for i, line in enumerate(block) if line.strip() == "fi"]
+    assert len(closes) >= 2, "expected a nested --build refusal inside the branch"
+    default_path = "\n".join(block[closes[0] + 1 :])
+
+    assert "NOT part of this deploy" in default_path, (
+        "the default path must say the uncommitted changes are not included"
+    )
+    assert "exit" not in default_path, "the default path must not refuse"
+    assert "git status --short" in default_path, (
+        "show which files, so the operator can check it is nothing they wanted"
     )

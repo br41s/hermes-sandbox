@@ -140,12 +140,29 @@ fi
 # tree therefore builds uncommitted code and publishes it under a commit's SHA
 # tag — an image whose name is a lie, and the tag is immutable so it stays a
 # lie. Refuse.
+#
+# Only on --build. The default path uploads nothing: Actions built the
+# committed ref, this script moves a tag to it, and the deployed bits are
+# identical whatever the working tree looks like. Refusing there blocked the
+# ordinary case — local edits in progress, production behind main, deploy main
+# — on a hazard that path does not have, and forced a stash to get around a
+# check that was never about it.
+#
+# Still worth a word, because a dirty tree is the shape of "I want my changes
+# live": say plainly that they are not in this deploy, then carry on.
 if [ -n "$(git status --porcelain)" ]; then
-  echo "✗ Working tree is not clean." >&2
-  echo "  The build uploads this directory, so uncommitted changes would ship" >&2
-  echo "  under $(git rev-parse --short HEAD)'s tag. Commit, stash or clean first:" >&2
-  git status --short >&2
-  exit 1
+  if [ "$DO_BUILD" -eq 1 ]; then
+    echo "✗ Working tree is not clean." >&2
+    echo "  The build uploads this directory, so uncommitted changes would ship" >&2
+    echo "  under $(git rev-parse --short HEAD)'s tag. Commit, stash or clean first:" >&2
+    git status --short >&2
+    exit 1
+  fi
+  echo "⚠ Working tree is not clean — these changes are NOT part of this deploy."
+  echo "  Actions built $(git rev-parse --short=9 HEAD) from the committed ref;"
+  echo "  this script only moves the service tag to it."
+  git status --short | sed "s/^/      /"
+  echo
 fi
 
 # ── Guard 0: the build cannot start without a registry credential ────────────
