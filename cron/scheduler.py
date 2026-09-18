@@ -626,7 +626,7 @@ def _job_run_lock(job_id: str):
     lock_dir = _get_hermes_home() / "cron"
     try:
         lock_dir.mkdir(parents=True, exist_ok=True)
-        fh = open(lock_dir / f".job-{job_id}.lock", "w")
+        fh = open(lock_dir / f".job-{job_id}.lock", "w", encoding="utf-8")
     except OSError:
         yield True
         return

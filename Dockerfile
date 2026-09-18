@@ -87,6 +87,14 @@ RUN set -eu; \
 # updated.
 COPY --chmod=0755 docker/tini-shim.sh /usr/bin/tini
 
+# Both installs below pipe curl into another command. Under /bin/sh a failed
+# download is masked by the exit status of the right-hand side — `curl … |
+# bash` on an empty stream exits 0 and would bake a xurl-less image. Scope
+# pipefail to just these two instructions and restore /bin/sh afterwards: no
+# later RUN in this stage contains a pipe, so leaving bash in place would
+# change the interpreter for eleven instructions for no gain. hadolint DL4006.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Install xurl (X Developer Platform CLI)
 RUN curl -fsSL https://raw.githubusercontent.com/xdevplatform/xurl/main/install.sh | bash
 
@@ -107,6 +115,9 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     curl -fsSL --retry 3 "https://github.com/cli/cli/releases/download/v${GH_VER}/gh_${GH_VER}_linux_${ARCH}.tar.gz" \
       | tar -xz -f - -C /usr/local/bin --strip-components=2 "gh_${GH_VER}_linux_${ARCH}/bin/gh" && \
     gh --version
+
+# Restore the default shell — see the SHELL note above the xurl install.
+SHELL ["/bin/sh", "-c"]
 
 # Non-root user for runtime; UID can be overridden via HERMES_UID at runtime
 RUN useradd -u 10000 -m -d /opt/data hermes
