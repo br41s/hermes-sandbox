@@ -131,3 +131,91 @@ reason = "pytest — dev dependency-group only, not installed in the production 
 [[IgnoredVulns]]
 id = "CVE-2026-4539"
 reason = "Pygments — dev/TUI-formatting path, not a request-handling surface. Low severity, no production exposure."
+
+# --- apps/desktop chain, part 2: verified absent from the image ---------------
+# Same decision as the electron/tar/extract-zip block above, and the same
+# expiry — but these three earned it by a stricter check rather than by
+# inheriting the label. `devDependency` is NOT sufficient grounds here: the
+# Dockerfile's `npm install` carries no `--omit=dev`, so plenty of dev packages
+# DO ship in the image. What matters is whether the package is actually there.
+#
+# Checked inside the running container (2026-09-18, commit d63986da5):
+#   /opt/hermes/node_modules/@xmldom/xmldom   absent
+#   /opt/hermes/node_modules/fast-uri         absent
+#   /opt/hermes/node_modules/shell-quote      absent
+#   (electron, tar likewise absent — confirming the block above)
+#
+# They reach the lockfile only through apps/*, which the image never installs.
+# The dev packages that ARE present — brace-expansion, js-yaml, browserslist,
+# undici-under-jsdom — were PATCHED instead of listed here, because "present but
+# probably not executed" is not a decision this file should be asked to carry.
+#
+# Re-verify with the same check if the Dockerfile's npm install ever changes.
+[[IgnoredVulns]]
+id = "CVE-2026-83605"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — apps/desktop chain, verified absent from /opt/hermes/node_modules. Patch on the desktop app's cadence."
+[[IgnoredVulns]]
+id = "CVE-2026-83607"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83608"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83610"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83611"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83613"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83614"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83615"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83616"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-83619"
+ignoreUntil = 2026-12-31
+reason = "@xmldom/xmldom — see CVE-2026-83605."
+[[IgnoredVulns]]
+id = "CVE-2026-13676"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — apps/desktop chain, verified absent from /opt/hermes/node_modules."
+[[IgnoredVulns]]
+id = "CVE-2026-16221"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — see CVE-2026-13676."
+[[IgnoredVulns]]
+id = "CVE-2026-18446"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — see CVE-2026-13676."
+[[IgnoredVulns]]
+id = "CVE-2026-75899"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — see CVE-2026-13676."
+[[IgnoredVulns]]
+id = "CVE-2026-75975"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — see CVE-2026-13676."
+[[IgnoredVulns]]
+id = "CVE-2026-76172"
+ignoreUntil = 2026-12-31
+reason = "fast-uri — see CVE-2026-13676."
+[[IgnoredVulns]]
+id = "CVE-2026-13311"
+ignoreUntil = 2026-12-31
+reason = "shell-quote — apps/desktop chain, verified absent from /opt/hermes/node_modules."

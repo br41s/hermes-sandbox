@@ -71,7 +71,7 @@ paths (google-auth, python-telegram-bot, fal-client, httpx).
 | `starlette` 1.0.1 | **Upgrading regresses the fix we pinned for.** 1.0.1 is held for CVE-2026-48710 (BadHost), which is exactly the desync the dashboard OAuth gate depends on not happening. The scanner's 1.3.x suggestion does not carry it forward. Upstream holds 1.0.1 too. |
 | `cryptography` 46.0.7 | Bundled-OpenSSL class, open on upstream/main as well. PR #38 decided to adopt when upstream does rather than freelance a transitive pin ahead of it. **Time-boxed to 2026-12-31** so the wait cannot become permanent. |
 | `hermes-agent` (us) | Two VulDB advisories against our own published package, neither with a fixed version — so *no upgrade can ever clear them* and they close by decision or not at all. CVE-2026-10224 (resource consumption in the Feishu webhook handler): the code is at `plugins/platforms/feishu/adapter.py`, not the advisory's `gateway/platforms/feishu.py`, and is bounded against exactly this class — per-IP rate limit, Content-Type guard, early Content-Length reject, 1 MB bounded reader, 30s read timeout, `client_max_size` backstop. CVE-2026-10221 states "up to 0.12.0"; we ship 0.19.0. |
-| Electron / `tar` / `extract-zip` | `apps/desktop` build chain, not in the production image. Time-boxed, so the desktop app answers for them on its own cadence instead of inheriting silence. |
+| Electron / `tar` / `extract-zip` / `@xmldom/xmldom` / `fast-uri` / `shell-quote` | `apps/desktop` build chain, **verified absent** from `/opt/hermes/node_modules` in the running container. Time-boxed, so the desktop app answers for them on its own cadence instead of inheriting silence. |
 | `pytest`, `Pygments` | dev dependency-group, not installed in the production image. |
 
 ### Unreachable — patched anyway, because it was cheap
@@ -83,6 +83,28 @@ breaking change to the docs site — left open deliberately, not suppressed.
 
 Nothing in the docs site was *accepted*; a static site is cheap to patch, and
 83 ignore entries would have been a worse artifact than a lock bump.
+
+## "devDependency" is not a reachability argument
+
+The Dockerfile's `npm install` carries no `--omit=dev`, so dev packages **do**
+ship in the image. Checking the container rather than the `dev: true` flag split
+the remaining npm queue in two, and the two halves got opposite treatment:
+
+| verified in `/opt/hermes/node_modules` | packages | action |
+|---|---|---|
+| **absent** | `@xmldom/xmldom`, `fast-uri`, `shell-quote` (and `electron`, `tar`) | accepted, time-boxed |
+| **present** | `brace-expansion`, `js-yaml`, `browserslist`, `undici`←`jsdom` | **patched** |
+
+The present ones reach the image through ESLint, jsdom and glob, and nothing in
+the agent's runtime executes them — but "present and probably not executed" is
+not a decision this register should be asked to carry, and it is exactly the
+kind of reason that is plausible enough to stop being re-read. They were cheap
+to patch, so they were patched.
+
+Worth stating because it nearly went the other way: the first draft of this
+section said "not in the production image" for all of them, which would have
+been false for four. The `dev: true` flag in the lockfile answers a different
+question than the one that matters.
 
 ## Part 2 — the standing owner
 
