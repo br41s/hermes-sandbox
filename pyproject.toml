@@ -452,4 +452,10 @@ constraint-dependencies = [
   "httplib2>=0.32.0,<1",  # CVE-2026-59939 — pulled in by google-auth-httplib2
   "cbor2>=5.9.0,<6",  # CVE-2026-26209
   "h2>=4.4.1,<5",  # CVE-2026-71554 — HTTP/2 stack under httpx
+  # Command injection in click.edit(): it shells out to $EDITOR without
+  # escaping, so an attacker-controlled filename reaches the shell. We never
+  # call click.edit(), but click arrives through uvicorn (a CORE dependency,
+  # not an extra) as well as typer/modal/ddgs, so the floor is worth holding
+  # rather than reasoning about which of four parents might reach it.
+  "click>=8.3.3,<9",  # CVE-2026-7246
 ]
