@@ -116,10 +116,11 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only
-  path that needs `$GHCR_TOKEN`, and the only one that refuses a dirty tree
-  (`gcloud builds submit` uploads the working directory, so uncommitted code
-  would ship under a commit's tag; Actions builds the committed ref and cannot
-  do that).
+  path that needs `$GHCR_TOKEN`. Both paths refuse a dirty tree: the reason is
+  `--build`-specific (`gcloud builds submit` uploads the working directory, so
+  uncommitted code would ship under a commit's tag, which Actions cannot do
+  because it builds the committed ref), but the guard runs before the paths
+  diverge, so a plain `scripts/deploy.sh` also wants a clean checkout.
 
   **The tag contract is `--short=9`, on both sides.** git picks an abbreviation
   length from the object count: a full clone gives 9, the shallow clone
