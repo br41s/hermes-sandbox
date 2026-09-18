@@ -217,7 +217,25 @@ def resolve_api_key_source() -> tuple:
     return "", ""
 
 
-JUDGE_DEADLINE_DEFAULT = 300
+# 420s, not 300s. The 300s bound was set to stop a hang (a judge call with
+# timeout=120 ran 300s then 590s on br41s/biglobster#526) and it does that, but
+# it also killed legitimate work: on 2026-09-18 the gate failed on 2 of 4 PRs,
+# and a hand-run judge call against PR #273 was reproduced exceeding 300s with
+# zero bytes of verdict. The other 2 PRs that run SUCCEEDED inside the bound, so
+# the model is variable rather than systematically hung — a bigger prompt (this
+# repo's own notes record a healthy call at 370s on 2026-09-16) simply takes
+# longer than 300s.
+#
+# 420 clears that observed-healthy 370s with margin while staying well under the
+# 590s hang, so the protection this bound exists for still fires.
+#
+# The cost is pool contention, and it is not small: the judge runs once per PR,
+# so the worst case multiplies against auditor.pending's DEFAULT_LIMIT of 10 —
+# 50 minutes of the single-thread cron pool becomes 70. That pool is what
+# starved merge-on-green for 8 and 13 minutes on 2026-09-18. If that ceiling
+# starts hurting, lower DEFAULT_LIMIT before raising this again: fewer PRs per
+# run is cheaper than a longer per-call bound.
+JUDGE_DEADLINE_DEFAULT = 420
 
 
 def judge_deadline_seconds() -> int:
