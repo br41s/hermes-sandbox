@@ -259,6 +259,57 @@ def test_publish_posts_to_the_right_endpoint(monkeypatch):
     assert url.endswith("/api/redirects/7/publish")
 
 
+def test_publish_carries_no_tier_gate_of_its_own(monkeypatch):
+    """``publish`` takes an id and nothing else — it cannot check the tier.
+
+    CLAUDE.md describes redirects as auto-publishing "only on a
+    checksum-verified barcode or manufacturer-reference match", which reads
+    like a mechanical gate somewhere in this repo. There is none, and there
+    structurally cannot be one here: by publish time the tool holds an id, not
+    a match_tier. The restriction lives in two places only — the schema text
+    the model reads (locked below) and the site's own server-side check.
+
+    Pinned so the distinction stays visible. This is the same shape as the
+    blog-draft claim that was wrong for months: a property asserted in a
+    runbook that no code enforces.
+    """
+    import inspect
+
+    call = inspect.signature(mod.bl_site_redirect).parameters
+    assert "match_tier" in call, "propose still needs to forward the tier"
+
+    calls = []
+    wire_routes(monkeypatch, {"/7/publish": {"success": True, "status": "live"}}, calls)
+
+    # A redirect resolved by nothing at all publishes exactly like a gtin one.
+    mod.bl_site_redirect(action="publish", redirect_id=7)
+    _method, _url, body = calls[0]
+    assert body is None, (
+        "publish sends no tier or evidence — the site re-derives everything"
+    )
+
+
+def test_the_schema_reserves_publishing_for_identifier_tier_matches():
+    """The only guard in this repo, and it is prose in a tool description.
+
+    A trimmed description would remove it silently while the tool behaves
+    identically, so assert the load-bearing words are still there.
+    """
+    description = mod.BL_SITE_REDIRECT_SCHEMA["description"]
+
+    assert "'gtin' or 'mpn'" in description, (
+        "the schema must name the tiers publishing is allowed for"
+    )
+    lowered = description.lower()
+    assert "must stay proposed" in lowered and "never published by you" in lowered, (
+        "the schema must tell the model a title-similarity match is a human's "
+        "call, not its own"
+    )
+    assert "always saves as pending" in lowered, (
+        "the schema must say proposing never goes live"
+    )
+
+
 def test_remove_requires_redirect_id():
     assert "redirect_id" in mod.bl_site_redirect(action="remove")
 

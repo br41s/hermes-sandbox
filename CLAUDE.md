@@ -256,10 +256,13 @@ Two rules hold across all of them, and they are what makes unattended writing de
   agent cannot assert a barcode, pin a stale fingerprint, or talk itself into publishing
   something thin.
 - **Everything except blog posts waits for a human.** Product sheets save as drafts
-  unless publication is explicit and the site's checklist passes; redirects save as
-  pending and only auto-publish on a checksum-verified barcode or manufacturer-reference
-  match — anything resolved by title similarity or human judgement stays pending for a
-  person to publish. **Blog posts are the exception: `create_blog_post` hardcodes
+  unless publication is explicit and the site's checklist passes; redirects always save as
+  pending, and publishing one is a *separate* call the agent chooses to make. Note what
+  enforces that choice: `publish` takes a `redirect_id` and nothing else, so it cannot
+  check the match tier — "identifier-tier only" is an instruction in the tool's schema
+  plus whatever the site checks server-side, not a gate in this repo. Anything resolved by
+  title similarity or human judgement is meant to stay pending for a person.
+  **Blog posts are the exception: `create_blog_post` hardcodes
   `"status": "published"` (`tools/bl_site_publish_tool.py`) and goes live on the client's
   public site immediately.** That is deliberate — it is why `gap-hunter`'s prompt says its
   rules are not optional, since nothing is checked afterwards — but it means a bad blog
