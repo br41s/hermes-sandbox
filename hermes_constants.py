@@ -362,7 +362,17 @@ def node_tool_runnable(path: str | None) -> bool:
 
         result = subprocess.run(
             [path, "--version"],
-            capture_output=True,
+            # Deliberately NOT capture_output=True. This probe only reads
+            # ``returncode``, and pipes make ``timeout`` unenforceable: on
+            # TimeoutExpired, subprocess.run kills the direct child and then
+            # calls communicate() a second time to reap it -- and that call
+            # waits for EOF on the pipes, not for the process. Any grandchild
+            # the tool spawned inherits those fds and can hold them open long
+            # past the cap, so the call blocks indefinitely. DEVNULL leaves no
+            # fd to wait on, so the timeout above is real.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=10,
             env=with_hermes_node_path(),
             creationflags=windows_hide_flags(),
@@ -479,7 +489,13 @@ def heal_hermes_managed_node() -> bool:
                 f'source "{_NODE_BOOTSTRAP_SCRIPT}" && heal_managed_node',
             ],
             env={**os.environ, "HERMES_HOME": str(get_hermes_home())},
-            capture_output=True,
+            # DEVNULL, not capture_output: same unenforceable-timeout trap as
+            # node_tool_runnable() above. The output is discarded either way,
+            # and the bootstrap script can leave background work holding an
+            # inherited pipe open well past the 300s cap.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=300,
             check=False,
         )
@@ -610,7 +626,14 @@ def agent_browser_runnable(path: str | None) -> bool:
 
         result = subprocess.run(
             [path, "--version"],
-            capture_output=True,
+            # DEVNULL, not capture_output: same unenforceable-timeout trap as
+            # node_tool_runnable() above -- and this is the call site where it
+            # actually bit. agent-browser launches a browser that inherits
+            # these fds and outlives it, so EOF never arrives and the "10s"
+            # probe wedged an entire local test run.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             timeout=10,
             env=with_hermes_node_path(),
             creationflags=windows_hide_flags(),
