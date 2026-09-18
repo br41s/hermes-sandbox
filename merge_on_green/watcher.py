@@ -12,7 +12,8 @@ last, manual step. It merges a PR only when all of these hold:
      review; a plain comment is still read, because that is where every
      approval before 2026-09-17 lives and where the auditor falls back to when
      ``gh pr review`` is refused.
-  3. GitHub reports it ``MERGEABLE`` and no check is failing or pending.
+  3. GitHub reports it ``MERGEABLE``, no check is pending, and no check is
+     failing that is not already failing on ``main`` (see ``checks_ok``).
   4. It touches no protected path and passes ``auditor.safety``'s
      mass-deletion floor — the same floor the auditor's own merges use.
   5. The remediation gates allow it: ``HERMES_AUTONOMY`` kill switch,
@@ -61,9 +62,19 @@ PROTECTED_PATHS_FILE = ".github/auto-merge-protected-paths.txt"
 #: never let automation rewrite its own CI.
 DEFAULT_PROTECTED: tuple[str, ...] = (".github/**",)
 
-#: States that do not veto a merge. Anything else — failure, pending, unknown —
-#: does. Unknown states are not enumerated on purpose: they block.
+#: States that do not veto a merge. Unknown states are not enumerated on
+#: purpose: they fall through to the failing branch, which blocks unless the
+#: baseline excuses them.
 _OK_CHECK_STATES = {"SUCCESS", "SKIPPED", "NEUTRAL"}
+
+#: A check still running is waited on, never excused by the baseline: "main is
+#: red too" says nothing about a run that has not finished.
+_PENDING_CHECK_STATES = {"PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED",
+                         "WAITING", "EXPECTED"}
+
+#: The branch a PR's checks are compared against to decide whether the diff
+#: caused the failure or merely inherited it.
+_BASELINE_REF = "main"
 
 _GH_TIMEOUT = 60
 
@@ -253,17 +264,77 @@ def auditor_approved(comments: Iterable[dict], head_sha: str,
     )
 
 
-def checks_ok(repo: str, number: int, *, runner: Optional[Runner] = None) -> tuple[bool, str]:
-    """No check may be failing or pending. Zero checks passes.
+def _classify(row: dict) -> str:
+    """One ``gh pr checks`` row as ``ok`` | ``pending`` | ``failed``.
 
-    GitHub Actions never runs on this account, so most repos report no checks
-    at all — the auditor's approval is the gate here, and checks are a veto
-    only. That matches the auditor SOUL's CI/status gate: any FAILING check is a
-    merge blocker.
+    ``bucket`` is gh's own categorisation and is preferred when present; the
+    ``state`` fallback keeps this working against an older gh and against the
+    rows the tests hand-build.
+    """
+    bucket = str(row.get("bucket") or "").lower()
+    if bucket:
+        if bucket in {"pass", "skipping"}:
+            return "ok"
+        return "pending" if bucket == "pending" else "failed"
+    state = str(row.get("state") or "").upper()
+    if state in _OK_CHECK_STATES:
+        return "ok"
+    return "pending" if state in _PENDING_CHECK_STATES else "failed"
+
+
+def baseline_failures(repo: str, *, runner: Optional[Runner] = None) -> Optional[set[str]]:
+    """Names of checks already failing on ``main``, or ``None`` if unknowable.
+
+    ``None`` is deliberately not an empty set. An unreadable baseline is not
+    evidence that a red check is the diff's fault, nor that it isn't — so the
+    caller blocks on it. A flaky API read must never open a merge path.
+
+    Check-run names here are the same job names ``gh pr checks`` reports, which
+    is why this reads the commit's check-runs rather than matching workflow
+    names: the PR check ``eval`` belongs to a workflow called ``Delegation OS
+    Eval``, and the two never match by string.
+    """
+    try:
+        payload = gh_json(
+            ["api", f"repos/{repo}/commits/{_BASELINE_REF}/check-runs"],
+            runner=runner,
+        )
+    except GhError:
+        return None
+    runs = (payload or {}).get("check_runs")
+    if runs is None:
+        return None
+    failing = set()
+    for run in runs:
+        if str(run.get("status") or "").upper() != "COMPLETED":
+            continue
+        if str(run.get("conclusion") or "").upper() not in {"SUCCESS", "SKIPPED", "NEUTRAL"}:
+            failing.add(str(run.get("name") or ""))
+    return failing
+
+
+def checks_ok(repo: str, number: int, *, runner: Optional[Runner] = None) -> tuple[bool, str]:
+    """A check vetoes the merge only for a failure this PR is answerable for.
+
+    Zero checks passes. A pending check always blocks. A FAILING check blocks
+    unless the same check is already failing on ``main`` — which proves the
+    diff did not cause it. When the baseline cannot be read, the failure
+    blocks.
+
+    Before 2026-09-18 any red check blocked unconditionally, and the premise
+    written here was that Actions never ran on this account so checks were
+    near-always absent. Both turned out false: two dead workflows in biglobster
+    (a ``test:delegation-os`` script that left with the 2026-06-04 archive, and
+    a ghcr push to the pre-rename owner) failed on every PR, and the gate
+    jammed every content PR behind them with a fix only a human could land.
+    The baseline keeps the reason the gate exists — FinView #101 merged with a
+    red Vercel preview and broke production — because that check was green on
+    ``main`` and red only on the PR.
     """
     try:
         rows = gh_json(
-            ["pr", "checks", str(number), "--repo", repo, "--json", "name,state"],
+            ["pr", "checks", str(number), "--repo", repo,
+             "--json", "name,state,bucket"],
             runner=runner,
         ) or []
     except GhError as exc:
@@ -273,11 +344,35 @@ def checks_ok(repo: str, number: int, *, runner: Optional[Runner] = None) -> tup
         return False, f"could not read checks ({exc})"
     if not rows:
         return True, "no checks reported"
-    bad = [f"{r.get('name')}={r.get('state')}" for r in rows
-           if str(r.get("state", "")).upper() not in _OK_CHECK_STATES]
-    if bad:
-        return False, "not green: " + ", ".join(sorted(bad))
-    return True, f"{len(rows)} check(s) green"
+
+    green = 0
+    pending: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for row in rows:
+        label = f"{row.get('name')}={row.get('state')}"
+        kind = _classify(row)
+        if kind == "ok":
+            green += 1
+        elif kind == "pending":
+            pending.append(label)
+        else:
+            failed.append((str(row.get("name") or ""), label))
+
+    if pending:
+        return False, "pending: " + ", ".join(sorted(pending))
+    if not failed:
+        return True, f"{green} check(s) green"
+
+    baseline = baseline_failures(repo, runner=runner)
+    if baseline is None:
+        return False, ("not green: " + ", ".join(sorted(l for _, l in failed))
+                       + f" (baseline on {_BASELINE_REF} unreadable — blocking)")
+    blocking = sorted(label for name, label in failed if name not in baseline)
+    if blocking:
+        return False, "not green: " + ", ".join(blocking)
+    inherited = ", ".join(sorted(label for _, label in failed))
+    return True, (f"{green} green; {inherited} already red on {_BASELINE_REF} "
+                  "— not caused by this diff")
 
 
 def changed_files(repo: str, number: int, *, runner: Optional[Runner] = None) -> list[str]:
