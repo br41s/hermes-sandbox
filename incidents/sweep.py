@@ -20,6 +20,11 @@ Signals:
   * Runaway agent runs — an agent cron run that burned its whole iteration
     budget. These report ``last_status: ok`` (the loop exits cleanly at the cap),
     so every failure-shaped signal above stays silent while the job does no work.
+  * New dependency advisories — open critical/high osv-scanner alerts from the
+    repo's code-scanning API, grouped by package. The existing backlog is
+    adopted as a baseline on first run and never reported; only packages whose
+    advisory set CHANGES after that produce a brief. Reporting the standing
+    queue every hour is what turns a security signal into muted noise.
   * Site-checkout drift — docker/cont-init.d/03-biglobster-config section 6b
     appends a JSON line to ``checkout-drift.jsonl`` when a BigLobster site
     checkout is both dirty and carries local commits origin/main doesn't have
@@ -624,6 +629,189 @@ def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     return out
 
 
+# --- dependency alerts -------------------------------------------------------
+# Reachability tiers. The 242-alert backlog that prompted this signal was ~60%
+# build tooling: the Docusaurus docs site and the Electron desktop app both
+# carry lockfiles that never enter the production image (the Dockerfile installs
+# root/web/ui-tui only, and `website/` is not copied at all). Reporting those at
+# the same volume as a core runtime CVE is how a queue gets muted, so the brief
+# says which tier an alert is in rather than pretending they are equivalent.
+DEP_LOCKFILE_TIERS = {
+    "uv.lock": "runtime (production image)",
+    "package-lock.json": "runtime (web/ui-tui in image; apps/desktop is NOT)",
+    "website/package-lock.json": "build-only (docs site, never in the image)",
+}
+DEP_SEVERITIES = ("critical", "high")
+DEP_ROLLUP_THRESHOLD = 6  # more new packages than this in one sweep -> one rollup
+
+
+def _dep_alert_lockfiles(alert: dict) -> List[str]:
+    """Lockfile paths an osv-scanner alert names in its Affected Packages table.
+
+    osv-scanner raises one alert per (advisory x lockfile), and the only place
+    the lockfile appears is inside the rendered markdown of `rule.help`. There
+    is no structured field for it, so this parses the table it documents.
+    """
+    help_text = (alert.get("rule") or {}).get("help") or ""
+    out: List[str] = []
+    for line in help_text.splitlines():
+        cell = line.strip().strip("|").split("|")[0].strip()
+        if cell.startswith("lockfile:"):
+            path = cell.split("/github/workspace/")[-1].strip()
+            if path and path not in out:
+                out.append(path)
+    return out
+
+
+def _dep_alert_packages(alert: dict) -> List[tuple]:
+    """(package, version) pairs from the alert's Affected Packages table."""
+    help_text = (alert.get("rule") or {}).get("help") or ""
+    out: List[tuple] = []
+    in_table = False
+    for line in help_text.splitlines():
+        if line.startswith("### Affected Packages"):
+            in_table = True
+            continue
+        if in_table and line.startswith("#"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if in_table and len(cells) == 3 and cells[0].startswith("lockfile:"):
+            pair = (cells[1], cells[2])
+            if pair not in out:
+                out.append(pair)
+    return out
+
+
+def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
+    """Every OPEN code-scanning alert, following pagination.
+
+    Returns None (not []) on any failure, so the caller can tell "the API said
+    there is nothing" from "we could not ask" — the difference between staying
+    correctly silent and silently going blind.
+
+    Pagination is not optional: an unpaginated query caps at 30 and would have
+    reported 30 of the 242 alerts as the whole truth.
+    """
+    import urllib.request
+
+    alerts: List[dict] = []
+    for page in range(1, 21):  # 20 pages x 100 = 2000 alert ceiling
+        url = (f"https://api.github.com/repos/{repo}/code-scanning/alerts"
+               f"?state=open&per_page=100&page={page}")
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+                batch = json.loads(resp.read().decode())
+        except Exception:
+            return None
+        if not isinstance(batch, list) or not batch:
+            break
+        alerts.extend(batch)
+        if len(batch) < 100:
+            break
+    return alerts
+
+
+def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
+                               repo: Optional[str] = None,
+                               token: Optional[str] = None) -> List[Incident]:
+    """Open critical/high dependency advisories, grouped by package.
+
+    Best-effort in the same sense as ``langfuse_error_incidents``: returns []
+    on a missing token or any API problem rather than raising, because this
+    signal must never be able to take the rest of the sweep down with it.
+
+    Grouped by (lockfile, package) rather than per alert. osv-scanner raises one
+    alert per (advisory x lockfile), so a single package routinely produces a
+    dozen: Pillow 12.2.0 alone accounted for 13 of the 242 open alerts. Per-alert
+    briefs would deliver that as thirteen Telegram messages about one pin.
+
+    The incident id carries the package's full advisory set, so a package that
+    picks up a NEW advisory re-reports once with its current state, while an
+    unchanged package stays silent forever.
+    """
+    if alerts is None:
+        repo = repo or (os.environ.get("HERMES_DEP_ALERT_REPO")
+                        or os.environ.get("GITHUB_REPOSITORY")
+                        or "br41s/hermes-sandbox").strip()
+        token = token or (os.environ.get("HERMES_DEP_ALERT_GITHUB_TOKEN")
+                          or os.environ.get("GITHUB_TOKEN")
+                          or os.environ.get("GH_TOKEN") or "").strip()
+        if not token:
+            return []
+        alerts = _fetch_dependency_alerts(repo, token)
+        if alerts is None:
+            return []
+
+    # (lockfile, package, version) -> {advisory id: severity}
+    grouped: dict = {}
+    for alert in alerts:
+        rule = alert.get("rule") or {}
+        sev = (rule.get("security_severity_level") or "").lower()
+        if sev not in DEP_SEVERITIES:
+            continue
+        advisory = rule.get("id") or f"alert-{alert.get('number')}"
+        lockfiles = _dep_alert_lockfiles(alert) or ["unknown"]
+        packages = _dep_alert_packages(alert) or [("unknown", "?")]
+        for lockfile in lockfiles:
+            for pkg, version in packages:
+                grouped.setdefault((lockfile, pkg, version), {})[advisory] = sev
+
+    out: List[Incident] = []
+    for (lockfile, pkg, version), advisories in sorted(grouped.items()):
+        ids = sorted(advisories)
+        worst = "critical" if "critical" in advisories.values() else "high"
+        tier = DEP_LOCKFILE_TIERS.get(lockfile, "unknown reachability")
+        shown = ", ".join(ids[:6]) + (f" (+{len(ids) - 6} more)" if len(ids) > 6 else "")
+        out.append(Incident(
+            # The advisory set is part of the id on purpose: an unchanged
+            # package never re-reports, a package that gains an advisory
+            # reports once more with its full current state.
+            id=f"depalert:{lockfile}:{pkg}:{','.join(ids)}",
+            kind="dependency",
+            title=f"{worst.upper()} dependency advisory — {pkg} {version} ({lockfile})",
+            detail=(f"package: {pkg} {version}\n"
+                    f"lockfile: {lockfile}\n"
+                    f"reachability: {tier}\n"
+                    f"advisories ({len(ids)}): {shown}"),
+            handoff=(f"triage {pkg} {version} in {lockfile} against docs/security/dependency-alert-triage.md — "
+                     f"classify as accepted / unreachable / patchable / real exposure. "
+                     f"If accepted, record it in osv-scanner.toml with the reason "
+                     f"rather than leaving it to alert again"),
+        ))
+    return out
+
+
+def _dep_rollup(incidents: List[Incident]) -> List[Incident]:
+    """Collapse a large batch into one brief.
+
+    A single osv-scanner run publishes every alert for a lockfile at once, so
+    'new since last run' can still be dozens of packages — a dependency bump
+    that shifts a whole transitive tree, or Advanced Security being switched on
+    (which is how 242 alerts appeared in one morning). Delivering those
+    individually is the failure mode this signal exists to avoid.
+    """
+    if len(incidents) <= DEP_ROLLUP_THRESHOLD:
+        return incidents
+    crit = [i for i in incidents if i.title.startswith("CRITICAL")]
+    names = ", ".join(sorted({i.detail.splitlines()[0].split(": ", 1)[1] for i in incidents})[:12])
+    return [Incident(
+        id="depalert-rollup:" + str(hash(tuple(sorted(i.id for i in incidents))) & 0xFFFFFFFF),
+        kind="dependency",
+        title=f"{len(incidents)} packages with new critical/high dependency advisories",
+        detail=(f"critical: {len(crit)}\npackages: {names}"
+                f"{' …' if len(incidents) > 12 else ''}\n"
+                f"Reported as one brief — a batch this size is a lockfile-wide shift "
+                f"or a scanner/config change, not {len(incidents)} separate decisions."),
+        handoff=("open the Security tab (Code Scanning > osv-scanner) and triage the batch "
+                 "against docs/security/dependency-alert-triage.md — group by package, not by alert"),
+    )]
+
+
 def _prune_blocked(path: Path, cap: int = _BLOCKED_CAP) -> None:
     """Keep the signal file bounded. Reported ids persist in seen-state, so
     trimming the oldest lines never re-surfaces an already-reported block."""
@@ -700,6 +888,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           blocked: Optional[List[Incident]] = None,
           checkout_drift: Optional[List[Incident]] = None,
           judge_liveness: Optional[List[Incident]] = None,
+          dependency_alerts: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -722,12 +911,33 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     cd = checkout_drift if checkout_drift is not None else checkout_drift_incidents()
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
 
+    # Dependency advisories are handled apart from the other signals because
+    # they need two things none of the others do: a baseline (the standing
+    # backlog is not news) and a rollup (one scanner run publishes a whole
+    # lockfile's alerts at once).
+    da_raw = (dependency_alerts if dependency_alerts is not None
+              else dependency_alert_incidents())
+    da_new = [i for i in da_raw if i.id not in seen]
+    baseline_established = False
+    if da_new and not state.get("dep_alerts_baselined"):
+        # First run ever: adopt whatever is already open as the starting point
+        # and say nothing. Without this the first sweep delivers the entire
+        # backlog — 242 alerts, the exact outcome this signal exists to prevent.
+        for i in da_new:
+            seen.add(i.id)
+            seen_list.append(i.id)
+        state["dep_alerts_baselined"] = True
+        baseline_established = True
+        da_new = []
+    da_covered = [i.id for i in da_new]
+    da_new = _dep_rollup(da_new)
+
     incidents = (cron_failure_incidents(jobs, now=now)
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(jl))
-    new = [i for i in incidents if i.id not in seen]
+    new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
     if new:
@@ -735,6 +945,12 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
         for i in new:
             seen.add(i.id)
             seen_list.append(i.id)
+        # A rollup brief speaks for ids that are not in `new` themselves;
+        # retire them too or the next sweep rolls the same batch up again.
+        for alert_id in da_covered:
+            if alert_id not in seen:
+                seen.add(alert_id)
+                seen_list.append(alert_id)
 
     # Remediation reconcile: verify prior gated fixes against current job health
     # and surface promotion recommendations. Escalations/recommendations are
@@ -751,7 +967,10 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
         output = _heartbeat_line(now)
         last_hb = now.isoformat()
 
-    if not dry_run and output:
+    # `baseline_established` is in the save condition on purpose: the baseline
+    # run deliberately produces no output, and if it were not persisted the
+    # next sweep would re-derive the whole backlog as new.
+    if not dry_run and (output or baseline_established):
         state["seen"] = seen_list[-_SEEN_CAP:]
         state["last_heartbeat_at"] = last_hb
         _save_state(state_path, state)
