@@ -119,7 +119,8 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   path that needs `$GHCR_TOKEN`, and the only one that refuses a dirty tree
   (`gcloud builds submit` uploads the working directory, so uncommitted code
   would ship under a commit's tag; Actions builds the committed ref and cannot
-  do that).
+  do that). The default path only warns, listing the uncommitted files so it
+  is obvious they are not in the deploy.
 
   **The tag contract is `--short=9`, on both sides.** git picks an abbreviation
   length from the object count: a full clone gives 9, the shallow clone
