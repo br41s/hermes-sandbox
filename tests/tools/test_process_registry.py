@@ -694,7 +694,17 @@ class TestSpawnEnvSanitization:
 
         env = captured["env"]
         assert env["MY_CUSTOM_VAR"] == "keep-me"
-        assert env["TELEGRAM_BOT_TOKEN"] == "forced-bot-token"
+        # Tier-1 (_ALWAYS_STRIP_KEYS) is unconditional: the _HERMES_FORCE_
+        # escape hatch does NOT re-inject it, even when explicitly requested.
+        # 9ae0cb62b hardened this after a container-level GITHUB_TOKEN reached
+        # a `gh` subprocess and silently overrode its on-disk identity (the
+        # auditor identity leak, biglobster#408). TELEGRAM_BOT_TOKEN sits in
+        # the same tier as GITHUB_TOKEN/GH_TOKEN/SLACK_BOT_TOKEN.
+        #
+        # The hatch still works for blocklisted-but-NOT-Tier-1 vars -- that
+        # path is covered by
+        # test_local_env_blocklist.py::test_force_prefix_passes_blocked_var.
+        assert "TELEGRAM_BOT_TOKEN" not in env
         assert "FIRECRAWL_API_KEY" not in env
         assert f"{_HERMES_PROVIDER_ENV_FORCE_PREFIX}TELEGRAM_BOT_TOKEN" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
