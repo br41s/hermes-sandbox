@@ -8,11 +8,20 @@ of 4000+ models across 109+ providers.  Provides:
   (reasoning, tools, vision, PDF, audio), modalities, knowledge cutoff,
   open-weights flag, family grouping, deprecation status
 
-Data resolution order (like TypeScript OpenCode):
-  1. Bundled snapshot (ships with the package — offline-first)
-  2. Disk cache (~/.hermes/models_dev_cache.json)
+Data resolution order (see ``fetch_models_dev`` for the full rules):
+  1. In-memory cache, under a 1 hour TTL
+  2. Disk cache (``$HERMES_HOME/models_dev_cache.json``), if younger than the
+     same TTL
   3. Network fetch (https://models.dev/api.json)
-  4. Background refresh every 60 minutes
+  4. On network failure, ANY disk cache, even a stale one
+
+This is NOT offline-first. There is no bundled snapshot: a cold start with no
+disk cache and no network returns an empty registry, and callers such as
+``lookup_models_dev_context`` degrade to ``None``. The 1 hour TTL is lazy —
+refreshed on the next access that finds it expired — not a background thread.
+(Two of the tiers listed here until 2026-09-18 had never been implemented; see
+``tests/agent/test_models_dev_resolution_order.py``, which now keeps this list
+and the code in step.)
 
 Other modules should import the dataclasses and query functions from here
 rather than parsing the raw JSON themselves.
