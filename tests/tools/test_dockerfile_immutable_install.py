@@ -12,16 +12,58 @@ def _dockerfile_text() -> str:
     return DOCKERFILE.read_text()
 
 
+def _dockerfile_instructions() -> list[str]:
+    """Dockerfile lines with comments and blanks stripped.
+
+    The source-COPY block carries a comment that *quotes* the upstream
+    ``COPY --link`` form it warns against, so matching raw text would find
+    that prose rather than a real instruction.
+    """
+    return [
+        line
+        for line in _dockerfile_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def test_dockerfile_makes_opt_hermes_readonly_for_hermes_user() -> None:
+    instructions = _dockerfile_instructions()
     text = _dockerfile_text()
 
     # --chmod on the source COPY bakes read-only perms at copy time instead
     # of a separate chmod -R pass (which walked ~30k files — #49113).
-    assert "COPY --link --chmod=a+rX,go-w . ." in text
+    # No `--link` here: see test_dockerfile_source_copy_omits_link below.
+    assert any(
+        line.strip() == "COPY --chmod=a+rX,go-w . ." for line in instructions
+    ), "source COPY must bake a+rX,go-w at copy time"
     # The old tree-walking passes must not be present.
     assert "chown -R root:root /opt/hermes" not in text
     assert "chmod -R a+rX /opt/hermes" not in text
     assert "chmod -R a-w /opt/hermes" not in text
+
+
+def test_dockerfile_source_copy_omits_link() -> None:
+    """Guard the deliberate divergence from upstream (ebc31eb5a, 2026-07-30).
+
+    Production images build on Cloud Build's ``gcr.io/cloud-builders/docker``,
+    whose built-in ``dockerfile.v0`` frontend predates ``--link`` and fails the
+    *whole build* with ``Unknown flag: link`` (build 305ad4d2). ``--chmod``
+    carries the perf win and is supported there; ``--link`` only decouples the
+    layer for caching, so dropping it changes nothing about image contents.
+
+    The Dockerfile says "do NOT restore --link on the next merge", but that is
+    prose. This asserts it mechanically, because an upstream merge is exactly
+    how it comes back — and the failure would surface as a broken deploy, not
+    a broken test.
+    """
+    offenders = [
+        line.strip()
+        for line in _dockerfile_instructions()
+        if line.lstrip().startswith("COPY") and "--link" in line
+    ]
+    assert not offenders, (
+        f"COPY --link breaks Cloud Build's dockerfile.v0 frontend: {offenders}"
+    )
 
 
 def test_dockerfile_keeps_mutable_state_under_opt_data() -> None:
