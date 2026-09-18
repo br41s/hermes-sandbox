@@ -4,6 +4,23 @@ on:
   push:
     branches: [main]
 
+# One build per branch; a newer push cancels the one it supersedes.
+#
+# Merging a batch of PRs otherwise starts a full ~4-minute image build per
+# merge, and every build but the last is already stale — its commit is no
+# longer main by the time it publishes.
+#
+# The cost is deliberate: a cancelled build never publishes its
+# `sha-<commit>`, so those intermediate commits cannot be deployed and
+# `scripts/deploy.sh` will refuse them by design. That is acceptable because
+# the rollback target is the previous commit that was actually DEPLOYED, and
+# that image exists precisely because deploying it published it — nobody rolls
+# back to an intermediate merge commit. If one is ever needed, re-run this
+# workflow on it.
+concurrency:
+  group: ghcr-publish-${{ github.ref }}
+  cancel-in-progress: true
+
 # Only run on this fork, not if someone forks br41s/hermes-sandbox further.
 # Remove or update this condition if you rename the repo.
 jobs:
