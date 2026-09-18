@@ -50,6 +50,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from typing import List, Optional, Tuple
 
@@ -233,6 +234,33 @@ def judge_deadline_seconds() -> int:
         return max(10, int(raw))
     except ValueError:
         return JUDGE_DEADLINE_DEFAULT
+
+
+def report_judge_elapsed(started: float, deadline: int, outcome: str) -> None:
+    """Emit one judge call's wall-clock cost to stderr, on EVERY exit path.
+
+    stdout carries the verdict, so this cannot go there. stderr lands in the
+    auditor agent's tool output, which is what a later diagnosis actually reads.
+
+    Why this exists: nothing recorded how long a judge call took. When the gate
+    failed on 2 of 4 PRs on 2026-09-18 the only artefact was ``exit 4``, and the
+    durations were unrecoverable — this module is raw ``urllib`` with no
+    Langfuse instrumentation, so the trace does not hold them either, and
+    ``agent.log`` never saw the subprocess. Answering "is the 300s bound too
+    tight, or was the call hung?" meant re-running the judge by hand against a
+    live PR. One line here turns that into a grep.
+
+    Logged on SUCCESS too, not just on failure: a call that lands at 280s of a
+    300s bound is the only warning that the next one will not, and that is
+    exactly the signal a failure-only log cannot give.
+    """
+    elapsed = time.monotonic() - started
+    used = (elapsed / deadline * 100) if deadline else 0.0
+    print(
+        f"auditor.llm: judge call {outcome} in {elapsed:.1f}s "
+        f"(deadline {deadline}s, {used:.0f}% used)",
+        file=sys.stderr,
+    )
 
 
 @contextlib.contextmanager
@@ -449,10 +477,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 2
 
     deadline = judge_deadline_seconds()
+    started = time.monotonic()
     try:
         with wall_clock_deadline(deadline, "judge call"):
             print(review(args.tier, user_content))
     except TimeoutError as e:
+        report_judge_elapsed(started, deadline, "TIMED OUT")
         print(
             f"auditor.llm: {e}. No verdict was produced — treat the gate as "
             f"BROKEN for this run, not as a degraded review. Raise the bound "
@@ -462,6 +492,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 4
     except RuntimeError as e:
+        report_judge_elapsed(started, deadline, "FAILED")
         # Exit 4 == "the judge itself could not run" (no credential, HTTP or
         # parse failure), as distinct from exit 3 == "could not fetch the PR".
         # The orchestrator must treat these differently: an unfetchable PR is a
@@ -470,6 +501,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # a routine footnote on 2026-09-16. See auditor.prompt PASO 2d.
         print(f"auditor.llm: {e}", file=sys.stderr)
         return 4
+    report_judge_elapsed(started, deadline, "OK")
     return 0
 
 

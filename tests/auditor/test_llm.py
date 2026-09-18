@@ -98,3 +98,57 @@ def test_no_session_id_omits_field():
     # Backwards-compatible: absent session_id => no key in the body.
     req = llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}], "sk-test")
     assert "session_id" not in _body(req)
+
+
+# ── judge timing (report_judge_elapsed) ─────────────────────────────────────
+# The gate failed on 2 of 4 PRs on 2026-09-18 and left only `exit 4` behind.
+# This module is raw urllib with no Langfuse instrumentation and runs as a
+# subprocess, so neither the trace nor agent.log held the duration — deciding
+# whether the 300s bound was too tight meant re-running the judge by hand.
+# These lock the timing line onto every exit path, and lock stdout clean:
+# stdout is the VERDICT the orchestrator parses.
+
+def _run_main(monkeypatch, review_impl):
+    """Drive main() past arg parsing and the PR fetch, with review() stubbed."""
+    monkeypatch.setattr(llm, "review", review_impl)
+    monkeypatch.setattr(llm, "fetch_pr_content", lambda repo, number: ("diff", None))
+    return llm.main(["--tier", "system", "--repo", "o/r", "--number", "1"])
+
+
+def test_elapsed_logged_on_success_and_stdout_is_only_the_verdict(monkeypatch, capsys):
+    rc = _run_main(monkeypatch, lambda tier, content: "VERDICT TEXT")
+    captured = capsys.readouterr()
+    assert rc == 0
+    # The orchestrator parses stdout — timing must never land there.
+    assert captured.out.strip() == "VERDICT TEXT"
+    assert "judge call OK in" in captured.err
+    assert "deadline" in captured.err
+
+
+def test_elapsed_logged_on_timeout(monkeypatch, capsys):
+    def _timeout(tier, content):
+        raise TimeoutError("judge call exceeded its 300s deadline")
+
+    rc = _run_main(monkeypatch, _timeout)
+    captured = capsys.readouterr()
+    assert rc == 4
+    assert captured.out == ""
+    assert "judge call TIMED OUT in" in captured.err
+
+
+def test_elapsed_logged_on_judge_failure(monkeypatch, capsys):
+    def _fail(tier, content):
+        raise RuntimeError("HTTP 502 from model")
+
+    rc = _run_main(monkeypatch, _fail)
+    captured = capsys.readouterr()
+    assert rc == 4
+    assert captured.out == ""
+    assert "judge call FAILED in" in captured.err
+
+
+def test_elapsed_reports_percentage_of_the_deadline(monkeypatch, capsys):
+    """A call landing near the bound is the only warning the next will exceed it."""
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS", "10")
+    _run_main(monkeypatch, lambda tier, content: "ok")
+    assert "deadline 10s" in capsys.readouterr().err
