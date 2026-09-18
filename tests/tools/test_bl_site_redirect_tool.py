@@ -248,15 +248,162 @@ def test_publish_requires_redirect_id():
     assert "redirect_id" in mod.bl_site_redirect(action="publish")
 
 
+def _listing(tier, redirect_id=7):
+    """The site's GET /api/redirects, carrying one row at the given tier.
+
+    Route order matters: the publish POST's URL also contains
+    "/api/redirects", so the more specific fragment has to come first.
+    """
+    return {
+        f"/{redirect_id}/publish": {"success": True, "status": "live"},
+        "/api/redirects": {
+            "redirects": [
+                {
+                    "id": redirect_id,
+                    "old_path": "/muerta",
+                    "new_path": "/productos/destructora-100.html",
+                    "match_tier": tier,
+                    "status": "pending",
+                }
+            ]
+        },
+    }
+
+
 def test_publish_posts_to_the_right_endpoint(monkeypatch):
     calls = []
-    wire_routes(monkeypatch, {"/7/publish": {"success": True, "status": "live"}}, calls)
+    wire_routes(monkeypatch, _listing("gtin"), calls)
 
     out = json.loads(mod.bl_site_redirect(action="publish", redirect_id=7))
     assert out["status"] == "live"
-    method, url, _body = calls[0]
+    method, url, _body = calls[-1]
     assert method == "POST"
     assert url.endswith("/api/redirects/7/publish")
+
+
+# --- publish is gated on the tier the SITE stored --------------------------
+#
+# Until this gate existed, "identifier-tier only" was an instruction in the
+# tool description and the agent prompt, enforced by neither side: this tool
+# posted whatever id it was handed, and the site's POST /:id/publish re-checks
+# only that new_path still resolves on disk. A 'human'-tier redirect — the one
+# the docs say waits for a person — went live on one call.
+
+
+def test_publish_refuses_a_redirect_the_site_did_not_verify(monkeypatch):
+    calls = []
+    wire_routes(monkeypatch, _listing("human"), calls)
+
+    out = mod.bl_site_redirect(action="publish", redirect_id=7)
+
+    assert "human" in out and "pending" in out
+    assert not any(method == "POST" for method, _url, _body in calls), (
+        "a refused publish must never reach the site"
+    )
+
+
+def test_publish_allows_both_identifier_tiers(monkeypatch):
+    for tier in ("gtin", "mpn"):
+        calls = []
+        wire_routes(monkeypatch, _listing(tier), calls)
+
+        out = json.loads(mod.bl_site_redirect(action="publish", redirect_id=7))
+
+        assert out["status"] == "live", f"{tier} is self-verifying and may publish"
+        assert calls[-1][0] == "POST"
+
+
+def test_publish_reads_the_tier_from_the_site_not_from_the_caller(monkeypatch):
+    """An agent that would publish a weak match would assert a strong tier.
+
+    Passing match_tier='gtin' alongside a row the site stored as 'human' must
+    change nothing — the argument is for `propose`, and the gate ignores it.
+    """
+    calls = []
+    wire_routes(monkeypatch, _listing("human"), calls)
+
+    out = mod.bl_site_redirect(action="publish", redirect_id=7, match_tier="gtin")
+
+    assert "human" in out
+    assert not any(method == "POST" for method, _url, _body in calls)
+
+
+def test_publish_refuses_an_id_the_site_does_not_have(monkeypatch):
+    calls = []
+    wire_routes(monkeypatch, _listing("gtin", redirect_id=7), calls)
+
+    out = mod.bl_site_redirect(action="publish", redirect_id=99)
+
+    assert "99" in out
+    assert not any(method == "POST" for method, _url, _body in calls)
+
+
+def test_publish_fails_closed_when_the_tier_cannot_be_read(monkeypatch):
+    """A refused publish leaves the row pending, which a person can fix. A
+    wrong live 301 on a client's site is not recoverable that way."""
+    def _request(method, url, token, body=None):
+        if method == "GET":
+            raise RuntimeError("No se pudo contactar el sitio")
+        raise AssertionError("must not publish without reading the tier")
+
+    monkeypatch.setattr(mod, "_request", _request)
+
+    out = mod.bl_site_redirect(action="publish", redirect_id=7)
+    assert "no se publica" in out.lower()
+
+
+def test_publish_matches_the_row_across_id_types(monkeypatch):
+    """The site returns JSON ids; callers pass whatever propose handed back.
+    A str/int mismatch would fail closed on a legitimate publish."""
+    calls = []
+    routes = _listing("gtin")
+    routes["/api/redirects"]["redirects"][0]["id"] = "7"
+    wire_routes(monkeypatch, routes, calls)
+
+    out = json.loads(mod.bl_site_redirect(action="publish", redirect_id=7))
+    assert out["status"] == "live"
+
+
+def test_publish_reads_the_tier_before_it_writes_anything(monkeypatch):
+    """The ordering IS the guarantee.
+
+    CLAUDE.md described redirects as auto-publishing "only on a checksum-
+    verified barcode or manufacturer-reference match". That was a mechanical
+    gate nowhere — not in this tool, and not in the site, whose
+    POST /:id/publish re-checks only that new_path still resolves. It is real
+    now, and it depends on the read happening first: a publish that POSTed
+    before reading would be no gate at all.
+    """
+    calls = []
+    wire_routes(monkeypatch, _listing("gtin"), calls)
+
+    mod.bl_site_redirect(action="publish", redirect_id=7)
+
+    methods = [method for method, _url, _body in calls]
+    assert methods == ["GET", "POST"], (
+        "the tier must be read from the site before the redirect goes live"
+    )
+
+
+def test_the_schema_reserves_publishing_for_identifier_tier_matches():
+    """The only guard in this repo, and it is prose in a tool description.
+
+    A trimmed description would remove it silently while the tool behaves
+    identically, so assert the load-bearing words are still there.
+    """
+    description = mod.BL_SITE_REDIRECT_SCHEMA["description"]
+
+    assert "'gtin' or 'mpn'" in description, (
+        "the schema must name the tiers publishing is allowed for"
+    )
+    lowered = description.lower()
+    assert "must stay proposed" in lowered and "never published by you" in lowered, (
+        "the schema must tell the model a title-similarity match is a human's "
+        "call, not its own"
+    )
+    assert "always saves as pending" in lowered, (
+        "the schema must say proposing never goes live"
+    )
 
 
 def test_remove_requires_redirect_id():

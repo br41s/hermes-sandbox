@@ -43,10 +43,19 @@ for this tool guessing from prose.
 The site owns every fact from here: ``propose`` always lands as a pending row,
 and the server independently re-derives a gtin/mpn claim against the target
 product before accepting it — this tool's ``evidence`` is a claim, never
-something the site trusts outright. ``publish`` is the one call that makes a
-redirect real, and is meant to be reserved for identifier-tier matches; a
-content-page redirect resolved by title similarity or human judgement should
-stay proposed, not published, until a person acts on it.
+something the site trusts outright.
+
+``publish`` is the one call that makes a redirect real, and it is restricted
+to identifier-tier matches: ``_refuse_unpublishable_tier`` reads the row's
+stored ``match_tier`` back from the site and refuses anything that is not
+``gtin`` or ``mpn``. A content-page redirect resolved by title similarity or
+human judgement stays proposed until a person acts on it.
+
+That restriction used to be a sentence in this docstring and in the tool
+description, enforced by neither side: the tool posted whatever id it was
+handed, and the site's ``POST /:id/publish`` re-checks only that ``new_path``
+still resolves. It is a gate now because "an instruction to a language model"
+is not a safety property, however clearly it is written.
 
 Credentials and the scripted-caller guard are shared with the other bl_site_*
 tools (imported, never copied), so a client's site can never be resolved two
@@ -81,6 +90,17 @@ from tools.product_enrich_tool import (
 )
 
 REQUEST_TIMEOUT = 30
+
+# --- publish: which match tiers may go live without a human ----------------
+# The site stores one of 'gtin' | 'mpn' | 'human' on every row (its
+# ALLOWED_TIERS; anything it does not recognise is coerced to 'human'), so a
+# row always has a tier and 'human' is exactly the case a person must decide.
+#
+# Only the identifier tiers are self-verifying: POST /api/redirects re-derives
+# the claimed gtin/mpn against the target product's own record and refuses a
+# mismatch, so a stored 'gtin'/'mpn' has already been checked by the site
+# against facts the agent does not control. 'human' carries no such proof.
+PUBLISHABLE_TIERS = frozenset({"gtin", "mpn"})
 
 # --- scan: run-to-run sitemap diff, own history file -----------------------
 _LOC_VALUE_RE = re.compile(r"<loc>\s*([^<]+?)\s*</loc>", re.IGNORECASE)
@@ -404,6 +424,62 @@ def _find_target(site_url: str, token: str, old_path: str) -> dict:
     }
 
 
+def _refuse_unpublishable_tier(base: str, token: str, redirect_id) -> Optional[str]:
+    """Refuse to publish a redirect the site did not verify by identifier.
+
+    Returns an error string to hand back, or ``None`` when publishing is
+    allowed.
+
+    Publishing is the call that puts a 301 in front of real visitors, and
+    until this existed nothing anywhere enforced which redirects were eligible
+    for it. The tool posted whatever id it was given; the site's
+    ``POST /:id/publish`` re-checks only that ``new_path`` still resolves on
+    disk and never looks at the tier. The "identifier-tier only" rule lived
+    exclusively in the tool description and the agent prompt — an instruction
+    to a language model, with no gate behind it, which is the same shape as
+    the blog-drafts claim that was wrong for months.
+
+    The tier is read back from the site rather than taken as an argument, and
+    that is the whole point: an agent that would talk itself into publishing a
+    weak match would equally talk itself into asserting a strong tier. The
+    stored value is the site's own, stamped when the row was proposed and
+    already re-derived against the target product.
+
+    Fails closed on every uncertainty — an unreadable list, a missing row, an
+    unexpected tier. A refused publish leaves the redirect pending for a
+    person, which is recoverable; a wrong live 301 on a client's site is not.
+    """
+    from tools.registry import tool_error
+
+    try:
+        listing = _request("GET", base, token)
+    except RuntimeError as err:
+        return tool_error(
+            f"No se pudo comprobar el tier de la redirección {redirect_id} "
+            f"antes de publicarla, así que no se publica: {err}"
+        )
+
+    rows = listing.get("redirects") or []
+    row = next((r for r in rows if str(r.get("id")) == str(redirect_id)), None)
+    if row is None:
+        return tool_error(
+            f"No existe ninguna redirección con id {redirect_id} en el sitio, "
+            "así que no hay nada que publicar."
+        )
+
+    tier = row.get("match_tier")
+    if tier not in PUBLISHABLE_TIERS:
+        return tool_error(
+            f"La redirección {redirect_id} ({row.get('old_path')} → "
+            f"{row.get('new_path')}) tiene match_tier '{tier}', no un "
+            "identificador verificado ('gtin' o 'mpn'). Se queda en 'pending' "
+            "para que la publique una persona. Repórtala como aviso; no la "
+            "vuelvas a intentar ni propongas otra con datos distintos."
+        )
+
+    return None
+
+
 def bl_site_redirect(
     action: str,
     old_path: Optional[str] = None,
@@ -457,6 +533,9 @@ def bl_site_redirect(
         if action == "publish":
             if not redirect_id:
                 return tool_error("publish requiere 'redirect_id'.")
+            refusal = _refuse_unpublishable_tier(base, token, redirect_id)
+            if refusal:
+                return refusal
             result = _request("POST", f"{base}/{redirect_id}/publish", token)
             return json.dumps(result, ensure_ascii=False)
 
@@ -507,7 +586,9 @@ BL_SITE_REDIRECT_SCHEMA = {
         "Use action='publish' with 'redirect_id' (from propose's response) to make a redirect "
         "real. Only ever do this for a redirect whose match_tier is 'gtin' or 'mpn' — a "
         "content-page match (no match_tier, or resolved by title similarity) must stay proposed "
-        "for a human to publish, never published by you. "
+        "for a human to publish, never published by you. The tool checks this itself: it reads "
+        "the tier the SITE stored and refuses anything else, so a refusal here is a decision, "
+        "not a failure — report it as a pending redirect for a person and move on. "
         "Use action='list' to see existing redirects (optionally add nothing else; the site "
         "returns all of them). "
         "Use action='remove' with 'redirect_id' to delete a wrong redirect. "

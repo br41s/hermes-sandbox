@@ -263,10 +263,17 @@ Two rules hold across all of them, and they are what makes unattended writing de
   agent cannot assert a barcode, pin a stale fingerprint, or talk itself into publishing
   something thin.
 - **Everything except blog posts waits for a human.** Product sheets save as drafts
-  unless publication is explicit and the site's checklist passes; redirects save as
-  pending and only auto-publish on a checksum-verified barcode or manufacturer-reference
-  match — anything resolved by title similarity or human judgement stays pending for a
-  person to publish. **Blog posts are the exception: `create_blog_post` hardcodes
+  unless publication is explicit and the site's checklist passes; redirects always save as
+  pending, and `publish` only goes through for a match the site itself verified by
+  identifier. That gate is `_refuse_unpublishable_tier`: it reads the row's stored
+  `match_tier` back from `GET /api/redirects` and refuses anything but `gtin`/`mpn`,
+  failing closed if it cannot read it. Reading the tier rather than accepting it as an
+  argument is the point — an agent that would publish a weak match would also assert a
+  strong tier. Anything resolved by title similarity or human judgement stays pending.
+  Until 2026-09-18 that rule was prose in the tool description and the agent prompt and
+  nothing else: the site's `POST /:id/publish` only re-checks that `new_path` resolves,
+  so a `human`-tier redirect went live on one call.
+  **Blog posts are the exception: `create_blog_post` hardcodes
   `"status": "published"` (`tools/bl_site_publish_tool.py`) and goes live on the client's
   public site immediately.** That is deliberate — it is why `gap-hunter`'s prompt says its
   rules are not optional, since nothing is checked afterwards — but it means a bad blog
