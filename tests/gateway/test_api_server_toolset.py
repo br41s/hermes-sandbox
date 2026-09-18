@@ -164,9 +164,22 @@ class TestApiServerAdapterToolset:
                                         "provider": None, "api_mode": None,
                                         "command": None, "args": []}
             mock_model.return_value = "test/model"
-            # User overrides with just web and terminal
+            # User overrides with just web and terminal.
+            #
+            # known_plugin_toolsets matters here: _get_platform_tools() treats a
+            # plugin toolset absent from that map as "new plugin the user has not
+            # seen yet" and defaults it ON, so a newly bundled plugin joins the
+            # resolved list and breaks an exact-match assertion regardless of the
+            # user's override. `shorts` did exactly that. Declaring the bundled
+            # plugin toolsets known ("known but not selected" = off) isolates the
+            # override contract from plugin-default behaviour, and deriving the
+            # keys keeps it true as plugins come and go.
+            from hermes_cli.tools_config import _get_plugin_toolset_keys
             mock_config.return_value = {
-                "platform_toolsets": {"api_server": ["web", "terminal"]}
+                "platform_toolsets": {"api_server": ["web", "terminal"]},
+                "known_plugin_toolsets": {
+                    "api_server": sorted(_get_plugin_toolset_keys())
+                },
             }
             mock_agent_cls.return_value = MagicMock()
 
