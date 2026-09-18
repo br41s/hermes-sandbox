@@ -429,9 +429,13 @@ dev = [
 # dependency, so the core dependency surface (and therefore the supply-chain
 # blast radius) is unchanged. See the `[all]` scope rule above.
 #
-# Each entry is a `>=` floor at the CVE-fixed version, not a `==` pin: these
-# are packages we do not use directly, so there is no API surface for us to
-# regress against, and a floor lets normal resolution keep them current.
+# Each entry is a `>=floor,<next_major` range, not a `==` pin: these are
+# packages we do not use directly, so there is no API surface of ours to
+# regress against, and a range lets normal resolution keep them current. The
+# upper bound is the CONTRIBUTING.md dependency-pinning policy (enforced by
+# supply-chain-audit.yml's dep-bounds job) — a transitive crossing a major
+# version can still break the package that pulls it in, even though we never
+# import it ourselves.
 #
 # Directly-pinned packages (cryptography, starlette, aiohttp, Pillow, ...) stay
 # in `dependencies`/extras with their own inline rationale — do not move them
@@ -439,13 +443,13 @@ dev = [
 constraint-dependencies = [
   # Three decoder-DoS advisories reachable from any X.509/SNMP parse path
   # (pulled in via google-auth/rsa).
-  "pyasn1>=0.6.4",  # CVE-2026-59884, CVE-2026-59885, CVE-2026-59886
+  "pyasn1>=0.6.4,<1",  # CVE-2026-59884, CVE-2026-59885, CVE-2026-59886
   # Auth-header leak across cross-origin redirects, plus body/multipart parse
   # DoS. Our webhook path is unused (Telegram polls), but the AsyncHTTPClient
   # advisories are not webhook-specific. 6.5.8 closes all seven open advisories.
-  "tornado>=6.5.8",  # CVE-2026-49853/49854/49855/82397/91990/91991/91992
-  "msgpack>=1.2.1",  # CVE-2026-57585
-  "httplib2>=0.32.0",  # CVE-2026-59939 — pulled in by google-auth-httplib2
-  "cbor2>=5.9.0",  # CVE-2026-26209
-  "h2>=4.4.1",  # CVE-2026-71554 — HTTP/2 stack under httpx
+  "tornado>=6.5.8,<7",  # CVE-2026-49853/49854/49855/82397/91990/91991/91992
+  "msgpack>=1.2.1,<2",  # CVE-2026-57585
+  "httplib2>=0.32.0,<1",  # CVE-2026-59939 — pulled in by google-auth-httplib2
+  "cbor2>=5.9.0,<6",  # CVE-2026-26209
+  "h2>=4.4.1,<5",  # CVE-2026-71554 — HTTP/2 stack under httpx
 ]

@@ -9,12 +9,12 @@ resolution-markers = [
 
 [manifest]
 constraints = [
-    { name = "cbor2", specifier = ">=5.9.0" },
-    { name = "h2", specifier = ">=4.4.1" },
-    { name = "httplib2", specifier = ">=0.32.0" },
-    { name = "msgpack", specifier = ">=1.2.1" },
-    { name = "pyasn1", specifier = ">=0.6.4" },
-    { name = "tornado", specifier = ">=6.5.8" },
+    { name = "cbor2", specifier = ">=5.9.0,<6" },
+    { name = "h2", specifier = ">=4.4.1,<5" },
+    { name = "httplib2", specifier = ">=0.32.0,<1" },
+    { name = "msgpack", specifier = ">=1.2.1,<2" },
+    { name = "pyasn1", specifier = ">=0.6.4,<1" },
+    { name = "tornado", specifier = ">=6.5.8,<7" },
 ]
 
 [[package]]
