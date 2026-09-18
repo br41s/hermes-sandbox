@@ -1,0 +1,133 @@
+# OSV-Scanner accepted-risk register — root lockfiles (uv.lock, package-lock.json).
+#
+# WHAT BELONGS HERE: an advisory we have consciously decided NOT to fix, with
+# the reason. Suppressing here rather than filtering in the reporter keeps the
+# rationale next to the pin it justifies, so the next person to read
+# `pyproject.toml` finds the same decision from the other direction.
+#
+# WHAT DOES NOT BELONG HERE: "we haven't got to it yet". An unsuppressed alert
+# is the backlog; this file is the decision log. The queue reached 242 open
+# alerts because nothing distinguished the two — do not re-merge them.
+#
+# HOW TO ADD ONE: state which of the four triage classes it is (accepted /
+# unreachable / patchable / real-exposure) and why. Anything that is merely
+# *inconvenient* to patch is not accepted — leave it alerting.
+#
+# REVIEW: entries without `ignoreUntil` are permanent decisions and are
+# re-read whenever the underlying pin moves. Entries with `ignoreUntil` expire
+# on their own and start alerting again — prefer those for "waiting on
+# upstream", so the wait cannot become permanent by accident.
+#
+# Triage of record: docs/security/dependency-alert-triage.md (2026-09-18).
+
+# --- starlette: bumping REGRESSES the fix we pinned for -----------------------
+# We pin starlette==1.0.1 across every extra that exposes a Starlette-backed
+# server surface, for CVE-2026-48710 (BadHost: a malformed Host header desyncs
+# request.url.path from the dispatched path, so middleware gating on
+# request.url can be bypassed — the dashboard OAuth gate is exactly that shape).
+# The scanner's suggested 1.1.0/1.3.x line does not carry that fix forward.
+# Upstream NousResearch/hermes-agent holds 1.0.1 for the same reason; moving
+# alone would also diverge us ahead of upstream on an unvetted version.
+# Re-evaluate when a release carries BOTH the BadHost fix and these.
+[[IgnoredVulns]]
+id = "CVE-2026-48818"
+reason = "starlette pinned 1.0.1 for CVE-2026-48710 (BadHost); the suggested upgrade regresses that fix. See pyproject.toml [all]/mcp/web extras."
+[[IgnoredVulns]]
+id = "CVE-2026-54283"
+reason = "starlette pinned 1.0.1 for CVE-2026-48710 (BadHost); the suggested upgrade regresses that fix. See pyproject.toml [all]/mcp/web extras."
+[[IgnoredVulns]]
+id = "CVE-2026-48817"
+reason = "starlette pinned 1.0.1 for CVE-2026-48710 (BadHost); the suggested upgrade regresses that fix. See pyproject.toml [all]/mcp/web extras."
+[[IgnoredVulns]]
+id = "CVE-2026-54282"
+reason = "starlette pinned 1.0.1 for CVE-2026-48710 (BadHost); the suggested upgrade regresses that fix. See pyproject.toml [all]/mcp/web extras."
+
+# --- hermes-agent: advisories against the package we ARE ----------------------
+# osv-scanner resolves our own published package out of uv.lock and matches
+# two VulDB-sourced advisories. Neither carries a fixed version, so OSV treats
+# the affected range as unbounded and NO upgrade can ever clear them — they
+# have to be closed by decision or not at all.
+[[IgnoredVulns]]
+id = "CVE-2026-10224"
+reason = "Targets gateway/platforms/feishu.py::_handle_webhook_request. That file does not exist in this fork — Feishu routes through the generic webhook adapter (gateway/config.py:401). Unreachable; verified 2026-09-18."
+[[IgnoredVulns]]
+id = "CVE-2026-10221"
+reason = "Stated affected range is 'up to 0.12.0'; we ship 0.19.0. OSV records no fixed version, so the range defaults to all-versions and no upgrade clears it. Re-check run_agent.py::_compress_context if the advisory is ever given a concrete fixed version."
+
+# --- cryptography: deferred to upstream, deliberately -------------------------
+# We pin cryptography==46.0.7 explicitly (it arrives via PyJWT[crypto]) so the
+# WeCom/Weixin crypto paths cannot drift below the CVE-2026-39892/34073 floor.
+# The remaining advisories are the bundled-OpenSSL class, open on upstream/main
+# too. Decided in PR #38: adopt when upstream bumps, rather than freelancing a
+# transitive pin ahead of it — a fork that runs ahead here re-merges badly and
+# we gain nothing the container's own OpenSSL does not already govern.
+# Time-boxed so "waiting on upstream" cannot silently become "forever".
+[[IgnoredVulns]]
+id = "GHSA-537c-gmf6-5ccf"
+ignoreUntil = 2026-12-31
+reason = "Vulnerable bundled OpenSSL. Open on upstream/main too; PR #38 decided to adopt 48.0.1+ when upstream does. Revisit 2026-12-31."
+[[IgnoredVulns]]
+id = "CVE-2026-69247"
+ignoreUntil = 2026-12-31
+reason = "cryptography 46.0.7 held at upstream parity per PR #38. Revisit 2026-12-31."
+[[IgnoredVulns]]
+id = "CVE-2026-69249"
+ignoreUntil = 2026-12-31
+reason = "cryptography 46.0.7 held at upstream parity per PR #38. Revisit 2026-12-31."
+[[IgnoredVulns]]
+id = "CVE-2026-69248"
+ignoreUntil = 2026-12-31
+reason = "cryptography 46.0.7 held at upstream parity per PR #38. Revisit 2026-12-31."
+
+# --- Electron desktop app: not in the production image ------------------------
+# The root package-lock.json describes the whole monorepo workspace set, but
+# the Dockerfile only installs root/web/ui-tui — apps/* (the desktop app) is
+# never `npm install`ed into the image (see Dockerfile, HERMES_TUI_DIR comment).
+# These three are devDependencies of that desktop build chain. They are real
+# for a developer running `npm install --workspace apps/desktop` locally, and
+# worth patching on the desktop app's own cadence, but they are NOT production
+# exposure for the Hermes control plane. NOT suppressed permanently: time-boxed
+# so the desktop app is forced to answer for them rather than inheriting
+# silence from a decision made about the server.
+[[IgnoredVulns]]
+id = "CVE-2026-59873"
+ignoreUntil = 2026-12-31
+reason = "node-tar, devDependency of the apps/desktop Electron build chain. Not installed into the production image (Dockerfile installs root/web/ui-tui only). Patch on the desktop app's cadence."
+[[IgnoredVulns]]
+id = "CVE-2026-59874"
+ignoreUntil = 2026-12-31
+reason = "node-tar, apps/desktop build chain only — see CVE-2026-59873."
+[[IgnoredVulns]]
+id = "CVE-2026-73566"
+ignoreUntil = 2026-12-31
+reason = "node-tar, apps/desktop build chain only — see CVE-2026-59873."
+[[IgnoredVulns]]
+id = "CVE-2026-59871"
+ignoreUntil = 2026-12-31
+reason = "node-tar, apps/desktop build chain only — see CVE-2026-59873."
+[[IgnoredVulns]]
+id = "CVE-2026-70608"
+ignoreUntil = 2026-12-31
+reason = "Electron itself, devDependency of apps/desktop. Not in the production image."
+[[IgnoredVulns]]
+id = "CVE-2026-70606"
+ignoreUntil = 2026-12-31
+reason = "Electron itself, devDependency of apps/desktop. Not in the production image."
+[[IgnoredVulns]]
+id = "CVE-2026-19693"
+ignoreUntil = 2026-12-31
+reason = "extract-zip, devDependency of the apps/desktop Electron packager. Not in the production image."
+[[IgnoredVulns]]
+id = "CVE-2026-56876"
+ignoreUntil = 2026-12-31
+reason = "extract-zip, devDependency of the apps/desktop Electron packager. Not in the production image."
+
+# --- dev-only Python tooling --------------------------------------------------
+# pytest and Pygments are in the dev dependency-group / dev extra. The
+# production image installs the runtime extras, not the dev group.
+[[IgnoredVulns]]
+id = "CVE-2025-71176"
+reason = "pytest — dev dependency-group only, not installed in the production image."
+[[IgnoredVulns]]
+id = "CVE-2026-4539"
+reason = "Pygments — dev/TUI-formatting path, not a request-handling surface. Low severity, no production exposure."
