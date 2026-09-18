@@ -348,6 +348,12 @@ locales = ["locales/*.yaml"]
 "optional-mcps/n8n" = ["optional-mcps/n8n/manifest.yaml"]
 
 [tool.setuptools.package-data]
+# Offline floor for provider metadata. agent/models_dev.py serves this when
+# neither the disk cache nor models.dev is reachable; a wheel that drops it
+# regresses a cold offline install to "no provider has any API-key env var",
+# which hides configured providers from the model picker. See
+# scripts/generate_models_dev_snapshot.py.
+agent = ["models_dev_snapshot.json"]
 hermes_cli = ["web_dist/**/*", "tui_dist/**/*", "scripts/install.sh", "scripts/install.ps1"]
 gateway = ["assets/**/*"]
 plugins = [

@@ -8,11 +8,21 @@ of 4000+ models across 109+ providers.  Provides:
   (reasoning, tools, vision, PDF, audio), modalities, knowledge cutoff,
   open-weights flag, family grouping, deprecation status
 
-Data resolution order (like TypeScript OpenCode):
-  1. Bundled snapshot (ships with the package — offline-first)
-  2. Disk cache (~/.hermes/models_dev_cache.json)
-  3. Network fetch (https://models.dev/api.json)
-  4. Background refresh every 60 minutes
+Data resolution order, freshest source first:
+  1. Disk cache ($HERMES_HOME/models_dev_cache.json), if < 60 min old
+  2. Network fetch (https://models.dev/api.json)
+  3. Disk cache again, at any age, if the network failed
+  4. Bundled snapshot (``models_dev_snapshot.json``, ships with the package)
+
+Stage 4 is provider metadata ONLY — name, env vars, base URL, docs link —
+with the per-model payload stripped, so it is a floor for provider
+identity rather than a substitute for the catalog. It exists because a
+cold install with no network otherwise resolves no provider at all, and
+``hermes_cli.providers.get_provider()`` sources a provider's
+``api_key_env_vars`` from here: without it, ``OPENROUTER_API_KEY`` is
+invisible to ``is_provider_explicitly_configured()`` and OpenRouter
+vanishes from the model picker despite being configured. Regenerate it
+with ``scripts/generate_models_dev_snapshot.py``.
 
 Other modules should import the dataclasses and query functions from here
 rather than parsing the raw JSON themselves.
@@ -34,9 +44,16 @@ logger = logging.getLogger(__name__)
 MODELS_DEV_URL = "https://models.dev/api.json"
 _MODELS_DEV_CACHE_TTL = 3600  # 1 hour in-memory
 
+# Provider-metadata snapshot shipped inside the package. Last-resort source
+# when there is no disk cache and no network — see the module docstring.
+_SNAPSHOT_PATH = Path(__file__).resolve().parent / "models_dev_snapshot.json"
+
 # In-memory cache
 _models_dev_cache: Dict[str, Any] = {}
 _models_dev_cache_time: float = 0
+
+# Memoised bundled snapshot. None = not yet read; {} = read and unusable.
+_bundled_snapshot: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +245,31 @@ def _disk_cache_age_seconds() -> Optional[float]:
         return None
 
 
+def _load_bundled_snapshot() -> Dict[str, Any]:
+    """Load the package-bundled provider snapshot, memoised for the process.
+
+    Returns the raw provider map (``{provider_id: {name, env, api, doc}}``)
+    or an empty dict when the file is missing or unreadable — a wheel built
+    without the package-data entry, or a sealed install that dropped it.
+    Callers must treat an empty result as "no data", never as an error: this
+    is a fallback path and it must not be able to break a working install.
+    """
+    global _bundled_snapshot
+
+    if _bundled_snapshot is not None:
+        return _bundled_snapshot
+
+    try:
+        with open(_SNAPSHOT_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        _bundled_snapshot = data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.debug("Failed to load bundled models.dev snapshot: %s", e)
+        _bundled_snapshot = {}
+
+    return _bundled_snapshot
+
+
 def _save_disk_cache(data: Dict[str, Any]) -> None:
     """Save models.dev data to disk cache atomically."""
     try:
@@ -251,11 +293,13 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
       3. Network fetch → on success, save to disk + in-mem and return.
       4. Network fails → fall back to ANY available disk cache (even stale)
          with a short 5 min in-mem grace period before retrying network.
+      5. No disk cache either → serve the package-bundled provider
+         snapshot (provider metadata only, no models), same 5 min grace.
 
     When ``force_refresh=True`` (used by ``hermes config refresh``, the
     \"refresh model catalog\" code path), stages 1 and 2 are skipped. The
-    function always hits the network and only falls back to disk if the
-    network call fails.
+    function always hits the network and only falls back to disk (then the
+    bundled snapshot) if the network call fails.
     """
     global _models_dev_cache, _models_dev_cache_time
 
@@ -314,6 +358,30 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
         if _models_dev_cache:
             _models_dev_cache_time = time.time() - _MODELS_DEV_CACHE_TTL + 300
             logger.debug("Loaded models.dev from disk cache (%d providers)", len(_models_dev_cache))
+
+    # Stage 5: no cache either — a cold install that has never reached
+    # models.dev. Serve the bundled provider snapshot so provider identity
+    # (crucially ``env``, the API-key env vars) still resolves; without it
+    # a configured provider is indistinguishable from an unknown one and
+    # disappears from the model picker. Entries carry no ``models`` key, so
+    # every model-level query degrades to "unknown" exactly as it did
+    # before — this widens what we know about providers, never about models.
+    #
+    # Top-level copy, not an alias: the snapshot is memoised for the process
+    # and re-read every time the 5 min grace lapses, so handing callers the
+    # same mapping object would let one stray ``data[provider] = ...`` outlive
+    # the call. (Entry dicts are shared; nothing mutates them today, and the
+    # disk-cache path has always had the same exposure.)
+    if not _models_dev_cache:
+        snapshot = _load_bundled_snapshot()
+        if snapshot:
+            _models_dev_cache = dict(snapshot)
+            # Same 5 min grace as stage 4 — retry the network soon.
+            _models_dev_cache_time = time.time() - _MODELS_DEV_CACHE_TTL + 300
+            logger.debug(
+                "Loaded models.dev from bundled snapshot (%d providers, no model data)",
+                len(_models_dev_cache),
+            )
 
     return _models_dev_cache
 
