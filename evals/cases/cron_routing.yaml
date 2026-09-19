@@ -13,11 +13,14 @@ scenario:
 
 assertions:
   - text: >
-      No live cron job is set to frozen 'origin' delivery toward a private DM or
-      a forum group without a thread — the audit reports OK with no failures.
+      The audit reports that it examined a non-zero number of live cron jobs and
+      found none using frozen 'origin' delivery to a private DM or to a forum
+      group without a thread.
     check:
       must_contain: ["OK"]
-      must_not_contain: ["FAIL"]
+      # "audited 0" is a vacuous pass — nothing was examined, so the audit
+      # cannot evidence the claim. It must not read as green.
+      must_not_contain: ["FAIL", "audited 0"]
 
 source_hints:
   - cron/jobs.py

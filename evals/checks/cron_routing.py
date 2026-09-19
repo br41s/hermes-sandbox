@@ -77,8 +77,35 @@ def audit_cron_routing(jobs: Optional[Iterable[dict]] = None) -> List[Tuple[str,
 
 
 def audit_summary(jobs: Optional[Iterable[dict]] = None) -> str:
-    """One-line summary — used as eval-case output."""
+    """Summary used as eval-case output.
+
+    Reports the population it examined, not just the verdict. "OK" on its own
+    is indistinguishable from "audited nothing" — which is what a reader (or a
+    judge) has to be able to tell apart, since ``load_jobs`` failing and every
+    job being clean both used to render as the same green line.
+    """
+    if jobs is None:
+        try:
+            from cron.jobs import load_jobs
+            jobs = list(load_jobs())
+        except Exception as exc:  # noqa: BLE001 — a failed audit is not a pass
+            return (f"FAIL: could not load the live cron jobs "
+                    f"({type(exc).__name__}) — nothing was audited.")
+    else:
+        jobs = [j for j in jobs if isinstance(j, dict)]
+
     flagged = audit_cron_routing(jobs)
-    if not flagged:
-        return "OK: every cron job delivers to an explicit destination (no frozen-origin DM routing)."
-    return "FAIL: " + "; ".join(f"job {jid}: {hz}" for jid, hz in flagged)
+    if flagged:
+        return "FAIL: " + "; ".join(f"job {jid}: {hz}" for jid, hz in flagged)
+
+    modes: dict[str, int] = {}
+    for job in jobs:
+        mode = _effective_deliver(job)
+        modes[mode] = modes.get(mode, 0) + 1
+    breakdown = ", ".join(f"{m}={n}" for m, n in sorted(modes.items())) or "none"
+    if not jobs:
+        return ("OK: audited 0 live cron jobs — none were present, so this run "
+                "demonstrates nothing about live routing.")
+    return (f"OK: audited {len(jobs)} live cron jobs, 0 with a routing hazard. "
+            f"Effective delivery mode per job: {breakdown}. No job uses frozen "
+            f"'origin' delivery to a private DM or to a group without a thread.")

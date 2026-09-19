@@ -20,6 +20,9 @@ uv run python -m evals.run fallback_switch_notice
 # LLM-as-judge (needs `hermes` CLI on PATH + provider creds):
 uv run python -m evals.run fallback_switch_notice --llm-judge
 
+# TypeSafe System One judge (needs TYPESAFE_API_KEY):
+uv run python -m evals.run fallback_switch_notice --typesafe-judge
+
 # On failure, ask a sub-agent to propose a fix (printed, never applied):
 uv run python -m evals.run fallback_switch_notice --diagnose --trace-id <langfuse_trace_id>
 ```
@@ -31,7 +34,7 @@ Exit code is `0` if all assertions pass, `1` otherwise.
 | Opik layer            | Here                                                              |
 |-----------------------|-------------------------------------------------------------------|
 | 1. Trace              | `plugins/observability/langfuse` (write) + `diagnose.fetch_langfuse_trace` (read) |
-| 3. Eval suite / judge | `cases/*.yaml` + `judge.py` (LLM-as-judge, deterministic fallback) |
+| 3. Eval suite / judge | `cases/*.yaml` + `judge.py` (TypeSafe Noul / LLM-as-judge, deterministic fallback) |
 | 2. Diagnose ("Ollie") | `diagnose.py` — sub-agent reads source + trace, proposes a diff   |
 | 4. Regression lock    | a graduated pytest, e.g. `tests/test_fallback_switch_notice_regression.py` |
 
@@ -59,8 +62,37 @@ source_hints: [path/to/file.py]  # what diagnose reads on failure
 
 - `diagnose` **never applies** a diff — it prints the proposal for human review
   (matches the delegate auto-deny default and Opik's explicit-approval model).
-- The LLM judge degrades to the deterministic `check` on any error, so a missing
-  CLI or expired key never turns a suite red for the wrong reason.
+- Both model judges degrade to the deterministic `check` on any error, so a
+  missing CLI or expired key never turns a suite red for the wrong reason. The
+  degradation always shows in the printed `[mode]`, and the TypeSafe path also
+  names the cause in its reason — a judge that quietly never ran is a failure
+  this repo has already paid for once.
+- The TypeSafe judge reads a **probability**, not a keyword, so it has no
+  "unparseable verdict" state. It uses two thresholds
+  (`NOUL_FAIL_BELOW` / `NOUL_PASS_ABOVE` in `judge.py`): outside the band the
+  verdict is clear, and inside it the assertion **fails as `uncertain`** rather
+  than being rounded into a confident green. An `uncertain` line means the
+  assertion or the output is ambiguous — not necessarily that the behaviour
+  is wrong.
+- **Measured against `jev-latest`, 2026-09-19** (~600ms and ~420 input tokens
+  per assertion). A well-posed assertion separates cleanly and repeatably:
+  `fallback_switch_notice#0` scores 0.98 on correct output and 0.01 when the
+  notice is missing, with 0.000 spread over three identical calls. Sampling
+  noise (~0.05) appears only *inside* the band, so nothing lands near a
+  threshold by accident.
+- **The band earned its keep on the first live run.** Three of six assertions
+  landed in it, and every one was a case asserting more than its output could
+  evidence — not a judge error. `fallback_switch_notice#1` scored 0.47 because
+  the `wrap:` body was a placeholder *promising* a summary; `cron_routing` and
+  `dashboard_lockdown` (0.61 / 0.36) asked the judge to accept a one-line
+  `OK:` summary as proof of a claim about live state. All three were fixed by
+  making the output carry its evidence — the population audited, and for the
+  gate the allowlist itself — and now score 0.97, 0.96 and 0.96. **Do not tune
+  the thresholds to make a case green; fix what the case reports.**
+- Note `cron_routing` audits **0 jobs** on a machine with no live cron jobs
+  (a dev checkout, and probably CI). It used to render that as `OK:`; it now
+  says `audited 0`, which both the judge and the deterministic `check` treat
+  as a failure. A vacuous audit is not a pass.
 
 ## v0 boundary / next (v1)
 

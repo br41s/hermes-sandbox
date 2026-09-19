@@ -1,7 +1,7 @@
 """Self-repair eval loop — CLI orchestrator.
 
-    python -m evals.run <case_name> [--llm-judge] [--diagnose] [--trace-id ID]
-                                    [--model M] [--provider P]
+    python -m evals.run <case_name> [--typesafe-judge] [--llm-judge] [--diagnose]
+                                    [--trace-id ID] [--model M] [--provider P]
 
 Flow: load case -> run scenario -> judge each assertion -> report. If any
 assertion fails and --diagnose is set, ask a Hermes sub-agent to propose a fix
@@ -57,6 +57,7 @@ def run_scenario(scenario: Dict[str, Any]) -> str:
 def evaluate(
     case: Dict[str, Any],
     *,
+    use_typesafe: bool = False,
     use_llm: bool = False,
     model: str | None = None,
     provider: str | None = None,
@@ -64,7 +65,8 @@ def evaluate(
     """Run the case and judge every assertion. Returns (output, results)."""
     output = run_scenario(case["scenario"])
     results = [
-        (a, judge(output, a, use_llm=use_llm, model=model, provider=provider))
+        (a, judge(output, a, use_typesafe=use_typesafe, use_llm=use_llm,
+                  model=model, provider=provider))
         for a in case.get("assertions", [])
     ]
     return output, results
@@ -87,6 +89,7 @@ def _print_report(case: Dict[str, Any], output: str, results) -> bool:
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals.run")
     parser.add_argument("case", help="case name (e.g. fallback_switch_notice) or path")
+    parser.add_argument("--typesafe-judge", action="store_true", help="use TypeSafe System One as judge (needs TYPESAFE_API_KEY)")
     parser.add_argument("--llm-judge", action="store_true", help="use the model as judge (needs hermes CLI + creds)")
     parser.add_argument("--diagnose", action="store_true", help="on failure, ask a sub-agent to propose a fix")
     parser.add_argument("--trace-id", default=None, help="failing Langfuse trace id to enrich diagnosis")
@@ -95,7 +98,8 @@ def main(argv: List[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     case = load_case(args.case)
-    output, results = evaluate(case, use_llm=args.llm_judge, model=args.model, provider=args.provider)
+    output, results = evaluate(case, use_typesafe=args.typesafe_judge, use_llm=args.llm_judge,
+                               model=args.model, provider=args.provider)
     passed = _print_report(case, output, results)
 
     if not passed and args.diagnose:

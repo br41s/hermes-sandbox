@@ -13,11 +13,14 @@ scenario:
 
 assertions:
   - text: >
-      The live public allowlist is minimal and contains no sensitive or mutation
-      endpoint — i.e. the audit reports OK with no failures.
+      The audit reports that it examined a non-zero number of unauthenticated
+      paths, lists them, and found none that is unexpected or that carries a
+      sensitive or mutation marker.
     check:
       must_contain: ["OK"]
-      must_not_contain: ["FAIL"]
+      # "audited 0" is a vacuous pass — an empty allowlist proves nothing about
+      # the live gate. It must not read as green.
+      must_not_contain: ["FAIL", "audited 0"]
 
 source_hints:
   - hermes_cli/dashboard_auth/public_paths.py
