@@ -20,6 +20,9 @@ uv run python -m evals.run fallback_switch_notice
 # LLM-as-judge (needs `hermes` CLI on PATH + provider creds):
 uv run python -m evals.run fallback_switch_notice --llm-judge
 
+# TypeSafe System One judge (needs TYPESAFE_API_KEY):
+uv run python -m evals.run fallback_switch_notice --typesafe-judge
+
 # On failure, ask a sub-agent to propose a fix (printed, never applied):
 uv run python -m evals.run fallback_switch_notice --diagnose --trace-id <langfuse_trace_id>
 ```
@@ -31,7 +34,7 @@ Exit code is `0` if all assertions pass, `1` otherwise.
 | Opik layer            | Here                                                              |
 |-----------------------|-------------------------------------------------------------------|
 | 1. Trace              | `plugins/observability/langfuse` (write) + `diagnose.fetch_langfuse_trace` (read) |
-| 3. Eval suite / judge | `cases/*.yaml` + `judge.py` (LLM-as-judge, deterministic fallback) |
+| 3. Eval suite / judge | `cases/*.yaml` + `judge.py` (TypeSafe Noul / LLM-as-judge, deterministic fallback) |
 | 2. Diagnose ("Ollie") | `diagnose.py` — sub-agent reads source + trace, proposes a diff   |
 | 4. Regression lock    | a graduated pytest, e.g. `tests/test_fallback_switch_notice_regression.py` |
 
@@ -59,8 +62,18 @@ source_hints: [path/to/file.py]  # what diagnose reads on failure
 
 - `diagnose` **never applies** a diff — it prints the proposal for human review
   (matches the delegate auto-deny default and Opik's explicit-approval model).
-- The LLM judge degrades to the deterministic `check` on any error, so a missing
-  CLI or expired key never turns a suite red for the wrong reason.
+- Both model judges degrade to the deterministic `check` on any error, so a
+  missing CLI or expired key never turns a suite red for the wrong reason. The
+  degradation always shows in the printed `[mode]`, and the TypeSafe path also
+  names the cause in its reason — a judge that quietly never ran is a failure
+  this repo has already paid for once.
+- The TypeSafe judge reads a **probability**, not a keyword, so it has no
+  "unparseable verdict" state. It uses two thresholds
+  (`NOUL_FAIL_BELOW` / `NOUL_PASS_ABOVE` in `judge.py`): outside the band the
+  verdict is clear, and inside it the assertion **fails as `uncertain`** rather
+  than being rounded into a confident green. An `uncertain` line means the
+  assertion or the output is ambiguous — not necessarily that the behaviour
+  is wrong.
 
 ## v0 boundary / next (v1)
 
