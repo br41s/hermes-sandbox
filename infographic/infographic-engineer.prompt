@@ -137,6 +137,20 @@ STEP 3 — Engineer the infographic:
      This is not hypothetical: 40 rects across 7 articles shipped square-
      cornered this way (PR #488), and this job regenerated the same bug on the
      very next run. lib/svg-token-guard.mjs now fails the build on it.
+   - A plain number means ONE number. rx is NOT the CSS border-radius
+     shorthand: rx="8 8 0 0" is an invalid value, so the browser discards it
+     whole and draws rx=0 — the same square corners, reached from the opposite
+     direction. x, y, width, height, rx, ry, cx, cy, r and x1/y1/x2/y2 each
+     take a single value; none of them accepts a list.
+     A single rx rounds ALL FOUR corners, so a rect CANNOT round only two.
+     When you need two — a card header sitting on a body rect, a bar capped at
+     one end — draw a path with arcs instead. A 340x60 header on a card with
+     rx="8", rounded on top and square at the bottom, is:
+       <path d="M 8 0 h 324 a 8 8 0 0 1 8 8 v 52 h -340 v -52 a 8 8 0 0 1 8 -8 Z" />
+     Before settling on a path, check whether rounding all four corners is
+     simply correct — it usually is for a shape that does not abut another.
+     This shipped too: 6 rects across 4 articles, 4 of them card headers that
+     wanted exactly two rounded corners.
    - Self-contained: no script, no external fetch.
    - Wrap it: <figure class="FIGURE_CLASS"> <svg>…</svg> <figcaption>…</figcaption> </figure>
 
@@ -157,7 +171,9 @@ STEP 5 — Commit, PR, verify:
    - Branch: `git checkout -b BRANCH_PREFIX<slug>`
    - Verify BEFORE committing: run `npm run build` (if node_modules is absent,
      run `npm ci` first). It MUST exit 0. lib/svg-token-guard.mjs throws on
-     var() in a geometry attribute, naming the file and every offending
+     var() in a geometry attribute (transform `svg-token-guard`) and on one
+     carrying several values where only one fits (`svg-multivalue-guard`,
+     which also gives the source line), naming the file and every offending
      attribute — fix them and rebuild. Skipping this does not avoid the
      failure, it only moves it to deploy time, where it blocks every unrelated
      deploy until a human intervenes. Both _site/ and node_modules/ are
