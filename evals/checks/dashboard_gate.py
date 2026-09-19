@@ -84,8 +84,21 @@ def audit_public_allowlist(paths: Iterable[str] = PUBLIC_API_PATHS) -> List[str]
 
 
 def audit_summary(paths: Iterable[str] = PUBLIC_API_PATHS) -> str:
-    """One-line summary — used as eval-case output."""
+    """Summary used as eval-case output.
+
+    Lists the allowlist it audited rather than only its verdict. The list is
+    short, and printing it lets a reader (or a judge) confirm "minimal, nothing
+    sensitive" from the output itself instead of trusting the word "OK" — an
+    empty allowlist and a locked-down one rendered identically before.
+    """
+    paths = list(paths)
     problems = audit_public_allowlist(paths)
-    if not problems:
-        return "OK: dashboard public allowlist is minimal and contains no sensitive endpoints."
-    return "FAIL: " + "; ".join(problems)
+    if problems:
+        return "FAIL: " + "; ".join(problems)
+    if not paths:
+        return ("OK: audited 0 public paths — the allowlist was empty, so this "
+                "run demonstrates nothing about the live gate.")
+    listed = ", ".join(sorted(paths))
+    return (f"OK: audited {len(paths)} unauthenticated paths, 0 problems. Every "
+            f"one is in the expected allowlist and none carries a sensitive "
+            f"marker ({', '.join(SENSITIVE_MARKERS)}). Public paths: {listed}.")

@@ -19,7 +19,10 @@ scenario:
     model: tencent/hy3-preview
   # Simulate the gateway/profile-delegate append (hermes_cli/delegate_core.py):
   # body + "\n\n" + notice. `{result}` is the function's return value.
-  wrap: "Aquí tienes el resumen que pediste.\n\n{result}"
+  # The body carries real content, not a placeholder promising it: assertion 2
+  # claims the user "still receives the actual answer", and a body that only
+  # says a summary is coming cannot evidence that.
+  wrap: "Aquí tienes el resumen que pediste: las ventas de Q3 subieron un 12% frente a Q2, impulsadas por la línea de accesorios.\n\n{result}"
 
 # Plain-English assertions. `text` is what the LLM-as-judge evaluates.
 # `check` is the deterministic fallback used in hermetic / CI runs.
