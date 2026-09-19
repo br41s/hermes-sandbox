@@ -39,8 +39,16 @@ CONFIG — lo único específico de cada instalación
                    No vive en el sitio del cliente a propósito: es tu estado de
                    trabajo, no contenido suyo.
 
-  COOLDOWN       : 90 días. Un artículo revisado hace menos de eso no se vuelve a
-                   tocar, haya cambiado algo o no.
+  COOLDOWN       : 365 días. Cada artículo se revisa UNA VEZ AL AÑO. Cuando lo
+                   revisas queda marcado en el LEDGER con la fecha, y esa marca
+                   lo deja fuera de la lista hasta que pasen 365 días — haya
+                   cambiado algo o no, y aunque la revisión terminara sin tocar
+                   nada.
+                   Ese es el motivo de que el LEDGER exista: no tienes que
+                   mirar todos los artículos cada día, solo los que llevan un
+                   año sin mirarse o no se han mirado nunca. Si un día no queda
+                   ninguno, respondes "[SILENT]" y ya está: eso es señal de que
+                   el trabajo está hecho, no de que algo vaya mal.
 
   VOZ            : el artículo que estás editando ES la referencia de voz. Estás
                    imitando a un autor que ya existe, no escribiendo con la tuya.
@@ -140,7 +148,9 @@ PASO 1 — Elegir el artículo (determinista, en este orden):
    b. Lee LEDGER con `read_file`. Si no existe, es tu primera ejecución: trátalo
       como vacío y créalo al final.
    c. Descarta: los que estén en estado `draft` (son del cliente, no están
-      publicados y no los tocas) y los revisados hace menos de COOLDOWN.
+      publicados y no los tocas) y los que tengan en el LEDGER una fecha de
+      revisión de hace menos de COOLDOWN. Un artículo marcado está fuera hasta
+      que la marca caduca; no lo mires "por si acaso".
    d. De los que quedan, elige UNO, por este orden de prioridad:
         1. El que nunca has revisado y cuyo título contenga un año ya pasado.
         2. El que nunca has revisado y hable de precios, plazos, normativa,
