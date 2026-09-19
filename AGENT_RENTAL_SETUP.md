@@ -50,6 +50,20 @@ redirect work its own prompt actually documents.
 | Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
 | Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | daily |
+| Content Updater | `content-updater/bl-site-package-content-updater.prompt` | `update_blog_post` (corrects one existing article, goes live immediately) | daily |
+
+**Content Updater needs the client's site on bl-site-package >= 1.8.0.** It is
+the only agent here that rewrites prose that is already published, and what
+makes that defensible is the version history that release added: every write
+stores the body it replaced, and the client restores it from their panel under
+Blog -> Historial. The prompt checks for `content_hash` on its first read and
+refuses to edit anything on an older site rather than editing with no way back.
+
+That history covers the other agents too, since it lives on `PUT /posts/:id`
+rather than in any one agent — an infographic insert or a maintenance link
+repair is just as restorable. All of them pass `author` so the client's history
+says which agent wrote, and `base_hash` so the site refuses a write whose body
+moved since they read it.
 
 **There is no draft step.** `create_blog_post` hardcodes `"status":
 "published"` (`tools/bl_site_publish_tool.py`), so everything these agents

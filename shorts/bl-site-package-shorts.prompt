@@ -196,8 +196,16 @@ Cierra el fichero con una línea indicando de qué artículo salieron y su URL.
        <!-- shorts:auto -->
 
 3. Reléelo: el resto del texto debe estar intacto, carácter por carácter.
-4. `bl_site_publish` con `action: "update_blog_post"`, el `post_id` y el
-   `content` completo. **No envíes `title`, `excerpt`, `cta_*` ni `image_*`.**
+4. `bl_site_publish` con `action: "update_blog_post"`, el `post_id`, el
+   `content` completo, **`base_hash` con el `content_hash` que te devolvió
+   `get_post`** y **`author: "shorts"`**. No envíes `title`, `excerpt`, `cta_*`
+   ni `image_*`.
+   - `base_hash` hace que el sitio rechace tu escritura si otro agente editó
+     ese artículo mientras trabajabas. Si te responde que ha cambiado, tu
+     edición NO se aplicó: vuelve a `get_post` y vuelve a marcarlo sobre el
+     texto nuevo.
+   - `author` es lo que hace que el cliente vea quién tocó el artículo en el
+     historial de su panel, en vez de que le aparezca como suyo.
 5. Confirma que la respuesta trae `"success": true`.
 
 Marca el artículo también cuando decidiste no hacer vídeos (FASE 2): así no lo
