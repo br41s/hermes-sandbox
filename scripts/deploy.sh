@@ -81,6 +81,24 @@ run() {
   fi
 }
 
+# Ask a yes/no question, and exit unless the answer is yes.
+#
+# Use this rather than a bare `read`: at EOF `read` returns non-zero, which
+# under `set -e` kills the script on that line — before any "aborted" branch
+# can say why. A caller with no tty (CI, an agent session, a piped shell) then
+# sees exit 1 and not one line of output, which looks exactly like a broken
+# script rather than an unanswered prompt.
+confirm() {
+  local reply
+  if ! read -r -p "$1" reply; then
+    echo >&2
+    echo "✗ no answer on stdin — this shell is not interactive." >&2
+    echo "  Re-run with --yes to confirm up front." >&2
+    exit 1
+  fi
+  [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
+}
+
 cd "$(dirname "$0")/.."
 
 # ── --status: what is actually running out there? ────────────────────────────
@@ -289,8 +307,7 @@ if [ "$DO_BUILD" -eq 1 ] && command -v gcloud >/dev/null 2>&1; then
     echo "  Re-pointing the service at the same tag changes no spec, so Zeabur" >&2
     echo "  will NOT roll out. If you need new code live, make a commit." >&2
     if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-      read -r -p "  Continue anyway? [y/N] " reply
-      [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
+      confirm "  Continue anyway? [y/N] "
     fi
   fi
 fi
@@ -334,11 +351,10 @@ fi
 
 if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   if [ "$DO_BUILD" -eq 1 ]; then
-    read -r -p "Build and deploy $TAG? [y/N] " reply
+    confirm "Build and deploy $TAG? [y/N] "
   else
-    read -r -p "Deploy $TAG? [y/N] " reply
+    confirm "Deploy $TAG? [y/N] "
   fi
-  [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
 fi
 
 if [ "$DO_BUILD" -eq 1 ]; then
