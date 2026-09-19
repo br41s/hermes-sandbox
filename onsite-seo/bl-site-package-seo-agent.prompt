@@ -161,9 +161,23 @@ dar por muerta una ruta de catálogo:
    eso no se recupera. Anótalo como aviso, deja ese artículo y pasa al
    siguiente: volverá a tocarle en un barrido posterior.
 7. `bl_site_publish(action: "update_blog_post", post_id: <id>, content: <el
-   cuerpo completo ya corregido>)`, inmediatamente después de la relectura del
-   paso 6 — sin más llamadas ni más análisis en medio. El artículo sigue
-   publicado: esta acción nunca cambia el estado.
+   cuerpo completo ya corregido>, base_hash: <el `content_hash` que devolvió el
+   `get_post` del paso 6>, author: "onsite-seo")`, inmediatamente después de la
+   relectura del paso 6 — sin más llamadas ni más análisis en medio. El artículo
+   sigue publicado: esta acción nunca cambia el estado.
+
+   **`base_hash` cierra el hueco que el paso 6 no puede cerrar.** Comparar a
+   mano deja siempre una rendija entre la relectura y la escritura, y ahí cabe
+   la edición de otro agente. Mandando el hash, es el sitio el que comprueba —
+   en el momento exacto de escribir — que el cuerpo sigue siendo el que leíste,
+   y rechaza la escritura si no lo es. Si responde que el artículo ha cambiado,
+   trátalo EXACTAMENTE igual que el caso del paso 6: tu edición no se aplicó, no
+   se ha perdido el trabajo de nadie, anótalo como aviso y pasa al siguiente.
+   Nunca reenvíes sin `base_hash` para esquivar el rechazo.
+
+   **`author`** es lo que hace que el cliente vea "Agente: onsite-seo" en el
+   historial de versiones de su panel. Sin él, tu corrección le aparece como
+   hecha por él mismo.
 
 **REGLA CRÍTICA — `content` se reemplaza entero.** Reenvía el cuerpo EXACTAMENTE
 igual que lo leíste, con el único cambio de las RUTAS dentro de los paréntesis.

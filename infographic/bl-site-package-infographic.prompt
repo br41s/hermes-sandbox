@@ -181,9 +181,19 @@ bloque HTML y no lo envuelva en un párrafo.
    bloque siempre en una sección normal, por encima de `## Preguntas
    frecuentes`.
 3. Reléelo: el resto del texto debe estar intacto, carácter por carácter.
-4. `bl_site_publish` con `action: "update_blog_post"`, el `post_id` y el
-   `content` completo ya modificado. **No envíes `title`, `excerpt`, `cta_*` ni
-   `image_*`**: no son cosa tuya y sólo hay que tocar el cuerpo.
+4. `bl_site_publish` con `action: "update_blog_post"`, el `post_id`, el
+   `content` completo ya modificado, **`base_hash` con el `content_hash` que te
+   devolvió `get_post`** y **`author: "infographic"`**. No envíes `title`,
+   `excerpt`, `cta_*` ni `image_*`: no son cosa tuya y sólo hay que tocar el
+   cuerpo.
+   - `base_hash` hace que el sitio rechace tu escritura si otro agente editó
+     ese artículo mientras trabajabas, en vez de dejar que le borres el cambio.
+     Si te responde que el artículo ha cambiado, tu edición NO se ha aplicado y
+     no se ha perdido nada: vuelve a `get_post`, rehaz el bloque sobre el texto
+     nuevo, y si no puedes, deja ese artículo y avisa.
+   - `author` es lo que hace que el cliente vea "Agente: infographic" en el
+     historial de versiones de su panel. Sin él, tu edición le aparece como
+     hecha por él mismo.
 5. Confirma que la respuesta trae `"success": true`.
 
 ## Informe final

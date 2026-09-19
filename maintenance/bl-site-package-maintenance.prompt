@@ -49,8 +49,15 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
 1. **Enlace interno roto.** Reescríbelo a la ruta correcta de
    `valid_internal_routes` (que viene en la respuesta de `bl_site_health`) o,
    si ninguna encaja, quita el enlace dejando el texto tal cual. Para un post:
-   `get_post` → corriges el Markdown → `update_blog_post`. Para una página:
-   `update_page_text` sobre el campo que lo contiene.
+   `get_post` → corriges el Markdown → `update_blog_post`, pasando siempre
+   **`base_hash`** (el `content_hash` que devolvió ese `get_post`) y
+   **`author: "maintenance"`**. El primero hace que el sitio rechace tu
+   escritura si otro agente tocó el artículo mientras trabajabas — si eso pasa,
+   tu arreglo NO se aplicó: relee y rehazlo, o déjalo y avísalo. El segundo es
+   lo que hace que el cliente vea "Agente: maintenance" en el historial de
+   versiones de su panel en vez de que tu arreglo le aparezca como suyo.
+   Para una página: `update_page_text` sobre el campo que lo contiene (las
+   páginas no llevan historial, así que ahí no hay nada que pasar).
    Los slugs de post válidos salen de `bl_site_publish` con
    `action: "list_posts"`. Jamás inventes una ruta.
 2. **Enlace externo roto (404/dominio caído).** Quita el enlace y deja el texto.
