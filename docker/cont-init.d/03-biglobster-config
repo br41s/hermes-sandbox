@@ -255,6 +255,21 @@ def _is_rented_tenant(env_path):
                           flags=re.MULTILINE))
 
 
+def _has_own_fal_key(env_path):
+    """True when this profile carries its own non-empty FAL_KEY.
+
+    FAL_KEY is written per-tenant by provision_bl_client.py --fal-key and is
+    deliberately NOT in the `inject` list above, so it survives restarts and
+    stays the client's own. Its presence is what makes the image_gen override
+    below harmful rather than helpful: a tenant that can pay for its own
+    images must not be rerouted onto our OpenRouter account.
+    """
+    if not env_path.exists():
+        return False
+    return bool(re.search(r"^FAL_KEY=.+", env_path.read_text(encoding="utf-8"),
+                          flags=re.MULTILINE))
+
+
 # Per-profile .env files — keeps tenant gateways on current keys after a
 # rotation. SOUL.md is the "real profile" marker (same as the s6 reconciler).
 profiles_root = home / "profiles"
@@ -475,7 +490,7 @@ def _reconcile_group_topics(cfg):
             changed = True
     return changed
 
-def _reconcile_config(config_path, label, is_rented=False):
+def _reconcile_config(config_path, label, is_rented=False, byok_images=False):
     if not config_path.exists():
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
@@ -483,11 +498,30 @@ def _reconcile_config(config_path, label, is_rented=False):
         cfg = yaml.safe_load(config_path.read_text()) or {}
         changed = False
         for (section, key), val in overrides.items():
+            # BYOK images: a tenant with its own FAL_KEY keeps the in-tree FAL
+            # path. Forcing image_gen.provider on it both broke covers and moved
+            # the bill to us — see the block below for the full account.
+            if byok_images and (section, key) == ("image_gen", "provider"):
+                continue
             if not isinstance(cfg.get(section), dict):
                 cfg[section] = {}
             if cfg[section].get(key) != val:
                 cfg[section][key] = val
                 changed = True
+        # Undo what earlier boots imposed. Skipping the override above is not
+        # enough on its own: a profile reconciled before this change still has
+        # `provider: openrouter` (and the curated openrouter.model) written to
+        # disk, and nothing would ever remove it. Clearing the keys returns the
+        # tenant to tools/image_generation_tool.py's in-tree FAL path, whose
+        # DEFAULT_MODEL (fal-ai/flux-2/klein/9b) is what these agents used
+        # before the override reached them.
+        if byok_images and isinstance(cfg.get("image_gen"), dict):
+            for stale in ("provider", "openrouter"):
+                if stale in cfg["image_gen"]:
+                    del cfg["image_gen"][stale]
+                    changed = True
+            if not cfg["image_gen"]:
+                del cfg["image_gen"]
         # Rented tenants: force web research onto the free ddgs backend,
         # never the "web.backend": "exa" override above. Deliberately a
         # MORE SPECIFIC key (search_backend, not backend) — the resolver
@@ -509,7 +543,10 @@ def _reconcile_config(config_path, label, is_rented=False):
                 cfg["web"]["search_backend"] = "ddgs"
                 changed = True
         # Preserve the curated image_gen.openrouter.model only if unset.
-        ig = cfg.get("image_gen")
+        # Never for a BYOK-images tenant: it is an OpenRouter model id, and on
+        # that path it would only ever be reached by rerouting the tenant off
+        # its own FAL key.
+        ig = None if byok_images else cfg.get("image_gen")
         if isinstance(ig, dict):
             ig_or = ig.get("openrouter")
             if not isinstance(ig_or, dict):
@@ -671,6 +708,11 @@ if profiles_root.is_dir():
         _reconcile_config(
             prof / "config.yaml", prof.name,
             is_rented=_is_rented_tenant(prof / ".env"),
+            # Both conditions on purpose: a rental WITHOUT its own FAL_KEY has
+            # no image backend of its own, so it keeps the OpenRouter override
+            # rather than losing image generation entirely.
+            byok_images=(_is_rented_tenant(prof / ".env")
+                         and _has_own_fal_key(prof / ".env")),
         )
 PYEOF
 
