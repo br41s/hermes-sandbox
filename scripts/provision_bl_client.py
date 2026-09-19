@@ -201,6 +201,33 @@ AGENT_SOURCES = {
         "once",
         None,
     ),
+    # The "Content Updater" subscription product. The only rented agent whose
+    # job is CHANGING prose that is already live — every other one here adds.
+    #
+    # Its toolset is deliberately narrow. `web` is the expensive half and the
+    # whole point: a change it cannot source is a change it does not make. It
+    # gets `file` for its own ledger in the profile home (not the client's
+    # site) and NOT `terminal`, so there is no shell to reach the site through
+    # if the prompt's two-lane rule ever gets in its way.
+    #
+    # Publishes straight to the live site, like gap-hunter. What makes that
+    # defensible is not a review step but that the site keeps the previous
+    # version of every article and the client can restore it from their panel
+    # in one click (Blog -> Historial). The agent stamps `author` so that
+    # history says who changed what, and its report always tells the client
+    # how to undo.
+    #
+    # Requires the client's site to run bl-site-package >= 1.8.0, which added
+    # the revision history and the lost-update guard. The prompt checks for
+    # `content_hash` on its first read and refuses to edit anything if the
+    # site predates it — editing with no way back is the one thing this agent
+    # must not do.
+    "content-updater": (
+        "content-updater/bl-site-package-content-updater.prompt",
+        "Content Updater",
+        "daily",
+        ["bl_site_publish", "web", "file", "todo"],
+    ),
     # The "Social Shorts" subscription product. Turns ONE existing blog post per
     # run into 3-5 vertical MP4s plus a captions.md of Instagram/TikTok copy,
     # rendered locally with ffmpeg (plugins/shorts). Needs no --old-site-url: it
