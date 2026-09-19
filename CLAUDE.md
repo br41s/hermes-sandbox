@@ -213,17 +213,52 @@ every one matching a ledger line. The `[SILENT]` it returned was correct behavio
 
 **Langfuse is the source of truth for agent behaviour**: the full tool-call sequence
 with arguments and outputs. Traces are keyed by the cron session id, which is
-`cron_<job_id>_<YYYYMMDD>_<HHMMSS>` and appears in every `agent.log` line for the run:
+`cron_<job_id>_<YYYYMMDD>_<HHMMSS>` and appears in every `agent.log` line for the run.
+
+**The env vars are `HERMES_`-prefixed for the keys and NOT for the base URL.** That
+asymmetry is a trap: an unprefixed `$LANGFUSE_PUBLIC_KEY` expands to empty, the request
+goes out unauthenticated, and Langfuse answers **401 with a body that still parses as
+`{"data": []}`**. Read through a `.get("data", [])` that is "no traces" — which reads as
+*the agent did nothing* or *tracing is broken*, when it means *you did not authenticate*.
+Always print the HTTP status, never just the row count.
 
 ```bash
-curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/traces?sessionId=<session_id>&limit=10"
-curl -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/observations?traceId=<trace_id>&limit=100"
+# Run inside the container. Note HERMES_ on the keys, none on the base URL.
+curl -s -w '\nHTTP:%{http_code}\n' \
+  -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
+  "$HERMES_LANGFUSE_BASE_URL/api/public/traces?sessionId=<session_id>&limit=10"
+
+curl -s -w '\nHTTP:%{http_code}\n' \
+  -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
+  "$HERMES_LANGFUSE_BASE_URL/api/public/observations?traceId=<trace_id>&limit=100"
+```
+
+**A killed run has no `sessionId`, so the lookup above finds nothing — which is exactly
+the run you are trying to diagnose.** Trace-level attributes (`name`, `sessionId`) flush
+when the trace finalises; child observations flush as they complete. Interrupt the
+process — the cron inactivity watchdog at `cron/scheduler.py:4048` does this at
+`HERMES_CRON_TIMEOUT`, default 600s — and the tool calls survive while the trace header
+never lands. Measured 2026-09-19: of ten traces that day, the nine completed runs all
+carried `name="Hermes turn"` and their session id; the one killed run had both empty.
+
+So for a failed run, find it by **time window** instead, and match it against the
+`agent.log` timestamp of the run's first turn:
+
+```bash
+curl -s -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
+  "$HERMES_LANGFUSE_BASE_URL/api/public/traces?fromTimestamp=<ISO8601>&limit=25"
 ```
 
 Observations of type `TOOL` carry the arguments; sort by `startTime` and a shared
 timestamp across several tools means they were issued as one parallel batch.
+
+**These v1 endpoints are deprecated and are removed on 2026-11-16.** Every response
+already carries a `_deprecation` key saying so; Langfuse Cloud's replacement is
+OpenTelemetry ingestion plus `GET /api/public/v2/observations` and
+`/api/public/v2/metrics`. The same notice warns that the v1 APIs "may have data
+delays", which is a third way this runbook can hand you an empty answer that is not
+an empty result — alongside the 401 and the missing `sessionId` above. When a query
+returns nothing, rule out those three before concluding anything about the agent.
 
 | Question | Where |
 |---|---|
