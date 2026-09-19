@@ -298,7 +298,11 @@ def test_stale_key_stripping_is_idempotent() -> None:
 # on Exa, not just removing the key from their .env.
 
 def test_reconcile_config_accepts_is_rented_flag(boot_text: str) -> None:
-    assert "def _reconcile_config(config_path, label, is_rented=False):" in boot_text
+    # Prefix match, not the whole signature: the contract this guards is that
+    # the flag exists and defaults to False, and pinning the closing paren made
+    # the test fail for merely ADDING a later keyword-only knob (byok_images,
+    # see tests/test_rented_tenant_byok_images.py) that changed nothing here.
+    assert "def _reconcile_config(config_path, label, is_rented=False" in boot_text
 
 
 def test_is_rented_forces_ddgs_search_backend_not_generic_web_backend(boot_text: str) -> None:
