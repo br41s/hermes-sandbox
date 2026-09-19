@@ -210,16 +210,18 @@ AGENT_SOURCES = {
     # site) and NOT `terminal`, so there is no shell to reach the site through
     # if the prompt's two-lane rule ever gets in its way.
     #
-    # Ships every client on MODO propose_only: nothing reaches the live site
-    # until the client has read some proposals in their panel and agreed with
-    # the agent's judgement. Flipping that is a prompt edit plus a sync, per
-    # client, and deliberately not a provisioning flag — it is a decision about
-    # trust, not a checkbox at checkout.
+    # Publishes straight to the live site, like gap-hunter. What makes that
+    # defensible is not a review step but that the site keeps the previous
+    # version of every article and the client can restore it from their panel
+    # in one click (Blog -> Historial). The agent stamps `author` so that
+    # history says who changed what, and its report always tells the client
+    # how to undo.
     #
-    # Requires the client's site to run bl-site-package >= 1.8.0, which is what
-    # added the proposal queue, the revision history and the lost-update guard.
-    # On an older site propose_edit 404s and the agent is told to report rather
-    # than fall back to publishing.
+    # Requires the client's site to run bl-site-package >= 1.8.0, which added
+    # the revision history and the lost-update guard. The prompt checks for
+    # `content_hash` on its first read and refuses to edit anything if the
+    # site predates it — editing with no way back is the one thing this agent
+    # must not do.
     "content-updater": (
         "content-updater/bl-site-package-content-updater.prompt",
         "Content Updater",

@@ -160,6 +160,28 @@ def test_propose_reports_a_conflict_rather_than_saving(monkeypatch):
     assert "get_post again" in result
 
 
+# ── author attribution ──────────────────────────────────────────────────────
+
+
+def test_update_sends_author(monkeypatch):
+    # Without this the client's Blog -> Historial attributes the agent's edit
+    # to the client themselves, which is worse than no attribution at all.
+    calls = _fake_http(monkeypatch, {"success": True, "id": 7})
+    publish.bl_site_publish(
+        action="update_blog_post", post_id="7", content="<p>x</p>",
+        base_hash="abc", author="content-updater",
+    )
+    assert calls[0]["body"]["author"] == "content-updater"
+
+
+def test_update_omits_author_when_not_given(monkeypatch):
+    # Existing callers (the infographic engineer, maintenance) send none, and
+    # the site records the row unattributed rather than guessing.
+    calls = _fake_http(monkeypatch, {"success": True, "id": 7})
+    publish.bl_site_publish(action="update_blog_post", post_id="7", content="<p>x</p>")
+    assert "author" not in calls[0]["body"]
+
+
 # ── schema ──────────────────────────────────────────────────────────────────
 
 
@@ -169,7 +191,7 @@ def test_propose_edit_is_an_offered_action():
 
 def test_the_new_parameters_are_declared():
     props = publish.BL_SITE_PUBLISH_SCHEMA["parameters"]["properties"]
-    for name in ("base_hash", "reason", "evidence"):
+    for name in ("base_hash", "reason", "evidence", "author"):
         assert name in props, f"{name} is passed by the handler but not declared"
 
 
@@ -189,10 +211,12 @@ def test_the_registered_handler_forwards_the_new_parameters():
 
     publish.bl_site_publish = spy
     try:
-        handler({"action": "propose_edit", "base_hash": "h", "reason": "r", "evidence": "[]"})
+        handler({"action": "propose_edit", "base_hash": "h", "reason": "r",
+                 "evidence": "[]", "author": "content-updater"})
     finally:
         publish.bl_site_publish = original
 
     assert seen.get("base_hash") == "h"
     assert seen.get("reason") == "r"
     assert seen.get("evidence") == "[]"
+    assert seen.get("author") == "content-updater"

@@ -78,6 +78,41 @@ Applying those three to `articles` is the whole of Phase 1.
       with an explicit toolset list.
 - [x] Tests, incl. `tests/scripts/test_rental_agent_toolsets.py` coverage.
 
+## Phase 2b — ship-and-revert, not propose-first (CEO, 2026-09-19)
+
+Reversed after the first build: the agent publishes straight to the live site
+like the Gap Hunter, and the version history is the safety net instead of a
+review queue.
+
+The propose-first model had an incoherence the CEO's call removes. **Gap Hunter
+already publishes brand-new articles containing prices, deadlines and legal
+claims, unattended, to a client's live site.** Refusing to let the Content
+Updater *correct* a price in an existing article, while another rented agent may
+*invent* a whole article about that same price, had no defensible basis — and it
+bought that inconsistency at the cost of handing the client a queue to review
+every week, which is work, not relief.
+
+What changed:
+
+- [x] One write path. `update_blog_post` + `base_hash`, no tiers, no lanes. Two
+      paths meant also getting the classification right, and misclassifying is
+      as real a failure as misredacting.
+- [x] The care gradient survives as a **sourcing** rule, not a routing one: a
+      price, tax rate or legal deadline needs an *official* source or the claim
+      gets removed rather than replaced.
+- [x] `author` threaded through the tool and stamped by the prompt, so the
+      client's history says who changed what.
+- [x] The prompt refuses to edit at all if `get_post` returns no `content_hash`
+      — a site older than 1.8.0 keeps no versions, and editing with no way back
+      is the one thing this agent must not do.
+- [x] Every report must close by naming the article and how to revert it.
+- [x] Panel UI (bl-site-package 1.8.1) — Blog → Historial, preview, restore.
+
+`propose_edit` and `article_edits` stay in the API. Nothing calls them now and
+the prompt forbids them, but they are the mechanism if a client ever asks for a
+review mode, and deleting tested, working primitives to save a table is not a
+saving.
+
 ## Phase 3 — provision shoroban
 
 - [ ] Add the job to `bl-shoroban` (daily, a slot no other profile/workdir job

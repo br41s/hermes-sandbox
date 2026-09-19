@@ -141,6 +141,7 @@ def bl_site_publish(
     base_hash: Optional[str] = None,
     reason: Optional[str] = None,
     evidence: Optional[str] = None,
+    author: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
 
@@ -288,6 +289,13 @@ def bl_site_publish(
             # it did before this parameter existed.
             if base_hash:
                 payload["base_hash"] = base_hash
+            # Stamps the revision this write supersedes, so the client's
+            # Blog -> Historial shows "Agente: content-updater" instead of
+            # attributing the change to them. A self-declared label, never an
+            # identity: every agent on a rented site logs in with the same
+            # panel password and the server cannot tell them apart.
+            if author:
+                payload["author"] = author
             try:
                 result = _http_json(
                     "PUT",
@@ -476,6 +484,15 @@ BL_SITE_PUBLISH_SCHEMA = {
                     "silently discarding their change. Never invent or reuse an old one."
                 ),
             },
+            "author": {
+                "type": "string",
+                "description": (
+                    "Who is making this edit, e.g. 'content-updater'. Recorded against the "
+                    "version being replaced and shown to the client in their panel under "
+                    "Blog -> Historial. Always send it when editing an existing post: without "
+                    "it the client's history attributes your change to them."
+                ),
+            },
             "reason": {
                 "type": "string",
                 "description": (
@@ -529,5 +546,6 @@ registry.register(
         base_hash=args.get("base_hash"),
         reason=args.get("reason"),
         evidence=args.get("evidence"),
+        author=args.get("author"),
     ),
 )
