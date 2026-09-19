@@ -751,3 +751,113 @@ def _creds(monkeypatch):
     monkeypatch.setattr(health, "_get_site_credentials", lambda: (SITE, "pw"))
     monkeypatch.setattr(health, "_get_jwt", lambda url, pw: "tok")
 
+
+
+# ---------------------------------------------------------------------------
+# Boilerplate meta descriptions (advisory, probabilistic)
+# ---------------------------------------------------------------------------
+
+def _fake_typesafe(monkeypatch, noul=None, *, error=None, per_path=None):
+    """Serve one System One answer per call. Returns the captured requests."""
+    import io
+    import json as _json
+    import urllib.request
+
+    captured = []
+
+    def fake_urlopen(request, timeout=None):
+        body = _json.loads(request.data.decode("utf-8"))
+        captured.append({"url": request.full_url,
+                         "headers": dict(request.headers),
+                         "body": body})
+        if error is not None:
+            raise error
+        value = noul
+        if per_path is not None:
+            value = per_path.get(body["state"]["page_path"], 0.0)
+        payload = {"model": "jev-latest",
+                   "answers": {"is_boilerplate": {"type": "noul", "noul": value}}}
+        return io.BytesIO(_json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "sk-test")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    return captured
+
+
+LONG_A = "Servicio profesional de fontanería con atención rápida en toda la ciudad."
+LONG_B = "Reparación de calderas de gas y mantenimiento anual certificado en Vigo."
+
+
+def test_check_is_skipped_without_a_key(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})
+    assert out["status"] == "skipped"
+    assert "TYPESAFE_API_KEY" in out["reason"]
+    assert out["generic"] == []
+
+
+def test_decisive_boilerplate_is_reported(monkeypatch):
+    _fake_typesafe(monkeypatch, noul=0.93)
+    out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})
+    assert out["status"] == "ok"
+    assert [g["page"] for g in out["generic"]] == ["/a"]
+    assert out["generic"][0]["probability"] == 0.93
+
+
+def test_specific_and_uncertain_descriptions_stay_silent(monkeypatch):
+    """Silence inside the band is what keeps a daily run stable."""
+    _fake_typesafe(monkeypatch, per_path={"/a": 0.04, "/b": 0.55})
+    out = health._check_boilerplate_descriptions(
+        {"/a": "A", "/b": "B"}, {"/a": LONG_A, "/b": LONG_B})
+    assert out["status"] == "ok"
+    assert out["checked"] == 2
+    assert out["generic"] == []
+
+
+def test_thin_descriptions_are_not_sent(monkeypatch):
+    """They are already reported deterministically; asking twice adds nothing."""
+    captured = _fake_typesafe(monkeypatch, noul=0.99)
+    out = health._check_boilerplate_descriptions(
+        {"/a": "A", "/thin": "T"}, {"/a": LONG_A, "/thin": "corto"})
+    assert out["checked"] == 1
+    assert [c["body"]["state"]["page_path"] for c in captured] == ["/a"]
+    assert [g["page"] for g in out["generic"]] == ["/a"]
+
+
+def test_cap_is_reported_as_truncated(monkeypatch):
+    _fake_typesafe(monkeypatch, noul=0.01)
+    n = health.BOILERPLATE_CHECK_CAP + 5
+    descriptions = {f"/p{i}": f"{LONG_A} {i}" for i in range(n)}
+    out = health._check_boilerplate_descriptions({}, descriptions)
+    assert out["checked"] == health.BOILERPLATE_CHECK_CAP
+    assert out["eligible"] == n
+    assert out["truncated"] is True
+
+
+def test_a_failed_call_skips_rather_than_reporting_a_clean_result(monkeypatch):
+    """A partial check must never render as 'looked and found nothing'."""
+    _fake_typesafe(monkeypatch, error=TimeoutError("timed out"))
+    out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})
+    assert out["status"] == "skipped"
+    assert "TimeoutError" in out["reason"]
+    assert out["generic"] == []
+
+
+def test_request_matches_the_documented_system_one_shape(monkeypatch):
+    captured = _fake_typesafe(monkeypatch, noul=0.5)
+    health._check_boilerplate_descriptions({"/a": "Inicio"}, {"/a": LONG_A})
+    assert len(captured) == 1
+    req = captured[0]
+    assert req["url"] == "https://api.typesafe.ai/v1/systemone"
+    assert req["headers"]["Authorization"] == "Bearer sk-test"
+    assert req["body"]["model"] == "jev-latest"
+    assert req["body"]["state"] == {
+        "page_path": "/a", "page_title": "Inicio", "meta_description": LONG_A}
+    assert req["body"]["questions"]["is_boilerplate"]["type"] == "noul"
+
+
+def test_report_carries_the_section_and_degrades_without_a_key(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    section = run(monkeypatch)["boilerplate_descriptions"]
+    assert section["status"] == "skipped"
+    assert section["generic"] == []
