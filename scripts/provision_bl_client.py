@@ -201,6 +201,31 @@ AGENT_SOURCES = {
         "once",
         None,
     ),
+    # The "Content Updater" subscription product. The only rented agent whose
+    # job is CHANGING prose that is already live — every other one here adds.
+    #
+    # Its toolset is deliberately narrow. `web` is the expensive half and the
+    # whole point: a change it cannot source is a change it does not make. It
+    # gets `file` for its own ledger in the profile home (not the client's
+    # site) and NOT `terminal`, so there is no shell to reach the site through
+    # if the prompt's two-lane rule ever gets in its way.
+    #
+    # Ships every client on MODO propose_only: nothing reaches the live site
+    # until the client has read some proposals in their panel and agreed with
+    # the agent's judgement. Flipping that is a prompt edit plus a sync, per
+    # client, and deliberately not a provisioning flag — it is a decision about
+    # trust, not a checkbox at checkout.
+    #
+    # Requires the client's site to run bl-site-package >= 1.8.0, which is what
+    # added the proposal queue, the revision history and the lost-update guard.
+    # On an older site propose_edit 404s and the agent is told to report rather
+    # than fall back to publishing.
+    "content-updater": (
+        "content-updater/bl-site-package-content-updater.prompt",
+        "Content Updater",
+        "daily",
+        ["bl_site_publish", "web", "file", "todo"],
+    ),
     # The "Social Shorts" subscription product. Turns ONE existing blog post per
     # run into 3-5 vertical MP4s plus a captions.md of Instagram/TikTok copy,
     # rendered locally with ffmpeg (plugins/shorts). Needs no --old-site-url: it

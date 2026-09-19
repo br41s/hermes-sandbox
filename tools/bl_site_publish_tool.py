@@ -138,6 +138,9 @@ def bl_site_publish(
     image_base64: Optional[str] = None,
     post_id: Optional[str] = None,
     badges: Optional[str] = None,
+    base_hash: Optional[str] = None,
+    reason: Optional[str] = None,
+    evidence: Optional[str] = None,
 ) -> str:
     from tools.registry import tool_error
 
@@ -253,6 +256,11 @@ def bl_site_publish(
                 "slug": result.get("slug"),
                 "status": result.get("status"),
                 "content": result.get("content"),
+                # The fingerprint of the body you are about to read. Pass it
+                # back as `base_hash` on update_blog_post or propose_edit and
+                # the site refuses the write if someone else changed the post
+                # in between, instead of silently discarding their work.
+                "content_hash": result.get("content_hash"),
             })
 
         if action == "update_blog_post":
@@ -273,12 +281,30 @@ def bl_site_publish(
                     payload[key] = val
             if not payload:
                 return tool_error("update_blog_post needs at least one field to change.")
-            result = _http_json(
-                "PUT",
-                f"{site_url}/api/blog/posts/{post_id}",
-                payload,
-                token=token,
-            )
+            # Optional, and only meaningful if you actually read the post this
+            # run: it is the `content_hash` get_post gave you. With it, a post
+            # someone else edited in the meantime comes back as a refusal you
+            # can act on. Without it the write still goes through, exactly as
+            # it did before this parameter existed.
+            if base_hash:
+                payload["base_hash"] = base_hash
+            try:
+                result = _http_json(
+                    "PUT",
+                    f"{site_url}/api/blog/posts/{post_id}",
+                    payload,
+                    token=token,
+                )
+            except RuntimeError as exc:
+                if "HTTP 409" in str(exc):
+                    return tool_error(
+                        "This post changed after you read it — another agent or the client "
+                        "edited it. Your edit was NOT applied and nothing was lost. Call "
+                        "get_post again, check your findings still hold against the new body, "
+                        "and rewrite the change over that version. Never re-send the same edit "
+                        f"with the old base_hash. Server said: {exc}"
+                    )
+                raise
             return json.dumps({
                 "success": bool(result.get("success")),
                 "id": result.get("id"),
@@ -287,9 +313,70 @@ def bl_site_publish(
                 "fields_changed": sorted(payload.keys()),
             })
 
+        if action == "propose_edit":
+            # Submit a rewrite for a human to approve instead of publishing it.
+            #
+            # This is the only write path on this site that does NOT reach the
+            # public page on the agent's own say-so. It exists because some
+            # claims are not the agent's to change unattended however good its
+            # sources are — a price, a legal threshold, a guarantee period. The
+            # proposal sits in the client's panel until someone applies it.
+            if not post_id:
+                return tool_error("propose_edit requires 'post_id'.")
+            if not base_hash:
+                return tool_error(
+                    "propose_edit requires 'base_hash' — the 'content_hash' from the get_post "
+                    "call you read this post with. A proposal waits in a queue, so it has to "
+                    "record which version it was written against."
+                )
+            payload = {"base_hash": base_hash}
+            for key, val in (("title", title), ("content", content), ("excerpt", excerpt)):
+                if val is not None:
+                    payload[key] = val
+            if not payload.keys() - {"base_hash"}:
+                return tool_error("propose_edit needs at least one of title, content or excerpt.")
+            if reason:
+                payload["reason"] = reason
+            if evidence:
+                # The site validates this is JSON and bounds its size; sending
+                # it as a string keeps the agent from having to build a nested
+                # object in a tool call.
+                payload["evidence"] = evidence
+            try:
+                result = _http_json(
+                    "POST",
+                    f"{site_url}/api/blog/posts/{post_id}/propose",
+                    payload,
+                    token=token,
+                )
+            except RuntimeError as exc:
+                if "HTTP 409" in str(exc):
+                    return tool_error(
+                        "This post changed after you read it, so the proposal was not saved. "
+                        "Call get_post again and rewrite it against the current body. "
+                        f"Server said: {exc}"
+                    )
+                if "HTTP 404" in str(exc):
+                    return tool_error(
+                        "This site does not have the proposal endpoint — it is running a "
+                        "bl-site-package older than 1.8.0. Do NOT fall back to "
+                        "update_blog_post for a change that needed review; report it to the "
+                        f"client as text instead. Server said: {exc}"
+                    )
+                raise
+            return json.dumps({
+                "success": True,
+                "edit_id": result.get("id"),
+                "status": "pending",
+                "note": (
+                    "Saved as a proposal. It is NOT on the live site and will not appear "
+                    "until the client approves it in their panel."
+                ),
+            })
+
         return tool_error(
             f"Unknown action '{action}'. Use 'create_blog_post', 'update_blog_post', "
-            "'update_page_text', 'get_post', 'list_posts', or 'upload_image'."
+            "'propose_edit', 'update_page_text', 'get_post', 'list_posts', or 'upload_image'."
         )
     except RuntimeError as e:
         return tool_error(str(e))
@@ -313,6 +400,12 @@ BL_SITE_PUBLISH_SCHEMA = {
         "Use action='update_blog_post' with 'post_id' to edit an EXISTING post in place, passing "
         "only the fields you want to change. It never changes publication status: a published post "
         "stays published and a draft stays a draft. "
+        "Use action='propose_edit' with 'post_id' and 'base_hash' to submit a rewrite of an "
+        "existing post for the CLIENT to approve — it is saved as a pending proposal and does "
+        "NOT appear on the live site until a human applies it in the panel. Use this instead of "
+        "update_blog_post for any change a client would want to see before it goes public "
+        "(prices, legal thresholds, guarantees, anything about their own business you did not "
+        "read off their own site). "
         "Use action='upload_image' to store an image on the site and get back its public URL. "
         "Pass the 'image_url' that image_generate returned; this tool fetches and uploads it "
         "(the site re-encodes to optimized WebP). Attach the returned URL as a blog cover "
@@ -326,16 +419,16 @@ BL_SITE_PUBLISH_SCHEMA = {
             "action": {
                 "type": "string",
                 "enum": [
-                    "create_blog_post", "update_blog_post", "update_page_text",
-                    "get_post", "list_posts", "upload_image",
+                    "create_blog_post", "update_blog_post", "propose_edit",
+                    "update_page_text", "get_post", "list_posts", "upload_image",
                 ],
                 "description": "Which operation to perform.",
             },
             "post_id": {
                 "type": "string",
                 "description": (
-                    "Id or slug of an existing post. Required for get_post and update_blog_post. "
-                    "Take it from a prior list_posts call."
+                    "Id or slug of an existing post. Required for get_post, update_blog_post "
+                    "and propose_edit. Take it from a prior list_posts call."
                 ),
             },
             "title": {"type": "string", "description": "Blog post title. Required for create_blog_post."},
@@ -373,6 +466,32 @@ BL_SITE_PUBLISH_SCHEMA = {
                 "type": "string",
                 "description": "Optional label for the CTA button. Defaults to 'Ver ficha original' if cta_url is set but this isn't.",
             },
+            "base_hash": {
+                "type": "string",
+                "description": (
+                    "The 'content_hash' that get_post returned for this post. Required for "
+                    "propose_edit; optional but strongly recommended for update_blog_post. It "
+                    "proves you are editing the version you actually read: if another agent or "
+                    "the client changed the post in between, the write is refused instead of "
+                    "silently discarding their change. Never invent or reuse an old one."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "For propose_edit: one short sentence, in the site's language, on why this "
+                    "content is now wrong. The client reads this to decide whether to approve."
+                ),
+            },
+            "evidence": {
+                "type": "string",
+                "description": (
+                    "For propose_edit: a JSON array string of the sources behind the change, "
+                    "e.g. '[{\"claim\": \"IVA reducido\", \"old\": \"10%\", "
+                    "\"new\": \"4%\", \"source_url\": \"https://...\"}]'. One entry per "
+                    "claim you changed. Only URLs you actually opened this run."
+                ),
+            },
             "badges": {
                 "type": "string",
                 "description": (
@@ -407,5 +526,8 @@ registry.register(
         image_base64=args.get("image_base64"),
         post_id=args.get("post_id"),
         badges=args.get("badges"),
+        base_hash=args.get("base_hash"),
+        reason=args.get("reason"),
+        evidence=args.get("evidence"),
     ),
 )
