@@ -279,6 +279,28 @@ Two rules hold across all of them, and they are what makes unattended writing de
   rules are not optional, since nothing is checked afterwards — but it means a bad blog
   post is a client-visible incident, not a draft someone catches. Treat any change to what
   those agents write as shipping straight to production.
+- **Blog posts are reversible instead, as of bl-site-package 1.8.x.** Every write through
+  `PUT /api/blog/posts/:id` snapshots the body it replaces, in the same transaction, and the
+  client restores it from their panel under Blog → Historial. That covers the whole fleet,
+  not one agent, because it lives on the route rather than in a prompt: an infographic
+  insert and a maintenance link repair are as restorable as a Content Updater correction.
+  Two things make it real rather than nominal, and both are easy to regress:
+  every writing agent passes **`author`** (without it the client's history attributes the
+  agent's edit to *them*), and **`base_hash`**, which the site checks at write time and
+  refuses on a mismatch — the lost-update guard that `onsite-seo` used to hand-roll by
+  re-reading and comparing, which could never close the gap between the compare and the
+  write. `base_hash` is optional on `PUT` so pre-existing callers keep working, and
+  mandatory on `propose`. Deleting an article deletes its history with it: a revision row
+  holds the full body, so leaving them behind would mean "delete" does not delete.
+
+  **`content-updater` is the only rented agent that rewrites published prose**, and the only
+  one that refuses to run at all on a site too old to keep versions — it checks for
+  `content_hash` on its first read. It publishes directly like `gap-hunter`; what makes that
+  defensible is the undo, plus a sourcing bar that scales with cost (an official source for
+  any price, tax rate or legal deadline; the client's own site for any fact about their
+  business; otherwise the stale claim is removed, never replaced). It reviews **one article
+  per run and each article at most once a year** — the ledger flag, not the scoring, is what
+  bounds the work, so an empty queue means the corpus is done, not that something broke.
 
 `product-sheets` is the exception worth remembering when selling: it only does anything for
 a client whose catalogue comes from a distributor feed, because that feed is the only thing
