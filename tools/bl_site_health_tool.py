@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 import socket
 import ssl
@@ -453,6 +454,135 @@ def _duplicate_pairs(values: dict[str, str]) -> list[dict]:
                     "value": text_a[:140],
                 })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Generic / boilerplate meta descriptions (advisory, probabilistic)
+# ---------------------------------------------------------------------------
+# `_duplicate_pairs` above compares pages to each other, which is O(N^2) in the
+# page count — and N here is 9 fixed routes plus every published post, growing
+# by roughly two a day on a client running gap-hunter and product-articles. A
+# per-pair judgment was therefore never affordable. This asks a per-page
+# question instead: not "do these two match" but "is this description generic
+# boilerplate", at one call per page rather than one per pair.
+#
+# Know what this does NOT cover. Measured against jev-latest, 2026-09-19: a
+# generic blurb scores 0.93 and a description templated across every blog post
+# 0.97, against 0.23 for a specific one — genericness is caught cleanly. But
+# two pages carrying *paraphrases* of each other, each individually specific,
+# score 0.05 and 0.06: a per-page question structurally cannot see that two
+# pages say the same thing. That case — which `difflib` also misses, since
+# paraphrases sit near 0.4 character similarity — remains uncovered, and
+# closing it needs a pairwise or embedding pass whose cost is the O(N^2)
+# problem above. An empty `generic` list does not mean "no duplicate meta
+# descriptions".
+#
+# It is ADVISORY and kept apart from the deterministic findings on purpose.
+# Website Maintenance is sold as a deterministic daily check; a probabilistic
+# signal folded in with the mechanical ones would quietly change what that
+# means. Two things keep a daily run stable: only a decisive result is
+# reported (measured spread at the extremes is 0.000, while the ~0.05 sampling
+# noise sits in the undecided middle, which stays silent), and nothing here is
+# ever auto-fixed.
+BOILERPLATE_CHECK_CAP = 40
+BOILERPLATE_REPORT_ABOVE = 0.75
+
+_TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+_TYPESAFE_MODEL = "jev-latest"
+_TYPESAFE_TIMEOUT = 20
+
+_BOILERPLATE_INSTRUCTIONS = (
+    "Is `meta_description` generic boilerplate — text that could sit unchanged "
+    "on almost any page of this site — rather than describing what is specific "
+    "to this one page? Use `page_path` and `page_title` for what the page "
+    "covers."
+)
+_BOILERPLATE_CRITERIA = {
+    "true": ("Generic: it names no topic, product or service particular to this "
+             "page, and would fit other pages of the same site unchanged."),
+    "false": ("Specific: it describes this page's own subject in terms that "
+              "would not fit the site's other pages."),
+}
+
+
+def _boilerplate_probability(path: str, title: str, description: str, api_key: str) -> float:
+    """Probability that ``description`` is generic boilerplate. Raises on failure."""
+    body = json.dumps({
+        "state": {
+            "page_path": path,
+            "page_title": title,
+            "meta_description": description,
+        },
+        "model": _TYPESAFE_MODEL,
+        "questions": {
+            "is_boilerplate": {
+                "type": "noul",
+                "instructions": _BOILERPLATE_INSTRUCTIONS,
+                "criteria": _BOILERPLATE_CRITERIA,
+            }
+        },
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        _TYPESAFE_URL,
+        data=body,
+        method="POST",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=_TYPESAFE_TIMEOUT) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    return float(payload["answers"]["is_boilerplate"]["noul"])
+
+
+def _check_boilerplate_descriptions(titles: dict[str, str], descriptions: dict[str, str]) -> dict:
+    """Flag meta descriptions that read as generic boilerplate.
+
+    Always reports whether it ran. An empty ``generic`` list has to mean "looked
+    and found nothing" — if it could also mean "never ran", the check would be
+    another green that proves nothing.
+    """
+    api_key = os.environ.get("TYPESAFE_API_KEY")
+    if not api_key:
+        return {"status": "skipped", "reason": "TYPESAFE_API_KEY is not set",
+                "checked": 0, "generic": []}
+
+    # Thin and missing descriptions are already reported deterministically;
+    # asking whether a 12-character string is boilerplate adds nothing.
+    candidates = [
+        (path, text) for path, text in descriptions.items()
+        if len(text.strip()) >= THIN_META_MIN_CHARS
+    ]
+    total = len(candidates)
+    truncated = total > BOILERPLATE_CHECK_CAP
+    candidates = candidates[:BOILERPLATE_CHECK_CAP]
+
+    generic: list[dict] = []
+    for path, text in candidates:
+        try:
+            probability = _boilerplate_probability(path, titles.get(path, ""), text, api_key)
+        except Exception as exc:  # noqa: BLE001 — a partial check must not pass as a clean one
+            return {
+                "status": "skipped",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "checked": len(generic),
+                "generic": [],
+            }
+        if probability >= BOILERPLATE_REPORT_ABOVE:
+            generic.append({
+                "page": path,
+                "probability": round(probability, 2),
+                "value": text[:140],
+            })
+
+    return {
+        "status": "ok",
+        "checked": len(candidates),
+        "eligible": total,
+        # True when the cap bit: the pages past it were NOT examined, so this
+        # run says nothing about them.
+        "truncated": truncated,
+        "report_above": BOILERPLATE_REPORT_ABOVE,
+        "generic": generic,
+    }
 
 
 def _check_duplicate_content(titles: dict[str, str], descriptions: dict[str, str]) -> dict:
@@ -992,6 +1122,7 @@ def _run_check(site_url: str, token: str) -> dict:
 
     social_contact_issues = _check_social_contact(config, site_url, page_html)
     duplicate_content = _check_duplicate_content(titles, descriptions)
+    boilerplate_descriptions = _check_boilerplate_descriptions(titles, descriptions)
     structured_data = _check_structured_data(page_html, site_url)
 
     old_site_url = _get_old_site_url()
@@ -1059,6 +1190,9 @@ def _run_check(site_url: str, token: str) -> dict:
         "image_issues": image_issues,
         "social_contact_issues": social_contact_issues,
         "duplicate_content": duplicate_content,
+        # Advisory and probabilistic — reported apart from the mechanical
+        # findings above, and never auto-fixed. See _check_boilerplate_descriptions.
+        "boilerplate_descriptions": boilerplate_descriptions,
         "structured_data": structured_data,
         # None when the client never had a previous site (no OLD_SITE_URL).
         "old_site_redirects": old_site_redirects,
@@ -1131,6 +1265,11 @@ BL_SITE_HEALTH_SCHEMA = {
         "It also returns 'social_contact_issues' (malformed WhatsApp/phone/e-mail endpoints and "
         "social profile URLs that no longer resolve), 'duplicate_content' (page titles or meta "
         "descriptions that are near-identical by string similarity, plus ones that are too short), "
+        "'boilerplate_descriptions' (ADVISORY, and the only probabilistic finding in this report: "
+        "meta descriptions judged generic enough to sit on any page of the site. Read 'status' "
+        "first — 'skipped' means the check did not run and the empty 'generic' list proves "
+        "nothing; 'truncated' means pages past the cap were never examined. Treat an entry as a "
+        "suggestion to a human, never as a defect to fix mechanically), "
         "'structured_data' (JSON-LD blocks that fail to parse or are missing required schema.org "
         "fields), 'old_site_redirects' (only when the profile has OLD_SITE_URL: old paths that now "
         "dead-end on the new site; null otherwise), 'release' (the instance's deployed "
