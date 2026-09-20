@@ -154,9 +154,9 @@ Both candidate system-reviewer models (`deepseek-v4.1-flash`, `deepseek-v4-flash
 
 | Knob | Default | What it does |
 |---|---|---|
-| `HERMES_AUDITOR_JUDGE_MAX_TOKENS` | `8000` | Hard cap on the verdict. A truncated verdict **fails the gate closed** (exit 4), never returns partial. Floor 256. |
-| `HERMES_AUDITOR_JUDGE_REASONING_EFFORT` | `low` | `low`/`medium`/`high`; `off` omits the field for a model that rejects it. |
-| `HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS` | `420` | Outer backstop for a hung socket. **Not** the dial for a slow model. |
+| `HERMES_AUDITOR_JUDGE_MAX_TOKENS` | `8000` | Hard cap on reasoning **plus** verdict — it is one budget. A truncated verdict **fails the gate closed** (exit 4), never returns partial. Floor 256. Measured 2026-09-20: a verdict-only call uses ~900 tokens; a `low` call needs ~22k, so turning reasoning on means raising this and the deadline together. |
+| `HERMES_AUDITOR_JUDGE_REASONING_EFFORT` | `off` | `off` sends `reasoning: {enabled: false}` — explicit, because deepseek-v4.1-flash reasons **by default** at `high` when the field is absent. `low`/`medium`/`high` send `reasoning_effort` (this model honours `max/high/low` as qualitative levels, not a share of the cap: `low` = ~22k tokens, ~13 min). `none` sends nothing, for a model that rejects the field. |
+| `HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS` | `420` | Outer backstop for a hung socket. Fits a verdict-only call (39s measured) and a full 8000-token cap at ~27 tok/s. A `low` call took 812s, past this and past the terminal tool's 600s foreground ceiling — the reason reasoning is off. |
 
 If the gate times out, read the `auditor.llm: judge call ... in Ns (deadline Ns, N% used)` line on stderr first: near 100% means the model ran long (raise the token cap or lower the effort), well under it means the socket stalled upstream.
 

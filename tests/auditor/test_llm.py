@@ -173,10 +173,14 @@ def test_completion_is_capped_by_default():
     assert body["max_tokens"] == llm.JUDGE_MAX_TOKENS_DEFAULT
 
 
-def test_reasoning_effort_is_low_by_default():
+def test_reasoning_is_explicitly_disabled_by_default():
+    # Explicit, not omitted: deepseek-v4.1-flash reasons by default at effort
+    # "high", so a request with neither field gets the LARGEST budget. The
+    # 2026-09-20 replay: "low" needed ~22k tokens and 812s; this payload, 39s.
     body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
                                     "sk-test"))
-    assert body["reasoning_effort"] == "low"
+    assert body["reasoning"] == {"enabled": False}
+    assert "reasoning_effort" not in body
 
 
 def test_request_streams():
@@ -202,15 +206,23 @@ def test_max_tokens_env_override_and_floor(monkeypatch):
 def test_reasoning_effort_override_and_escape_hatch(monkeypatch):
     monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "high")
     assert llm.judge_reasoning_effort() == "high"
-    # "off" (or anything unrecognised) omits the field for a model that would
-    # reject it. _env_value strips, so "" cannot carry that meaning itself.
-    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "off")
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert body["reasoning_effort"] == "high"
+    assert "reasoning" not in body
+    # "none" sends nothing, for a model that would reject the field.
+    # _env_value strips, so "" cannot carry that meaning itself.
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "none")
     assert llm.judge_reasoning_effort() == ""
     body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
                                     "sk-test"))
-    assert "reasoning_effort" not in body
-    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "   ")
-    assert llm.judge_reasoning_effort() == llm.JUDGE_REASONING_EFFORT_DEFAULT
+    assert "reasoning_effort" not in body and "reasoning" not in body
+    # Blank and unrecognised fall back to the default — which is "off", not
+    # "omit": an unrecognised value used to omit the field and hand this model
+    # its default effort, "high".
+    for junk in ("   ", "banana"):
+        monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", junk)
+        assert llm.judge_reasoning_effort() == llm.JUDGE_REASONING_EFFORT_DEFAULT == "off"
 
 
 # ── SSE parsing ─────────────────────────────────────────────────────────────
@@ -247,7 +259,7 @@ def test_stream_accumulates_content_and_finish_reason():
         *_sse(_chunk("APPR"), _chunk("OVE", finish="stop")),
         "data: [DONE]\n",
     ])
-    text, finish = llm._read_stream(resp)
+    text, finish, _ = llm._read_stream(resp)
     assert text == "APPROVE"
     assert finish == "stop"
 
@@ -329,12 +341,78 @@ def test_stream_cut_mid_verdict_fails_closed():
 
 def test_finish_reason_alone_is_a_valid_terminator():
     # A provider may end cleanly without emitting [DONE]; that is not a cut.
-    text, finish = llm._read_stream(_FakeResp(_sse(_chunk("APPROVE", finish="stop"))))
+    text, finish, _ = llm._read_stream(_FakeResp(_sse(_chunk("APPROVE", finish="stop"))))
     assert (text, finish) == ("APPROVE", "stop")
 
 
 def test_done_alone_is_a_valid_terminator():
     # ...and the mirror case: [DONE] with no finish_reason on any chunk.
     resp = _FakeResp([*_sse(_chunk("APPROVE")), "data: [DONE]\n"])
-    text, finish = llm._read_stream(resp)
+    text, finish, _ = llm._read_stream(resp)
     assert (text, finish) == ("APPROVE", None)
+
+
+# ── usage accounting (FinView#266) ──────────────────────────────────────────
+# The cap counts reasoning and verdict together. #266 ended finish_reason=length
+# at 8000 on a ~5 KB diff and nothing said which side ate the budget — the two
+# need opposite fixes. These lock the frame in, the split out, on every path.
+
+_USAGE = {"prompt_tokens": 1900, "completion_tokens": 8000,
+          "completion_tokens_details": {"reasoning_tokens": 7990}}
+
+
+def test_bounds_fit_the_measured_verdict_only_call():
+    # 2026-09-20 replay of the #266 request with reasoning off: 905 completion
+    # tokens in 39s (~27 tok/s). The cap must clear that verdict with margin,
+    # and the full cap must still fit the deadline at the measured rate — the
+    # two are one budget seen from two sides. A "low" call (21868 tokens, 812s)
+    # does NOT fit either, which is why reasoning is off.
+    assert llm.JUDGE_MAX_TOKENS_DEFAULT >= 4 * 905
+    assert llm.JUDGE_DEADLINE_DEFAULT >= llm.JUDGE_MAX_TOKENS_DEFAULT / 27
+
+
+def test_request_asks_for_the_usage_frame():
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert body["usage"] == {"include": True}
+
+
+def test_stream_returns_the_usage_frame():
+    resp = _FakeResp([
+        *_sse({"choices": [{"delta": {"reasoning": "hmm"}, "finish_reason": None}]}),
+        *_sse({"choices": [{"delta": {}, "finish_reason": "length"}], "usage": _USAGE}),
+    ])
+    assert llm._read_stream(resp) == ("", "length", _USAGE)
+
+
+def test_stream_without_usage_frame_returns_none():
+    assert llm._read_stream(_FakeResp(_sse(_chunk("APPROVE", finish="stop"))))[2] is None
+
+
+def test_length_error_carries_the_split(monkeypatch, capsys):
+    lines = _sse({"choices": [{"delta": {"content": "APPR"}, "finish_reason": "length"}],
+                  "usage": _USAGE})
+    try:
+        _review_over(monkeypatch, lines)
+    except RuntimeError as e:
+        assert "reasoning=7990" in str(e)
+        assert "verdict_chars=4" in str(e)
+        assert "HERMES_AUDITOR_JUDGE_REASONING_EFFORT" in str(e)
+    else:
+        raise AssertionError("a length-truncated verdict must not be returned")
+    assert "judge usage" in capsys.readouterr().err
+
+
+def test_usage_is_logged_on_success_too(monkeypatch, capsys):
+    ok = {"prompt_tokens": 1900, "completion_tokens": 700,
+          "completion_tokens_details": {"reasoning_tokens": 420}}
+    lines = _sse({"choices": [{"delta": {"content": "APPROVE"}, "finish_reason": "stop"}],
+                  "usage": ok})
+    assert _review_over(monkeypatch, lines) == "APPROVE"
+    err = capsys.readouterr().err
+    assert "reasoning=420" in err and "verdict_chars=7" in err
+
+
+def test_missing_usage_frame_logs_na(monkeypatch, capsys):
+    assert _review_over(monkeypatch, _sse(_chunk("APPROVE", finish="stop"))) == "APPROVE"
+    assert "reasoning=n/a" in capsys.readouterr().err
