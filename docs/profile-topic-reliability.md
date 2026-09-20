@@ -102,6 +102,12 @@ primary attempt for genuine TCP blips, and one-shot orchestrator delegations
 
 ## Model choice — operator action recommended (not auto-applied)
 
+> **RESOLVED 2026-09-20.** The recommendation below was carried out: the main
+> chain moved off owl-alpha (via hy3 and gpt-5.6-luna) to
+> `deepseek/deepseek-v4.1-flash`, and owl-alpha has since been retired from
+> OpenRouter entirely. The analysis is kept as written — it is the record of
+> why the move happened, not current configuration.
+
 `openrouter/owl-alpha` is a **free, rate-limited** model. It is structurally
 unfit as the *primary* for interactive topics: it saturates, which is the root
 of both the latency and (via the wide in-flight window) the `-15` kills. The

@@ -22,7 +22,7 @@ Today one project ("BigLobster") holds two services: the **web app** and **Herme
 3. On the **Hermes** service, open **Variables** and screenshot/save the full env list
    (you'll confirm it carried over later). Key ones expected:
    - `OPENROUTER_API_KEY`
-   - `HERMES_DEFAULT_MODEL=owl-alpha`  ← our confirmed main model
+   - `HERMES_DEFAULT_MODEL=deepseek/deepseek-v4.1-flash`  ← main model since 2026-09-20 (was `owl-alpha`, now retired from OpenRouter)
    - `HERMES_DASHBOARD=1`
    - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`
    - `HERMES_DASHBOARD_INSECURE` (currently truthy → why the panel is open)
