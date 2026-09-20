@@ -69,12 +69,16 @@ SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
 # fired — and it only became load-bearing when langmap.json moved translation
 # PRs into this tier.
 #
-# v4-flash-0731 is the cheapest live option by a wide margin ($0.04/$0.08 per
-# M vs luna's $0.20/$1.20), which is what a CONTENT-tier default should be, and
-# it is the DATED slug per the rule in BIGLOBSTER_SETUP.md: the undated alias
-# resolves to the oldest, priciest snapshot. It is also a reasoning model, but
-# that is now bounded — see JUDGE_MAX_TOKENS_DEFAULT.
-CONTENT_MODEL_DEFAULT = "deepseek/deepseek-v4-flash-0731"
+# v4.1-flash is the standing default across Hermes (CEO, 2026-09-20), so both
+# tiers fall back to it. That deliberately collapses the cheap/strong split at
+# DEFAULT level only: the split still exists wherever it matters, because
+# production sets HERMES_AUDITOR_CONTENT_MODEL explicitly. A default's job here
+# is to be live and predictable, not to be the cheapest id available.
+# (deepseek-v4-flash-0731 is ~4x cheaper at $0.04/$0.08 per M vs $0.15/$0.60
+# if the content tier ever needs to economise — it is the dated slug, per the
+# rule in BIGLOBSTER_SETUP.md that an undated alias resolves to the oldest,
+# priciest snapshot.)
+CONTENT_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_SYSTEM_MSG = (

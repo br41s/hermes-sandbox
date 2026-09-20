@@ -89,9 +89,11 @@ def test_deepseek_is_provider_pinned_with_fallbacks_on():
 
 def test_non_deepseek_is_not_pinned():
     # A single-backend model has no backend-local cache to keep warm, so there
-    # is nothing to pin to. (Fixture was openrouter/owl-alpha until that model
-    # was retired from OpenRouter — see CONTENT_MODEL_DEFAULT.)
-    req = llm._build_request("openai/gpt-5.6-luna", [{"role": "user", "content": "hi"}],
+    # is nothing to pin to. Deliberately a PLACEHOLDER id, not a live one: this
+    # fixture named openrouter/owl-alpha until that model was retired out from
+    # under it, and the assertion is about the "not deepseek/*" branch, not
+    # about any particular vendor.
+    req = llm._build_request("vendor/cheap-1", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-content")
     assert "provider" not in _body(req)
 
