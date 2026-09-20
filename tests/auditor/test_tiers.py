@@ -163,3 +163,42 @@ def test_profile_code_repo_defaults_to_system():
 def test_profile_unknown_path_fails_safe():
     assert classify(["frontend/App.tsx"], FIN) == "system"
     assert classify(["wsgi.py"], "br41s/SocialAgenda") == "system"
+
+
+# ── langmap.json: publication data, not config (biglobster#550) ─────────────
+# Every translation PR must add one entry per direction or the new post ships
+# with no hreflang. While langmap.json was system-tier, that one file dragged
+# every translation to the strong reviewer: #550 was 3 files of pure prose and
+# still classified system, so it went to the reasoning judge and timed the gate
+# out. The allowlist entry is an EXACT FILE on purpose — see the next test.
+
+def test_langmap_is_content_on_biglobster():
+    assert classify(["site/_data/langmap.json"], BIG) == "content"
+
+
+def test_translation_pr_shape_is_content():
+    # The exact changeset of biglobster#550.
+    assert classify([
+        "site/_data/langmap.json",
+        "site/blog/meta-one-planes-precios-pymes-2026.html",
+        "translation-es-ledger.md",
+    ], BIG) == "content"
+
+
+def test_the_rest_of_site_data_stays_system():
+    # site.json is brand/menu/legal/company config. Allowlisting the DIRECTORY
+    # would have swept it in; the entry is one exact file for this reason.
+    assert classify(["site/_data/site.json"], BIG) == "system"
+    assert classify(["site/_data/nav.json"], BIG) == "system"
+
+
+def test_langmap_allowlist_does_not_leak_to_other_repos():
+    assert classify(["site/_data/langmap.json"], FIN) == "system"
+    assert classify(["site/_data/langmap.json"], GS) == "system"
+    assert classify(["site/_data/langmap.json"], "br41s/hermes-sandbox") == "system"
+    assert classify(["site/_data/langmap.json"]) == "system"  # engine ruleset
+
+
+def test_langmap_does_not_rescue_a_system_sibling():
+    # The fail-safe still wins: one system path makes the whole PR system.
+    assert classify(["site/_data/langmap.json", "src/web.js"], BIG) == "system"

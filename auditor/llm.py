@@ -60,7 +60,25 @@ from typing import List, Optional, Tuple
 # snapshots for it, re-pin to the dated one: an undated alias with siblings
 # has previously resolved to the oldest (priciest) snapshot, not the newest.
 SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
-CONTENT_MODEL_DEFAULT = "openrouter/owl-alpha"
+# Was `openrouter/owl-alpha` until 2026-09-20, by which point that model no
+# longer existed on OpenRouter (confirmed absent from the live /models list,
+# 447 entries). A dead id is the one thing a default here must never be: the
+# contract above is "degrades loudly-but-safely", and a 404 from the judge
+# degrades to a BROKEN GATE (exit 4), not to a safe one. It went unnoticed
+# because production sets HERMES_AUDITOR_CONTENT_MODEL, so the default never
+# fired — and it only became load-bearing when langmap.json moved translation
+# PRs into this tier.
+#
+# v4.1-flash is the standing default across Hermes (CEO, 2026-09-20), so both
+# tiers fall back to it. That deliberately collapses the cheap/strong split at
+# DEFAULT level only: the split still exists wherever it matters, because
+# production sets HERMES_AUDITOR_CONTENT_MODEL explicitly. A default's job here
+# is to be live and predictable, not to be the cheapest id available.
+# (deepseek-v4-flash-0731 is ~4x cheaper at $0.04/$0.08 per M vs $0.15/$0.60
+# if the content tier ever needs to economise — it is the dated slug, per the
+# rule in BIGLOBSTER_SETUP.md that an undated alias resolves to the oldest,
+# priciest snapshot.)
+CONTENT_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_SYSTEM_MSG = (
@@ -98,6 +116,62 @@ plainly. Style preferences are not blockers.
 # truncating silently is not: the judge would grade a fragment while believing it
 # saw the whole change. Cap, and say so in the text the model reads.
 _MAX_DIFF_CHARS = 200_000
+
+# --- generation bounds -----------------------------------------------------
+# The judge model is a REASONING model (deepseek-v4.1-flash advertises
+# `reasoning`, `reasoning_effort` and a 384 000-token max completion on
+# OpenRouter). Sending no `max_tokens` and no `reasoning_effort` let it think
+# for as long as it liked before emitting a single byte, and the call was not
+# streamed — so time-to-first-byte WAS time-to-last-byte and total latency had
+# no ceiling at all.
+#
+# That, not prompt size, is what broke the gate. The old rationale in this file
+# blamed a bigger prompt for exceeding 300s, and biglobster#550 disproved it:
+# 3 files, +195/-3, a ~20 KB payload, and it still burned 100% of the 420s
+# bound. Latency tracked reasoning-token count, which was unbounded, so the
+# observed spread (300s, 370s, 420s, 590s) was a distribution with no right
+# edge — no fixed deadline can close that, it can only pick a failure rate.
+#
+# Cap the generation and the tail disappears. Keep the wall-clock deadline as
+# the outer backstop, not as the primary control.
+JUDGE_MAX_TOKENS_DEFAULT = 8000
+# "low", not off: the verdict quality that matters here is spotting a real bug
+# in a diff, which needs some deliberation, but nothing near the unbounded
+# budget. Set HERMES_AUDITOR_JUDGE_REASONING_EFFORT="" to omit the field for a
+# model that rejects it.
+JUDGE_REASONING_EFFORT_DEFAULT = "low"
+
+
+def judge_max_tokens() -> int:
+    """Hard cap on the judge's completion, in tokens.
+
+    Override with ``HERMES_AUDITOR_JUDGE_MAX_TOKENS``. Floor of 256 so a typo
+    cannot cap every verdict into truncation — which fails CLOSED (see
+    ``review``), but noisily and for every PR at once.
+    """
+    raw = (_env_value("HERMES_AUDITOR_JUDGE_MAX_TOKENS") or "").strip()
+    if not raw:
+        return JUDGE_MAX_TOKENS_DEFAULT
+    try:
+        return max(256, int(raw))
+    except ValueError:
+        return JUDGE_MAX_TOKENS_DEFAULT
+
+
+def judge_reasoning_effort() -> str:
+    """Reasoning budget: ``"low"``, ``"medium"``, ``"high"``, or ``""`` = omit.
+
+    Override with ``HERMES_AUDITOR_JUDGE_REASONING_EFFORT``. ``_env_value``
+    strips and returns ``""`` for both unset and empty, so it cannot carry
+    "send nothing" — the escape hatch for a model that REJECTS the field
+    (rather than ignoring it, which is OpenRouter's usual behaviour) is the
+    explicit word ``off``, or any unrecognised value. Blank falls back to the
+    default, like every other knob in this module.
+    """
+    raw = (_env_value("HERMES_AUDITOR_JUDGE_REASONING_EFFORT") or "").strip().lower()
+    if not raw:
+        return JUDGE_REASONING_EFFORT_DEFAULT
+    return raw if raw in ("low", "medium", "high") else ""
 
 
 def _gh(args: List[str], *, timeout: int = 120) -> Optional[str]:
@@ -230,6 +304,17 @@ def resolve_api_key_source() -> tuple:
 # 420 clears that observed-healthy 370s with margin while staying well under the
 # 590s hang, so the protection this bound exists for still fires.
 #
+# CORRECTION (2026-09-20, biglobster#550): the "a bigger prompt simply takes
+# longer" reading above was WRONG, and raising 300 -> 420 only moved the
+# failure rate. #550 was 3 files, +195/-3, a ~20 KB payload — the smallest
+# input the gate had seen — and it still burned 100% of 420s. The variable was
+# never prompt size; it was reasoning tokens, which the request did not cap.
+# The real fix is JUDGE_MAX_TOKENS_DEFAULT + reasoning_effort + streaming (see
+# above). This bound stays as the OUTER BACKSTOP for a hung socket, which is
+# what it is good at. Do not raise it again to chase a slow call: if calls are
+# slow now, the cap or the model is the thing to look at, and the elapsed line
+# from report_judge_elapsed is the evidence.
+#
 # The cost is pool contention, and it is not small: the judge runs once per PR,
 # so the worst case multiplies against auditor.pending's DEFAULT_LIMIT of 10 —
 # 50 minutes of the single-thread cron pool becomes 70. That pool is what
@@ -330,8 +415,28 @@ def _build_request(
     api_key: str,
     *,
     session_id: Optional[str] = None,
+    stream: bool = True,
+    max_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> urllib.request.Request:
     payload: dict = {"model": model, "messages": messages, "temperature": 0}
+    # Bound the generation. See JUDGE_MAX_TOKENS_DEFAULT: without these the
+    # judge is a reasoning model with a 384k-token budget and no ceiling on
+    # latency. Resolved here, not at the call site, so every caller (including
+    # a future one) gets the bound by default rather than opting in.
+    payload["max_tokens"] = judge_max_tokens() if max_tokens is None else max_tokens
+    effort = judge_reasoning_effort() if reasoning_effort is None else reasoning_effort
+    if effort:
+        payload["reasoning_effort"] = effort
+    # Stream. Not for progressive display — nothing reads this incrementally —
+    # but so the socket has traffic on it: `urlopen(timeout=...)` is a
+    # PER-READ timeout, so on a non-streamed call the whole generation is one
+    # silent wait that the timeout cannot see into, and OpenRouter's keepalive
+    # padding (`: OPENROUTER PROCESSING`) kept resetting even that. Streaming
+    # turns each token into a read, so a genuine stall trips `timeout` in
+    # seconds instead of holding the single-thread cron pool for minutes.
+    if stream:
+        payload["stream"] = True
     # OpenRouter sticky-routing key (≤256 chars): pins consecutive auditor
     # reviews to the same upstream backend so the shared system-prompt/rubric
     # prefix stays cache-warm across reviews. Best-effort on OpenRouter's side.
@@ -342,8 +447,9 @@ def _build_request(
     # re-bills the full prefix (measured ~44% miss / 56% hit on the orchestrator
     # before this). Prefer the DeepSeek upstream so the cache is reused; keep
     # fallbacks ON so a DeepSeek outage degrades to another provider rather than
-    # breaking the review gate. Only deepseek/* benefits — owl-alpha is single
-    # OpenRouter-native backend and needs no pinning.
+    # breaking the review gate. Only deepseek/* benefits — a model served from a
+    # single OpenRouter-native backend has no cache to keep warm and needs no
+    # pinning.
     if model.startswith("deepseek/"):
         payload["provider"] = {"order": ["deepseek"]}
     body = json.dumps(payload).encode("utf-8")
@@ -359,6 +465,67 @@ def _build_request(
         },
         method="POST",
     )
+
+
+def _read_stream(resp) -> Tuple[str, Optional[str]]:
+    """Accumulate an OpenRouter SSE stream into ``(text, finish_reason)``.
+
+    Three line shapes arrive on the wire and only one carries content:
+      * ``: OPENROUTER PROCESSING`` — keepalive padding. This is the byte
+        trickle that made a per-read socket timeout useless on the old
+        non-streamed call; ignored here, but each one is still a read, so the
+        socket clock only resets while the upstream is genuinely alive.
+      * ``data: {json}`` — a chunk. ``delta.content`` is the verdict text;
+        ``delta.reasoning`` (reasoning models emit it) is deliberately dropped,
+        we grade on the conclusion, not the thinking.
+      * ``data: [DONE]`` — end of stream.
+
+    An error can also arrive mid-stream AFTER a 200 OK (upstream timeout,
+    provider fallback exhausted). That is raised, not returned: a partial
+    verdict must never reach the orchestrator as if it were a whole one.
+
+    So is a stream that simply STOPS. A connection cut mid-verdict yields
+    content, no ``finish_reason`` and no ``[DONE]``, and the text it leaves
+    behind looks like an ordinary short review — the one shape that would slip
+    past every other check here and read as an approval. Either terminator is
+    accepted (not both: a provider may omit one), neither is not.
+    """
+    chunks: List[str] = []
+    finish_reason: Optional[str] = None
+    saw_done = False
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line or line.startswith(":"):
+            continue
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            saw_done = True
+            break
+        try:
+            event = json.loads(data)
+        except json.JSONDecodeError:
+            # NOT a reassembly point: iterating the response yields whole
+            # lines, so this is a genuinely malformed frame, and the only one
+            # that matters is a final line cut by a dropped connection. Skip
+            # it here; the terminator check below is what catches that.
+            continue
+        err = event.get("error")
+        if isinstance(err, dict):
+            raise RuntimeError(f"stream carried an error: {err.get('message') or err}")
+        for choice in event.get("choices") or []:
+            piece = (choice.get("delta") or {}).get("content")
+            if piece:
+                chunks.append(piece)
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+    if not saw_done and finish_reason is None:
+        raise RuntimeError(
+            "stream ended without a terminator — the connection dropped "
+            "mid-verdict and the review is PARTIAL"
+        )
+    return "".join(chunks), finish_reason
 
 
 def _liveness_path() -> "Path":
@@ -419,18 +586,32 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     req = _build_request(model, messages, api_key, session_id=f"hermes-auditor-{tier}")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            text, finish_reason = _read_stream(resp)
     except TimeoutError:
-        # The wall-clock deadline fired mid-request. Propagate it as-is so the
-        # caller can say "it hung" rather than "it failed", which are different
-        # operational problems.
+        # Either the wall-clock deadline fired or the socket stalled for
+        # `timeout` with no chunk. Both are "the judge hung" and both must exit
+        # 4; the elapsed line tells them apart (a stall lands near `timeout`, a
+        # deadline at 100% of it). Propagate as-is — "it hung" and "it failed"
+        # are different operational problems.
         raise
     except Exception as e:  # noqa: BLE001 — surface any failure to the caller
         raise RuntimeError(f"auditor.llm review failed (model={model}): {e}") from e
-    try:
-        text = payload["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise RuntimeError(f"auditor.llm: unexpected response shape from {model}: {e}") from e
+
+    # Fail CLOSED on a verdict that is not whole. Both of these used to be
+    # impossible to hit and are now reachable because the completion is capped:
+    # returning either one would hand the orchestrator something it parses as a
+    # review, and a review with no BLOCK in it reads as approval.
+    if finish_reason == "length":
+        raise RuntimeError(
+            f"auditor.llm: {model} hit the {judge_max_tokens()}-token cap before "
+            f"finishing its verdict — the review is PARTIAL and must not be "
+            f"trusted. Raise HERMES_AUDITOR_JUDGE_MAX_TOKENS if this recurs."
+        )
+    if not text.strip():
+        raise RuntimeError(
+            f"auditor.llm: {model} returned an empty verdict "
+            f"(finish_reason={finish_reason!r}). The review did NOT run."
+        )
     record_judge_success()
     return text
 
@@ -503,9 +684,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         report_judge_elapsed(started, deadline, "TIMED OUT")
         print(
             f"auditor.llm: {e}. No verdict was produced — treat the gate as "
-            f"BROKEN for this run, not as a degraded review. Raise the bound "
-            f"with HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS if the model is "
-            f"legitimately this slow.",
+            f"BROKEN for this run, not as a degraded review. Check the elapsed "
+            f"line above: near the deadline means the model ran long (look at "
+            f"HERMES_AUDITOR_JUDGE_MAX_TOKENS and the reasoning budget, NOT at "
+            f"the deadline); well under it means the socket stalled upstream.",
             file=sys.stderr,
         )
         return 4

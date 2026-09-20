@@ -88,8 +88,12 @@ def test_deepseek_is_provider_pinned_with_fallbacks_on():
 
 
 def test_non_deepseek_is_not_pinned():
-    # owl-alpha is a single OpenRouter-native backend — no pinning, no harm.
-    req = llm._build_request("openrouter/owl-alpha", [{"role": "user", "content": "hi"}],
+    # A single-backend model has no backend-local cache to keep warm, so there
+    # is nothing to pin to. Deliberately a PLACEHOLDER id, not a live one: this
+    # fixture named openrouter/owl-alpha until that model was retired out from
+    # under it, and the assertion is about the "not deepseek/*" branch, not
+    # about any particular vendor.
+    req = llm._build_request("vendor/cheap-1", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-content")
     assert "provider" not in _body(req)
 
@@ -152,3 +156,185 @@ def test_elapsed_reports_percentage_of_the_deadline(monkeypatch, capsys):
     monkeypatch.setenv("HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS", "10")
     _run_main(monkeypatch, lambda tier, content: "ok")
     assert "deadline 10s" in capsys.readouterr().err
+
+
+# ── generation bounds (the biglobster#550 gate outage) ──────────────────────
+# The judge model is a REASONING model with a 384k-token completion budget. The
+# request sent no max_tokens, no reasoning_effort and did not stream, so
+# time-to-first-byte was time-to-last-byte and latency had no ceiling: the gate
+# timed out on 2 of 4 PRs (2026-09-18) and then on biglobster#550 (2026-09-20),
+# a 3-file, +195/-3 prose diff that still burned 100% of a 420s bound. Raising
+# the bound 300 -> 420 did not fix it and could not: the tail was unbounded.
+# These lock the three properties that bound it.
+
+def test_completion_is_capped_by_default():
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert body["max_tokens"] == llm.JUDGE_MAX_TOKENS_DEFAULT
+
+
+def test_reasoning_effort_is_low_by_default():
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert body["reasoning_effort"] == "low"
+
+
+def test_request_streams():
+    # Not for display — so each token is a socket read the per-read timeout can
+    # actually see. Non-streamed, the whole generation was one silent wait.
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert body["stream"] is True
+
+
+def test_max_tokens_env_override_and_floor(monkeypatch):
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_MAX_TOKENS", "1234")
+    assert llm.judge_max_tokens() == 1234
+    # A typo must not cap every verdict into truncation.
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_MAX_TOKENS", "3")
+    assert llm.judge_max_tokens() == 256
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_MAX_TOKENS", "banana")
+    assert llm.judge_max_tokens() == llm.JUDGE_MAX_TOKENS_DEFAULT
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_MAX_TOKENS", "  ")
+    assert llm.judge_max_tokens() == llm.JUDGE_MAX_TOKENS_DEFAULT
+
+
+def test_reasoning_effort_override_and_escape_hatch(monkeypatch):
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "high")
+    assert llm.judge_reasoning_effort() == "high"
+    # "off" (or anything unrecognised) omits the field for a model that would
+    # reject it. _env_value strips, so "" cannot carry that meaning itself.
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "off")
+    assert llm.judge_reasoning_effort() == ""
+    body = _body(llm._build_request("vendor/strong-1", [{"role": "user", "content": "hi"}],
+                                    "sk-test"))
+    assert "reasoning_effort" not in body
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "   ")
+    assert llm.judge_reasoning_effort() == llm.JUDGE_REASONING_EFFORT_DEFAULT
+
+
+# ── SSE parsing ─────────────────────────────────────────────────────────────
+
+class _FakeResp:
+    """Minimal stand-in for the urlopen response: a context manager over lines."""
+
+    def __init__(self, lines):
+        self._lines = [l.encode("utf-8") for l in lines]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+def _sse(*events):
+    return [f"data: {json.dumps(e)}\n" for e in events]
+
+
+def _chunk(content=None, finish=None):
+    delta = {"content": content} if content is not None else {}
+    return {"choices": [{"delta": delta, "finish_reason": finish}]}
+
+
+def test_stream_accumulates_content_and_finish_reason():
+    resp = _FakeResp([
+        ": OPENROUTER PROCESSING\n",          # keepalive padding — ignored
+        "\n",
+        *_sse(_chunk("APPR"), _chunk("OVE", finish="stop")),
+        "data: [DONE]\n",
+    ])
+    text, finish = llm._read_stream(resp)
+    assert text == "APPROVE"
+    assert finish == "stop"
+
+
+def test_stream_drops_reasoning_tokens():
+    # We grade on the conclusion, not the thinking.
+    resp = _FakeResp([
+        *_sse({"choices": [{"delta": {"reasoning": "hmm..."}, "finish_reason": None}]}),
+        *_sse(_chunk("BLOCK", finish="stop")),
+    ])
+    assert llm._read_stream(resp)[0] == "BLOCK"
+
+
+def test_stream_error_after_200_raises():
+    # A provider can fail mid-stream after the headers said 200. A partial
+    # verdict must never reach the orchestrator as a whole one.
+    resp = _FakeResp([
+        *_sse(_chunk("APPR")),
+        *_sse({"error": {"message": "upstream timed out"}}),
+    ])
+    try:
+        llm._read_stream(resp)
+    except RuntimeError as e:
+        assert "upstream timed out" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError on a mid-stream error")
+
+
+# ── fail-closed on a verdict that is not whole ──────────────────────────────
+# Both are newly reachable now the completion is capped. Returning either would
+# hand the orchestrator text it parses as a review — and a review with no BLOCK
+# in it reads as approval.
+
+def _review_over(monkeypatch, lines):
+    monkeypatch.setattr(llm, "_env_value", lambda name: "sk-test")
+    monkeypatch.setattr(llm.urllib.request, "urlopen",
+                        lambda req, timeout=None: _FakeResp(lines))
+    monkeypatch.setattr(llm, "record_judge_success", lambda: None)
+    return llm.review("system", "diff")
+
+
+def test_truncated_verdict_fails_closed(monkeypatch):
+    lines = _sse(_chunk("APPROVE, but I was cut off mid-", finish="length"))
+    try:
+        _review_over(monkeypatch, lines)
+    except RuntimeError as e:
+        assert "PARTIAL" in str(e)
+        assert "HERMES_AUDITOR_JUDGE_MAX_TOKENS" in str(e)
+    else:
+        raise AssertionError("a length-truncated verdict must not be returned")
+
+
+def test_empty_verdict_fails_closed(monkeypatch):
+    try:
+        _review_over(monkeypatch, _sse(_chunk("", finish="stop")))
+    except RuntimeError as e:
+        assert "empty verdict" in str(e)
+    else:
+        raise AssertionError("an empty verdict must not be returned")
+
+
+def test_whole_verdict_is_returned(monkeypatch):
+    out = _review_over(monkeypatch, _sse(_chunk("APPROVE — sound change.", finish="stop")))
+    assert out == "APPROVE — sound change."
+
+
+def test_stream_cut_mid_verdict_fails_closed():
+    # No finish_reason, no [DONE] — a dropped connection. The text left behind
+    # looks like an ordinary short review, which is exactly why this must raise
+    # rather than return: a review with no BLOCK in it reads as approval.
+    resp = _FakeResp(_sse(_chunk("APPROVE, the change is so")))
+    try:
+        llm._read_stream(resp)
+    except RuntimeError as e:
+        assert "PARTIAL" in str(e)
+    else:
+        raise AssertionError("a cut stream must not return its partial text")
+
+
+def test_finish_reason_alone_is_a_valid_terminator():
+    # A provider may end cleanly without emitting [DONE]; that is not a cut.
+    text, finish = llm._read_stream(_FakeResp(_sse(_chunk("APPROVE", finish="stop"))))
+    assert (text, finish) == ("APPROVE", "stop")
+
+
+def test_done_alone_is_a_valid_terminator():
+    # ...and the mirror case: [DONE] with no finish_reason on any chunk.
+    resp = _FakeResp([*_sse(_chunk("APPROVE")), "data: [DONE]\n"])
+    text, finish = llm._read_stream(resp)
+    assert (text, finish) == ("APPROVE", None)
