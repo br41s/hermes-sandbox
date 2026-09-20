@@ -134,12 +134,40 @@ _MAX_DIFF_CHARS = 200_000
 #
 # Cap the generation and the tail disappears. Keep the wall-clock deadline as
 # the outer backstop, not as the primary control.
+#
+# CORRECTION (2026-09-20, FinView#266): the cap counts REASONING and verdict
+# together, and `reasoning_effort: low` is not a share of it. OpenRouter's model
+# record for deepseek-v4.1-flash advertises efforts max/high/low and no
+# `supports_max_tokens`, so "low" is DeepSeek's own qualitative level — the
+# "~20% of max_tokens" mapping in OpenRouter's docs applies only to models that
+# take a token budget. #266 was 2 files, +41/-1, ~5 KB of judge input, and still
+# ended finish_reason=length at 8000; the gate was down on 3 of 3 PRs that day.
+# The request now asks for the usage frame and report_judge_usage logs the
+# reasoning/verdict split on every exit path. Read THAT line before moving this
+# number: mostly reasoning means the effort level is the lever, mostly verdict
+# means the cap is.
+#
+# MEASURED (2026-09-20, the #266 request replayed in-container, temperature 0):
+#   low, cap 8000   -> 8231 reasoning tokens, verdict never started, 358s, length
+#   low, cap 32000  -> 21361 reasoning + 507 verdict tokens, APPROVE, 812s
+#   reasoning off   -> 0 reasoning + 905 verdict tokens, BLOCK, 39s
+# Throughput was ~27 tok/s in every variant, so the cap and the deadline below
+# are one budget seen from two sides: a "low" call needs ~22k tokens AND ~13
+# minutes, past the 600s foreground ceiling of the agent's terminal tool. The
+# gate cannot afford that per PR on a single-thread cron pool.
+#
+# DECISION (2026-09-20, Brais): reasoning OFF. A verdict-only call is ~1k tokens
+# and ~40s; the cap below is 8x the measured verdict and fits the deadline at
+# the measured rate. The cost is judgement: the one off-reasoning sample
+# BLOCKed #266 on a reading the human reviewer rejected. The verdict is one
+# input to the auditor agent, not the merge decision, so that is acceptable.
 JUDGE_MAX_TOKENS_DEFAULT = 8000
-# "low", not off: the verdict quality that matters here is spotting a real bug
-# in a diff, which needs some deliberation, but nothing near the unbounded
-# budget. Set HERMES_AUDITOR_JUDGE_REASONING_EFFORT="" to omit the field for a
-# model that rejects it.
-JUDGE_REASONING_EFFORT_DEFAULT = "low"
+# "off" sends `reasoning: {"enabled": false}`. It must be explicit: this model
+# reasons by DEFAULT at effort "high" (OpenRouter's record: default_enabled
+# true, default_effort high), so merely omitting the field — which is what
+# "off" used to do — hands the model the largest budget, not none. Variant C
+# above was sent with exactly this payload and returned in 39s.
+JUDGE_REASONING_EFFORT_DEFAULT = "off"
 
 
 def judge_max_tokens() -> int:
@@ -159,19 +187,25 @@ def judge_max_tokens() -> int:
 
 
 def judge_reasoning_effort() -> str:
-    """Reasoning budget: ``"low"``, ``"medium"``, ``"high"``, or ``""`` = omit.
+    """Reasoning setting: ``"off"``, ``"low"``, ``"medium"``, ``"high"``, or ``""``.
 
-    Override with ``HERMES_AUDITOR_JUDGE_REASONING_EFFORT``. ``_env_value``
-    strips and returns ``""`` for both unset and empty, so it cannot carry
-    "send nothing" — the escape hatch for a model that REJECTS the field
-    (rather than ignoring it, which is OpenRouter's usual behaviour) is the
-    explicit word ``off``, or any unrecognised value. Blank falls back to the
-    default, like every other knob in this module.
+    Override with ``HERMES_AUDITOR_JUDGE_REASONING_EFFORT``:
+      * ``off``  — send ``reasoning: {"enabled": false}``. The default.
+      * ``low`` / ``medium`` / ``high`` — send ``reasoning_effort``.
+      * ``none`` — send NOTHING, for a model that REJECTS the field (rather
+        than ignoring it, which is OpenRouter's usual behaviour). Returned as
+        ``""``. ``_env_value`` strips and returns ``""`` for both unset and
+        empty, so blank cannot carry this meaning itself.
+    Blank or unrecognised falls back to the default, like every other knob in
+    this module — an unrecognised value used to mean "omit the field", which
+    for this model meant reasoning at its default effort, "high".
     """
     raw = (_env_value("HERMES_AUDITOR_JUDGE_REASONING_EFFORT") or "").strip().lower()
-    if not raw:
-        return JUDGE_REASONING_EFFORT_DEFAULT
-    return raw if raw in ("low", "medium", "high") else ""
+    if raw in ("off", "low", "medium", "high"):
+        return raw
+    if raw == "none":
+        return ""
+    return JUDGE_REASONING_EFFORT_DEFAULT
 
 
 def _gh(args: List[str], *, timeout: int = 120) -> Optional[str]:
@@ -321,6 +355,15 @@ def resolve_api_key_source() -> tuple:
 # starved merge-on-green for 8 and 13 minutes on 2026-09-18. If that ceiling
 # starts hurting, lower DEFAULT_LIMIT before raising this again: fewer PRs per
 # run is cheaper than a longer per-call bound.
+#
+# MEASURED (2026-09-20, see JUDGE_MAX_TOKENS_DEFAULT): a HEALTHY low-effort call
+# on the smallest diff the gate sees took 812s at ~27 tok/s, so 420 could never
+# pass one — every call since #299 shipped died here or at the cap. That is why
+# reasoning is now off: a verdict-only call took 39s, and the full 8000-token
+# cap at the measured rate is ~300s, inside this bound. If the effort is ever
+# turned back on, this number and the cap move together, and so must the
+# agent side: the terminal tool's foreground ceiling is 600s
+# (TERMINAL_MAX_FOREGROUND_TIMEOUT) and the auditor prompt passes no timeout.
 JUDGE_DEADLINE_DEFAULT = 420
 
 
@@ -426,7 +469,10 @@ def _build_request(
     # a future one) gets the bound by default rather than opting in.
     payload["max_tokens"] = judge_max_tokens() if max_tokens is None else max_tokens
     effort = judge_reasoning_effort() if reasoning_effort is None else reasoning_effort
-    if effort:
+    if effort == "off":
+        # Explicit, not omitted: see JUDGE_REASONING_EFFORT_DEFAULT.
+        payload["reasoning"] = {"enabled": False}
+    elif effort:
         payload["reasoning_effort"] = effort
     # Stream. Not for progressive display — nothing reads this incrementally —
     # but so the socket has traffic on it: `urlopen(timeout=...)` is a
@@ -437,6 +483,11 @@ def _build_request(
     # seconds instead of holding the single-thread cron pool for minutes.
     if stream:
         payload["stream"] = True
+    # Ask for the usage frame on the final chunk. It is the only place that
+    # says how the completion split between reasoning and verdict — the one
+    # number a `length` failure needs (FinView#266: 8000 tokens gone, nothing
+    # on record to say whether the model thought them away or wrote long).
+    payload["usage"] = {"include": True}
     # OpenRouter sticky-routing key (≤256 chars): pins consecutive auditor
     # reviews to the same upstream backend so the shared system-prompt/rubric
     # prefix stays cache-warm across reviews. Best-effort on OpenRouter's side.
@@ -467,8 +518,8 @@ def _build_request(
     )
 
 
-def _read_stream(resp) -> Tuple[str, Optional[str]]:
-    """Accumulate an OpenRouter SSE stream into ``(text, finish_reason)``.
+def _read_stream(resp) -> Tuple[str, Optional[str], Optional[dict]]:
+    """Accumulate an OpenRouter SSE stream into ``(text, finish_reason, usage)``.
 
     Three line shapes arrive on the wire and only one carries content:
       * ``: OPENROUTER PROCESSING`` — keepalive padding. This is the byte
@@ -479,6 +530,8 @@ def _read_stream(resp) -> Tuple[str, Optional[str]]:
         ``delta.reasoning`` (reasoning models emit it) is deliberately dropped,
         we grade on the conclusion, not the thinking.
       * ``data: [DONE]`` — end of stream.
+    The last content chunk also carries ``usage`` (requested in
+    ``_build_request``); it is returned as-is, ``None`` if it never came.
 
     An error can also arrive mid-stream AFTER a 200 OK (upstream timeout,
     provider fallback exhausted). That is raised, not returned: a partial
@@ -492,6 +545,7 @@ def _read_stream(resp) -> Tuple[str, Optional[str]]:
     """
     chunks: List[str] = []
     finish_reason: Optional[str] = None
+    usage: Optional[dict] = None
     saw_done = False
     for raw in resp:
         line = raw.decode("utf-8", "replace").strip()
@@ -514,6 +568,8 @@ def _read_stream(resp) -> Tuple[str, Optional[str]]:
         err = event.get("error")
         if isinstance(err, dict):
             raise RuntimeError(f"stream carried an error: {err.get('message') or err}")
+        if isinstance(event.get("usage"), dict):
+            usage = event["usage"]
         for choice in event.get("choices") or []:
             piece = (choice.get("delta") or {}).get("content")
             if piece:
@@ -525,7 +581,33 @@ def _read_stream(resp) -> Tuple[str, Optional[str]]:
             "stream ended without a terminator — the connection dropped "
             "mid-verdict and the review is PARTIAL"
         )
-    return "".join(chunks), finish_reason
+    return "".join(chunks), finish_reason, usage
+
+
+def report_judge_usage(model: str, usage: Optional[dict], verdict_chars: int) -> str:
+    """Log how the completion split between reasoning and verdict; return the line.
+
+    On every exit path, like ``report_judge_elapsed`` and for the same reason:
+    a ``length`` failure without this line is undiagnosable. FinView#266 burned
+    the whole 8000-token cap on a ~5 KB diff and nothing recorded whether the
+    model thought the budget away or wrote a long verdict — and those two need
+    opposite fixes (the effort level vs. the cap). ``n/a`` means the provider
+    sent no usage frame, which is itself worth knowing.
+    """
+    u = usage if isinstance(usage, dict) else {}
+    details = u.get("completion_tokens_details") or {}
+
+    def _n(v):
+        return v if isinstance(v, int) else "n/a"
+
+    line = (
+        f"prompt={_n(u.get('prompt_tokens'))} "
+        f"completion={_n(u.get('completion_tokens'))} "
+        f"reasoning={_n(details.get('reasoning_tokens'))} "
+        f"verdict_chars={verdict_chars}"
+    )
+    print(f"auditor.llm: judge usage {model} {line}", file=sys.stderr)
+    return line
 
 
 def _liveness_path() -> "Path":
@@ -586,7 +668,7 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     req = _build_request(model, messages, api_key, session_id=f"hermes-auditor-{tier}")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            text, finish_reason = _read_stream(resp)
+            text, finish_reason, usage = _read_stream(resp)
     except TimeoutError:
         # Either the wall-clock deadline fired or the socket stalled for
         # `timeout` with no chunk. Both are "the judge hung" and both must exit
@@ -601,11 +683,14 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     # impossible to hit and are now reachable because the completion is capped:
     # returning either one would hand the orchestrator something it parses as a
     # review, and a review with no BLOCK in it reads as approval.
+    split = report_judge_usage(model, usage, len(text))
     if finish_reason == "length":
         raise RuntimeError(
             f"auditor.llm: {model} hit the {judge_max_tokens()}-token cap before "
-            f"finishing its verdict — the review is PARTIAL and must not be "
-            f"trusted. Raise HERMES_AUDITOR_JUDGE_MAX_TOKENS if this recurs."
+            f"finishing its verdict ({split}) — the review is PARTIAL and must "
+            f"not be trusted. Mostly reasoning: set "
+            f"HERMES_AUDITOR_JUDGE_REASONING_EFFORT=off; mostly verdict: raise "
+            f"HERMES_AUDITOR_JUDGE_MAX_TOKENS."
         )
     if not text.strip():
         raise RuntimeError(
