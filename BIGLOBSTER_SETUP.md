@@ -145,6 +145,17 @@ Two rules the reconciler enforces, both from incidents:
 
 Model env vars are read by a **cont-init hook**, so they take effect on a full Zeabur container restart only — the panel's "Restart Gateway" does not re-run cont-init. See *Three different "restarts"* above.
 
+### Judge generation bounds (read before touching the deadline)
+Both candidate system-reviewer models (`deepseek-v4.1-flash`, `deepseek-v4-flash-0731`) are **reasoning** models with completion budgets of 384k and 943k tokens. The judge call originally sent no cap and did not stream, so its latency had no ceiling and the gate timed out on whatever PR happened to draw a long thinking run — including `biglobster#550`, a 3-file prose diff (2026-09-20). Raising `HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS` from 300 to 420 did not help and could not: the tail was unbounded.
+
+| Knob | Default | What it does |
+|---|---|---|
+| `HERMES_AUDITOR_JUDGE_MAX_TOKENS` | `8000` | Hard cap on the verdict. A truncated verdict **fails the gate closed** (exit 4), never returns partial. Floor 256. |
+| `HERMES_AUDITOR_JUDGE_REASONING_EFFORT` | `low` | `low`/`medium`/`high`; `off` omits the field for a model that rejects it. |
+| `HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS` | `420` | Outer backstop for a hung socket. **Not** the dial for a slow model. |
+
+If the gate times out, read the `auditor.llm: judge call ... in Ns (deadline Ns, N% used)` line on stderr first: near 100% means the model ran long (raise the token cap or lower the effort), well under it means the socket stalled upstream.
+
 ### owl-alpha instability window (resolved)
 `openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10), which was itself superseded by `openai/gpt-5.6-luna`. The chain has since shifted down: hy3 is now the `fallback_model`, and deepseek has left the main chain entirely — it survives only in the auditor's own knobs.
 
