@@ -104,7 +104,7 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 | `OPENROUTER_API_KEY` | Yes | OpenRouter API key |
 | `HERMES_CALLBACK_SECRET` | Yes | Shared secret for callback auth. Must match BigLobster's value. |
 | `HERMES_CALLBACK_URL` | Yes | `https://biglobster.top/api/hermes-callback` |
-| `HERMES_DEFAULT_MODEL` | Yes | Active model. Currently: `openrouter/owl-alpha` |
+| `HERMES_DEFAULT_MODEL` | Yes | Active model. Target: `deepseek/deepseek-v4.1-flash` (see *Model* below) |
 | `HERMES_MAX_ITERATIONS` | No | Max agent turns per task (default: 60) |
 | `HERMES_DASHBOARD` | Yes | Set to `1` to start the web dashboard on port 9119 |
 | `HERMES_DASHBOARD_INSECURE` | Yes | Set to `1`. Since the s6 upgrade, the dashboard **refuses to bind to `0.0.0.0`** without this (the OAuth gate engages on non-loopback binds and no auth provider is configured). Without it the dashboard never comes up → Zeabur health probe fails → restart loop. See the deploy note below. |
@@ -126,17 +126,19 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 ## Model
 
-`openai/gpt-5.6-luna` via OpenRouter — the active default, superseding `tencent/hy3`. Values below verified against the live Zeabur service on 2026-09-05.
+`deepseek/deepseek-v4.1-flash` via OpenRouter — the standing default (CEO, 2026-09-20), superseding `openai/gpt-5.6-luna`.
+
+> **The table below is the TARGET, not a verified reading.** The last verification against the live Zeabur service was 2026-09-05, before this change. Zeabur is the source of truth, so these values are only true once the vars are set there — confirm with `hermes doctor` after a full container restart.
 
 Set via env vars in Zeabur — the `03-biglobster-config` boot hook reconciles `config.yaml` on the persistent volume at **every boot**. `docker/config.yaml` in the repo is only the *first-boot seed*: an existing volume keeps its own file, so the env var is the source of truth, not the repo.
 
 | Role | Env var | Value |
 |---|---|---|
-| Main | `HERMES_DEFAULT_MODEL` | `openai/gpt-5.6-luna` |
+| Main | `HERMES_DEFAULT_MODEL` | `deepseek/deepseek-v4.1-flash` |
 | Fallback | `HERMES_FALLBACK_MODEL` | `tencent/hy3` |
 | Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4-flash-0731` |
 | Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `deepseek/deepseek-v4.1-flash` |
-| Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `openai/gpt-5.6-luna` |
+| Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `deepseek/deepseek-v4.1-flash` |
 
 Code defaults, used only when a var above is unset, are `deepseek/deepseek-v4.1-flash` for **both** tiers — the standing Hermes default. The content default was `openrouter/owl-alpha` until 2026-09-20; that model no longer exists on OpenRouter, so the default was a guaranteed 404 — harmless only because the env var is set. Keep both defaults **live**: a dead default turns a missing env var into a broken gate instead of a degraded one.
 
@@ -158,8 +160,9 @@ Both candidate system-reviewer models (`deepseek-v4.1-flash`, `deepseek-v4-flash
 
 If the gate times out, read the `auditor.llm: judge call ... in Ns (deadline Ns, N% used)` line on stderr first: near 100% means the model ran long (raise the token cap or lower the effort), well under it means the socket stalled upstream.
 
-### owl-alpha instability window (resolved)
-`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10), which was itself superseded by `openai/gpt-5.6-luna`. The chain has since shifted down: hy3 is now the `fallback_model`, and deepseek has left the main chain entirely — it survives only in the auditor's own knobs.
+### owl-alpha instability window (HISTORY — the model is retired)
+**`openrouter/owl-alpha` no longer exists on OpenRouter** (absent from the live model list, confirmed 2026-09-20). Everything below is the record of why the chain moved, kept because several guards in the code cite it. It is not configuration.
+`openrouter/owl-alpha` was the original model. It hit a stretch of "Provider returned error" failures on OpenRouter around 2026-05-21, so we temporarily switched the default to `deepseek/deepseek-v4-flash`. owl-alpha recovered (2026-06-02) and ran as the active model until superseded by `tencent/hy3` (2026-07-10), then by `openai/gpt-5.6-luna`, and finally by `deepseek/deepseek-v4.1-flash` (2026-09-20). hy3 remains the `fallback_model`. deepseek, which had left the main chain and survived only in the auditor's knobs, is now back at the head of it.
 
 ### Vendor segment vs. provider auto-detection (read before changing any model here)
 Every model above is served **through OpenRouter**, but the vendor segment of a model ID (`tencent/`, `openai/`, `deepseek/`) is also a provider name in Hermes' alias table (`hermes_cli/models.py`). Any path that *auto-detects* a provider from that segment resolves to the direct vendor API, not OpenRouter, and fails on the missing key:

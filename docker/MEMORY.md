@@ -6,7 +6,7 @@ git identity must be configured before any commit: git config --global user.name
 §
 ping is not available in this container. Use curl for connectivity checks: curl -sf --max-time 5 https://github.com -o /dev/null && echo OK || echo FAIL
 §
-vision tool: AUXILIARY_VISION_MODEL env var sets the vision model. owl-alpha does not support image input — if vision fails with 404, the tool auto-retries with the default backend (google/gemini-3-flash-preview via OpenRouter). Check AUXILIARY_VISION_MODEL value before debugging vision failures.
+vision tool: AUXILIARY_VISION_MODEL env var sets the vision model. If the configured model does not support image input, vision fails with 404 and the tool auto-retries with the default backend (google/gemini-3-flash-preview via OpenRouter). Check AUXILIARY_VISION_MODEL value before debugging vision failures. (The original case was owl-alpha, text-only and since retired; the main model is now deepseek/deepseek-v4.1-flash, which does accept images — so a 404 here now points at AUXILIARY_VISION_MODEL itself, not at the main model.)
 §
 Memory limit is 6000 chars. When near-full, compact entries: merge related facts, drop stale context. Never let memory fill to capacity — future writes will be silently rejected.
 §
