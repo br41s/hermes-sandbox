@@ -88,8 +88,10 @@ def test_deepseek_is_provider_pinned_with_fallbacks_on():
 
 
 def test_non_deepseek_is_not_pinned():
-    # owl-alpha is a single OpenRouter-native backend — no pinning, no harm.
-    req = llm._build_request("openrouter/owl-alpha", [{"role": "user", "content": "hi"}],
+    # A single-backend model has no backend-local cache to keep warm, so there
+    # is nothing to pin to. (Fixture was openrouter/owl-alpha until that model
+    # was retired from OpenRouter — see CONTENT_MODEL_DEFAULT.)
+    req = llm._build_request("openai/gpt-5.6-luna", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-content")
     assert "provider" not in _body(req)
 

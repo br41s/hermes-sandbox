@@ -135,8 +135,10 @@ Set via env vars in Zeabur — the `03-biglobster-config` boot hook reconciles `
 | Main | `HERMES_DEFAULT_MODEL` | `openai/gpt-5.6-luna` |
 | Fallback | `HERMES_FALLBACK_MODEL` | `tencent/hy3` |
 | Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4-flash-0731` |
-| Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `deepseek/deepseek-v4-flash-0731` |
+| Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `deepseek/deepseek-v4.1-flash` |
 | Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `openai/gpt-5.6-luna` |
+
+Code defaults, used only when a var above is unset, are `deepseek-v4.1-flash` (system) and `deepseek-v4-flash-0731` (content). The content default was `openrouter/owl-alpha` until 2026-09-20; that model no longer exists on OpenRouter, so the default was a guaranteed 404 — harmless only because the env var is set. Keep both defaults **live and cheap**: a dead default turns a missing env var into a broken gate instead of a degraded one.
 
 Two rules the reconciler enforces, both from incidents:
 

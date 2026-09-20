@@ -60,7 +60,21 @@ from typing import List, Optional, Tuple
 # snapshots for it, re-pin to the dated one: an undated alias with siblings
 # has previously resolved to the oldest (priciest) snapshot, not the newest.
 SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
-CONTENT_MODEL_DEFAULT = "openrouter/owl-alpha"
+# Was `openrouter/owl-alpha` until 2026-09-20, by which point that model no
+# longer existed on OpenRouter (confirmed absent from the live /models list,
+# 447 entries). A dead id is the one thing a default here must never be: the
+# contract above is "degrades loudly-but-safely", and a 404 from the judge
+# degrades to a BROKEN GATE (exit 4), not to a safe one. It went unnoticed
+# because production sets HERMES_AUDITOR_CONTENT_MODEL, so the default never
+# fired — and it only became load-bearing when langmap.json moved translation
+# PRs into this tier.
+#
+# v4-flash-0731 is the cheapest live option by a wide margin ($0.04/$0.08 per
+# M vs luna's $0.20/$1.20), which is what a CONTENT-tier default should be, and
+# it is the DATED slug per the rule in BIGLOBSTER_SETUP.md: the undated alias
+# resolves to the oldest, priciest snapshot. It is also a reasoning model, but
+# that is now bounded — see JUDGE_MAX_TOKENS_DEFAULT.
+CONTENT_MODEL_DEFAULT = "deepseek/deepseek-v4-flash-0731"
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_SYSTEM_MSG = (
@@ -429,8 +443,9 @@ def _build_request(
     # re-bills the full prefix (measured ~44% miss / 56% hit on the orchestrator
     # before this). Prefer the DeepSeek upstream so the cache is reused; keep
     # fallbacks ON so a DeepSeek outage degrades to another provider rather than
-    # breaking the review gate. Only deepseek/* benefits — owl-alpha is single
-    # OpenRouter-native backend and needs no pinning.
+    # breaking the review gate. Only deepseek/* benefits — a model served from a
+    # single OpenRouter-native backend has no cache to keep warm and needs no
+    # pinning.
     if model.startswith("deepseek/"):
         payload["provider"] = {"order": ["deepseek"]}
     body = json.dumps(payload).encode("utf-8")
