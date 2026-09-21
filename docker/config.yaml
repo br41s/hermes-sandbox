@@ -2,7 +2,12 @@ model:
   default: tencent/hy3
   provider: openrouter
   base_url: ''
-providers: {}
+providers:
+  openrouter:
+    # Reconciled on every boot by docker/cont-init.d/03-biglobster-config;
+    # see the comment there for why 600 (must stay below the cron inactivity
+    # watchdog, 1200s).
+    request_timeout_seconds: 600
 fallback_model:
   provider: openrouter
   model: deepseek/deepseek-v4.1-flash
