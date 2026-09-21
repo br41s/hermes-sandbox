@@ -628,6 +628,29 @@ def _reconcile_config(config_path, label, is_rented=False, byok_images=False):
             if pr.get("order") != ["deepseek"]:
                 pr["order"] = ["deepseek"]
                 changed = True
+        # Bound every OpenRouter request to 600s. Without a per-provider
+        # request_timeout_seconds the httpx timeout falls back to
+        # HERMES_API_TIMEOUT (1800s), which is LOOSER than the cron inactivity
+        # watchdog (1200s) — so a hung non-streaming response was never a
+        # retryable SDK timeout, it was always the watchdog killing the whole
+        # run ("idle for 1204s ... waiting for non-streaming API response",
+        # ~14 times since 2026-08 across auditor-review, gap hunters and the
+        # Shoroban jobs). At 600s the request fails first and the agent's own
+        # retry gets a second attempt inside the same run. Main + every
+        # profile, because a profile job reads ITS config.yaml, not main's.
+        # First set by hand on 2026-09-21; reconciled here so a newly
+        # provisioned profile gets it too.
+        provs = cfg.get("providers")
+        if not isinstance(provs, dict):
+            provs = {}
+            cfg["providers"] = provs
+        orc = provs.get("openrouter")
+        if not isinstance(orc, dict):
+            orc = {}
+            provs["openrouter"] = orc
+        if orc.get("request_timeout_seconds") != 600:
+            orc["request_timeout_seconds"] = 600
+            changed = True
         # Enable the Langfuse observability plugin when its keys are present.
         # The recorder is OPT-IN via plugins.enabled — the env keys alone do
         # NOT activate it (the #1 source of "I set the keys but see no traces").
