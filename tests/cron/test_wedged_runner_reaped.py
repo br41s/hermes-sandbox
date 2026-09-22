@@ -25,8 +25,11 @@ we find out by that test failing rather than by trusting a comment.
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 WEDGE = """
 import concurrent.futures, threading, time
@@ -128,3 +131,60 @@ def test_cli_survives_a_broken_scheduler_import(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", boom)
     assert cli._exit_hard_if_threads_abandoned(7) == 7
+
+
+# ------------------------------------ the reap must beat a blocked stdout ---
+
+def test_exit_happens_even_when_stdout_is_a_full_unread_pipe(tmp_path):
+    """The reap must run BEFORE anything prints.
+
+    A wedged run often leaves stdout as a pipe with no reader — an operator's
+    `zeabur service exec` that dropped, a closed terminal. Once the pipe buffer
+    fills, print() blocks forever, and on 2026-09-22 that stranded the very
+    process the hard exit exists to reap: the run was already recorded failed,
+    and the main thread sat in process_bootstrap.write() on the "Triggered job:"
+    line, holding 278 MB for 22 minutes.
+
+    Here the child fills the pipe and then prints, with nobody draining it. It
+    must still exit.
+    """
+    script = tmp_path / "blocked_stdout.py"
+    script.write_text(
+        "import os, sys\n"
+        f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+        # Fill the OS pipe buffer so any FURTHER write blocks. The fill itself
+        # must not block, hence non-blocking until EAGAIN, then back to
+        # blocking so fd 1 behaves exactly like a stranded terminal.
+        "os.set_blocking(1, False)\n"
+        "try:\n"
+        "    while True:\n"
+        "        os.write(1, b'x' * 65536)\n"
+        "except BlockingIOError:\n"
+        "    pass\n"
+        "os.set_blocking(1, True)\n"
+        "from hermes_cli import cron as cli\n"
+        "import cron.scheduler as sched\n"
+        "sched._note_abandoned_agent_thread()\n"
+        "cli._exit_hard_if_threads_abandoned(0)\n"
+        "os._exit(99)\n",  # only reached if the helper failed to exit
+        encoding="utf-8",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise AssertionError(
+            "the process hung on a full stdout pipe — the reap ran too late, "
+            "or its own print blocked"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+    assert proc.returncode == 0, (
+        f"expected the helper's os._exit(0), got {proc.returncode} "
+        f"({'fell through to the sentinel' if proc.returncode == 99 else 'unexpected'})"
+    )
