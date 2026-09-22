@@ -348,6 +348,43 @@ Two rules hold across all of them, and they are what makes unattended writing de
   per run and each article at most once a year** — the ledger flag, not the scoring, is what
   bounds the work, so an empty queue means the corpus is done, not that something broke.
 
+### The Infographic Engineer is one agent for every site
+
+`infographic/infographic-engineer.prompt` serves biglobster AND every rental. The
+lane is resolved at runtime from `BL_SITE_URL`: set means the client's HTTP lane
+(`bl_site_publish`, live on save), unset means the git lane (branch + PR, a human
+merges). Only two things differ per stack — the delivery lane and the design-token
+names (`--bg-surface`/`--font-body` here, `--bg`/`--font` on a client site). Never
+fork the drawing rules for one client.
+
+**Raster generation was removed from this agent.** An image model misspells its own
+labels, renders hex colour codes as if they were text and crops its composition, and
+none of that is checkable before it is live on a client's site. Everything is inline
+SVG now, which the client sanitizer allows (`svg g title desc path rect circle
+ellipse line polyline polygon text tspan` — but not `defs`, `marker` or `style`).
+
+**`infographic/validate_infographic.py` is the gate, and it is not optional.** The
+agent cannot render what it draws; the old prompt asked it to do the layout
+arithmetic in its head and 16 of 82 published graphics had text outside its box or
+the canvas. The validator measures with real Inter advance widths
+(`inter-metrics.json`, regenerable with `measure_inter_metrics.js`) and exits
+non-zero with a list of fixes. It is a committed script invoked by path because cron
+denies `execute_code` — same convention as `onsite-seo/build_sitestate.py`. It needs
+`hunspell`+`hunspell-es`, which the Dockerfile now installs, for the spelling check;
+without them it warns and skips rather than failing.
+
+Two things that look like details and are not:
+
+- **The done-marker is `class="article-infographic"`, not the HTML comment.** The
+  client sanitizer strips comments before render (they survive in the DB, which is
+  why `shorts:auto` still works — that agent reads the API, never the page), and on
+  biglobster 55 articles already carry a figure with no comment, so the old check
+  would have given them a second infographic.
+- **The canvas is always `viewBox="0 0 800 <height>"`,** on every site. Widths used
+  to run 360→1000, so the same `font-size` rendered up to 3x bigger on one article
+  than another. Each site fits it to the column and adds its own "Ampliar" control;
+  presentation is the stack's job, not the agent's.
+
 `product-sheets` is the exception worth remembering when selling: it only does anything for
 a client whose catalogue comes from a distributor feed, because that feed is the only thing
 it writes from. Sold to a client without one it goes quiet on every run.
