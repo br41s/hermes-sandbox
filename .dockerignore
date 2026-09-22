@@ -89,6 +89,16 @@ infographic/
 # `hermes cron sync-prompt` both resolve prompt_source against /opt/hermes, so
 # dropping it makes the watcher alert "prompt source missing" on every sweep.
 !infographic/*.prompt
+# ...and the pre-publish validator the prompt invokes BY PATH
+# (`python3 /opt/hermes/infographic/validate_infographic.py`), plus the font
+# metrics it measures with. Without these the agent's mandatory validation step
+# fails on a missing file every run, and the only symptom is a cron job that
+# stops producing infographics. That is not hypothetical: the first deploy of
+# the unified agent shipped the prompt and left the validator behind, because
+# this block re-included only *.prompt.
+# tests/docker/test_dockerignore_runtime_files.py holds this invariant.
+!infographic/*.py
+!infographic/inter-metrics.json
 
 # Plugin-level docs (hermes-achievements ships docs/ but the runtime doesn't read them)
 plugins/hermes-achievements/docs/
