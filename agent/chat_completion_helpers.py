@@ -452,10 +452,27 @@ def direct_api_call(agent, api_kwargs: dict):
 
     Used when ``should_use_direct_api_call`` is True. Skips the interrupt worker
     (whose only job is interactive-interrupt responsiveness, which this context
-    does not have) so the nested-pool deadlock (#62151) cannot occur. Because the
-    request runs in-flight normally, the per-request OpenAI client's own httpx
-    timeout (provider ``request_timeout_seconds`` / ``HERMES_API_TIMEOUT``) bounds
-    a genuinely hung provider — the same bound interactive calls already rely on.
+    does not have) so the nested-pool deadlock (#62151) cannot occur.
+
+    It used to say here that the client's httpx timeout "bounds a genuinely hung
+    provider". **It does not.** An httpx timeout is PER OPERATION and resets on
+    every byte, so a provider that returns headers and then trickles the body
+    holds the request open forever while technically making progress.
+
+    Measured 2026-09-22: OpenRouter dripped a response at ~12 bytes/sec
+    (``rchar`` +140 every 12s, steady, for 20 minutes) on an ESTABLISHED socket.
+    Every read finished far inside the 600s read timeout, so nothing fired. Five
+    consecutive Infographic Engineer runs died on the cron inactivity watchdog
+    instead, each reporting "waiting for non-streaming API response" — naming the
+    wrong layer, because that string is stamped once when the call starts.
+
+    ``stale_timeout_seconds`` does not cover it either: that is time-to-FIRST
+    byte, and this stalls after.
+
+    So the call now carries an OVERALL deadline. A timer thread aborts the
+    in-flight request through the same ``_abort_active_request`` path cron's
+    watchdog already uses, turning an unbounded hang into a normal API error the
+    retry / fallback / credential-rotation loop can act on.
     """
     _check_stale_giveup(agent)
     agent._touch_activity("waiting for non-streaming API response")
@@ -480,6 +497,33 @@ def direct_api_call(agent, api_kwargs: dict):
         agent._active_request_abort = _abort_active_request
         return client
 
+    # Overall wall-clock deadline. Reuses request_timeout_seconds because that
+    # is the bound this function always claimed to enforce; this makes the claim
+    # true. A plain Timer, not a worker thread — the call stays inline, so the
+    # nested-pool deadlock (#62151) that banned the interrupt worker here cannot
+    # come back.
+    _deadline = get_provider_request_timeout(agent.provider, agent.model)
+    _deadline_timer = None
+    _deadline_fired = threading.Event()
+
+    def _on_deadline() -> None:
+        _deadline_fired.set()
+        logger.error(
+            "%sAPI call exceeded its overall deadline of %.0fs — aborting the "
+            "request. The provider may be trickling the response body, which no "
+            "per-operation httpx timeout can catch.",
+            getattr(agent, "log_prefix", ""), _deadline,
+        )
+        try:
+            _abort_active_request("overall request deadline exceeded")
+        except Exception:
+            logger.debug("deadline abort failed", exc_info=True)
+
+    if _deadline and _deadline > 0:
+        _deadline_timer = threading.Timer(_deadline, _on_deadline)
+        _deadline_timer.daemon = True
+        _deadline_timer.start()
+
     try:
         response = _dispatch_nonstreaming_api_request(
             agent, api_kwargs, make_client=_make_client
@@ -487,6 +531,15 @@ def direct_api_call(agent, api_kwargs: dict):
     except Exception:
         if getattr(agent, "_interrupt_requested", False):
             raise InterruptedError("Agent interrupted during API call") from None
+        if _deadline_fired.is_set():
+            # Surface the real reason. Without this the abort looks like a
+            # generic transport error and the next reader re-learns all of the
+            # above from scratch.
+            raise TimeoutError(
+                f"API call aborted after exceeding its overall deadline of "
+                f"{_deadline:.0f}s (provider sent no complete response; a "
+                f"trickled body does not trip a per-operation timeout)"
+            ) from None
         raise
     else:
         if getattr(agent, "_interrupt_requested", False):
@@ -494,6 +547,8 @@ def direct_api_call(agent, api_kwargs: dict):
         _reset_stale_streak(agent)
         return response
     finally:
+        if _deadline_timer is not None:
+            _deadline_timer.cancel()
         if getattr(agent, "_active_request_abort", None) is _abort_active_request:
             agent._active_request_abort = None
         with request_client_lock:
