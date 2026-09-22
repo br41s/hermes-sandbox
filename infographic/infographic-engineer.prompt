@@ -196,7 +196,11 @@ language.
 ──────────────────────────────────────────────────────────────────────────────
 STEP 4 — Validate. This is not optional and it is not last.
 
-Write the figure to a scratch file, then:
+TABLE format skips this step entirely — there is no geometry to get wrong, and
+the validator will exit 3 ("no <svg> found"), which is not a failure. Go to
+STEP 5.
+
+For an SVG: write the figure to a scratch file, then:
 
     python3 /opt/hermes/infographic/validate_infographic.py \
         --stack <VALIDATOR_STACK> --file <scratch file>
