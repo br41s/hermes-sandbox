@@ -120,7 +120,8 @@ Cost is one call per hourly sweep.
 
 **Runtime-relevance filter — the anti-crying-wolf rule.** Of the 11 commits in
 the founding incident, **10 touched `.github/workflows` and nothing else**
-(confirmed per-commit via the API); the eleventh carried 3 runtime files. An
+(confirmed per-commit via the API); the eleventh carried 3 non-workflow files,
+of which 2 are runtime once `tests/` is excluded as inert. An
 alert that shouts "11 commits behind" when ten are inert trains you to ignore
 it.
 
@@ -128,7 +129,7 @@ So: fire only when the **aggregate** `files` list contains at least one path
 outside the inert set (`.github/**`, `tasks/**`, `tests/**`). Report `ahead_by`
 alongside the count of runtime-relevant *files* — deliberately files, not
 commits, because that is what one call can tell you honestly. In the founding
-case that reads "11 commits behind, 3 runtime files changed", which is both true
+case that reads "11 commits behind, 2 runtime files changed", which is both true
 and actionable.
 
 Keep the inert set *tight*. Under-filtering costs one unnecessary alert;
@@ -136,9 +137,14 @@ over-filtering costs a missed deploy. Specifically, `*.md` is NOT inert — skil
 `SKILL.md` files and `AGENTS.md` are read by the runtime — and `.prompt` files
 are emphatically not inert (they are Half 2's whole subject).
 
-**Grace threshold.** Fire on the age of the *oldest* undeployed
-runtime-relevant commit, not on the count, so a normal merge-then-deploy cycle
-never alerts. `DEPLOY_DRIFT_GRACE_HOURS`, default 6, env-tunable, mirroring
+**Grace threshold.** Fire on the age of the *oldest undeployed commit in the
+range*, not on the count, so a normal merge-then-deploy cycle never alerts.
+
+> **Corrected during implementation, 2026-09-22.** This originally said "oldest
+> runtime-relevant commit". Per-commit relevance is not available from the single
+> compare call (see the box above), so the age basis is the oldest commit in the
+> range. The relevance test still gates firing at all; it just does not also pick
+> which commit supplies the clock. `DEPLOY_DRIFT_GRACE_HOURS`, default 6, env-tunable, mirroring
 `STALE_GRACE_HOURS`.
 
 **Dedup key: `deploy-drift:<running_sha>`.** One alert per stale deployment; it
@@ -157,8 +163,15 @@ A producer that returns `[]` on every error is indistinguishable from a healthy
 one with nothing to report. That is exactly how the auditor judge went 12 weeks
 without running, and it is the failure mode this repo keeps re-learning.
 
-So: a `deploy-drift-blind:<reason>` incident, exempt from the `seen` baseline,
-following the `depalert-blind:` precedent verbatim. Reasons that must be loud
+So: a `deploy-drift-blind:<reason>:<date>` incident, following the
+`depalert-blind:` precedent. The date in the id makes it repeat daily until
+someone acts rather than once ever.
+
+> **Simplified during implementation, 2026-09-22.** The draft said "exempt from
+> the `seen` baseline". There is nothing to be exempt from: baselining exists
+> only for dependency alerts, where a standing backlog would otherwise flood the
+> first sweep. Deploy drift has no backlog, so the blind incident flows through
+> the ordinary `seen` path. Reasons that must be loud
 rather than silent:
 
 - no token resolved;
@@ -169,6 +182,13 @@ rather than silent:
   that is not on `main` at all. That is the scariest state of the four and
   `scripts/deploy.sh` already calls it out separately; mirror that here.
 
+**Blind only inside the deployment.** A missing `.hermes_build_sha` means
+"cannot tell" in the pod, but on a laptop or in CI it means "there is no deployed
+image here" — not applicable, not blind. Gate on whether the file's parent
+directory exists: absent, return []. Without this every developer's test run and
+every CI sweep grows a spurious blind incident, which is the crying-wolf failure
+one paragraph further up, aimed at ourselves.
+
 Nothing in this producer may raise. It must never be able to take the rest of
 the sweep down with it.
 
@@ -178,8 +198,8 @@ Hermetic, mirroring `tests/test_incident_sweep_regression.py` — inject the
 compare payload and the running sha; no network, no container.
 
 - **The founding case**: the real 2026-09-22 compare payload (`ahead_by: 11`,
-  13 aggregate files, 3 of them runtime) -> fires, and the brief reads
-  "11 commits behind, 3 runtime files changed".
+  13 aggregate files = 10 workflow + 1 test + 2 runtime) -> fires, and the brief
+  reads "11 commits behind, 2 runtime files changed".
 - Aggregate diff touching only `.github/**` -> silent, however many commits.
 - Inside the grace window -> silent.
 - Same running sha across two sweeps -> exactly one alert.

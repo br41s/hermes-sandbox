@@ -655,6 +655,214 @@ DEP_SEVERITIES = ("critical", "high")
 DEP_ROLLUP_THRESHOLD = 6  # more new packages than this in one sweep -> one rollup
 
 
+# ── deploy drift ─────────────────────────────────────────────────────────────
+# Production runs whatever image the Zeabur service tag points at; `main` moves
+# on every merge. Nothing reconciles the two — `scripts/deploy.sh` is run by
+# hand — so the gap is invisible until someone thinks to look. On 2026-09-22 it
+# had reached 11 commits, one of which was a real fix that had been sitting
+# undeployed. See tasks/deploy-automation-plan.md, "Half 1 (revised)", for why
+# this is a signal rather than an auto-deploy.
+
+DEPLOY_DRIFT_GRACE_HOURS = 6  # a same-day merge-then-deploy is not drift
+# Paths a deploy cannot change the behaviour of. Deliberately TIGHT: under-
+# filtering costs one unnecessary alert, over-filtering costs a missed deploy.
+# `*.md` is NOT here — skill SKILL.md and AGENTS.md are read by the runtime —
+# and neither is `.prompt`, which is the whole subject of Half 2.
+_DEPLOY_INERT_PREFIXES = (".github/", "tasks/", "tests/")
+_BUILD_SHA_FILE = Path("/opt/hermes/.hermes_build_sha")
+
+
+def _deploy_drift_blind(reason: str, detail: str, *,
+                        now: Optional[datetime] = None) -> Incident:
+    """One incident saying the drift signal cannot see, not that all is well.
+
+    Same reasoning as ``_blind_incident``: a producer that returns [] on every
+    failure is indistinguishable from a healthy one with nothing to report,
+    which is how the auditor judge went twelve weeks without running. The id
+    carries the UTC date so this repeats daily until someone acts, rather than
+    once ever.
+    """
+    now = now or _now()
+    return Incident(
+        id=f"deploy-drift-blind:{reason}:{now.strftime('%Y-%m-%d')}",
+        kind="deploy",
+        title=f"Deploy-drift signal is BLIND ({reason})",
+        detail=(f"reason: {reason}\n{detail}\n"
+                "Until this clears, 'no deploy drift' means 'cannot tell', not "
+                "'production is current'."),
+        handoff=("check the deploy-drift detector in incidents/sweep.py — "
+                 "run `scripts/deploy.sh --status` by hand meanwhile"),
+    )
+
+
+def _fetch_deploy_compare(repo: str, base: str, token: str) -> Optional[dict]:
+    """``base...main`` from the compare API.
+
+    Three outcomes, and the difference is the point:
+      * dict — the API answered.
+      * None — transient (network, timeout, 5xx). Stay quiet; the next sweep is
+               an hour away.
+      * raise DependencyAlertBlind — refused (401/403/404). Never self-heals,
+               so it must surface rather than become a reassuring silence.
+
+    One call. ``files`` comes back as the AGGREGATE diff across the range, not
+    per-commit; a per-commit breakdown would cost one request per commit, which
+    is the wrong shape for an hourly sweep.
+    """
+    import urllib.error
+    import urllib.request
+
+    url = f"https://api.github.com/repos/{repo}/compare/{base}...main"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in _BLIND_STATUSES:
+            raise DependencyAlertBlind(exc.code, f"compare {base}...main") from exc
+        return None
+    except Exception:
+        return None
+
+
+def _read_build_sha(path: Optional[Path] = None) -> str:
+    """The commit the running image was built from, stamped by the Dockerfile.
+
+    The watcher runs INSIDE the pod, so this is a local file read — no
+    `zeabur service exec`, and no Zeabur credential anywhere in this signal.
+    Absent on images built before HERMES_GIT_SHA was wired; report that rather
+    than guessing "up to date", which is the failure this whole check exists
+    to prevent.
+    """
+    path = path or _BUILD_SHA_FILE
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def deploy_drift_incidents(*, compare: Optional[dict] = None,
+                           running_sha: Optional[str] = None,
+                           repo: Optional[str] = None,
+                           token: Optional[str] = None,
+                           now: Optional[datetime] = None,
+                           grace_hours: Optional[float] = None,
+                           build_sha_path: Optional[Path] = None) -> List[Incident]:
+    """Flag production running meaningfully behind ``main``.
+
+    Fires only when ALL of these hold, so a normal merge-then-deploy is silent:
+      * the aggregate range diff touches a path outside ``_DEPLOY_INERT_PREFIXES``
+        — of the 11 founding commits, 10 were workflow-only;
+      * the oldest undeployed commit is older than ``grace_hours``.
+
+    Dedup is on the RUNNING sha, so one stale deployment is one alert that goes
+    quiet when you deploy — not a fresh alert per subsequent merge.
+    """
+    now = now or _now()
+    if grace_hours is None:
+        try:
+            grace_hours = float(os.environ.get("HERMES_DEPLOY_DRIFT_GRACE_HOURS")
+                                or DEPLOY_DRIFT_GRACE_HOURS)
+        except ValueError:
+            grace_hours = DEPLOY_DRIFT_GRACE_HOURS
+
+    if running_sha is None:
+        running_sha = _read_build_sha(build_sha_path)
+    if not running_sha:
+        # A missing stamp is only alarming INSIDE the deployment. On a laptop or
+        # in CI there is no /opt/hermes and no deployed image to be behind, so
+        # the honest answer is "not applicable", not "blind" — otherwise every
+        # developer's test run grows a spurious incident.
+        sha_file = build_sha_path or _BUILD_SHA_FILE
+        if not sha_file.parent.is_dir():
+            return []
+        return [_deploy_drift_blind(
+            "no-build-sha",
+            f"{sha_file} is missing or empty — the image predates the "
+            "HERMES_GIT_SHA build-arg, or the file was not stamped.",
+            now=now)]
+
+    if compare is None:
+        repo = repo or (os.environ.get("HERMES_DEPLOY_DRIFT_REPO")
+                        or os.environ.get("GITHUB_REPOSITORY")
+                        or "br41s/hermes-sandbox").strip()
+        token = token or (os.environ.get("HERMES_DEPLOY_DRIFT_GITHUB_TOKEN")
+                          or os.environ.get("GITHUB_TOKEN")
+                          or os.environ.get("GH_TOKEN") or "").strip()
+        if not token:
+            return [_deploy_drift_blind(
+                "no-token",
+                "no GitHub token resolved (HERMES_DEPLOY_DRIFT_GITHUB_TOKEN / "
+                "GITHUB_TOKEN / GH_TOKEN) — cannot read how far main has moved.",
+                now=now)]
+        try:
+            compare = _fetch_deploy_compare(repo, running_sha, token)
+        except DependencyAlertBlind as blind:
+            return [_deploy_drift_blind(
+                f"api-{blind.status}",
+                f"the compare API refused: HTTP {blind.status} for "
+                f"{repo} {running_sha}...main.",
+                now=now)]
+        if compare is None:
+            return []   # transient; try again next hour
+
+    # GitHub's own verdict on the relationship, rather than inferring it.
+    status = str(compare.get("status") or "")
+    if status in ("behind", "diverged"):
+        return [_deploy_drift_blind(
+            "not-an-ancestor",
+            f"production is serving {running_sha}, which is '{status}' relative to "
+            "main — it is running code that is NOT on main. Do not deploy over "
+            "this before working out what it is.",
+            now=now)]
+
+    ahead_by = compare.get("ahead_by") or 0
+    if status == "identical" or not ahead_by:
+        return []
+
+    # `files` is the aggregate range diff. GitHub omits it entirely past ~300
+    # files; treat a missing list as runtime-relevant rather than assuming the
+    # drift is inert — silence is the dangerous direction here.
+    files = compare.get("files")
+    if files is None:
+        runtime_files = None
+    else:
+        runtime_files = [f for f in files
+                         if not str(f.get("filename") or "").startswith(_DEPLOY_INERT_PREFIXES)]
+        if not runtime_files:
+            return []
+
+    commits = compare.get("commits") or []
+    oldest = None
+    for c in commits:
+        ts = _parse_iso((((c.get("commit") or {}).get("committer") or {}).get("date")))
+        if ts is not None and (oldest is None or ts < oldest):
+            oldest = ts
+    if oldest is not None and (now - oldest) < timedelta(hours=grace_hours):
+        return []
+
+    n_runtime = "unknown (too many to list)" if runtime_files is None else len(runtime_files)
+    age = "unknown" if oldest is None else f"{(now - oldest).total_seconds() / 3600:.1f}h"
+    return [Incident(
+        id=f"deploy-drift:{running_sha}",
+        kind="deploy",
+        title=f"Production is {ahead_by} commit(s) behind main",
+        detail=(f"running: {running_sha}\n"
+                f"behind by: {ahead_by} commit(s)\n"
+                f"runtime files changed: {n_runtime}\n"
+                f"oldest undeployed commit: {age} ago\n"
+                "(commits touching only .github/, tasks/ or tests/ do not count "
+                "as runtime-relevant and never raise this on their own)"),
+        handoff=("deploy it: `cd <repo> && git pull --ff-only origin main && "
+                 "scripts/deploy.sh` — the image is already built and published "
+                 "by Actions, so this is a tag move"),
+    )]
+
+
 def _dep_alert_lockfiles(alert: dict) -> List[str]:
     """Lockfile paths an osv-scanner alert names in its Affected Packages table.
 
@@ -972,6 +1180,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           langfuse: Optional[List[Incident]] = None,
           blocked: Optional[List[Incident]] = None,
           checkout_drift: Optional[List[Incident]] = None,
+          deploy_drift: Optional[List[Incident]] = None,
           judge_liveness: Optional[List[Incident]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
@@ -994,6 +1203,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     lf = langfuse if langfuse is not None else langfuse_error_incidents(now=now)
     bc = blocked if blocked is not None else blocked_commit_incidents()
     cd = checkout_drift if checkout_drift is not None else checkout_drift_incidents()
+    dd = deploy_drift if deploy_drift is not None else deploy_drift_incidents(now=now)
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
 
     # Dependency advisories are handled apart from the other signals because
@@ -1028,7 +1238,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
-                 + list(lf) + list(bc) + list(cd) + list(jl))
+                 + list(lf) + list(bc) + list(cd) + list(dd) + list(jl))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
