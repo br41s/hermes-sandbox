@@ -13329,6 +13329,16 @@ def main():
     # in ps/top/htop.  Non-fatal — just a nicer UX.
     _set_process_title()
 
+    # Arm the SIGUSR1 stack dumper before anything can wedge. Costs a signal
+    # handler; buys the ability to see what a stuck process is doing, which
+    # py-spy cannot provide in the Zeabur pod (ptrace_scope=2, no
+    # CAP_SYS_PTRACE). See hermes_cli/stackdump.py.
+    try:
+        from hermes_cli.stackdump import install_stack_dumper
+        install_stack_dumper()
+    except Exception:
+        pass
+
     # Force UTF-8 stdio on Windows before anything prints.  No-op elsewhere.
     try:
         from hermes_cli.stdio import configure_windows_stdio

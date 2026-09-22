@@ -4141,12 +4141,48 @@ def _run_job_impl(
                         except Exception:
                             pass
                     if _idle_secs >= _cron_inactivity_limit:
+                        # Capture what the agent is actually stuck on BEFORE we
+                        # give up on it. The message this timeout produces names
+                        # the last recorded *activity*, which is not the same as
+                        # what the thread is blocked on and has already sent one
+                        # investigation down the wrong path: on 2026-09-22 it
+                        # reported "waiting for non-streaming API response" four
+                        # times while the process held zero open sockets and the
+                        # request had completed minutes earlier.
+                        #
+                        # The agent runs in _cron_pool, a thread in THIS process,
+                        # so a plain faulthandler dump covers it. An external
+                        # profiler does not work here: the Zeabur pod has
+                        # ptrace_scope=2 and no CAP_SYS_PTRACE, so py-spy is
+                        # refused even as root.
+                        try:
+                            from hermes_cli.stackdump import dump_now, dump_path
+                            dump_now()
+                            logger.error(
+                                "Job '%s': inactivity timeout after %.0fs — "
+                                "all-thread stack dumped to %s",
+                                job_id, _idle_secs, dump_path(),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Job '%s': inactivity timeout after %.0fs "
+                                "(stack dump unavailable)", job_id, _idle_secs,
+                            )
                         _inactivity_timeout = True
                         break
         except Exception:
             _cron_pool.shutdown(wait=False, cancel_futures=True)
             raise
         finally:
+            # NOTE: this does NOT stop a running agent. cancel_futures only
+            # drops QUEUED futures, and Python cannot kill a thread that is
+            # already executing. On an inactivity timeout the agent thread
+            # therefore survives, the process cannot exit, and it is left
+            # behind holding its full heap (~280 MB observed). Three such
+            # orphans accumulated on 2026-09-22 before anyone noticed.
+            # Reaping them needs the agent to become interruptible, or the
+            # runner to hard-exit after delivering — both larger changes than
+            # this one. Do not read this shutdown as a kill.
             _cron_pool.shutdown(wait=False, cancel_futures=True)
 
         if _inactivity_timeout:
