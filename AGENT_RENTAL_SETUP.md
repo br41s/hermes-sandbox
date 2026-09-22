@@ -46,7 +46,7 @@ redirect work its own prompt actually documents.
 | SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `update_blog_post` (link repairs only), `bl_site_redirect` (verified matches auto-publish) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
 | Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (goes live immediately, with CTA) | daily |
-| Infographic Engineer | `infographic/bl-site-package-infographic.prompt` | `update_blog_post` (inserts one inline SVG) | daily |
+| Infographic Engineer | `infographic/infographic-engineer.prompt` (shared with biglobster) | `update_blog_post` (inserts one inline SVG, or one HTML table) | daily |
 | Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
 | Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | daily |
@@ -192,8 +192,15 @@ Instagram Reels and TikTok plus a `captions.md` of per-network copy, written to
 `workspace/shorts/<post-slug>/` in the client's own profile. Its only write to
 the site is the `<!-- shorts:auto -->` sentinel appended to the post it just
 used, which is how it knows never to redo one — the same
-mark-it-in-the-content trick the Infographic Engineer uses, and the same
+mark-it-in-the-content trick the Infographic Engineer used, and the same
 prose-is-immutable rule. See "Social Shorts" below.
+
+> The Infographic Engineer no longer marks with a comment. The site's sanitizer
+> strips HTML comments before render — they survive in the database, so an
+> agent reading back through the API still sees them, but nothing on the page
+> does. It now treats `class="article-infographic"` as the marker, which is
+> visible in both places. Worth knowing for Social Shorts too: `shorts:auto`
+> works only because that agent reads the API, never the rendered page.
 
 Web research is **bundled, not BYOK — free ddgs, never the client's own key.**
 Content Gap Hunter, Onboarding Content, Product Article Agent, and Site Launch

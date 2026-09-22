@@ -36,6 +36,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # Shared, package-wide prompts. Globbed rather than listed so a new one is
 # covered the day it lands.
 SHARED_PROMPTS = "*/bl-site-package-*.prompt"
+# The Infographic Engineer serves biglobster AND every rental from one file,
+# so its name carries no bl-site-package- prefix. It still ships to clients,
+# and this test already caught a customer name in its predecessor, so it is
+# named explicitly rather than left to the glob.
+EXTRA_SHARED_PROMPTS = ("infographic/infographic-engineer.prompt",)
 
 # Customer names, their distributors, and any identifier tied to a single
 # client. Case-insensitive, matched on word boundaries.
@@ -61,7 +66,9 @@ ALLOWED_DOMAINS = {
 
 
 def _shared_prompts():
-    return sorted(REPO_ROOT.glob(SHARED_PROMPTS))
+    found = set(REPO_ROOT.glob(SHARED_PROMPTS))
+    found.update(REPO_ROOT / rel for rel in EXTRA_SHARED_PROMPTS)
+    return sorted(p for p in found if p.exists())
 
 
 def test_the_glob_still_finds_the_shared_prompts():

@@ -167,15 +167,22 @@ AGENT_SOURCES = {
         "daily",
         ["bl_site_product", "web"],
     ),
-    # Adds ONE inline-SVG infographic to ONE existing blog post per run, editing
-    # it in place. Needs no --old-site-url: it only ever reads the client's own
-    # blog. Goes quiet ([SILENT]) once every post already carries one, so it's
-    # safe to leave scheduled daily on a small blog.
+    # Adds ONE inline-SVG infographic (or one HTML table) to ONE existing blog
+    # post per run, editing it in place. Needs no --old-site-url: it only ever
+    # reads the client's own blog. Goes quiet ([SILENT]) once every post already
+    # carries one, so it's safe to leave scheduled daily on a small blog.
+    #
+    # Shares ONE prompt with the biglobster job; the lane is resolved at runtime
+    # from BL_SITE_URL. No `image_gen`: raster generation was removed from this
+    # agent because an image model misspells its own labels, renders hex colour
+    # codes as text and crops its composition, and none of that is checkable
+    # before it is live on a client's site. Everything is inline SVG now, which
+    # the site sanitizer allows and validate_infographic.py can verify.
     "infographic": (
-        "infographic/bl-site-package-infographic.prompt",
+        "infographic/infographic-engineer.prompt",
         "Infographic Engineer",
         "daily",
-        ["bl_site_publish", "image_gen", "file", "terminal", "skills", "todo"],
+        ["bl_site_publish", "file", "terminal", "skills", "todo"],
     ),
     # The "Website Maintenance" subscription product. Daily, like gap-hunter:
     # availability and publish-drift are only meaningful checked often, and a
