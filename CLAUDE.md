@@ -222,43 +222,54 @@ goes out unauthenticated, and Langfuse answers **401 with a body that still pars
 *the agent did nothing* or *tracing is broken*, when it means *you did not authenticate*.
 Always print the HTTP status, never just the row count.
 
+**Query `/api/public/v2/observations` — never `/traces`.** v4 has no trace object: a
+trace is just the rows sharing a `traceId`, and `GET /traces`, `GET /traces/{id}` and
+`GET /observations` are removed on 2026-11-16. There is no v2 single-trace getter and
+no `traces get` worth reaching for; every question below is one observations query.
+The same applies to the CLI — `langfuse-cli api observations list`, never
+`api traces get` / `api traces list`, which are the deprecated v1 endpoints wearing a
+friendlier name.
+
 ```bash
 # Run inside the container. Note HERMES_ on the keys, none on the base URL.
-curl -s -w '\nHTTP:%{http_code}\n' \
+# Everything in one session: root, generations and tool calls.
+curl -s -w '\nHTTP:%{http_code}\n' -G \
   -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
-  "$HERMES_LANGFUSE_BASE_URL/api/public/traces?sessionId=<session_id>&limit=10"
+  "$HERMES_LANGFUSE_BASE_URL/api/public/v2/observations" \
+  --data-urlencode "sessionId=<session_id>" \
+  --data-urlencode "fields=core,basic,io" \
+  --data-urlencode "limit=100"
 
-curl -s -w '\nHTTP:%{http_code}\n' \
-  -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
-  "$HERMES_LANGFUSE_BASE_URL/api/public/observations?traceId=<trace_id>&limit=100"
+# One trace, or a time window when you have no session id.
+#   --data-urlencode "traceId=<trace_id>"
+#   --data-urlencode "fromStartTime=<ISO8601>"  (bound big queries; cursor-paginated)
 ```
 
-**A killed run has no `sessionId`, so the lookup above finds nothing — which is exactly
-the run you are trying to diagnose.** Trace-level attributes (`name`, `sessionId`) flush
-when the trace finalises; child observations flush as they complete. Interrupt the
-process — the cron inactivity watchdog at `cron/scheduler.py:4048` does this at
-`HERMES_CRON_TIMEOUT`, default 600s — and the tool calls survive while the trace header
-never lands. Measured 2026-09-19: of ten traces that day, the nine completed runs all
-carried `name="Hermes turn"` and their session id; the one killed run had both empty.
-
-So for a failed run, find it by **time window** instead, and match it against the
-`agent.log` timestamp of the run's first turn:
-
-```bash
-curl -s -u "$HERMES_LANGFUSE_PUBLIC_KEY:$HERMES_LANGFUSE_SECRET_KEY" \
-  "$HERMES_LANGFUSE_BASE_URL/api/public/traces?fromTimestamp=<ISO8601>&limit=25"
-```
+**`fields` is the new way to get an empty answer.** A response carries only the field
+groups you ask for, and the default is `core,basic` — which does **not** include
+`input`/`output`. Omit `fields=...,io` and every tool call comes back with no
+arguments and no result, which reads exactly like an agent that did nothing. Ask for
+`io` whenever the question is *what did it actually do*. Input and output are raw
+strings in v2; parse them yourself.
 
 Observations of type `TOOL` carry the arguments; sort by `startTime` and a shared
 timestamp across several tools means they were issued as one parallel batch.
 
-**These v1 endpoints are deprecated and are removed on 2026-11-16.** Every response
-already carries a `_deprecation` key saying so; Langfuse Cloud's replacement is
-OpenTelemetry ingestion plus `GET /api/public/v2/observations` and
-`/api/public/v2/metrics`. The same notice warns that the v1 APIs "may have data
-delays", which is a third way this runbook can hand you an empty answer that is not
-an empty result — alongside the 401 and the missing `sessionId` above. When a query
-returns nothing, rule out those three before concluding anything about the agent.
+**A killed run still has no trace header, but its finished tool calls are now
+findable by `sessionId`.** Trace-level attributes flush when the trace finalises;
+each observation flushes when it ends, carrying its own `sessionId` (this is what
+the propagation fix below buys). Interrupt the process — the cron inactivity watchdog
+at `cron/scheduler.py:4048` does this at `HERMES_CRON_TIMEOUT`, default 600s — and the
+completed tool calls survive the query above while the root and the in-flight
+generation never land, because a span that never ends never exports. Verified
+2026-09-22 against a deliberately unfinalised run. Absence of the root is therefore
+evidence the run was killed, not evidence it did nothing.
+
+**Ruling out an empty answer that is not an empty result** — check these before
+concluding anything about the agent: the 401 above; a missing `io` field group; a
+killed run's unended spans; and, for any trace written before the session-propagation
+fix shipped, children that never carried a `sessionId` at all (filter by `traceId`
+instead for those).
 
 | Question | Where |
 |---|---|

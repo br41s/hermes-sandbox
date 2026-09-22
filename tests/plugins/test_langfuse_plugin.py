@@ -1196,3 +1196,115 @@ class TestUsageFromSanitizedResponse:
 
         assert seen["resp"] is resp
         assert captured["usage_details"] == {"input": 7, "output": 3}
+
+
+class TestSessionPropagationToChildren:
+    """Regression guard for the v4 observations-first data model.
+
+    v4 aggregates on observations, not on the trace, so a child observation
+    without ``session_id`` is excluded from session filtering and from session
+    cost — and generations are exactly where the cost lives.
+    ``propagate_attributes`` only stamps spans opened inside its scope, and the
+    root's scope closes at the end of ``_start_root_trace``; relying on the
+    root's OTel context to carry into later hooks stamped children only
+    intermittently (measured on production traces 2026-09-22: 236 of 286
+    children missing the session id), because a turn's hooks can run on
+    different threads. Children must therefore be opened inside a re-entered
+    propagation scope.
+    """
+
+    def _make_mod(self, monkeypatch):
+        sys.modules.pop("plugins.observability.langfuse", None)
+        mod = importlib.import_module("plugins.observability.langfuse")
+        mod._TRACE_STATE.clear()
+        return mod
+
+    def test_children_are_opened_inside_the_session_scope(self, monkeypatch):
+        mod = self._make_mod(monkeypatch)
+        events: list = []
+
+        class _Scope:
+            def __init__(self, session_id):
+                self.session_id = session_id
+
+            def __enter__(self):
+                events.append(("enter", self.session_id))
+                return self
+
+            def __exit__(self, *exc):
+                events.append(("exit", self.session_id))
+                return False
+
+        monkeypatch.setattr(
+            mod, "propagate_attributes",
+            lambda **kw: _Scope(kw.get("session_id")), raising=False,
+        )
+
+        class _Span:
+            def start_observation(self, **kw):
+                events.append(("start_observation", kw.get("name")))
+                return _Span()
+
+        state = mod.TraceState(
+            trace_id="t", root_ctx=None, root_span=_Span(), session_id="sess-1",
+        )
+        mod._start_child_observation(
+            state, client=object(), name="LLM call 1",
+            as_type="generation", input_value={},
+        )
+
+        assert events == [
+            ("enter", "sess-1"),
+            ("start_observation", "LLM call 1"),
+            ("exit", "sess-1"),
+        ], "child must be created INSIDE propagate_attributes(session_id=...)"
+
+    def test_root_records_the_session_it_propagated(self, monkeypatch):
+        """The state must carry the same value propagated onto the root —
+        including the task_key fallback, or children land in a different
+        session than their own root."""
+        mod = self._make_mod(monkeypatch)
+        monkeypatch.setattr(mod, "propagate_attributes", None, raising=False)
+        client = _RecordingLangfuse()
+        monkeypatch.setattr(mod, "_get_langfuse", lambda: client)
+
+        mod.on_pre_llm_request(
+            task_id="task-1", session_id="sess-9", api_call_count=1,
+            request_messages=[{"role": "user", "content": "hi"}],
+        )
+        state = mod._TRACE_STATE[mod._trace_key("task-1", "sess-9")]
+        assert state.session_id == "sess-9"
+
+        mod._TRACE_STATE.clear()
+        mod.on_pre_llm_request(
+            task_id="task-2", session_id="", api_call_count=1,
+            request_messages=[{"role": "user", "content": "hi"}],
+        )
+        key = mod._trace_key("task-2", "")
+        assert mod._TRACE_STATE[key].session_id == key
+
+    def test_child_is_still_created_when_propagation_blows_up(self, monkeypatch):
+        """Observability must fail open: a broken scope loses the session id,
+        never the observation."""
+        mod = self._make_mod(monkeypatch)
+
+        def _boom(**kw):
+            raise RuntimeError("no context")
+
+        monkeypatch.setattr(mod, "propagate_attributes", _boom, raising=False)
+        created = []
+
+        class _Span:
+            def start_observation(self, **kw):
+                created.append(kw.get("name"))
+                return _Span()
+
+        state = mod.TraceState(
+            trace_id="t", root_ctx=None, root_span=_Span(), session_id="sess-1",
+        )
+        obs = mod._start_child_observation(
+            state, client=object(), name="Tool: terminal",
+            as_type="tool", input_value={},
+        )
+        assert obs is not None
+        assert created == ["Tool: terminal"], "exactly one observation, no duplicate"
