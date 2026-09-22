@@ -219,3 +219,59 @@ def test_a_defective_graphic_exits_1(tmp_path):
     bad = tmp_path / "a.svg"
     bad.write_text(svg('<rect x="700" y="10" width="200" height="40"/>'), encoding="utf-8")
     assert mod.main(["--stack", "biglobster", "--file", str(bad), "--no-spelling"]) == 1
+
+
+# ------------------------------------------- spelling vs domain vocabulary ---
+
+def test_article_vocabulary_collects_the_words_the_article_uses():
+    vocab = mod.article_vocabulary("<p>El CRA obliga a toda pyme. ENISA lo supervisa.</p>")
+    assert {"cra", "pyme", "enisa"} <= vocab
+
+
+def test_a_term_the_article_uses_is_not_reported_as_a_misspelling(monkeypatch):
+    """The regression that made the agent rewrite its own labels.
+
+    On the first successful run hunspell flagged CRA, ENISA, pyme, dic and sep —
+    all words the article itself uses — and the agent reworded the graphic to
+    reach exit 0, writing "el Reglamento europeo" where a human would write "el
+    CRA". A validator that changes what the content SAYS has overstepped.
+    """
+    monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/hunspell")
+
+    class FakeProc:
+        # hunspell -l prints one unknown word per line
+        stdout = "CRA\nENISA\nqomplet\n"
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: FakeProc())
+
+    parser = mod.SvgParser()
+    parser.feed('<svg viewBox="0 0 800 300">'
+                '<text x="20" y="50" font-size="16">CRA ENISA qomplet</text></svg>')
+    parser.close()
+
+    findings = []
+    mod.check_spelling(parser, findings, vocabulary={"cra", "enisa"})
+    reported = [f.message for f in findings]
+
+    assert len(reported) == 1, f"expected only the real typo, got {reported}"
+    assert "qomplet" in reported[0]
+    assert not any("CRA" in m or "ENISA" in m for m in reported)
+
+
+def test_without_a_vocabulary_every_unknown_word_is_still_reported(monkeypatch):
+    """The guard must not become a no-op: a real slip is still caught."""
+    monkeypatch.setattr(mod.shutil, "which", lambda _n: "/usr/bin/hunspell")
+
+    class FakeProc:
+        stdout = "qomplet\n"
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: FakeProc())
+
+    parser = mod.SvgParser()
+    parser.feed('<svg viewBox="0 0 800 300">'
+                '<text x="20" y="50" font-size="16">qomplet</text></svg>')
+    parser.close()
+
+    findings = []
+    mod.check_spelling(parser, findings, vocabulary=set())
+    assert [f.code for f in findings] == ["spelling"]

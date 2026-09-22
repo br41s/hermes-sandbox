@@ -656,12 +656,35 @@ def check_emoji(p, findings):
             ))
 
 
-def check_spelling(p, findings, lang="es_ES"):
+WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]{1,}")
+
+
+def article_vocabulary(source):
+    """Every word the ARTICLE already uses, lowercased.
+
+    The validator checks text the agent just wrote, and that text is drawn from
+    the article it illustrates. A word the article already uses is therefore the
+    author's vocabulary, not a typo the agent introduced — so hunspell flagging
+    it is a false positive, every time.
+
+    This is not hypothetical. On the first successful run the check flagged
+    `CRA`, `ENISA`, `pyme`, `dic` and `sep`, all of which appear in the article,
+    and the agent rewrote its labels to get past them: it wrote "el Reglamento
+    europeo" where a human would write "el CRA", and spelled out every date. It
+    even filed the workaround in its skill. A validator that changes what the
+    content SAYS has overstepped — it is there to catch a slip, not to enforce a
+    dictionary on domain language.
+    """
+    return {w.lower() for w in WORD_RE.findall(source or "")}
+
+
+def check_spelling(p, findings, lang="es_ES", vocabulary=None):
     """Spanish spellcheck via hunspell. Absent hunspell warns, it does not fail."""
     if not shutil.which("hunspell"):
         print("warning: hunspell not installed, skipping the spelling check",
               file=sys.stderr)
         return
+    vocabulary = vocabulary or set()
     words = {}
     for run in p.runs:
         for word in re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]{2,}", run.text):
@@ -678,6 +701,8 @@ def check_spelling(p, findings, lang="es_ES"):
         print(f"warning: hunspell failed ({exc}), skipping the spelling check", file=sys.stderr)
         return
     for word in dict.fromkeys(w for w in proc.stdout.split() if w):
+        if word.lower() in vocabulary:
+            continue  # the article already uses it; not a slip the agent made
         findings.append(Finding(
             "spelling",
             f'"{word}" is not a Spanish word.',
@@ -707,7 +732,7 @@ def extract_svgs(source):
     return SVG_RE.findall(haystack)
 
 
-def validate(svg, stack, skip_spelling=False):
+def validate(svg, stack, skip_spelling=False, vocabulary=None):
     parser = SvgParser()
     parser.css = parse_css_classes(
         " ".join(re.findall(r"<style[^>]*>(.*?)</style>", svg, re.S | re.I)))
@@ -726,7 +751,7 @@ def validate(svg, stack, skip_spelling=False):
     check_design_tokens(parser, stack, findings, svg)
     check_emoji(parser, findings)
     if not skip_spelling:
-        check_spelling(parser, findings)
+        check_spelling(parser, findings, vocabulary=vocabulary)
     return findings
 
 
@@ -753,7 +778,11 @@ def main(argv=None):
         print("error: no <svg> found in the input", file=sys.stderr)
         return 3
 
-    results = [validate(svg, args.stack, args.no_spelling) for svg in svgs]
+    # Built from the WHOLE input, not just the figure: when --file is an
+    # article, its prose is the author's vocabulary and nothing drawn from
+    # it is a new misspelling.
+    vocab = article_vocabulary(source)
+    results = [validate(svg, args.stack, args.no_spelling, vocab) for svg in svgs]
     total = sum(len(r) for r in results)
 
     if args.json:
