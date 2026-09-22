@@ -45,6 +45,9 @@ class TraceState:
     trace_id: str
     root_ctx: Any
     root_span: Any
+    # The session id actually propagated onto the root — reused verbatim when
+    # opening each child so the whole turn aggregates under one session.
+    session_id: str = ""
     generations: Dict[str, Any] = field(default_factory=dict)
     tools: Dict[str, Any] = field(default_factory=dict)
     pending_tools_by_name: Dict[str, list] = field(default_factory=dict)
@@ -659,20 +662,45 @@ def _start_root_trace(task_key: str, *, task_id: str, session_id: str, platform:
         root_span = root_ctx.__enter__()
 
     _debug(f"started trace {trace_id} for {task_key}")
-    return TraceState(trace_id=trace_id, root_ctx=root_ctx, root_span=root_span)
+    return TraceState(
+        trace_id=trace_id,
+        root_ctx=root_ctx,
+        root_span=root_span,
+        session_id=session_id or task_key,
+    )
 
 
 def _start_child_observation(state: TraceState, *, client: Langfuse, name: str, as_type: str,
                              input_value: Any, metadata: Optional[dict] = None,
                              model: Optional[str] = None, model_parameters: Optional[dict] = None) -> Any:
-    return state.root_span.start_observation(
-        name=name,
-        as_type=as_type,
-        input=input_value,
-        metadata=metadata or {},
-        model=model,
-        model_parameters=model_parameters,
-    )
+    # v4 aggregates on observations, not on the trace: a child without
+    # session_id is excluded from session filtering AND from session cost —
+    # and generations are where the cost lives. propagate_attributes only
+    # stamps spans opened inside its scope, and the root's scope closed at the
+    # end of _start_root_trace, so re-enter it here. Inheriting the root's
+    # OTel context is not enough: hooks for one turn can run on different
+    # threads, which is why children were stamped only intermittently.
+    def _create() -> Any:
+        return state.root_span.start_observation(
+            name=name,
+            as_type=as_type,
+            input=input_value,
+            metadata=metadata or {},
+            model=model,
+            model_parameters=model_parameters,
+        )
+
+    if propagate_attributes is None or not state.session_id:
+        return _create()
+
+    observation = None
+    try:
+        with propagate_attributes(session_id=state.session_id):
+            observation = _create()
+    except Exception as exc:  # pragma: no cover - fail-open
+        _debug(f"session propagation failed: {exc}")
+    # Created-but-teardown-failed still counts; only retry if nothing was made.
+    return observation if observation is not None else _create()
 
 
 def _end_observation(observation: Any, *, output: Any = None, metadata: Optional[dict] = None,
