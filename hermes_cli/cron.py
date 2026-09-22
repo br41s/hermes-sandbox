@@ -464,6 +464,14 @@ def cron_sync_prompt(args):
 
 def _job_action(action: str, job_id: str, success_verb: str) -> int:
     result = _cron_api(action=action, job_id=job_id)
+    if action == "run":
+        # BEFORE any printing. A wedged run can leave stdout as a pipe nobody
+        # reads — an operator's `zeabur service exec` that dropped, a closed
+        # terminal — and once its buffer fills, print() blocks forever. That
+        # stranded the very process this exit exists to reap: observed
+        # 2026-09-22, main thread parked in process_bootstrap.write() at the
+        # "Triggered job:" line while the run had already been recorded failed.
+        _exit_hard_if_threads_abandoned(0)
     if not result.get("success"):
         print(color(f"Failed to {action} job: {result.get('error', 'unknown error')}", Colors.RED))
         return 1
@@ -511,10 +519,22 @@ def _exit_hard_if_threads_abandoned(rc: int) -> int:
     if not stuck:
         return rc
 
-    print(color(
-        f"  {stuck} agent thread(s) wedged and cannot be stopped — exiting so "
-        f"this process does not linger holding memory.", Colors.YELLOW,
-    ))
+    # Same hazard as the caller's prints: if stdout is a pipe with no reader
+    # this message would hang and defeat the whole point. Non-blocking means a
+    # partial or dropped line, which is the right trade when the alternative is
+    # a process that never exits.
+    try:
+        os.set_blocking(sys.stdout.fileno(), False)
+        os.set_blocking(sys.stderr.fileno(), False)
+    except Exception:
+        pass
+    try:
+        print(color(
+            f"  {stuck} agent thread(s) wedged and cannot be stopped — exiting "
+            f"so this process does not linger holding memory.", Colors.YELLOW,
+        ))
+    except Exception:
+        pass
     try:
         sys.stdout.flush()
         sys.stderr.flush()
