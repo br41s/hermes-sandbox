@@ -70,8 +70,16 @@ class Incident:
     id: str          # stable dedup key
     kind: str        # "cron" | "langfuse"
     title: str
-    detail: str
+    detail: str      # human-facing body of the brief — PRESENTATION, not input
     handoff: str     # how to hand it to Claude Code for a proposed fix
+    # The raw failure text on its own, for machines. ``detail`` renders the same
+    # text with context glued around it (``when: <iso>\nerror: ...``), and
+    # remediation.registry used to pattern-match that blob — which meant an
+    # ISO-8601 microsecond field containing "401"/"403" tripped the hard-fault
+    # veto and a real transient failure silently stopped classifying. Defaulted
+    # so producers with no distinct error text need no change; matchers fall
+    # back to ``detail`` when it is empty.
+    error: str = ""
 
 
 def _now() -> datetime:
@@ -154,7 +162,8 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
             err_kind = "interrupted by restart"
         else:
             err_kind = "agent error" if job.get("last_error") else "delivery error"
-        detail = f"when: {when}\nerror: {str(err)[:500]}"
+        err_text = str(err)[:500]
+        detail = f"when: {when}\nerror: {err_text}"
         if interrupted:
             detail += (
                 f"\nlast completed run: {job.get('last_run_at') or 'never'}\n"
@@ -167,6 +176,7 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
             title=f"Cron job '{job.get('name') or jid}' failed ({err_kind})",
             detail=detail,
             handoff=f"cron job id {jid}",
+            error=err_text,
         ))
     return out
 
