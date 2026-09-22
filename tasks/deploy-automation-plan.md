@@ -131,8 +131,9 @@ commits, because that is what one call can tell you honestly. In the founding
 case that reads "11 commits behind, 3 runtime files changed", which is both true
 and actionable.
 
-Keep the inert set *tight*. Under-filtering costs one unnecessary alert;
-over-filtering costs a missed deploy. Specifically, `*.md` is NOT inert — skill
+Keep the inert set *tight* — **confirmed 2026-09-22, build it as written**.
+Under-filtering costs one unnecessary alert; over-filtering costs a missed
+deploy. Specifically, `*.md` is NOT inert — skill
 `SKILL.md` files and `AGENTS.md` are read by the runtime — and `.prompt` files
 are emphatically not inert (they are Half 2's whole subject).
 
@@ -149,7 +150,8 @@ subsequent merge and turn one stale deploy into a stream.
 The accepted cost: if production stays stale for a week you get one alert, not
 an escalating nag. The 24h heartbeat still runs underneath. If that proves too
 quiet in practice, re-arm on crossing a commit-count bucket — but ship the
-quiet version first.
+quiet version first. **Confirmed 2026-09-22: ship quiet, no escalating nag in
+v1.**
 
 ### Failing loudly, not silently
 
