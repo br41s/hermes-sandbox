@@ -6,6 +6,8 @@ pause/resume/run/remove, status, and tick.
 """
 
 import json
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -481,6 +483,47 @@ def _job_action(action: str, job_id: str, success_verb: str) -> int:
     return 0
 
 
+def _exit_hard_if_threads_abandoned(rc: int) -> int:
+    """Terminate instead of hanging when a wedged agent thread was abandoned.
+
+    ``hermes cron run`` executes the agent IN THIS PROCESS (``_cron_api`` ->
+    ``cronjob_tool``), so an inactivity timeout leaves a live thread here that
+    nothing can stop. ``concurrent.futures`` then joins it at interpreter exit,
+    so returning normally hangs forever: the run is reported, the failure is
+    delivered, and the process still sits there holding ~280 MB.
+
+    That is how four orphans accumulated on 2026-09-22 — the oldest 1h32m,
+    on a container down to 213 MB free. They had to be killed by hand.
+
+    The work is finished by the time this runs: the run record is written and
+    the failure delivered. Only the wedged thread remains, and it will never
+    make progress, so exiting is strictly better than waiting for it.
+
+    ``os._exit`` skips atexit deliberately — the atexit hook is the thing that
+    hangs. Buffers are flushed first, by hand, since nothing else will.
+    """
+    try:
+        from cron.scheduler import abandoned_agent_threads
+
+        stuck = abandoned_agent_threads()
+    except Exception:
+        return rc
+    if not stuck:
+        return rc
+
+    print(color(
+        f"  {stuck} agent thread(s) wedged and cannot be stopped — exiting so "
+        f"this process does not linger holding memory.", Colors.YELLOW,
+    ))
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        logging.shutdown()
+    except Exception:
+        pass
+    os._exit(rc)
+
+
 def cron_command(args):
     """Handle cron subcommands."""
     subcmd = getattr(args, 'cron_command', None)
@@ -518,7 +561,9 @@ def cron_command(args):
         return _job_action("resume", args.job_id, "Resumed")
 
     if subcmd == "run":
-        return _job_action("run", args.job_id, "Triggered")
+        return _exit_hard_if_threads_abandoned(
+            _job_action("run", args.job_id, "Triggered")
+        )
 
     if subcmd in {"remove", "rm", "delete"}:
         return _job_action("remove", args.job_id, "Removed")
