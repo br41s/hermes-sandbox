@@ -19,6 +19,7 @@ what a re-run can touch. Such a class declares ``reversal=None`` with a rational
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
@@ -30,13 +31,21 @@ from incidents.sweep import Incident
 # (escalate to Brais) than to retry a deterministic failure forever.
 _TRANSIENT_MARKERS = (
     "provider returned error",   # owl-alpha upstream 5xx (the first real incident)
-    "rate limit", "rate-limit", "429",
+    "rate limit", "rate-limit",
     "timeout", "timed out", "timed-out",
     "temporarily", "temporary failure",
     "connection reset", "connection refused", "connection error",
-    "502", "503", "504", "bad gateway", "service unavailable", "gateway timeout",
+    "bad gateway", "service unavailable", "gateway timeout",
     "read timed out", "remote end closed",
 )
+
+# Bare HTTP status codes, matched on word boundaries rather than as free
+# substrings: as substrings they fire on anything that merely CONTAINS the
+# digits (a request id, a byte count, a duration). Boundaries can only ever make
+# this tuple match LESS, so the retry class only gets *less* eager — the safe
+# direction. The veto tuples below deliberately stay plain substrings: loosening
+# a veto would make the classes MORE eager, and one of them is destructive.
+_TRANSIENT_CODE_RE = re.compile(r"\b(?:429|502|503|504)\b")
 
 # Substrings that VETO a retry even if a transient marker is also present — these
 # are deterministic faults a retry can never clear (config, auth, missing code).
@@ -51,7 +60,9 @@ def _looks_transient(text: str) -> bool:
     low = (text or "").lower()
     if any(m in low for m in _HARD_FAULT_MARKERS):
         return False
-    return any(m in low for m in _TRANSIENT_MARKERS)
+    if any(m in low for m in _TRANSIENT_MARKERS):
+        return True
+    return _TRANSIENT_CODE_RE.search(low) is not None
 
 
 # Substrings that mark a cron failure as a shared-clone *branch/identity*
@@ -84,6 +95,23 @@ def _looks_branch_confusion(text: str) -> bool:
     if any(v in low for v in _CONFUSION_VETO):
         return False
     return any(m in low for m in _BRANCH_CONFUSION_MARKERS)
+
+
+def _match_text(inc: Incident) -> str:
+    """The text the marker tuples are scanned against: the raw error alone.
+
+    ``inc.detail`` is the brief's human-facing body — the sweep renders it as
+    ``when: <iso>\\nerror: <text>``, so scanning it handed the matchers an
+    ISO-8601 timestamp as if it were error text. A microsecond field containing
+    ``401``/``403`` then tripped the hard-fault veto (and the confusion veto),
+    and a genuinely transient failure silently stopped classifying — an absence,
+    not an error, which is why it went unnoticed.
+
+    Falls back to ``detail`` when a producer supplies no separate ``error``, so
+    no caller has to change; that fallback keeps the old (over-vetoing, therefore
+    fail-safe) behaviour rather than classifying nothing at all.
+    """
+    return inc.error or inc.detail
 
 
 def _cron_job_id(inc: Incident) -> Optional[str]:
@@ -146,7 +174,7 @@ class RemediationClass:
 
 CRON_TRANSIENT_FAILURE = RemediationClass(
     name="cron-transient-failure",
-    matches=lambda inc: inc.kind == "cron" and _looks_transient(inc.detail),
+    matches=lambda inc: inc.kind == "cron" and _looks_transient(_match_text(inc)),
     fix=_retry_cron,
     proposal=lambda inc: (
         f"retry cron job ({_cron_job_id(inc) or 'unknown'}) — transient error, "
@@ -159,7 +187,7 @@ CRON_TRANSIENT_FAILURE = RemediationClass(
 
 SHARED_CLONE_BRANCH_CONFUSION = RemediationClass(
     name="shared-clone-branch-confusion",
-    matches=lambda inc: inc.kind == "cron" and _looks_branch_confusion(inc.detail),
+    matches=lambda inc: inc.kind == "cron" and _looks_branch_confusion(_match_text(inc)),
     fix=_realign_shared_clone,
     proposal=lambda inc: (
         f"realign shared clone for cron job ({_cron_job_id(inc) or 'unknown'}): "

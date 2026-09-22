@@ -4,10 +4,14 @@ Hermetic: mode tests inject ``path``; registry tests build synthetic Incidents.
 Guards the two invariants that keep gated→auto safe: (1) only genuinely transient
 cron failures match the retry class — a hard fault (auth/config/missing code)
 never does; (2) mode state fails safe to the registry default, never silently to
-``auto``.
+``auto``; (3) markers are scanned against the ERROR text, never the timestamp
+the sweep prefixes onto it.
 """
+from datetime import timedelta
+
 import pytest
 
+from incidents import sweep
 from incidents.sweep import Incident
 from remediation import clone_safety, modes, reconcile, registry
 from remediation.cli import cmd_promote
@@ -324,3 +328,71 @@ class TestBranchConfusionGatedOnly:
         p.write_text('{"shared-clone-branch-confusion": "auto"}', encoding="utf-8")
         # A hand-edited modes.json cannot make a gated-only class auto-act.
         assert modes.is_auto("shared-clone-branch-confusion", path=p) is False
+
+
+# --- marker scope: the error text, never the timestamp glued to it ----------
+
+class TestMarkersScopedToErrorNotTimestamp:
+    """The classifier must read the ERROR, not the ``when:`` line in front of it.
+
+    ``cron_failure_incidents`` renders ``detail`` as ``when: <iso>\\nerror: <text>``.
+    Scanning that whole blob meant an ISO-8601 *microsecond* field containing
+    ``401`` or ``403`` tripped the hard-fault veto, so a genuinely transient 502
+    stopped classifying — roughly one failure in a thousand, and always failing
+    silent: the incident simply never became a remediation proposal.
+    """
+
+    @staticmethod
+    def _job(microsecond, err="Provider returned error (502)"):
+        when = (sweep._now() - timedelta(hours=1)).replace(microsecond=microsecond)
+        return {"id": "j1", "name": "finview-cron", "last_error": err,
+                "last_delivery_error": None, "last_run_at": when.isoformat()}
+
+    @pytest.mark.parametrize("microsecond,digits", [(401754, "401"), (403912, "403")])
+    def test_transient_survives_a_veto_lookalike_in_the_timestamp(self, microsecond, digits):
+        inc = sweep.cron_failure_incidents([self._job(microsecond)])[0]
+        # Guard the guard: the hazard must actually be present in this fixture.
+        assert digits in inc.detail.splitlines()[0]
+        assert digits not in inc.error
+        assert classify(inc) is CRON_TRANSIENT_FAILURE
+
+    def test_transient_classifies_with_an_innocent_timestamp(self):
+        inc = sweep.cron_failure_incidents([self._job(123456)])[0]
+        assert classify(inc) is CRON_TRANSIENT_FAILURE
+
+    def test_real_auth_fault_in_the_error_still_vetoes(self):
+        # Narrowing the scan must not blunt the veto itself.
+        inc = sweep.cron_failure_incidents(
+            [self._job(123456, err="401 Unauthorized from provider")])[0]
+        assert classify(inc) is None
+
+    def test_incident_carries_the_raw_error_separately(self):
+        inc = sweep.cron_failure_incidents([self._job(123456)])[0]
+        assert inc.error == "Provider returned error (502)"
+        assert inc.detail.startswith("when: ")
+
+    def test_error_defaults_empty_and_falls_back_to_detail(self):
+        # Producers that predate the field keep working: matching falls back to
+        # ``detail`` rather than silently classifying nothing.
+        inc = Incident(id="cron:j9:t", kind="cron", title="t",
+                       detail="when: t\nerror: Read timed out", handoff="cron job id j9")
+        assert inc.error == ""
+        assert classify(inc) is CRON_TRANSIENT_FAILURE
+
+
+class TestNumericMarkersUseWordBoundaries:
+    """Bare status codes are collision-prone; boundaries only ever match LESS."""
+
+    @pytest.mark.parametrize("err", [
+        "job 8502341 failed",          # 502 inside a longer id
+        "wrote 15034 bytes, aborted",  # 503 inside a byte count
+    ])
+    def test_digits_embedded_in_a_longer_number_are_not_a_status_code(self, err):
+        assert classify(_cron_inc(err=err)) is None
+
+    @pytest.mark.parametrize("err", [
+        "Provider returned error (502)", "HTTP 503 Service Unavailable",
+        "gateway timeout 504", "rate limit exceeded (429)",
+    ])
+    def test_real_status_codes_still_match(self, err):
+        assert classify(_cron_inc(err=err)) is CRON_TRANSIENT_FAILURE
