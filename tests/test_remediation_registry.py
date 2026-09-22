@@ -396,3 +396,60 @@ class TestNumericMarkersUseWordBoundaries:
     ])
     def test_real_status_codes_still_match(self, err):
         assert classify(_cron_inc(err=err)) is CRON_TRANSIENT_FAILURE
+
+
+# --- veto precision: SHA collisions and git's real auth wording -------------
+
+class TestVetoCodesUseWordBoundaries:
+    """The 401/403 vetoes collide with git SHAs, which are hex.
+
+    ``HEAD detached at 4013abc`` is textbook branch confusion, and the bare
+    substring veto swallowed it — the same collision class as the ``when:``
+    timestamp, one tuple further down. Measured over 400k random SHAs the
+    substring form misfires on 0.24% of 7-char and 1.84% of full-length ones;
+    word boundaries take both to zero, and cost nothing on real auth text
+    (git only ever emits these codes as ``URL returned error: NNN``).
+    """
+
+    @pytest.mark.parametrize("err", [
+        "fatal: You are in 'detached HEAD' state. HEAD is now at 4013abc",
+        "HEAD detached at e403f21",
+        "Your branch and 'origin/main' have diverged; HEAD is now at 1403aef",
+    ])
+    def test_sha_containing_the_digits_is_not_an_auth_fault(self, err):
+        assert classify(_branch_inc(err=err)) is SHARED_CLONE_BRANCH_CONFUSION
+
+    @pytest.mark.parametrize("err", [
+        "HEAD detached at a1b2c3d\nfatal: unable to access: The requested URL "
+        "returned error: 403",
+        "branch diverged\nThe requested URL returned error: 401",
+    ])
+    def test_a_real_status_code_still_vetoes_the_reset(self, err):
+        assert classify(_branch_inc(err=err)) is None
+
+    def test_transient_survives_a_request_id_containing_the_digits(self):
+        # Same collision on the retry side: an opaque id is not a 401.
+        inc = _cron_inc(err="Provider returned error (502), request id req_a401f2")
+        assert classify(inc) is CRON_TRANSIENT_FAILURE
+
+
+class TestConfusionVetoCoversGitsAuthWording:
+    """git's commonest auth failure says "Authentication failed", not "401".
+
+    A dead PAT that also left the clone diverged therefore drew a DESTRUCTIVE
+    reset proposal. Tightening only — these phrases can never make the class
+    more eager.
+    """
+
+    @pytest.mark.parametrize("err", [
+        "Your branch and 'origin/main' have diverged\n"
+        "fatal: Authentication failed for 'https://github.com/br41s/x'",
+        "HEAD detached at a1b2c3d\n"
+        "remote: Support for password authentication was removed",
+        "updates were rejected\nremote: HTTP Basic: Access denied",
+    ])
+    def test_auth_failure_vetoes_the_destructive_class(self, err):
+        assert classify(_branch_inc(err=err)) is None
+
+    def test_plain_branch_confusion_is_untouched(self):
+        assert classify(_branch_inc()) is SHARED_CLONE_BRANCH_CONFUSION

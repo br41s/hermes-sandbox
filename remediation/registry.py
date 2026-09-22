@@ -43,22 +43,30 @@ _TRANSIENT_MARKERS = (
 # substrings: as substrings they fire on anything that merely CONTAINS the
 # digits (a request id, a byte count, a duration). Boundaries can only ever make
 # this tuple match LESS, so the retry class only gets *less* eager — the safe
-# direction. The veto tuples below deliberately stay plain substrings: loosening
-# a veto would make the classes MORE eager, and one of them is destructive.
+# direction. ``_AUTH_CODE_RE`` below gives the veto codes the same treatment,
+# where the reasoning is the reverse and worth spelling out.
 _TRANSIENT_CODE_RE = re.compile(r"\b(?:429|502|503|504)\b")
 
 # Substrings that VETO a retry even if a transient marker is also present — these
 # are deterministic faults a retry can never clear (config, auth, missing code).
 _HARD_FAULT_MARKERS = (
     "modulenotfound", "no module named", "no models provided",
-    "401", "403", "unauthorized", "forbidden", "permission denied",
+    "unauthorized", "forbidden", "permission denied",
     "not found", "no such file", "invalid", "traceback",
 )
+
+# The auth status codes, shared by both veto tuples and likewise boundary-matched.
+# Bare substrings collided with any identifier carrying the digits — an opaque
+# request id on the retry side, and a git SHA (hex, so full of digits) on the
+# reset side, where ``HEAD detached at 4013abc`` is textbook branch confusion.
+# git only ever prints these as ``The requested URL returned error: NNN``, so a
+# boundary match still catches every real one.
+_AUTH_CODE_RE = re.compile(r"\b(?:401|403)\b")
 
 
 def _looks_transient(text: str) -> bool:
     low = (text or "").lower()
-    if any(m in low for m in _HARD_FAULT_MARKERS):
+    if any(m in low for m in _HARD_FAULT_MARKERS) or _AUTH_CODE_RE.search(low):
         return False
     if any(m in low for m in _TRANSIENT_MARKERS):
         return True
@@ -84,15 +92,19 @@ _BRANCH_CONFUSION_MARKERS = (
 # A branch reset cannot fix a deterministic code/auth/config fault — and running
 # a destructive reset on one would be reckless. If any of these is present the
 # branch-confusion class does NOT match (it escalates as a plain incident).
+# git's commonest auth failure says "Authentication failed", not "401" — without
+# those phrases a dead PAT that also left the clone diverged drew a DESTRUCTIVE
+# reset proposal. Adding them can only ever make this class match LESS.
 _CONFUSION_VETO = (
     "modulenotfound", "no module named", "no models",
-    "401", "403", "unauthorized", "forbidden",
+    "unauthorized", "forbidden",
+    "authentication failed", "password authentication", "access denied",
 )
 
 
 def _looks_branch_confusion(text: str) -> bool:
     low = (text or "").lower()
-    if any(v in low for v in _CONFUSION_VETO):
+    if any(v in low for v in _CONFUSION_VETO) or _AUTH_CODE_RE.search(low):
         return False
     return any(m in low for m in _BRANCH_CONFUSION_MARKERS)
 
