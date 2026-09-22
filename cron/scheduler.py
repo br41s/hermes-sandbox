@@ -783,6 +783,39 @@ def _assert_own_subprocess_identity(
     )
 
 
+_ABANDONED_AGENT_THREADS = 0
+_ABANDONED_LOCK = threading.Lock()
+
+
+def abandoned_agent_threads() -> int:
+    """How many agent threads this process gave up on but could not stop.
+
+    An inactivity timeout ends the *wait*, not the work. The agent runs in a
+    ThreadPoolExecutor in THIS process and Python cannot kill a running
+    thread; ``shutdown(cancel_futures=True)`` only drops QUEUED futures. The
+    wedged thread therefore keeps its whole heap AND keeps the interpreter
+    alive, because ``concurrent.futures`` registers an atexit hook that joins
+    every worker — so a normal ``sys.exit`` blocks forever.
+
+    Measured 2026-09-22: four wedged Infographic Engineer runs left four
+    ``hermes cron run`` processes alive, ~280 MB each, the oldest 1h32m, on a
+    7.6 GB container down to 213 MB free.
+
+    A process that owns itself (``hermes cron run``) uses this to decide it
+    must hard-exit rather than return. A long-lived scheduler cannot, and
+    leaks the thread instead — which is why this is a count, not a boolean.
+    """
+    with _ABANDONED_LOCK:
+        return _ABANDONED_AGENT_THREADS
+
+
+def _note_abandoned_agent_thread() -> int:
+    global _ABANDONED_AGENT_THREADS
+    with _ABANDONED_LOCK:
+        _ABANDONED_AGENT_THREADS += 1
+        return _ABANDONED_AGENT_THREADS
+
+
 @contextmanager
 def _job_profile_context(job_id: str, profile: Optional[str]):
     """Temporarily run a job under a specific Hermes profile.
@@ -4168,6 +4201,7 @@ def _run_job_impl(
                                 "Job '%s': inactivity timeout after %.0fs "
                                 "(stack dump unavailable)", job_id, _idle_secs,
                             )
+                        _note_abandoned_agent_thread()
                         _inactivity_timeout = True
                         break
         except Exception:
@@ -4180,9 +4214,12 @@ def _run_job_impl(
             # therefore survives, the process cannot exit, and it is left
             # behind holding its full heap (~280 MB observed). Three such
             # orphans accumulated on 2026-09-22 before anyone noticed.
-            # Reaping them needs the agent to become interruptible, or the
-            # runner to hard-exit after delivering — both larger changes than
-            # this one. Do not read this shutdown as a kill.
+            # The thread also keeps the interpreter alive: concurrent.futures
+            # registers an atexit hook that joins every worker, so sys.exit
+            # blocks forever. abandoned_agent_threads() counts them so a
+            # process that owns itself can hard-exit instead of hanging — see
+            # _exit_hard_if_threads_abandoned in hermes_cli/cron.py.
+            # Do not read this shutdown as a kill.
             _cron_pool.shutdown(wait=False, cancel_futures=True)
 
         if _inactivity_timeout:
