@@ -33,4 +33,6 @@ def compose(spec, dst):
     print(f"{dst}  {canvas.width}x{canvas.height}  ({W}x{H} @{SCALE}x)")
 
 if __name__ == "__main__":
-    compose(json.load(open(sys.argv[1])), sys.argv[2])
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        spec = json.load(fh)
+    compose(spec, sys.argv[2])
