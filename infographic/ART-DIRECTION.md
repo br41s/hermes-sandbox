@@ -4,11 +4,12 @@ Rules for the raster artwork the Infographic Engineer commissions, and for how
 it combines with the SVG data layer. One set of rules for biglobster and every
 rented site; only the palette values differ, and they are derived, not chosen.
 
-Status: **live on two sites, 2026-09-23.** Four biglobster articles (ES+EN,
-br41s/biglobster#564) and five Shoroban articles carry the format. Both stacks
-render and enlarge it (br41s/bl-site-package#85, 1.8.7). Still not wired into
-the agent: the prompt, the provisioning script and the client-lane upload step
-are unchanged, so every poster so far was built by hand through these scripts.
+Status: **live, and the agent produces it, 2026-09-23.** Four biglobster
+articles (ES+EN) and seven Shoroban articles carry the format; both stacks render
+and enlarge it (bl-site-package 1.8.8). The prompt, the pipeline scripts and the
+client-lane upload path are all shipped and synced to both cron jobs. Everything
+published so far was still built by hand through these scripts — the first
+agent-produced posters are the next scheduled runs.
 
 ---
 
@@ -67,12 +68,25 @@ regenerated with a new seed, not accepted:
 
 | Check | Threshold | Why |
 |---|---|---|
-| ground share | **between ~30% and ~70%** of pixels on the ground colour | below the floor the plate is a dense block with no breathing room; **above the ceiling the subject is tiny, off-centre or cropped**. Both bounds caught real failures: a plate at 25% was too dense, and one at 82% had the figure's head cut off and half the frame empty. The floor is palette-relative — an illustration that uses the accent as a full-bleed background legitimately scores low, so judge the render, not only the number |
-| textless | no glyphs detected | the whole premise. Verify it, never assume it — plate A drew pseudo-text on a notice board despite an explicit prohibition |
-| no self-drawn frame | edge rows/columns are not a contrasting band | the model likes to add its own border, which then fights the slot's rounded corner |
+| largest flat field | **25–75%** of pixels on the single most common colour | below the floor nothing on the plate rests; above it the subject is tiny, off-centre or cropped. Both bounds caught real failures — 25% too dense, 82% with a figure's head cut off. Measuring the GROUND colour instead was the first cut and it condemned two good full-bleed illustrations, so it measures the largest field whatever colour that is |
+| no self-drawn frame | the outer 2% band is ≥90% one colour AND differs from the ring inside it | the model likes to add its own border, which fights the slot's rounded corner. Testing "the outer band is not the ground colour" condemns every full-bleed plate |
+| textless | **UNSOLVED — see below** | |
 
-Layer 3 is the one that does not exist yet and has to be built. Layers 1 and 2
-are proven.
+All three live in `plate_check.py`. The first two are measured and hold; the
+third does not work and is off by default.
+
+**The textless check is not solved, and a passing result means nothing.**
+Measured against a positive control — a 1600×600 crop whose top half is a 56px
+headline — `gemini-3.1-flash-lite`, `claude-haiku-4.5` and `gpt-5.4-mini` all
+answered "no text". The image does arrive (1573 prompt tokens against 19 with
+none, and the description is accurate) but it is downscaled to about one tile and
+the text does not survive. A check that passes a page of text is worse than no
+check, so `--ocr` is advisory and off. A YES is still worth acting on; a NO
+proves nothing.
+
+What makes that tolerable is the architecture rather than luck: the artwork
+carries no information, so text baked into a plate is **ugly, never wrong**. In
+the old raster design the text in the image *was* the information.
 
 ### What a failing plate does to the run — CEO decision, 2026-09-23
 
@@ -209,6 +223,26 @@ generated art.
 ---
 
 ## Composition
+
+**The system is fixed; the composition is not.** Palette and its roles, type
+sizes, the 800 canvas, the flat quantised plate with its 8-unit corner, the
+hairline rules and the closing accent rule are identical on every run — that is
+what makes a corpus look like one publication. What must vary is the shape of
+the page.
+
+A wide art band on top and three labelled card rows underneath, every time, is a
+template with different words in it. The first six posters built by hand all
+used it, and by the sixth the repetition was the most visible thing about them.
+So each run varies two axes against the previous graphic on the same site:
+
+| Axis | Options |
+|---|---|
+| Schematic | comparison matrix · quantity · process with state · decision tree · timeline · before/after · unit chart · two scales |
+| Layout archetype | hero band · split · bookend · inset · full bleed · diptych · spine |
+
+The archetype decides the plate count — diptych and bookend need two, the rest
+one — so it has to be chosen **before** generating, at $0.04 a plate.
+
 
 **Canvas** `viewBox="0 0 800 <height>"`, unchanged from today. Portrait for a
 poster; 1100–1300 is the working range.
