@@ -815,6 +815,59 @@ def extract_svgs(source):
     return SVG_RE.findall(haystack)
 
 
+def check_poster(source, box, findings):
+    """A poster figure is TWO layers that must agree, or the labels drift.
+
+    The <svg> is absolutely positioned over the <img> and takes its height from
+    its own viewBox, so if the image's aspect ratio differs the two coordinate
+    systems separate and every label lands away from the artwork it belongs to —
+    a little at the top, badly at the bottom, and nothing looks broken.
+    """
+    if "article-infographic--poster" not in source:
+        if re.search(r"<img\b", source, re.I):
+            findings.append(Finding(
+                "poster-class-missing",
+                "The figure has an <img> but not the article-infographic--poster class.",
+                "Without it neither stack overlays the two layers: they stack "
+                "vertically instead, artwork above and a floating data layer below."))
+        return
+    img = re.search(r"<img\b[^>]*>", source, re.I)
+    if not img:
+        findings.append(Finding(
+            "poster-image-missing",
+            "article-infographic--poster is set but the figure has no <img>.",
+            "The class makes the <svg> position:absolute over an image that is "
+            "not there, so the graphic collapses to zero height."))
+        return
+    tag = img.group(0)
+    if not re.search(r'\balt\s*=\s*"\s*"', tag):
+        findings.append(Finding(
+            "poster-alt-not-empty",
+            "The poster's <img> needs alt=\"\".",
+            "The artwork is decorative; the <svg>'s <title> and <desc> carry the "
+            "accessible description. A populated alt reads it out twice."))
+    w = re.search(r'\bwidth\s*=\s*"(\d+)"', tag)
+    h = re.search(r'\bheight\s*=\s*"(\d+)"', tag)
+    if not (w and h):
+        findings.append(Finding(
+            "poster-image-unsized",
+            "The poster's <img> needs explicit width and height.",
+            "They pin the intrinsic ratio so the layers line up before the image "
+            "has loaded, and they are what this check compares against."))
+        return
+    if not box:
+        return
+    iw, ih = int(w.group(1)), int(h.group(1))
+    _x, _y, vw, vh = box
+    if (iw, ih) != (int(vw), int(vh)):
+        findings.append(Finding(
+            "poster-aspect-mismatch",
+            f'<img> is {iw}x{ih} but the viewBox is {vw:g}x{vh:g}.',
+            "The two layers must share one coordinate system. Set the image "
+            f'attributes to width="{vw:g}" height="{vh:g}" and composite the '
+            "artwork at that ratio."))
+
+
 def validate(svg, stack, skip_spelling=False, vocabulary=None):
     parser = SvgParser()
     parser.css = parse_css_classes(
@@ -830,6 +883,7 @@ def validate(svg, stack, skip_spelling=False, vocabulary=None):
     check_text_in_box(parser, findings)
     check_text_collisions(parser, findings)
     check_shapes(parser, box, findings)
+    check_poster(svg, box, findings)
     check_forbidden(parser, findings)
     check_geometry_tokens(parser, findings)
     check_design_tokens(parser, stack, findings, svg)

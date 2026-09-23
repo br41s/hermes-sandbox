@@ -15,6 +15,7 @@ articles that render correctly. Measuring the wrong size is worse than not
 measuring, because a false alarm trains everyone to skip the check.
 """
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -342,3 +343,69 @@ def test_a_continuation_tspan_under_a_non_start_anchor_is_left_untracked():
                 'Uno <tspan>dos</tspan></text></svg>')
     parser.close()
     assert [r.tracked for r in parser.runs] == [True, False]
+
+
+# ------------------------------------------------- the two-layer poster figure
+
+# A poster is an <img> of textless artwork with the data layer laid over it. The
+# two must share one coordinate system: the <svg> is positioned absolutely and
+# takes its height from its own viewBox, so a mismatched image ratio separates
+# them — a little at the top, badly at the bottom, and nothing looks broken.
+
+POSTER = ('<figure class="article-infographic article-infographic--poster">'
+          '<img src="/uploads/a.webp" alt="" width="800" height="400" loading="lazy">'
+          '{svg}<figcaption>c</figcaption></figure>')
+
+
+def poster_codes(svg_markup, img=None):
+    fig = POSTER.format(svg=svg_markup)
+    if img:
+        fig = re.sub(r"<img\b[^>]*>", img, fig)
+    return [f.code for f in mod.validate(fig, "biglobster", skip_spelling=True)]
+
+
+def test_a_well_formed_poster_passes():
+    assert poster_codes(svg('<text x="40" y="60" font-size="16">Hola</text>')) == []
+
+
+def test_an_image_whose_ratio_differs_from_the_viewbox_is_rejected():
+    codes = poster_codes(svg('<text x="40" y="60" font-size="16">Hola</text>'),
+                         img='<img src="/uploads/a.webp" alt="" width="800" height="1200">')
+    assert "poster-aspect-mismatch" in codes
+
+
+def test_a_poster_image_needs_explicit_dimensions():
+    codes = poster_codes(svg('<text x="40" y="60" font-size="16">Hola</text>'),
+                         img='<img src="/uploads/a.webp" alt="">')
+    assert "poster-image-unsized" in codes
+
+
+def test_a_poster_image_must_have_an_empty_alt():
+    """The <svg>'s title/desc is the accessible description; alt would duplicate it."""
+    codes = poster_codes(svg('<text x="40" y="60" font-size="16">Hola</text>'),
+                         img='<img src="/uploads/a.webp" alt="Un taller" width="800" height="400">')
+    assert "poster-alt-not-empty" in codes
+
+
+def test_an_img_without_the_poster_class_is_rejected():
+    """Without the class neither stack overlays the layers — they stack vertically."""
+    fig = ('<figure class="article-infographic">'
+           '<img src="/uploads/a.webp" alt="" width="800" height="400">'
+           + svg('<text x="40" y="60" font-size="16">Hola</text>')
+           + "<figcaption>c</figcaption></figure>")
+    assert "poster-class-missing" in [f.code for f in mod.validate(fig, "biglobster", skip_spelling=True)]
+
+
+def test_the_poster_class_without_an_image_is_rejected():
+    fig = ('<figure class="article-infographic article-infographic--poster">'
+           + svg('<text x="40" y="60" font-size="16">Hola</text>')
+           + "<figcaption>c</figcaption></figure>")
+    assert "poster-image-missing" in [f.code for f in mod.validate(fig, "biglobster", skip_spelling=True)]
+
+
+def test_a_plain_svg_figure_is_still_fine():
+    """Not every graphic is a poster: a token-based SVG stays valid."""
+    fig = ('<figure class="article-infographic">'
+           + svg('<text x="40" y="60" font-size="16">Hola</text>')
+           + "<figcaption>c</figcaption></figure>")
+    assert [f.code for f in mod.validate(fig, "biglobster", skip_spelling=True)] == []

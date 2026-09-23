@@ -57,8 +57,22 @@ CONFIG — the only per-stack values. Nothing else may vary between sites.
     VALIDATOR_STACK : bl-site-package
 
   BOTH
-    FIGURE_CLASS    : article-infographic   (already styled on both sites)
+    FIGURE_CLASS    : article-infographic article-infographic--poster
+    PIPELINE        : /opt/hermes/infographic/
+                      palette.py       derive the palette for this site
+                      palettize.py     snap a plate onto it
+                      plate_check.py   gate a plate before you use it
+                      compose.py       paste plates onto the poster ground
     VALIDATOR       : /opt/hermes/infographic/validate_infographic.py
+    PALETTE_SOURCE  : REPO LANE   python3 .../palette.py --stack biglobster
+                      CLIENT LANE python3 .../palette.py --stack bl-site-package \
+                                    --url <any published article URL on this site>
+                      Never read a client's colours from the package stylesheet.
+                      That file ships DEFAULTS; each client overrides --accent in
+                      an inline <style> on its own page. One client's real accent
+                      was an olive #b0ba1c against the package default #b8391c, a
+                      terracotta: two characters apart, and five posters shipped in
+                      the wrong brand colour before anyone looked.
 
 ──────────────────────────────────────────────────────────────────────────────
 HARD GUARDRAILS
@@ -66,11 +80,31 @@ HARD GUARDRAILS
 1. Prose is immutable. Do not edit, reword, reorder or delete any existing text,
    heading, FAQ, CTA, metadata, JSON-LD or cover figure. You only INSERT one
    block. Everything else must be identical, character for character.
-2. Inline SVG or a plain HTML table. Nothing else. No <img>, no raster or photo
-   asset, no generated image, no external image or font URL, no <canvas>, no JS.
-   Raster generation was removed from this agent on purpose: an image model
-   misspells its own labels, draws hex colour codes as if they were text, and
-   crops its own composition, and none of that can be checked before it is live.
+2. THE ARTWORK NEVER CARRIES INFORMATION. Every fact is SVG.
+   A poster is one <img> — generated artwork with no text in it — and one inline
+   <svg> layered over it holding every label, number, axis and data mark. No
+   external image or font URL, no <canvas>, no JS, no <iframe>.
+
+   This is the whole design, not a style preference. Raster generation was
+   removed from this agent in September because an image model misspells its own
+   labels and draws hex colour codes as if they were text. Every one of those
+   failures is about TEXT INSIDE THE IMAGE. An image with no information in it
+   cannot commit any of them: the worst case is a picture that is merely ugly,
+   never a picture that is wrong.
+
+   So the artwork MAY contain: people at work, hands, tools, machines, vehicles,
+   buildings, interiors, furniture, plants, crates, everyday objects.
+   It may NOT contain: anything with a glyph on it, or anything that invites one
+   — signage, screens showing content, documents face-on, book covers, keyboards,
+   packaging, number plates, clocks with numerals. Nor any chart, graph, axis,
+   arrow-as-data, map, territory outline or flag; no logo or brand mark; no
+   frame, border or vignette of its own; nobody identifiable as a real person.
+   A map is worth naming twice: territory shapes are FACTS. If a graphic needs
+   one, it is SVG path data, never generated art.
+
+   Nothing machine-checks that a plate is textless (see STEP 3b). The rule above
+   is the control, and the architecture is what makes an occasional slip
+   survivable.
 3. Never curl/wget an API with a token, header or secret — the exfil guard
    blocks those prompts and the job will not run. REPO LANE uses git and `gh`,
    already authenticated. CLIENT LANE uses `bl_site_publish`.
@@ -85,8 +119,25 @@ HARD GUARDRAILS
 ──────────────────────────────────────────────────────────────────────────────
 STEP 1 — Pick the target (deterministic, oldest first)
 
-An article is DONE if its source/content contains `article-infographic`. Done
-articles are never touched again — not to improve them, not to replace them.
+An article is DONE if its source/content contains `article-infographic` AND that
+figure passes VALIDATOR. A figure that FAILS the validator, or whose <img> src
+returns anything but HTTP 200, is not done — it is damage, and it outranks a bare
+article.
+
+Work in this order:
+
+  1. BROKEN   a figure whose image 404s. Five articles on one client site sat
+              like that for two months, showing readers a broken image. Nothing
+              else is more urgent.
+  2. DEFECTIVE a figure VALIDATOR rejects: off-canvas viewBox, <style>/<defs>,
+              text outside its box, labels printed over each other.
+  3. BARE     an article with no figure at all, oldest first.
+
+NEVER rewrite a figure that passes the validator and sits on the 800 canvas, even
+if you would have drawn it differently. "Old" is not a defect. On 2026-09-23
+`medios-pago-aumentan-ingresos` was skipped on exactly this rule: a six-card
+comparison matrix, real data in every card, standard canvas, no findings. Left
+alone. Your taste is not a reason to spend a run and burn a client's goodwill.
 
   REPO LANE
     git fetch origin && git checkout main && git pull --ff-only origin main
@@ -156,54 +207,127 @@ Reach for one of these, and use the full 800-unit width:
   TIMELINE           position on a real axis, with intervals to scale.
   BEFORE / AFTER     the same structure twice with the delta highlighted.
 
+FORMAT. A poster is a fixed-palette printed plate: artwork the reader sees, and
+a crisp SVG layer they can select, translate and search.
+
+  <figure class="article-infographic article-infographic--poster">
+    <img src="<uploaded or committed path>" alt="" width="800" height="<H>" loading="lazy">
+    <svg viewBox="0 0 800 <H>" role="img" aria-labelledby="<id>-t <id>-d">…</svg>
+    <figcaption>…</figcaption>
+  </figure>
+
+`alt=""` is deliberate: the artwork is decoration, and the <svg>'s <title> plus
+<desc> carry the accessible description of the whole graphic. Both stacks style
+this variant and their viewers enlarge both layers together.
+
 MECHANICS — all mandatory, all checked by VALIDATOR:
 
-  - `viewBox="0 0 800 <height>"`. Always 800 wide, on every site, so a given
-    font-size renders at a predictable px size. Height 200–1400, whatever the
-    content needs. No `width`/`height` attributes on the <svg>; both sites
-    already size it to the column and offer a zoom control.
-  - `role="img"` plus `<title>` and `<desc>`, both meaningful. The `<desc>`
-    is the whole graphic in prose, for a screen reader.
-  - Every `<text>` carries an explicit `font-size` of at least 15. An unset
-    font-size inherits the page body size, which is not a safe default.
-  - Colour and type come from the TOKENS listed in CONFIG for your lane, or from
-    `currentColor`. Nothing else. A hex literal will not follow dark mode, and a
-    token from the other site's list resolves to nothing and silently renders
-    black. Prefer `currentColor` — it is correct on both sites.
-  - var() works ONLY in colour and type attributes (fill, stroke, stop-color,
-    font-family), because those are CSS properties. In a geometry attribute —
-    x, y, width, height, rx, ry, cx, cy, r, x1, y1, x2, y2, dx, dy, points, d —
-    it is ignored and the attribute falls back to its default with no error and
-    nothing wrong-looking in the markup. Write the number: rx="8", never
-    rx="var(--radius-md)".
-  - One number per geometry attribute. `rx="8 8 0 0"` is not the CSS
-    border-radius shorthand; the browser discards it whole and draws rx=0. A
-    single rx rounds all four corners. To round only two — a card header sitting
-    on a body — draw a path:
-      <path d="M 8 0 h 324 a 8 8 0 0 1 8 8 v 52 h -340 v -52 a 8 8 0 0 1 8 -8 Z"/>
-    First check whether rounding all four is simply correct. It usually is.
+  - `viewBox="0 0 800 <height>"`. Always 800 wide, on every site. Portrait for a
+    poster; 1100–1300 is the working range. The <img> width/height attributes
+    MUST be 800 x the same height, and the composited image MUST have that
+    aspect ratio, or the two layers drift apart down the page.
+  - `role="img"` plus `<title>` and `<desc>`, both meaningful. The `<desc>` is
+    the whole graphic in prose, for a screen reader.
+  - Every `<text>` carries an explicit `font-size` of at least 15.
+  - COLOUR COMES FROM PALETTE_SOURCE, as literal hex, NOT `var(--token)`.
+    This inverts the old rule and it is deliberate: the text sits on the plate's
+    own ground, so it cannot follow the page theme. Use the roles palette.py
+    prints and nothing else:
+        ink        body text
+        slate      secondary text
+        atext      accent-coloured text  <- NOT `accent`
+        accent     fills: bars, chips, rules
+        deep       a second fill
+        on_accent  text sitting ON an accent fill
+    `accent` is a FILL. A terracotta accent happens to work as text too, which
+    hid this for weeks; an olive one scores 1.96:1 on its own ground and is
+    illegible. palette.py computes `atext` by darkening the accent until it
+    clears 4.5:1. Never substitute your own shade.
+  - One number per geometry attribute. `rx="8 8 0 0"` is not the CSS shorthand;
+    the browser discards it whole and draws rx=0.
   - FORBIDDEN: <style>, <defs>, <marker>, <use>, <image>, <script>,
-    <foreignObject>, gradients, filters, animation. The client sanitizer strips
-    them, and a <style> block carrying its own prefers-color-scheme rule fights
-    the site's own theme switch. Draw arrowheads as <polygon>.
-  - No emoji. They render as empty boxes in SVG text and ignore the theme. Draw
-    the icon, or drop it. `→ ✓ ≈ ≤ ≥ • −` are typography, not emoji, and are fine.
-  - Text must fit the box it sits in, not merely the canvas. Overhanging text is
-    often the SAME COLOUR as the page, so it does not look broken — it looks
-    truncated. This shipped: a pill reading "COMPRAR E INSTALAR" measured 146
-    units in a 128-unit pill and went live reading "OMPRAR E INSTALA".
-    Split a long label across `<tspan x="same-x" dy="1.2em">` lines, or shorten
-    it. Do not shrink below font-size 15.
-
-Wrap it:
-    <figure class="article-infographic">
-      <svg …>…</svg>
-      <figcaption>…</figcaption>
-    </figure>
+    <foreignObject>, gradients, filters, animation. Draw arrowheads as <polygon>.
+  - No emoji. `→ ✓ ≈ ≤ ≥ • −` are typography, not emoji, and are fine.
+  - Text must fit the box it sits in, and must not land on another label or on a
+    bar it is not inside. VALIDATOR checks all three. A "275%" set at font-size
+    52 once overlapped the line beside it by 13.8 units and shipped, because the
+    check measured text against RECTS only.
+  - COMPUTE THE GEOMETRY, DO NOT TYPE IT. Work out bar lengths, row positions
+    and the canvas height from the numbers, in the scratch script that emits the
+    figure, and assert the last baseline is inside the canvas. Every poster built
+    by hand on 2026-09-23 needed its height corrected at least once, and the
+    assert is what caught it rather than a reader.
 
 The figcaption carries the conclusion — the thing the reader should take away —
 not a description of the picture. Write all visible text in the article's
 language.
+
+──────────────────────────────────────────────────────────────────────────────
+STEP 3b — Commission the artwork
+
+Derive the palette FIRST; every later step takes it as input.
+
+    python3 /opt/hermes/infographic/palette.py --stack <VALIDATOR_STACK> \
+        [--url <a published article URL>] > /tmp/palette.json
+
+Then, for each art slot in your layout (one wide band is usually enough; two
+side by side for a before/after):
+
+1. WRITE THE BRIEF. A subject line, then this contract appended VERBATIM, with
+   the palette named in words — "warm cream, near-black ink, terracotta red,
+   warm orange, muted slate grey" for biglobster, "pale yellow-green cream,
+   near-black ink, olive green, dark olive, muted slate grey, no warm colours,
+   no red, no orange" for an olive client. Naming the wrong colours and fixing
+   it in quantisation does NOT work: every warm region collapses onto its
+   nearest neighbour and the illustration loses its structure.
+
+     Flat vector editorial illustration, screen-print risograph look. Bold even
+     outlines, solid flat colour fills, no gradients, no shading, no texture, no
+     3D, no photorealism. <the five colours, in words>. No text, no letters, no
+     numbers, no signage, no logos. Subject fully inside frame, generous empty
+     margin, plain flat <ground colour> background.
+
+   "Generous empty margin" is load-bearing twice: it is what makes a centre-crop
+   to the slot's aspect ratio safe, and what keeps the plate out of the
+   too-busy band.
+
+2. GENERATE with `image_generate` at the slot's aspect ratio, sized 2x the slot
+   so it stays sharp on a retina screen.
+
+3. SNAP IT TO THE PALETTE. This is what produces a house style — not the prompt.
+   Two plates generated back to back from an identical contract came back with
+   different borders, different shading and different off-palette hues; snapped,
+   they read as one system.
+
+     python3 /opt/hermes/infographic/palettize.py \
+         --src <raw> --dst <plate>.png --palette /tmp/palette.json
+
+4. GATE IT. Exit 0 or the plate is not usable:
+
+     python3 /opt/hermes/infographic/plate_check.py \
+         --plate <plate>.png --palette /tmp/palette.json
+
+   A failing plate is REGENERATED with a new seed, never patched. Retry about
+   TWO further seeds. If it still fails, drop the artwork and ship the graphic
+   as a plain SVG — and say so (see STEP 7).
+
+   What it cannot check: whether the plate is textless. Three vision models were
+   measured against a positive control and all three answered "no text" to a
+   page of text, so `--ocr` is advisory and off. A YES from it is worth acting
+   on; a NO proves nothing. Your prompt contract is the real control, and the
+   fact that artwork carries no information is what makes a slip survivable.
+
+5. COMPOSE the plates onto one ground image at your template coordinates:
+
+     python3 /opt/hermes/infographic/compose.py <layout>.json <out>.png
+
+   with `{"canvas":[800,H], "ground":"<palette ground>", "slots":[{"src":…,
+   "rect":[x,y,w,h], "radius":8}]}`. ONE image per figure, always: a client site
+   cannot position two <img> elements, because the sanitizer allows no `style`
+   attribute, no `div`, and a class cannot carry per-article coordinates.
+   Compositing it yourself is also what removes alignment risk entirely.
+
+   Save as WebP. A 800x1220 poster is ~380 KB as PNG and ~60 KB as WebP.
 
 ──────────────────────────────────────────────────────────────────────────────
 STEP 4 — Validate. This is not optional and it is not last.
@@ -244,10 +368,31 @@ data for Google, and everything under a question heading is taken as part of the
 ANSWER. A block placed there ships markup soup into a search result, and nothing
 visibly fails. Always place it in a normal section, above the FAQ.
 
-  REPO LANE   Insert inside CONTENT_CONTAINER, after the closing `---` of the
+PUBLISH THE IMAGE FIRST, and put its real path in the markup before you write
+anything. A figure whose <img> 404s is the worst outcome there is — worse than
+no figure, and five articles on one client site sat like that for two months.
+
+  REPO LANE   Commit the WebP under `web/assets/blog/infographics/<slug>.webp`
+              and reference it as `/assets/blog/infographics/<slug>.webp`. One
+              plate serves every locale of the same article: the artwork holds
+              no text, so `site/blog/x.html` and `site/en/blog/x.html` share the
+              image and differ only in their SVG layer.
+              Insert inside CONTENT_CONTAINER, after the closing `---` of the
               frontmatter — never inside the frontmatter JSON. Bracket it with
               `<!-- infographic:auto -->` on both sides.
-  CLIENT LANE Start from the EXACT `content` returned by get_post. Leave a blank
+  CLIENT LANE `bl_site_publish` action:"upload_image" with the composed WebP.
+              It returns `/uploads/<hash>.webp`; put THAT in the src. The
+              sanitizer only accepts a root-relative `/uploads/…` path on this
+              site, so an external URL is silently dropped and you ship a broken
+              figure.
+              SPLICE AND CHECK BEFORE YOU UPLOAD. Do the string replacement on a
+              copy first and confirm exactly one `<figure …article-infographic`
+              survives; only then upload and write. Uploading first and failing
+              the splice leaves an orphan image on the client's site. And count
+              `<figure` blocks, never the substring `article-infographic` — a
+              poster carries two class tokens where an old figure carried one,
+              so a raw count is always off by one and will fail a correct edit.
+              Start from the EXACT `content` returned by get_post. Leave a blank
               line before and after the block so the renderer treats it as an
               HTML block. Keep the SVG flush-left: four spaces of indentation
               turns it into a Markdown code block and it renders as escaped
@@ -303,6 +448,16 @@ the article's language.
   - Inserted before section: <heading>
   - Validator: exit 0
   - REPO LANE only: PR <url>
+
+  ✅ Infographic added — artwork dropped
+  - Article: <title> (<slug>)
+  - Artwork: <n> plates rejected (<the plate_check finding>) — shipped as plain SVG
+  - Everything else as above
+
+  This third outcome is NOT a failure and NOT an ordinary success. The article
+  still gets a correct graphic, so `RUN FAILED` would be wrong; reporting it as
+  a normal run is how a fleet quietly stops being illustrated for weeks with the
+  Telegram report looking identical throughout. Say it plainly.
 
   ⚠️ No infographic this run
   - Article evaluated: <title>
