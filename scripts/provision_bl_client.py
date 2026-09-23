@@ -173,16 +173,21 @@ AGENT_SOURCES = {
     # carries one, so it's safe to leave scheduled daily on a small blog.
     #
     # Shares ONE prompt with the biglobster job; the lane is resolved at runtime
-    # from BL_SITE_URL. No `image_gen`: raster generation was removed from this
-    # agent because an image model misspells its own labels, renders hex colour
-    # codes as text and crops its composition, and none of that is checkable
-    # before it is live on a client's site. Everything is inline SVG now, which
-    # the site sanitizer allows and validate_infographic.py can verify.
+    # from BL_SITE_URL.
+    #
+    # `image_gen` IS required. It was removed in September when raster
+    # generation was dropped — an image model misspells its own labels and
+    # renders hex codes as text — and the poster format brought it back under a
+    # rule that makes those failures impossible: the artwork carries NO
+    # information, so every label and figure is inline SVG over it. Without the
+    # toolset entry the agent cannot call image_generate at all and silently
+    # ships a plain SVG instead, which is what a live run did on 2026-09-23:
+    # no error, no report, just a quietly downgraded graphic.
     "infographic": (
         "infographic/infographic-engineer.prompt",
         "Infographic Engineer",
         "daily",
-        ["bl_site_publish", "file", "terminal", "skills", "todo"],
+        ["bl_site_publish", "image_gen", "file", "terminal", "skills", "todo"],
     ),
     # The "Website Maintenance" subscription product. Daily, like gap-hunter:
     # availability and publish-drift are only meaningful checked often, and a
