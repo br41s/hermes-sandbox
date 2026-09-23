@@ -265,7 +265,15 @@ language.
 ──────────────────────────────────────────────────────────────────────────────
 STEP 3b — Commission the artwork
 
-Derive the palette FIRST; every later step takes it as input.
+A PLATE COSTS ABOUT $0.04 AND EVERYTHING ELSE IN THIS RUN IS CHEAP. That one
+number decides the order of this step. Settle the palette, the canvas height and
+the slot's aspect ratio BEFORE you generate anything: a plate thrown away
+because one of those changed afterwards is the only real waste in the job.
+Measured on 2026-09-23 — of 14 plates generated for one client site, 5 were
+discarded solely because the palette was settled after the fact, a third of the
+spend for nothing.
+
+So derive the palette FIRST; every later step takes it as input.
 
     python3 /opt/hermes/infographic/palette.py --stack <VALIDATOR_STACK> \
         [--url <a published article URL>] > /tmp/palette.json
@@ -307,9 +315,11 @@ side by side for a before/after):
      python3 /opt/hermes/infographic/plate_check.py \
          --plate <plate>.png --palette /tmp/palette.json
 
-   A failing plate is REGENERATED with a new seed, never patched. Retry about
-   TWO further seeds. If it still fails, drop the artwork and ship the graphic
-   as a plain SVG — and say so (see STEP 7).
+   A failing plate is REGENERATED with a new seed, never patched. Retry at most
+   TWO further seeds — three plates is $0.12, already more than the rest of the
+   run — then drop the artwork and ship the graphic as a plain SVG, and say so
+   (see STEP 7). Do not keep rolling: if two reseeds both fail the same check,
+   the brief is wrong, not the seed, and a fourth will fail too.
 
    What it cannot check: whether the plate is textless. Three vision models were
    measured against a positive control and all three answered "no text" to a
