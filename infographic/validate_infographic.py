@@ -642,6 +642,69 @@ def check_text_collisions(p, findings):
             ))
 
 
+# A wrapped pair: two runs at the same x, same size and weight, one line apart.
+WRAP_MIN, WRAP_MAX = 0.9, 1.8      # multiples of font-size between baselines
+CLAUSE_END = ",.:;!?\u2014\u2026"  # a break AFTER one of these is a clause boundary
+# A clause boundary is only a BETTER break than the one chosen if it sits at a
+# sensible line length. Breaking at a comma that lands a third of the way across
+# leaves a worse rag than running on to the next natural pause.
+GOOD_BREAK_MIN, GOOD_BREAK_MAX = 0.60, 1.00
+
+
+def check_unneeded_breaks(p, box, findings):
+    """A line must not break mid-clause when a clause boundary would have fitted.
+
+    Hand-splitting text across two <text> elements puts the break wherever the
+    author stopped typing rather than at a pause a reader can feel. This shipped
+    on a client site: "Primero mira lo que ya tienes. Despues separa lo basico /
+    de lo prescindible. El precio es lo ultimo." broke after "basico", in the
+    middle of a clause, when "...de lo prescindible." ends a sentence at 98% of
+    the width and was available the whole time.
+
+    Two things deliberately stay quiet. A break AFTER a comma or a full stop is
+    already a clause boundary and is correct. And a long line with no internal
+    pause at all — a two-line headline like "Comprar cinco veces al mes / te
+    cuesta mas por exactamente lo mismo." — has no better break to offer, so
+    flagging it would just be noise.
+    """
+    if not box:
+        return
+    _x, _y, canvas_w, _h = box
+    runs = [r for r in p.runs if r.tracked and r.text and r.text.strip()]
+    for a, b in zip(runs, runs[1:]):
+        if a.anchor != "start" or b.anchor != "start":
+            continue
+        if abs(a.x - b.x) > 1 or abs(a.font_size - b.font_size) > 0.5 or a.weight != b.weight:
+            continue
+        gap = b.y - a.y
+        if not (WRAP_MIN * a.font_size <= gap <= WRAP_MAX * a.font_size):
+            continue
+        if a.text.rstrip()[-1:] in CLAUSE_END:
+            continue                       # already broken at a pause
+
+        joined = f"{a.text.rstrip()} {b.text.strip()}"
+        available = canvas_w - a.x * 2     # the layouts use a symmetric margin
+        chosen = text_width(a.text, a.font_size, a.weight)
+
+        best = None
+        for m in re.finditer(r"[" + re.escape(CLAUSE_END) + r"](?=\s)", joined):
+            prefix = joined[: m.end()]
+            width = text_width(prefix, a.font_size, a.weight)
+            ratio = width / available if available else 0
+            if GOOD_BREAK_MIN <= ratio <= GOOD_BREAK_MAX and width > chosen:
+                best = (prefix, ratio)
+        if best:
+            prefix, ratio = best
+            findings.append(Finding(
+                "break-not-at-clause",
+                f'"{clip(a.text)}" breaks mid-clause at {chosen / available:.0%} of the '
+                f"width when a pause was available at {ratio:.0%}.",
+                f'Break after "...{clip(prefix[-40:])}" instead. A reader feels a break '
+                f"at a comma or a full stop; one in the middle of a phrase just looks "
+                f"like the line gave up.",
+            ))
+
+
 def check_shapes(p, box, findings):
     if not box:
         return
@@ -882,6 +945,7 @@ def validate(svg, stack, skip_spelling=False, vocabulary=None):
     check_text(parser, box, findings)
     check_text_in_box(parser, findings)
     check_text_collisions(parser, findings)
+    check_unneeded_breaks(parser, box, findings)
     check_shapes(parser, box, findings)
     check_poster(svg, box, findings)
     check_forbidden(parser, findings)

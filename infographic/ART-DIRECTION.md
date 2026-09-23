@@ -210,6 +210,26 @@ generated art.
 
 ## Composition
 
+**The system is fixed; the composition is not.** Palette and its roles, type
+sizes, the 800 canvas, the flat quantised plate with its 8-unit corner, the
+hairline rules and the closing accent rule are identical on every run — that is
+what makes a corpus look like one publication. What must vary is the shape of
+the page.
+
+A wide art band on top and three labelled card rows underneath, every time, is a
+template with different words in it. The first six posters built by hand all
+used it, and by the sixth the repetition was the most visible thing about them.
+So each run varies two axes against the previous graphic on the same site:
+
+| Axis | Options |
+|---|---|
+| Schematic | comparison matrix · quantity · process with state · decision tree · timeline · before/after · unit chart · two scales |
+| Layout archetype | hero band · split · bookend · inset · full bleed · diptych · spine |
+
+The archetype decides the plate count — diptych and bookend need two, the rest
+one — so it has to be chosen **before** generating, at $0.04 a plate.
+
+
 **Canvas** `viewBox="0 0 800 <height>"`, unchanged from today. Portrait for a
 poster; 1100–1300 is the working range.
 

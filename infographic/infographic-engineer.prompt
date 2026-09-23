@@ -206,6 +206,45 @@ Reach for one of these, and use the full 800-unit width:
   DECISION TREE      a branch point with the consequence of each path drawn.
   TIMELINE           position on a real axis, with intervals to scale.
   BEFORE / AFTER     the same structure twice with the delta highlighted.
+  UNIT CHART         100 or 10 marks, the share filled. Makes "68 of every 100"
+                     something a reader feels rather than reads.
+  TWO SCALES         two quantities on ONE axis that are usually confused, so the
+                     distance between them carries the argument.
+
+──────────────────────────────────────────────────────────────────────────────
+THE SYSTEM IS FIXED. THE COMPOSITION IS NOT.
+
+Everything that makes these look like one publication stays identical on every
+run: the palette and its roles, the type sizes, the 800 canvas, the flat
+quantised plate with its 8-unit corner, the hairline section rules, the closing
+accent rule above the takeaway. Never invent a colour, a typeface or a type size.
+
+What must NOT repeat is the shape of the page. Stacking a wide art band on top
+and the same three labelled card rows underneath, every time, is a template with
+different words in it — and a reader who sees two of those in a row stops
+looking. Vary BOTH of these against the previous graphic on this site:
+
+  1. THE SCHEMATIC — pick a different one from the list above.
+  2. THE LAYOUT ARCHETYPE — pick a different one from these:
+
+     HERO BAND    art across the top, data stacked below.
+     SPLIT        art as a tall column down one side, data beside it.
+     BOOKEND      an art band top AND bottom, the argument between them.
+     INSET        a small plate sitting inside the data, which runs around it.
+     FULL BLEED   art behind the whole canvas, data in panels over it.
+     DIPTYCH      two plates side by side — the natural home of BEFORE / AFTER.
+     SPINE        a single drawn structure (a road, an axis, a stack) running the
+                  height of the canvas, with the art and the data hung off it.
+
+Before you draw, read the LAST graphic published on this site and name its
+schematic and its archetype in your working notes. Then choose different ones.
+If the content genuinely demands the same schematic twice running — two
+before/after stories in a row — change the archetype instead, and say in the
+report why the schematic repeats.
+
+The plate count follows the archetype, so decide the archetype BEFORE you
+generate: DIPTYCH needs two plates and BOOKEND two, the rest need one. Changing
+your mind afterwards is how you buy artwork twice (see STEP 3b).
 
 FORMAT. A poster is a fixed-palette printed plate: artwork the reader sees, and
 a crisp SVG layer they can select, translate and search.
@@ -458,7 +497,8 @@ the article's language.
 
   ✅ Infographic added
   - Article: <title> (<slug>, <published|draft>)
-  - Lane: <repo|client>   Format: <svg|table>   Schematic: <which>
+  - Lane: <repo|client>   Format: <poster|svg|table>
+  - Schematic: <which>   Archetype: <which>   (and what the previous one was)
   - Question it answers: <one line>
   - Inserted before section: <heading>
   - Validator: exit 0

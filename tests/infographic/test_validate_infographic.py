@@ -32,6 +32,10 @@ def codes(svg, stack="biglobster"):
     return [f.code for f in mod.validate(svg, stack, skip_spelling=True)]
 
 
+def codes_of(svg_markup, stack="biglobster"):
+    return [f.code for f in mod.validate(svg_markup, stack, skip_spelling=True)]
+
+
 def svg(body, width=800, height=400):
     return f'<svg viewBox="0 0 {width} {height}">{body}</svg>'
 
@@ -409,3 +413,62 @@ def test_a_plain_svg_figure_is_still_fine():
            + svg('<text x="40" y="60" font-size="16">Hola</text>')
            + "<figcaption>c</figcaption></figure>")
     assert [f.code for f in mod.validate(fig, "biglobster", skip_spelling=True)] == []
+
+
+# ------------------------------------------------------ where a line breaks
+
+# Hand-splitting text across two <text> elements puts the break wherever the
+# author stopped typing. This shipped on a client site: a takeaway broke after
+# "lo básico", mid-clause, when a full stop sat at 85% of the width and had been
+# available the whole time. The CEO spotted it on the rendered page.
+
+def two_lines(l1, l2, size=17, weight=700, y=100, lead=26):
+    return svg(f'<text x="40" y="{y}" font-size="{size}" font-weight="{weight}">{l1}</text>'
+               f'<text x="40" y="{y + lead}" font-size="{size}" font-weight="{weight}">{l2}</text>',
+               height=300)
+
+
+def test_a_break_mid_clause_is_rejected_when_a_pause_would_have_fitted():
+    codes = codes_of(two_lines(
+        "Primero mira lo que ya tienes. Después separa lo básico",
+        "de lo prescindible. El precio es lo último."))
+    assert "break-not-at-clause" in codes
+
+
+def test_breaking_at_the_full_stop_passes():
+    """The fix that shipped: carry the clause to its end, then break."""
+    codes = codes_of(two_lines(
+        "Primero mira lo que ya tienes. Después separa lo básico de lo prescindible.",
+        "El precio es lo último."))
+    assert "break-not-at-clause" not in codes
+
+
+def test_a_two_line_headline_with_no_internal_pause_is_left_alone():
+    """It has to wrap and there is no better point, so flagging it is noise."""
+    codes = codes_of(two_lines(
+        "Comprar cinco veces al mes",
+        "te cuesta más por exactamente lo mismo.", size=28))
+    assert "break-not-at-clause" not in codes
+
+
+def test_a_break_after_a_comma_is_already_a_clause_boundary():
+    codes = codes_of(two_lines(
+        "Antes de preguntar en qué contenedor,",
+        "pregunta si se puede volver a usar.", size=28))
+    assert "break-not-at-clause" not in codes
+
+
+def test_a_pause_too_early_in_the_line_is_not_a_better_break():
+    """Breaking at a comma a third of the way across leaves a worse rag than
+    running on. Only a pause at a sensible line length counts."""
+    codes = codes_of(two_lines(
+        "Para tareas que mezclan pantalla y papel, el INSST sitúa la iluminancia media",
+        "recomendada entre 300 y 500 lux.", size=16, weight=400))
+    assert "break-not-at-clause" not in codes
+
+
+def test_lines_that_are_not_a_wrapped_pair_are_ignored():
+    """Different sizes, or far apart vertically, are separate blocks."""
+    assert "break-not-at-clause" not in codes_of(two_lines(
+        "Primero mira lo que ya tienes. Después separa lo básico",
+        "de lo prescindible. El precio es lo último.", lead=120))
