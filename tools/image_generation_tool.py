@@ -160,6 +160,29 @@ FAL_MODELS: Dict[str, Dict[str, Any]] = {
         },
         "max_reference_images": 9,
     },
+    # Seedream on fal, so a BYOK tenant can reach the same illustrator the rest
+    # of the fleet uses. The infographic posters were drawn with seedream via
+    # OpenRouter; a tenant whose FAL_KEY bills its own artwork was falling back
+    # to flux-2/klein, which draws a visibly different picture from the same
+    # brief — a corpus that mixes them reads as two illustrators. Same model on
+    # the client's own key keeps the billing boundary AND the house style.
+    "fal-ai/bytedance/seedream/v4/text-to-image": {
+        "display": "Seedream 4",
+        "speed": "~11s",
+        "strengths": "Flat vector and editorial illustration; follows a palette brief closely",
+        "price": "see fal pricing",
+        "size_style": "image_size_preset",
+        "sizes": {
+            "landscape": "landscape_16_9",
+            "square": "square_hd",
+            "portrait": "portrait_16_9",
+        },
+        "defaults": {
+            "num_images": 1,
+        },
+        "supports": {"prompt", "image_size", "num_images", "seed"},
+        "upscale": False,
+    },
     "fal-ai/z-image/turbo": {
         "display": "Z-Image Turbo",
         "speed": "~2s",
