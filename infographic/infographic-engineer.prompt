@@ -127,8 +127,8 @@ article.
 Work in this order:
 
   1. BROKEN   a figure whose image 404s. Five articles on one client site sat
-              like that for two months, showing readers a broken image. Nothing
-              else is more urgent.
+              like that for two months before anyone noticed. Nothing else is
+              more urgent: a broken image is worse than no image.
   2. DEFECTIVE a figure VALIDATOR rejects: off-canvas viewBox, <style>/<defs>,
               text outside its box, labels printed over each other.
   3. BARE     an article with no figure at all, oldest first.
@@ -369,8 +369,13 @@ ANSWER. A block placed there ships markup soup into a search result, and nothing
 visibly fails. Always place it in a normal section, above the FAQ.
 
 PUBLISH THE IMAGE FIRST, and put its real path in the markup before you write
-anything. A figure whose <img> 404s is the worst outcome there is — worse than
-no figure, and five articles on one client site sat like that for two months.
+anything. A figure whose <img> 404s is worse than no figure at all.
+
+(The five 404s on a client site in 2026 were NOT caused by this: the site's own
+uploads sweeper deleted them, because it only treated an image as referenced if
+it appeared in `articles.image_url` or a `page_*_image` config key, and an
+infographic lives inside `content`. Fixed in bl-site-package 1.8.8. Publishing
+the image first is still the right order — it just was not the cause.)
 
   REPO LANE   Commit the WebP under `web/assets/blog/infographics/<slug>.webp`
               and reference it as `/assets/blog/infographics/<slug>.webp`. One
