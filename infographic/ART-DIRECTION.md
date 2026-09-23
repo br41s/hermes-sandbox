@@ -4,11 +4,11 @@ Rules for the raster artwork the Infographic Engineer commissions, and for how
 it combines with the SVG data layer. One set of rules for biglobster and every
 rented site; only the palette values differ, and they are derived, not chosen.
 
-Status: **direction approved 2026-09-23, not yet built.** The CEO signed off on
-the prototype (`relevo-generacional-digitalizacion-pyme-galicia-2026`, rendered,
-not shipped) and settled the dark-theme question below. Nothing here is wired
-into the prompt, the validator, the provisioning script or either stack's
-CSS/JS yet.
+Status: **live on two sites, 2026-09-23.** Four biglobster articles (ES+EN,
+br41s/biglobster#564) and five Shoroban articles carry the format. Both stacks
+render and enlarge it (br41s/bl-site-package#85, 1.8.7). Still not wired into
+the agent: the prompt, the provisioning script and the client-lane upload step
+are unchanged, so every poster so far was built by hand through these scripts.
 
 ---
 
@@ -67,7 +67,7 @@ regenerated with a new seed, not accepted:
 
 | Check | Threshold | Why |
 |---|---|---|
-| ground share | ≥ 35% of pixels on the ground colour | below that the plate is a dense dark block with no breathing room, and two plates side by side stop matching. Measured: A 44% (good), B 25% (too dense) |
+| ground share | **between ~30% and ~70%** of pixels on the ground colour | below the floor the plate is a dense block with no breathing room; **above the ceiling the subject is tiny, off-centre or cropped**. Both bounds caught real failures: a plate at 25% was too dense, and one at 82% had the figure's head cut off and half the frame empty. The floor is palette-relative — an illustration that uses the accent as a full-bleed background legitimately scores low, so judge the render, not only the number |
 | textless | no glyphs detected | the whole premise. Verify it, never assume it — plate A drew pseudo-text on a notice board despite an explicit prohibition |
 | no self-drawn frame | edge rows/columns are not a contrasting band | the model likes to add its own border, which then fights the slot's rounded corner |
 
@@ -101,8 +101,36 @@ prompt's reporting section alongside `[SILENT]` and `RUN FAILED`.
 
 ## Palette
 
-Per stack, **derived from that site's light-mode tokens** — never picked by
-hand, never per article. biglobster:
+Per stack, **derived from the tokens the site ACTUALLY RENDERS** — never picked
+by hand, never per article, and never read from the package stylesheet.
+
+**Read the palette off the client's own rendered page, not off
+`bl-site-package/web/style.css`.** That file ships defaults; each client
+overrides `--accent` in an inline `<style>` on the page. Shoroban's real accent
+is `#b0ba1c`, an olive. The package default is `#b8391c`, biglobster's
+terracotta. Two characters apart, and five posters shipped in the wrong brand
+colour before anyone looked. Fetch the article URL and read the custom
+properties out of the page.
+
+**An accent is not automatically usable as text.** Terracotta happened to work
+both as a fill and as a label colour, which hid the rule. Measured against
+Shoroban's plate ground:
+
+| | contrast on `#F6F7E4` | verdict |
+|---|---|---|
+| accent `#B0BA1C` as text | **1.96** | unusable |
+| accent darkened to 60%, `#6A7011` | **4.91** | the accent-text colour |
+| ink `#111318` | 17.12 | body text |
+| pale ground on an olive fill | 1.96 | unusable |
+| ink on an olive fill | 8.75 | text on a bar |
+
+So each stack needs two accent roles, computed not assumed: **ACCENT** for
+fills, and **ATEXT** — the accent darkened until it clears 4.5:1 on the ground —
+for any accent-coloured label. Text sitting *on* an accent fill takes whichever
+of ink or ground clears 4.5:1 there. Compute both at build time and assert them;
+do not eyeball a swatch.
+
+biglobster, for reference:
 
 | Role | Value | Source |
 |---|---|---|
@@ -113,8 +141,27 @@ hand, never per article. biglobster:
 | accent | `#B8391C` | `--accent` |
 | warm | `#D4622A` | `--accent-teal` |
 
-Six entries, no more: quantisation to a larger palette stops flattening and the
-posterised look is lost.
+Shoroban, derived the same way and deliberately nothing like it:
+
+| Role | Value | Source |
+|---|---|---|
+| ground | `#F6F7E4` | `--accent-light` = color-mix(accent 12%, white) |
+| pale | `#DDE1E9` | `--border` |
+| slate | `#5B6375` | `--text-muted` |
+| ink | `#111318` | `--text-primary` |
+| accent | `#B0BA1C` | `--accent`, olive — **fills only** |
+| deep | `#909917` | `--accent-hover` |
+| atext | `#6A7011` | accent darkened to 60% — accent-coloured **text** |
+
+Six entries in the art palette, no more: quantisation to a larger palette stops
+flattening and the posterised look is lost. `atext` is a seventh colour for the
+SVG layer only, never for the artwork.
+
+The style contract has to name the palette in words too. Asking for "terracotta
+red, warm orange" and then quantising to olive maps every warm region onto
+whatever is nearest and the illustration loses its structure — the plates were
+regenerated with "olive green, dark olive, no warm colours, no red, no orange"
+rather than re-quantised.
 
 **The plate does not follow the theme. CEO decision, 2026-09-23, explicit.**
 A raster has fixed pixels. The choices were a fixed printed plate, or two
