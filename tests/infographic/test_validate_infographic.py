@@ -275,3 +275,70 @@ def test_without_a_vocabulary_every_unknown_word_is_still_reported(monkeypatch):
     findings = []
     mod.check_spelling(parser, findings, vocabulary=set())
     assert [f.code for f in findings] == ["spelling"]
+
+
+# ------------------------------------------------- text printed over text
+
+# check_text_in_box measures text against RECTS, so two labels colliding with
+# each other are invisible to it — both can sit inside their boxes, or inside
+# no box at all, while one word renders on top of another. That shipped on
+# 2026-09-23: a "275%" set at font-size 52 overlapped the 15-unit line beside
+# it by 13.8 units and the validator returned exit 0.
+
+def test_a_label_printed_over_another_label_is_rejected():
+    body = ('<text x="40" y="100" font-size="52" font-weight="700">275%</text>'
+            '<text x="168" y="82" font-size="19" font-weight="700">de retorno el primer mes</text>')
+    assert "text-collision" in codes(svg(body, height=300))
+
+
+def test_moving_the_label_clear_of_the_number_passes():
+    """The fix that shipped: start the line at x=200 instead of x=168."""
+    body = ('<text x="40" y="100" font-size="52" font-weight="700">275%</text>'
+            '<text x="200" y="80" font-size="19" font-weight="700">de retorno el primer mes</text>')
+    assert "text-collision" not in codes(svg(body, height=300))
+
+
+def test_tight_leading_is_typography_not_a_collision():
+    """A label and its sub-label 16 units apart share a descender with an
+    ascender. Reporting those would train everyone to skip the check — the
+    same failure mode as measuring every label at the default 16px."""
+    body = ('<text x="40" y="100" font-size="15" font-weight="700">Ahorro de tiempo</text>'
+            '<text x="40" y="116" font-size="15">40 h/mes x 25 EUR/h</text>')
+    assert "text-collision" not in codes(svg(body, height=300))
+
+
+def test_labels_side_by_side_do_not_collide():
+    body = ('<text x="40" y="100" font-size="15">Antes</text>'
+            '<text x="400" y="100" font-size="15">Despues</text>')
+    assert "text-collision" not in codes(svg(body, height=300))
+
+
+# ------------------------------------------- <tspan> continuation position
+
+# A <tspan> with no x and no dx continues at the PEN — the end of the text
+# drawn so far — not back at the parent <text>'s x. Reusing the parent's x
+# stacks the runs on top of each other and INVENTS collisions that do not
+# render: measured against the live corpus it turned 4 real hits into 7.
+
+def test_an_unpositioned_tspan_continues_from_the_pen():
+    body = '<text x="50" y="100" font-size="13">ROI <tspan>= (beneficio / coste)</tspan></text>'
+    assert "text-collision" not in codes(svg(body, height=300))
+
+
+def test_a_tspan_with_its_own_x_is_positioned_absolutely():
+    """The wrapping idiom the prompt recommends still measures correctly."""
+    body = ('<text x="40" y="100" font-size="15">Primera linea'
+            '<tspan x="40" dy="1.2em">Segunda linea</tspan></text>')
+    assert "text-collision" not in codes(svg(body, height=300))
+
+
+def test_a_continuation_tspan_under_a_non_start_anchor_is_left_untracked():
+    """With text-anchor=middle the whole <text> is placed as a unit and the
+    per-run split is not recoverable, so the run is not measured rather than
+    measured wrongly — the same rule the transform handling uses."""
+    parser = mod.SvgParser()
+    parser.feed('<svg viewBox="0 0 800 300">'
+                '<text x="400" y="100" font-size="15" text-anchor="middle">'
+                'Uno <tspan>dos</tspan></text></svg>')
+    parser.close()
+    assert [r.tracked for r in parser.runs] == [True, False]

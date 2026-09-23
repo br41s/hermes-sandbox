@@ -301,10 +301,18 @@ class SvgParser(HTMLParser):
     def _flush(self):
         if self._pending is None:
             return
-        text = self._pending.text.strip()
+        raw = self._pending.text
+        text = raw.strip()
         if text:
             self._pending.text = text
             self.runs.append(self._pending)
+            # Advance the pen so an unpositioned <tspan> that follows starts
+            # where this run ended instead of back at the parent's x. Measure
+            # the text AS DRAWN — raw, not stripped — or the trailing space
+            # that separates the two runs is lost and they appear to collide.
+            if self._text_stack:
+                self._text_stack[-1]["pen"] = self._pending.x + text_width(
+                    raw.lstrip(), self._pending.font_size, self._pending.weight)
         self._pending = None
 
     def _begin_run(self, x, y):
@@ -350,11 +358,12 @@ class SvgParser(HTMLParser):
             st = self._style[-1]
             x = num(attrs, "x", 0.0)
             y = num(attrs, "y", 0.0)
-            self._text_stack.append({"x": x, "y": y})
+            self._text_stack.append({"x": x, "y": y, "pen": x})
             self._begin_run(x, y)
         elif tag == "tspan" and self._text_stack:
             frame = self._text_stack[-1]
             st = self._style[-1]
+            positioned = "x" in attrs or "dx" in attrs
             if "x" in attrs:
                 frame["x"] = num(attrs, "x", frame["x"])
             if "y" in attrs:
@@ -363,7 +372,19 @@ class SvgParser(HTMLParser):
                 frame["y"] = frame["y"] + length(attrs.get("dy"), st["font_size"])
             if "dx" in attrs:
                 frame["x"] = frame["x"] + length(attrs.get("dx"), st["font_size"])
-            self._begin_run(frame["x"], frame["y"])
+            if positioned:
+                frame["pen"] = frame["x"]
+                self._begin_run(frame["x"], frame["y"])
+            else:
+                # Continuation run: it starts where the previous one ended, not
+                # at the parent's x. With a non-start anchor the whole <text> is
+                # placed as a unit and the per-run split is not recoverable, so
+                # the run is left untracked rather than measured wrongly — the
+                # same rule the transform handling uses.
+                self._flush()
+                self._begin_run(frame.get("pen", frame["x"]), frame["y"])
+                if self._pending is not None and self._style[-1]["anchor"] != "start":
+                    self._pending.tracked = False
         else:
             self._shape(tag, attrs)
 
@@ -559,6 +580,68 @@ def check_text_in_box(p, findings):
             ))
 
 
+# Inter's cap height is ~0.727em and its descender ~0.21em. A box of
+# ascent 0.72 / descent 0.20 around the baseline is deliberately a little
+# tighter than the full em square: two lines set 16 units apart at font-size
+# 15 are normal typography, not a collision, and a full-em box would report
+# every one of them.
+ASCENT, DESCENT = 0.72, 0.20
+
+# A real collision overlaps vertically by a meaningful fraction of the type.
+# Measured against the case this check exists for: "275%" at font-size 52 sat
+# 13.8 units into a 15-unit line beside it. Tight leading produces ~2.
+VERTICAL_COLLISION_RATIO = 0.25
+HORIZONTAL_TOL = 2.0
+
+
+def run_box(run):
+    """Baseline-relative bounding box of one text run, in canvas units."""
+    width = text_width(run.text, run.font_size, run.weight)
+    if run.anchor == "middle":
+        left = run.x - width / 2
+    elif run.anchor == "end":
+        left = run.x - width
+    else:
+        left = run.x
+    return (left, run.y - ASCENT * run.font_size,
+            left + width, run.y + DESCENT * run.font_size)
+
+
+def check_text_collisions(p, findings):
+    """Two labels must not sit on top of each other.
+
+    check_text_in_box measures text against RECTS, so a label colliding with
+    another label is invisible to it: both can be inside their boxes, or
+    inside no box at all, and the graphic still renders as one word printed
+    over another. That shipped - a "275%" set at font-size 52 overlapped the
+    15-unit line beside it by 13.8 units and the validator returned exit 0.
+
+    Only overlaps in BOTH axes count, and the vertical one has to be worth
+    reporting: adjacent lines of a label and its sub-label routinely share a
+    descender with an ascender, and flagging those would train everyone to
+    ignore this check.
+    """
+    runs = [r for r in p.runs if r.tracked and r.text and r.text.strip()]
+    boxes = [(r, run_box(r)) for r in runs]
+    for i, (ra, (ax0, ay0, ax1, ay1)) in enumerate(boxes):
+        for rb, (bx0, by0, bx1, by1) in boxes[i + 1:]:
+            ox = min(ax1, bx1) - max(ax0, bx0)
+            oy = min(ay1, by1) - max(ay0, by0)
+            if ox <= HORIZONTAL_TOL or oy <= 0:
+                continue
+            floor = VERTICAL_COLLISION_RATIO * min(ra.font_size, rb.font_size)
+            if oy <= floor:
+                continue
+            findings.append(Finding(
+                "text-collision",
+                f'"{clip(ra.text)}" and "{clip(rb.text)}" overlap by '
+                f"{ox:.0f}x{oy:.0f} units.",
+                f"One label is printed over the other. Move one of them, or "
+                f"shorten it: at font-size {ra.font_size:g} and {rb.font_size:g} "
+                f"they span x {ax0:.0f}..{ax1:.0f} and {bx0:.0f}..{bx1:.0f}.",
+            ))
+
+
 def check_shapes(p, box, findings):
     if not box:
         return
@@ -745,6 +828,7 @@ def validate(svg, stack, skip_spelling=False, vocabulary=None):
     box = check_canvas(parser, findings)
     check_text(parser, box, findings)
     check_text_in_box(parser, findings)
+    check_text_collisions(parser, findings)
     check_shapes(parser, box, findings)
     check_forbidden(parser, findings)
     check_geometry_tokens(parser, findings)
