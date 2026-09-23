@@ -580,12 +580,13 @@ def check_text_in_box(p, findings):
             ))
 
 
-# Inter's cap height is ~0.727em and its descender ~0.21em. A box of
-# ascent 0.72 / descent 0.20 around the baseline is deliberately a little
-# tighter than the full em square: two lines set 16 units apart at font-size
-# 15 are normal typography, not a collision, and a full-em box would report
-# every one of them.
-ASCENT, DESCENT = 0.72, 0.20
+# The box a collision is measured in. 0.72/0.20 was tuned to the cap height and
+# descender so that two lines 16 units apart at font-size 15 read as normal
+# leading rather than a collision — but it is tighter than what a browser
+# reports, and a 19pt heading sitting just above a 15pt label slipped through
+# while getBBox showed them touching. 0.80 matches the rendered box more
+# closely and still clears 16-unit leading (0.80 + 0.20 = 1.0em = the leading).
+ASCENT, DESCENT = 0.80, 0.20
 
 # A real collision overlaps vertically by a meaningful fraction of the type.
 # Measured against the case this check exists for: "275%" at font-size 52 sat
