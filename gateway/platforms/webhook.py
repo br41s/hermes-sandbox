@@ -521,12 +521,14 @@ class WebhookAdapter(BasePlatformAdapter):
 
         async def _fire_cron_job() -> None:
             try:
+                from cron.fork_ext.dispatch import run_event_job
                 from tools.cronjob_tools import execute_job_for_event
                 # The job store (cron/jobs.json) and the run belong to the ROUTED profile, not the gateway's
                 # default home; to_thread copies contextvars so the scope follows. A cron job is a full agent
                 # run (minutes) — keep it off the gateway event loop.
                 with self._profile_scope(profile):
-                    result = await asyncio.to_thread(execute_job_for_event, job_ref, event_context)
+                    # fork: a profile/workdir job runs on the sequential lane, not a thread of its own.
+                    result = await run_event_job(job_ref, execute_job_for_event, job_ref, event_context)
                 if not result.get("success"):
                     logger.warning("[webhook] cron-trigger job=%s route=%s did not complete cleanly: %s", job_ref,
                                    route_name, result.get("error"))
@@ -546,10 +548,11 @@ class WebhookAdapter(BasePlatformAdapter):
         _HERMES_WEBHOOK_SAFE_TOOLS excludes the terminal tool from every webhook session, since payloads can
         carry attacker-controlled content.
 
-        Unlike upstream's ``cron_job`` (``_handle_cron_trigger``, a worker thread per event), the job is
-        ENQUEUED through ``cron.scheduler.dispatch_job_async`` onto the scheduler's own lanes, so a
-        profile/workdir job queues behind tick's on the fork's single-thread lane (cron/fork_ext/dispatch.py)
-        and a multi-minute run never blocks this event loop. 200 on queued or benign dedup, 502 on an
+        Unlike upstream's ``cron_job`` (``_handle_cron_trigger``, which claims the job and runs it with the
+        event as extra context), the job is ENQUEUED through ``cron.scheduler.dispatch_job_async`` onto the
+        scheduler's own lanes, so a profile/workdir job queues behind tick's on the fork's single-thread lane
+        (cron/fork_ext/dispatch.py) and a multi-minute run never blocks this event loop. ``cron_job`` reaches
+        the same lane through ``run_event_job``. 200 on queued or benign dedup, 502 on an
         unknown job or a dispatch exception."""
         trigger_job_id = route_config["trigger_cron_job_id"]
         try:
