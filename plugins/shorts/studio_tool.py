@@ -213,7 +213,9 @@ def _action_ledger(args: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 def _request_id(pkg: Dict[str, Any]) -> str:
-    stamp = time.strftime("%Y%m%d%H%M", time.gmtime())
+    # Second resolution: two submits of one slug inside a minute would
+    # otherwise share an id, dispatch a render, then fail to record it.
+    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     return f"{pkg['lang']}-{pkg['article']['slug'][:60].strip('-')}-{stamp}"
 
 
@@ -273,6 +275,10 @@ def _action_submit(args: Dict[str, Any]) -> str:
     pkg["avoid_broll_ids"] = sorted(set(pkg.get("avoid_broll_ids", []) + used["broll"]))
     pkg["music"]["avoid_ids"] = sorted(set(pkg["music"].get("avoid_ids", []) + used["music"]))
     request_id = _request_id(pkg)
+    if request_id in data["entries"]:
+        # Checked before dispatch, never after: a render must not start for
+        # a short the ledger cannot record.
+        return _fail(f"{request_id} was submitted this second already; submit again")
     pkg["request_id"] = request_id
 
     try:
@@ -443,6 +449,8 @@ def _action_publish(args: Dict[str, Any]) -> str:
     files = {k: Path(v) for k, v in _files(entry).items()}
     if "master" not in files:
         return _fail(f"the rendered files for {request_id} are missing; run status first")
+    if target == "instagram_story" and "story" not in files:
+        return _fail(f"the Story cut for {request_id} is missing; run status first")
     pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8"))
     social = pkg.get("social") or {}
     synthetic = bool(entry.get("avatars"))

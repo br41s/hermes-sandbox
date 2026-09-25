@@ -524,3 +524,54 @@ def test_shadow_handoff_does_not_relabel_a_published_short(sample, submit_env, m
     out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
     assert not out["success"] and "shadow" in out["error"]
     assert ledger.get(rid)["state"] == "published"
+
+
+def test_intervals_keep_a_condition_that_runs_to_the_end():
+    from plugins.shorts.studio import qa
+
+    log = "freeze_start: 1.0\nfreeze_end: 2.0\nfreeze_start: 8.5\n"
+    spans = qa._intervals(log, "freeze_start", "freeze_end", until=12.0)
+    assert spans == [{"start": 1.0, "end": 2.0, "length": 1.0},
+                     {"start": 8.5, "end": 12.0, "length": 3.5}]
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_qa_catches_a_freeze_that_lasts_to_the_last_frame(tmp_path):
+    from plugins.shorts.studio import media, qa
+
+    video = tmp_path / "v.mp4"
+    # 22s of motion, then the last frame held for 3s: the freeze never ends.
+    media.ffmpeg("-f", "lavfi", "-i", "testsrc2=s=1080x1920:r=30:d=22",
+                 "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=48000:duration=25",
+                 "-vf", "tpad=stop_mode=clone:stop_duration=3", "-c:v", "libx264", "-preset", "ultrafast",
+                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(video), what="frozen tail")
+    report = qa.check_master(video)
+    assert any("frozen picture" in e for e in report["errors"]), report["errors"]
+
+
+def test_submit_refuses_a_colliding_request_id_before_dispatching(sample, submit_env, monkeypatch):
+    monkeypatch.setattr(st, "_request_id", lambda pkg: "en-fixed-id-20260925000000")
+    first = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+    assert first["success"], first
+    other = copy.deepcopy(sample)
+    other["article"]["url"] = "https://biglobster.top/blog/another-post"
+    other["beats"][-1]["url"] = other["article"]["url"]
+    other["style"] = {"palette": "violet-lime", "motif": "grid"}
+    second = json.loads(st.handle_shorts_studio({"action": "submit", "package": other}))
+    assert not second["success"] and "submitted this second" in second["error"]
+    assert len(submit_env) == 1  # no second render started
+
+
+def test_publish_story_without_a_story_cut_is_a_clear_error(sample, submit_env, monkeypatch):
+    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
+    for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t", "META_IG_USER_ID": "2"}.items():
+        monkeypatch.setenv(k, v)
+    st.handle_shorts_studio({"action": "submit", "package": sample})
+    rid = submit_env[0][0]
+    out_dir = Path(ledger.get(rid)["dir"]) / "out"
+    out_dir.mkdir(parents=True)
+    (out_dir / "master.mp4").write_bytes(b"x")
+    ledger.update(rid, state="ready")
+    out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid,
+                                              "target": "instagram_story"}))
+    assert not out["success"] and "Story cut" in out["error"]

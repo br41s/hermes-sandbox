@@ -23,10 +23,21 @@ BLACK_MAX = 0.4
 SILENCE_MAX = 1.6        # a longer gap reads as a dropout
 
 
-def _intervals(stderr: str, start_key: str, end_key: str) -> List[Dict[str, float]]:
+def _intervals(stderr: str, start_key: str, end_key: str,
+               until: float | None = None) -> List[Dict[str, float]]:
+    """Pair start/end markers. A start with no end ran to the end of the file.
+
+    The detectors only print an end marker when the condition stops, so a
+    freeze or black screen lasting to the last frame has a start and nothing
+    else. Zipping would silently drop exactly that case; ``until`` closes it.
+    """
     starts = [float(x) for x in re.findall(rf"{start_key}:\s*([\d.]+)", stderr)]
     ends = [float(x) for x in re.findall(rf"{end_key}:\s*([\d.]+)", stderr)]
-    return [{"start": s, "end": e, "length": round(e - s, 3)} for s, e in zip(starts, ends)]
+    out = [{"start": s, "end": e, "length": round(e - s, 3)} for s, e in zip(starts, ends)]
+    if until is not None:
+        for s in starts[len(ends):]:
+            out.append({"start": s, "end": until, "length": round(until - s, 3)})
+    return out
 
 
 def _analyse(path: Path) -> str:
@@ -98,11 +109,12 @@ def check_master(path: Path, *, expected_seconds: float | None = None) -> Dict[s
     if peak is not None and peak > MAX_TRUE_PEAK:
         warnings.append(f"true peak {peak:.1f} dBFS above {MAX_TRUE_PEAK}")
 
-    freezes = _intervals(stderr, "lavfi.freezedetect.freeze_start", "lavfi.freezedetect.freeze_end")
+    freezes = _intervals(stderr, "lavfi.freezedetect.freeze_start", "lavfi.freezedetect.freeze_end",
+                         until=seconds)
     if not freezes:
-        freezes = _intervals(stderr, "freeze_start", "freeze_end")
-    blacks = _intervals(stderr, "black_start", "black_end")
-    silences = _intervals(stderr, "silence_start", "silence_end")
+        freezes = _intervals(stderr, "freeze_start", "freeze_end", until=seconds)
+    blacks = _intervals(stderr, "black_start", "black_end", until=seconds)
+    silences = _intervals(stderr, "silence_start", "silence_end", until=seconds)
     for f in freezes:
         if f["length"] > FREEZE_MAX:
             errors.append(f"frozen picture for {f['length']:.1f}s at {f['start']:.1f}s")
