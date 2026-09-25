@@ -14,7 +14,8 @@ tool-side state transition.
 
 States::
 
-    rendering ─┬─> ready ──> published
+    rendering ─┬─> ready ─┬─> published      (live mode: every target done)
+               │          └─> handed_off     (shadow mode: files sent to a human)
                ├─> qa_failed
                └─> render_failed
     (any) ─────────> skipped
@@ -35,9 +36,9 @@ except ImportError:  # pragma: no cover - non-Unix: in-process only, like cron/j
     fcntl = None
 
 LEDGER_VERSION = 1
-STATES = ("rendering", "ready", "qa_failed", "render_failed", "published", "skipped")
+STATES = ("rendering", "ready", "qa_failed", "render_failed", "published", "handed_off", "skipped")
 # A post counts as done while its short is alive or out; a failure is retried.
-DONE_STATES = ("rendering", "ready", "published", "skipped")
+DONE_STATES = ("rendering", "ready", "published", "handed_off", "skipped")
 TARGETS = ("youtube", "facebook", "instagram_reel", "instagram_story")
 
 
@@ -160,3 +161,30 @@ def get(request_id: str) -> Dict[str, Any]:
     if entry is None:
         raise KeyError(f"no short {request_id!r} in the ledger")
     return entry
+
+
+# ---------------------------------------------------------------------------
+# Avatar library — Google Flow clips, each with the exact line it speaks
+# ---------------------------------------------------------------------------
+
+def avatars_path() -> Path:
+    return shorts_root() / "avatars.json"
+
+
+def avatars() -> List[Dict[str, Any]]:
+    path = avatars_path()
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("clips", [])
+
+
+def add_avatar(clip: Dict[str, Any]) -> Dict[str, Any]:
+    with locked(write=False):  # same lock file serialises library writes too
+        clips = [c for c in avatars() if c.get("clip_url") != clip["clip_url"]]
+        clip = {**clip, "uploaded_at": _now()}
+        clips.append(clip)
+        path = avatars_path()
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"clips": clips}, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    return clip

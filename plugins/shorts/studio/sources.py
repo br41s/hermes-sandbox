@@ -76,14 +76,43 @@ def pexels_candidates(query: str) -> List[Dict]:
              "duration": c.get("duration")} for c in clips]
 
 
+_STOPWORDS = {"a", "an", "the", "of", "on", "in", "at", "for", "with", "and", "to", "at", "by",
+              "small", "big", "new", "person", "people", "man", "woman", "de", "la", "el", "en", "y"}
+
+
+def mixkit_slugs(query: str) -> List[str]:
+    """Mixkit pages are keyed by topic, not phrase: the phrase, then its strongest words.
+
+    "small business owner laptop" -> small-business-owner-laptop, business-owner,
+    laptop, business, owner — longest words last-first, since the final noun
+    usually names the subject.
+    """
+    words = [w for w in re.findall(r"[a-z]+", query.lower()) if w not in _STOPWORDS]
+    slugs = [_slug(query)]
+    if len(words) >= 2:
+        slugs.append("-".join(words[-2:]))
+    if words:
+        slugs.append(words[-1])
+        slugs += sorted(words[:-1], key=len, reverse=True)
+    out: List[str] = []
+    for s in slugs:
+        if s and s not in out:
+            out.append(s)
+    return out[:5]
+
+
 def mixkit_video_candidates(query: str) -> List[Dict]:
+    html = ""
     try:
         with _client() as client:
-            resp = client.get(MIXKIT_VIDEO_PAGE.format(slug=_slug(query)))
-        if resp.status_code != 200:
-            return []
-        html = resp.text
+            for slug in mixkit_slugs(query):
+                resp = client.get(MIXKIT_VIDEO_PAGE.format(slug=slug))
+                if resp.status_code == 200 and _MIXKIT_VIDEO.search(resp.text):
+                    html = resp.text
+                    break
     except Exception:
+        return []
+    if not html:
         return []
     seen, out = set(), []
     for url in _MIXKIT_VIDEO.findall(html):

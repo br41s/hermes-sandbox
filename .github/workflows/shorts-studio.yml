@@ -47,8 +47,14 @@ jobs:
     if: github.repository == 'br41s/hermes-sandbox'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # A dispatch renders its one package; a push smoke-renders both
+        # samples, so the Spanish voice and text are proven as well.
+        sample: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["package"]' || '["en","es"]') }}
     env:
-      REQUEST_ID: ${{ inputs.request_id || 'smoke' }}
+      REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}', matrix.sample) }}
       PACKAGE_B64: ${{ inputs.package }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
       # Lets build.py download avatar clips stored as release assets of this repo.
@@ -93,7 +99,7 @@ jobs:
           if [ -n "${PACKAGE_B64:-}" ]; then
             printf '%s' "$PACKAGE_B64" | base64 -d | gunzip > "$RUNNER_TEMP/short/package.json"
           else
-            cp shorts/studio/samples/en-sample.json "$RUNNER_TEMP/short/package.json"
+            cp "shorts/studio/samples/${{ matrix.sample }}-sample.json" "$RUNNER_TEMP/short/package.json"
           fi
           # The request id is stamped by the workflow, never trusted from the payload.
           python - <<'PY'
@@ -103,7 +109,7 @@ jobs:
               raise SystemExit(f"invalid request_id {rid!r}")
           path = os.path.join(os.environ["RUNNER_TEMP"], "short", "package.json")
           pkg = json.load(open(path, encoding="utf-8"))
-          pkg["request_id"] = rid if rid != "smoke" else "smoke-render"
+          pkg["request_id"] = rid
           json.dump(pkg, open(path, "w", encoding="utf-8"), ensure_ascii=False)
           PY
 

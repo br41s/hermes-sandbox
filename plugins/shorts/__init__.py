@@ -264,3 +264,19 @@ def register(ctx) -> None:
         check_fn=check_shorts_available,
         emoji="🎬",
     )
+    # The Remotion render farm + publishing. Hidden unless the profile has a
+    # studio token, so rented tenants (who get `shorts_render`) never see it.
+    from plugins.shorts.studio_tool import (
+        SHORTS_STUDIO_SCHEMA,
+        check_studio_available,
+        handle_shorts_studio,
+    )
+
+    ctx.register_tool(
+        name="shorts_studio",
+        toolset="shorts",
+        schema=SHORTS_STUDIO_SCHEMA,
+        handler=handle_shorts_studio,
+        check_fn=check_studio_available,
+        emoji="🎞️",
+    )
