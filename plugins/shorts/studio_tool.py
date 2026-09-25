@@ -549,8 +549,14 @@ def _action_handoff(args: Dict[str, Any]) -> str:
         entry = ledger.get(request_id)
     except KeyError as exc:
         return _fail(str(exc))
-    if entry.get("state") not in ("ready", "published"):
-        return _fail(f"{request_id} is {entry.get('state')!r}; only a finished short can be handed off")
+    live = publish_mode() == "live"
+    # Live: X follows the automatic targets, so a published short qualifies.
+    # Shadow: only a short nothing has published yet — anything else would be
+    # recorded as "handed_off" when it was not.
+    allowed = ("ready", "published") if live else ("ready",)
+    if entry.get("state") not in allowed:
+        return _fail(f"{request_id} is {entry.get('state')!r}; in {publish_mode()} mode only "
+                     f"{' or '.join(allowed)} shorts can be handed off")
     if entry.get("x_handoff_at"):
         return _ok(already=True, message="")
     files = _files(entry)
@@ -560,7 +566,7 @@ def _action_handoff(args: Dict[str, Any]) -> str:
     social = pkg.get("social") or {}
     lang = entry.get("lang", "").upper()
     lines: List[str] = []
-    if publish_mode() == "live":
+    if live:
         pub = entry.get("published") or {}
         lines.append(f"🎬 Short {lang} publicado — {entry.get('title')}")
         for key, label in (("youtube", "YouTube"), ("instagram_reel", "Instagram"),

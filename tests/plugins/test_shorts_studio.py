@@ -498,3 +498,29 @@ def test_failures_are_reported_once(home, monkeypatch):
     second = json.loads(st.handle_shorts_studio({"action": "status"}))
     assert [s["request_id"] for s in first["shorts"]] == ["en-f-1"]
     assert second["shorts"] == []
+
+
+@pytest.mark.parametrize(
+    "url, gets_token",
+    [
+        ("https://api.github.com/repos/br41s/hermes-sandbox/releases/assets/1", True),
+        ("https://github.com/br41s/hermes-sandbox/releases/download/x/a.mp4", True),
+        ("https://github.com.evil.example/a.mp4", False),
+        ("https://evil.example/?next=https://api.github.com/", False),
+        ("http://api.github.com/repos/x", False),
+        ("https://objects.githubusercontent.com/a.mp4", False),
+    ],
+)
+def test_workflow_token_only_goes_to_github_hosts(url, gets_token, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    assert ("Authorization" in build_mod._github_headers(url)) is gets_token
+
+
+def test_shadow_handoff_does_not_relabel_a_published_short(sample, submit_env, monkeypatch):
+    monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
+    st.handle_shorts_studio({"action": "submit", "package": sample})
+    rid = submit_env[0][0]
+    ledger.update(rid, state="published")
+    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
+    assert not out["success"] and "shadow" in out["error"]
+    assert ledger.get(rid)["state"] == "published"

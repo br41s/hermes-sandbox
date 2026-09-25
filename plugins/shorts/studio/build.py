@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,10 +67,18 @@ def _frames(seconds: float) -> int:
     return int(round(seconds * FPS))
 
 
+# Hosts that may receive the workflow token. Exact match on the parsed host —
+# a substring test would hand it to "github.com.evil.example" too. The asset
+# download 302s to githubusercontent storage, and httpx drops Authorization on
+# that cross-origin hop, so the token never needs to go there.
+_GITHUB_TOKEN_HOSTS = {"api.github.com", "github.com"}
+
+
 def _github_headers(url: str) -> Dict[str, str]:
     """Private-repo release assets need the workflow token to download."""
     token = os.environ.get("GITHUB_TOKEN", "")
-    if token and ("github.com/" in url or "githubusercontent.com/" in url):
+    parsed = urllib.parse.urlparse(url)
+    if token and parsed.scheme == "https" and (parsed.hostname or "").lower() in _GITHUB_TOKEN_HOSTS:
         return {"Authorization": f"Bearer {token}", "Accept": "application/octet-stream"}
     return {}
 
