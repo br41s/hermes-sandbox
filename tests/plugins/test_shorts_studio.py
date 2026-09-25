@@ -479,3 +479,22 @@ def test_master_audio_lands_on_minus_14_lufs_and_qa_reads_it(tmp_path):
     story = media.story_cut(master, tmp_path / "story.mp4", 10.0)
     assert qa.check_story(story)["passed"]
     assert abs(media.duration(story) - 10.0) < 0.2
+
+
+def test_a_post_that_keeps_failing_stops_being_retried(home):
+    url = "https://b.top/post"
+    ledger.add(_entry("en-post-1", article_url=url))
+    ledger.update("en-post-1", state="qa_failed")
+    assert url not in ledger.done_urls()  # one failure: retry tomorrow
+    ledger.add(_entry("en-post-2", article_url=url))
+    ledger.update("en-post-2", state="render_failed")
+    assert url in ledger.done_urls()  # two: leave it for a human
+
+
+def test_failures_are_reported_once(home, monkeypatch):
+    ledger.add(_entry("en-f-1", dir=str(home / "x")))
+    ledger.update("en-f-1", state="qa_failed", qa={"passed": False, "errors": ["loudness"]})
+    first = json.loads(st.handle_shorts_studio({"action": "status"}))
+    second = json.loads(st.handle_shorts_studio({"action": "status"}))
+    assert [s["request_id"] for s in first["shorts"]] == ["en-f-1"]
+    assert second["shorts"] == []

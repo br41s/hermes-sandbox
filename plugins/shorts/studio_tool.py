@@ -378,7 +378,12 @@ def _action_status(args: Dict[str, Any]) -> str:
             except Exception as exc:
                 logger.warning("shorts status %s: %s", entry["request_id"], exc)
                 entry = {**entry, "collect_error": str(exc)}
+        failed = entry.get("state") in ("qa_failed", "render_failed")
+        if failed and entry.get("failure_reported") and not only:
+            continue  # a failure is reported once, not on every run
         if entry.get("state") in ("rendering", "ready", "qa_failed", "render_failed") or only:
+            if failed and not entry.get("failure_reported"):
+                entry = ledger.update(entry["request_id"], failure_reported=True)
             item = {k: entry.get(k) for k in ("request_id", "lang", "slug", "title", "article_url",
                                               "state", "qa", "duration_s", "run_url", "published",
                                               "collect_error", "notes")}

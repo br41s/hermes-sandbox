@@ -93,8 +93,19 @@ def entries(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     return sorted(data["entries"].values(), key=lambda e: e.get("created_at", ""))
 
 
+# A post whose short failed this many times is left alone: a template or
+# source problem would otherwise burn a render every day on the same post.
+MAX_FAILED_ATTEMPTS = 2
+
+
 def done_urls(data: Optional[Dict[str, Any]] = None) -> set:
-    return {e["article_url"] for e in entries(data) if e.get("state") in DONE_STATES}
+    done, failures = set(), {}
+    for e in entries(data):
+        if e.get("state") in DONE_STATES:
+            done.add(e["article_url"])
+        elif e.get("state") in ("qa_failed", "render_failed"):
+            failures[e["article_url"]] = failures.get(e["article_url"], 0) + 1
+    return done | {url for url, n in failures.items() if n >= MAX_FAILED_ATTEMPTS}
 
 
 def recent_style(data: Optional[Dict[str, Any]] = None, n: int = 2) -> Dict[str, List[str]]:
