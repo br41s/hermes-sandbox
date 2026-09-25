@@ -101,8 +101,8 @@ into chat, a commit, or a printed env table (CLAUDE.md, *Secrets*).
 Optional: `SHORTS_STUDIO_REPO` / `SHORTS_STUDIO_REF` (defaults
 `br41s/hermes-sandbox` / `main`), `SHORTS_FEEDS` (JSON `{"en": url, "es": url}`).
 
-Actions cost: ~5 min per short (the first run took 4m08s), 2 shorts a day, so
-~300 min/month, inside the free private-repo allowance.
+Actions cost: ~7 min per short, 2 shorts a day, so
+~450 min/month, inside the free private-repo allowance.
 
 ### 3.2 YouTube
 
@@ -191,10 +191,12 @@ decision, not a code one.
 
 ## 6. Proven vs not yet proven
 
-**Proven.** Full renders on Actions with real Edge TTS, in both languages. EN: 137
-words, 63.0s, Remotion 193s. ES (Álvaro): 148 words, 66.0s, footage found for 6
-of 6 queries after the Mixkit slug fallback, Mixkit bed, Remotion 388s at one core.
-Covers, ducking, two-pass loudness at −14.0 LUFS and QA passed on both. The same pipeline also ran
+**Proven.** Full renders on Actions with real Edge TTS, in both languages, with
+footage for 6 of 6 queries (after the Mixkit slug fallback) and a Mixkit bed.
+EN: 137 words, 63.0s. ES (Álvaro): 148 words, 66.0s. Remotion takes 300–340s
+per short with all cores on the 2-vCPU runner (388s at Remotion's default of one
+core), ~7 min end to end. Covers, ducking, two-pass loudness at −14.0 LUFS and QA
+passed on every run. The same pipeline also ran
 offline in the dev sandbox. 45 unit tests cover the package contract,
 grounding, ledger, tool flows, GitHub client, publishers (mocked HTTP) and the
 ffmpeg loudness/Story path.
