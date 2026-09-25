@@ -1,0 +1,124 @@
+name: Shorts Studio
+
+# The render farm for BigLobster shorts. Hermes (plugins/shorts, tool
+# `shorts_studio`) dispatches one run per short with the package inline; the
+# run renders it with Remotion + ffmpeg and uploads the deliverables as an
+# artifact named `short-<request_id>`, which Hermes downloads and publishes.
+#
+# Why here and not in the Hermes container: Remotion needs Node + Chromium and
+# ~1800 browser frames per minute of video. The Zeabur pod is CPU-only and
+# runs every cron job on one thread, so a 5-minute render there would stall
+# every other agent (see CLAUDE.md, "One long agent run starves every other
+# agent"). Actions minutes are free and isolated.
+#
+# A push touching the studio renders the example package as a smoke test, so
+# a template change is proven on real Edge TTS and real footage before merge.
+#
+# Design and setup: shorts/STUDIO.md.
+
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('shorts {0}', inputs.request_id) || 'shorts smoke' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Unique id for this short (lowercase, digits, dashes). Names the artifact."
+        required: true
+        type: string
+      package:
+        description: "The short package: JSON, gzipped, then base64."
+        required: true
+        type: string
+  push:
+    paths:
+      - "plugins/shorts/studio/**"
+      - "shorts/studio/**"
+      - ".github/workflows/shorts-studio.yml"
+
+concurrency:
+  group: shorts-studio-${{ inputs.request_id || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    if: github.repository == 'br41s/hermes-sandbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REQUEST_ID: ${{ inputs.request_id || 'smoke' }}
+      PACKAGE_B64: ${{ inputs.package }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      # Lets build.py download avatar clips stored as release assets of this repo.
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout studio sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: |
+            plugins/__init__.py
+            plugins/shorts
+            shorts/studio
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: shorts/studio/remotion/package-lock.json
+
+      - name: Install ffmpeg and Python deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ffmpeg
+          python -m pip install --quiet "edge-tts==7.2.8" "httpx>=0.28,<1"
+          ffmpeg -version | head -1
+
+      - name: Install Remotion
+        working-directory: shorts/studio/remotion
+        run: |
+          npm ci --no-audit --no-fund
+          npx remotion browser ensure
+
+      - name: Decode package
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/short"
+          if [ -n "${PACKAGE_B64:-}" ]; then
+            printf '%s' "$PACKAGE_B64" | base64 -d | gunzip > "$RUNNER_TEMP/short/package.json"
+          else
+            cp shorts/studio/samples/en-sample.json "$RUNNER_TEMP/short/package.json"
+          fi
+          # The request id is stamped by the workflow, never trusted from the payload.
+          python - <<'PY'
+          import json, os, re
+          rid = os.environ["REQUEST_ID"]
+          if not re.fullmatch(r"[a-z0-9][a-z0-9-]{4,90}", rid):
+              raise SystemExit(f"invalid request_id {rid!r}")
+          path = os.path.join(os.environ["RUNNER_TEMP"], "short", "package.json")
+          pkg = json.load(open(path, encoding="utf-8"))
+          pkg["request_id"] = rid if rid != "smoke" else "smoke-render"
+          json.dump(pkg, open(path, "w", encoding="utf-8"), ensure_ascii=False)
+          PY
+
+      - name: Render
+        run: |
+          python -m plugins.shorts.studio.build \
+            --package "$RUNNER_TEMP/short/package.json" \
+            --out "$RUNNER_TEMP/short/out" \
+            --remotion shorts/studio/remotion
+
+      - name: Upload deliverables
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: short-${{ env.REQUEST_ID }}
+          path: ${{ runner.temp }}/short/out
+          retention-days: 7
+          if-no-files-found: warn
