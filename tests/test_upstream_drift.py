@@ -1,8 +1,9 @@
 """Tests for scripts/upstream_drift.py — the upstream-drift watchdog.
 
-The failure this guards is silent and total: a watchdog that reports a stale
-tag as "newest" never fires, and nobody notices because its whole job is to
-stay quiet.
+The failure this guards is silent and total: a watchdog that never fires looks
+exactly like one with nothing to say. It happened twice — a string-sorted tag
+list, then a threshold measured against a tag that was always days old — so it
+now reports on every run and the tests pin that down.
 """
 
 from __future__ import annotations
@@ -50,42 +51,129 @@ class TestVersionOrdering:
         ]
 
     def test_unparseable_tag_sorts_last_and_does_not_raise(self, drift):
-        assert drift._version_key("not-a-version") == (0, 0, 0)
+        assert drift._version_key("not-a-version") == (0, 0, 0, 0)
         assert drift._version_key("v2026.7.7") > drift._version_key("not-a-version")
 
 
-class TestSilenceContract:
-    """It must print NOTHING when there is nothing to do.
+def _ago(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
 
-    The cron job runs in --no-agent mode where stdout IS the delivered message,
-    so any stray output becomes a weekly Telegram notification.
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _tags(*names: str) -> list[tuple[str, str]]:
+    return [(n, f"https://api.test/commits/{n}") for n in names]
+
+
+class TestAlwaysReports:
+    """Every run prints a status line — silence is never an answer.
+
+    Regression: the watchdog used to print nothing under the threshold, and
+    measured the threshold against upstream's NEWEST tag. Upstream releases
+    every few days, so that tag was never 30 days old and the check said nothing
+    while the fork fell 14 releases behind. A silent watchdog and a broken one
+    look identical from Telegram.
     """
 
-    def test_matching_version_is_silent(self, drift, monkeypatch, capsys):
+    def test_up_to_date_still_reports(self, drift, monkeypatch, capsys):
         monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.30")
-        monkeypatch.setattr(drift, "_api_latest_tag", lambda: ("v2026.7.30", "2026-07-30T00:00:00Z"))
+        monkeypatch.setattr(drift, "_api_release_tags", lambda: _tags("v2026.7.30", "v2026.7.20"))
         assert drift._remote_report(30) == 0
-        assert capsys.readouterr().out == ""
+        out = capsys.readouterr().out
+        assert "up to date" in out and "v2026.7.30" in out
 
-    def test_new_tag_under_threshold_is_silent(self, drift, monkeypatch, capsys):
-        """A tag cut today is not yet a reason to nag."""
-        from datetime import datetime, timedelta, timezone
-
-        fresh = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    def test_behind_under_threshold_reports_but_not_due(self, drift, monkeypatch, capsys):
         monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.20")
-        monkeypatch.setattr(drift, "_api_latest_tag", lambda: ("v2026.7.30", fresh))
+        monkeypatch.setattr(drift, "_api_release_tags", lambda: _tags("v2026.7.30", "v2026.7.20"))
+        monkeypatch.setattr(drift, "_api_tag_date", lambda url: _ago(2))
         assert drift._remote_report(30) == 0
-        assert capsys.readouterr().out == ""
+        out = capsys.readouterr().out
+        assert "not due" in out and "1 release behind" in out
 
-    def test_stale_tag_over_threshold_reports(self, drift, monkeypatch, capsys):
-        from datetime import datetime, timedelta, timezone
-
-        old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+    def test_due_is_judged_by_the_oldest_unmerged_tag(self, drift, monkeypatch, capsys):
+        """The newest tag is 1 day old; the oldest unmerged one is 45."""
         monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.20")
-        monkeypatch.setattr(drift, "_api_latest_tag", lambda: ("v2026.7.30", old))
+        monkeypatch.setattr(drift, "_api_release_tags",
+                            lambda: _tags("v2026.9.24", "v2026.8.16.2", "v2026.7.30", "v2026.7.20"))
+        dates = {"v2026.9.24": _ago(1), "v2026.8.16.2": _ago(20), "v2026.7.30": _ago(45)}
+        monkeypatch.setattr(drift, "_api_tag_date", lambda url: dates[url.rsplit("/", 1)[1]])
         assert drift._remote_report(30) == 1
         out = capsys.readouterr().out
-        assert "v2026.7.20" in out and "v2026.7.30" in out and "45 days ago" in out
+        assert "merge is due" in out and "3 releases behind" in out
+        assert "v2026.7.30, came out 45 days ago" in out and "v2026.9.24" in out
+
+    def test_unknown_age_counts_as_due(self, drift, monkeypatch, capsys):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.20")
+        monkeypatch.setattr(drift, "_api_release_tags", lambda: _tags("v2026.7.30", "v2026.7.20"))
+        monkeypatch.setattr(drift, "_api_tag_date", lambda url: "")
+        assert drift._remote_report(30) == 1
+
+    def test_api_failure_is_an_error_not_silence(self, drift, monkeypatch):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.20")
+        monkeypatch.setattr(drift, "_api_release_tags", lambda: None)
+        assert drift._remote_report(30) == 2
+
+    def test_missing_upstream_version_is_an_error(self, drift, monkeypatch):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: None)
+        assert drift._remote_report(30) == 2
+
+
+class TestFourPartTags:
+    """Upstream cuts same-day re-releases like v2026.8.16.2."""
+
+    def test_fourth_component_parses_and_orders(self, drift):
+        assert drift._version_key("v2026.8.16.2") > drift._version_key("v2026.8.16")
+        assert drift._version_key("v2026.8.18") > drift._version_key("v2026.8.16.2")
+
+
+class TestDeferToActions:
+    """Hermes fallback: silent only when the Actions workflow already reported."""
+
+    def _run_main(self, drift, monkeypatch, reported):
+        monkeypatch.setattr(drift, "_actions_reported", lambda hours: reported)
+        monkeypatch.setattr(drift, "_have_git_repo", lambda: False)
+        monkeypatch.setattr(drift, "_remote_report", lambda t: print("STATUS") or 1)
+        monkeypatch.setattr(drift.sys, "argv", ["upstream_drift.py", "--defer-to-actions"])
+        return drift.main()
+
+    def test_silent_when_actions_succeeded(self, drift, monkeypatch, capsys):
+        assert self._run_main(drift, monkeypatch, (True, "succeeded 20h ago")) == 0
+        assert capsys.readouterr().out == ""
+
+    def test_reports_and_says_why_when_actions_did_not(self, drift, monkeypatch, capsys):
+        assert self._run_main(drift, monkeypatch, (False, "it has never succeeded")) == 1
+        out = capsys.readouterr().out
+        assert out.startswith("STATUS") and "Hermes fallback" in out and "never succeeded" in out
+
+    def _runs(self, drift, monkeypatch, payload):
+        monkeypatch.setattr(drift, "_api_get", lambda url: payload)
+        return drift._actions_reported(72)
+
+    def test_recent_success_counts(self, drift, monkeypatch):
+        ok, _ = self._runs(drift, monkeypatch, {"workflow_runs": [{"conclusion": "failure", "run_started_at": _ago(0)}, {"conclusion": "success", "run_started_at": _ago(1)}]})
+        assert ok
+
+    def test_last_week_success_does_not_count(self, drift, monkeypatch):
+        ok, why = self._runs(drift, monkeypatch, {"workflow_runs": [{"conclusion": "success", "run_started_at": _ago(8)}]})
+        assert not ok and "8 days ago" in why
+
+    def test_no_runs_does_not_count(self, drift, monkeypatch):
+        ok, why = self._runs(drift, monkeypatch, {"workflow_runs": []})
+        assert not ok and "never" in why
+
+    def test_only_failed_runs_do_not_count(self, drift, monkeypatch):
+        """A run that failed to send to Telegram must not silence the fallback."""
+        ok, why = self._runs(drift, monkeypatch,
+                             {"workflow_runs": [{"conclusion": "failure", "run_started_at": _ago(0)}]})
+        assert not ok and "no successful run" in why
+
+    def test_unreachable_api_does_not_count(self, drift, monkeypatch):
+        def boom(url):
+            raise drift.urllib.error.URLError("down")
+
+        monkeypatch.setattr(drift, "_api_get", boom)
+        ok, why = drift._actions_reported(72)
+        assert not ok and "could not reach" in why
 
 
 class TestRecordedVersionMustBeMerged:
