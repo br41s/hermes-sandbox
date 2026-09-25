@@ -191,9 +191,10 @@ decision, not a code one.
 
 ## 6. Proven vs not yet proven
 
-**Proven.** A full render on Actions with real Edge TTS (the EN sample: 137 words,
-63.0s, 7 beats), a Mixkit music bed, the Remotion render (193s), covers, ducking,
-two-pass loudness at −14.0 LUFS and QA passing. The same pipeline also ran
+**Proven.** Full renders on Actions with real Edge TTS, in both languages. EN: 137
+words, 63.0s, Remotion 193s. ES (Álvaro): 148 words, 66.0s, footage found for 6
+of 6 queries after the Mixkit slug fallback, Mixkit bed, Remotion 388s at one core.
+Covers, ducking, two-pass loudness at −14.0 LUFS and QA passed on both. The same pipeline also ran
 offline in the dev sandbox. 45 unit tests cover the package contract,
 grounding, ledger, tool flows, GitHub client, publishers (mocked HTTP) and the
 ffmpeg loudness/Story path.
@@ -202,7 +203,7 @@ ffmpeg loudness/Story path.
 including Instagram's resumable upload for Stories and the unpublished-photo
 cover trick. They are written to the documented API, but the first live-mode run
 is the real test, which is why shadow mode comes first. Also unproven: a Pexels
-key in the render farm, and the Spanish sample on Actions.
+key in the render farm.
 
 ## 7. Operating it
 

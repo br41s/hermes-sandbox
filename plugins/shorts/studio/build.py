@@ -269,10 +269,13 @@ def _remotion(remotion_dir: Path, args: List[str], what: str, timeout: int = 180
 
 def render_visuals(remotion_dir: Path, props_path: Path, public: Path, out: Path) -> Dict[str, Path]:
     common = [f"--props={props_path}", f"--public-dir={public}", "--log=error"]
+    # Remotion defaults to half the cores — one on a 2-vCPU Actions runner.
+    concurrency = os.environ.get("REMOTION_CONCURRENCY", "100%")
     silent = out.parent / "work" / "master_silent.mp4"
     silent.parent.mkdir(parents=True, exist_ok=True)
     _remotion(remotion_dir, ["render", "src/index.ts", "Short", str(silent), "--codec=h264",
-                             "--crf=18", "--muted", "--pixel-format=yuv420p", "--color-space=bt709", *common], "render")
+                             "--crf=18", "--muted", "--pixel-format=yuv420p", "--color-space=bt709",
+                             f"--concurrency={concurrency}", *common], "render")
     cover, thumb = out / "cover.jpg", out / "thumb.jpg"
     _remotion(remotion_dir, ["still", "src/index.ts", "Cover", str(cover), "--image-format=jpeg",
                              "--jpeg-quality=88", *common], "cover")
