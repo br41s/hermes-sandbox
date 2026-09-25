@@ -5,6 +5,7 @@ author: BigLobster
 kind: backend
 provides_tools:
   - shorts_render
+  - shorts_studio
 # No ``requires_env``: rendering needs only ffmpeg (in the container image) and
 # the profile's configured TTS provider, which defaults to the free Edge TTS.
 #

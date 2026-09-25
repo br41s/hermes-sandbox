@@ -1,0 +1,84 @@
+{
+ "lang": "en",
+ "article": {
+  "url": "https://biglobster.top/blog/when-to-adopt-ai-sme-2026",
+  "title": "When should a small business adopt AI? A 2026 guide",
+  "slug": "when-to-adopt-ai-sme-2026"
+ },
+ "style": {
+  "palette": "indigo-coral",
+  "motif": "diamonds"
+ },
+ "beats": [
+  {
+   "kind": "hook",
+   "kicker": "2026 guide",
+   "onscreen": "Is your business *late* to AI?",
+   "vo": "Is your small business late to AI? Probably not. But waiting another year will cost you.",
+   "broll": "small business owner laptop"
+  },
+  {
+   "kind": "point",
+   "onscreen": "Start with *one* boring process",
+   "vo": "Start with one boring process you repeat every single week. Invoices, follow-up emails, booking confirmations. Boring is good: boring is predictable.",
+   "broll": "office paperwork"
+  },
+  {
+   "kind": "point",
+   "onscreen": "Measure the hours *before* you automate",
+   "vo": "Before you buy anything, write down how many hours that process eats every week. That number is your baseline, and it is the only honest way to know if the tool paid for itself.",
+   "broll": "calendar planning"
+  },
+  {
+   "kind": "stat",
+   "value": "73%",
+   "label": "of small firms saved *time* in 3 months",
+   "vo": "Seventy-three percent of small firms that did exactly this saw real time savings within three months.",
+   "broll": "team meeting office"
+  },
+  {
+   "kind": "list",
+   "onscreen": "Good first tasks are",
+   "items": [
+    "Repetitive",
+    "Rule-based",
+    "Easy to measure"
+   ],
+   "vo": "Good first tasks are repetitive, rule based, and easy to measure. If you can't measure it, you can't prove it worked.",
+   "broll": "checklist on desk"
+  },
+  {
+   "kind": "quote",
+   "onscreen": "Automate the *process*, not the chaos",
+   "vo": "And fix the process before you automate it. AI makes a messy process faster, not better.",
+   "broll": "whiteboard planning"
+  },
+  {
+   "kind": "cta",
+   "onscreen": "Read the full guide",
+   "url": "https://biglobster.top/blog/when-to-adopt-ai-sme-2026",
+   "vo": "The full step-by-step guide is on biglobster dot top. Link in the description."
+  }
+ ],
+ "covers": {
+  "cover_title": "Is your business late to AI?",
+  "thumb_title": "When should you adopt AI?"
+ },
+ "social": {
+  "youtube": {
+   "title": "When should a small business adopt AI? #Shorts",
+   "description": "Start with one boring process. Full guide: https://biglobster.top/blog/when-to-adopt-ai-sme-2026",
+   "tags": [
+    "AI",
+    "small business",
+    "automation"
+   ]
+  },
+  "instagram": "Is your business late to AI? Probably not — but here is where to start.\n\n#AI #SmallBusiness #Automation",
+  "facebook": "Is your business late to AI? Start with one boring process. Full guide: https://biglobster.top/blog/when-to-adopt-ai-sme-2026",
+  "x": "Is your small business late to AI? Start with one boring process. Full guide 👇 https://biglobster.top/blog/when-to-adopt-ai-sme-2026"
+ },
+ "music": {
+  "mood": "corporate"
+ }
+}

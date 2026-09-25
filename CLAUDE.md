@@ -389,11 +389,34 @@ Two things that look like details and are not:
 a client whose catalogue comes from a distributor feed, because that feed is the only thing
 it writes from. Sold to a client without one it goes quiet on every run.
 
+## BigLobster Shorts Studio — Hermes plans, GitHub Actions renders
+
+`shorts/STUDIO.md` is the design and setup guide. The short version:
+
+- **Two cron agents, no profile, no workdir.** The Producer writes a JSON *package*
+  per post and submits it, the Publisher collects and publishes. Neither waits on a
+  render, and neither sits on the shared profile/workdir thread (see above). Their
+  keys (`SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*`, `META_*`) live only in the
+  service env. **Do not add them to the boot hook's `inject`**, which would copy
+  BigLobster's publishing tokens into every profile.
+- **Rendering is Remotion in `.github/workflows/shorts-studio.yml`**, never in the
+  pod: ~1,800 browser frames a minute of video would starve the fleet.
+- **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
+  and rejects unsourced figures, repeated palettes and malformed packages. `publish`
+  refuses QA failures and does nothing unless `SHORTS_PUBLISH_MODE=live`. A rule
+  that matters goes in `plugins/shorts/studio_tool.py` or `studio/package.py`.
+- `package.py` is shared by Hermes and the renderer, and `PALETTES`/`MOTIFS` are
+  mirrored in `shorts/studio/remotion/src/theme.ts` (a test keeps them equal).
+- A studio change smoke-renders both samples on push. Read the job log's
+  `[studio]` lines: they give TTS duration, footage hits, render time and QA.
+- The rental SKU (`shorts_render`, in-container ffmpeg) is separate and unchanged.
+
 ## Fork-specific docs
 
 - `AGENT_RENTAL_SETUP.md` — rental provisioning, incl. whitelisting `43.157.39.241` on 443
 - `BIGLOBSTER_SETUP.md` — BigLobster profile wiring
 - `hermes-already-has-routines.md` — what upstream provides before you build scheduling
+- `shorts/STUDIO.md` — BigLobster shorts pipeline; `shorts/CHECKLIST.md` — the manual checklist, revised
 
 ## Before you build
 

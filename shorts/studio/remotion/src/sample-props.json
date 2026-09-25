@@ -1,0 +1,413 @@
+{
+ "lang": "en",
+ "palette": "indigo-coral",
+ "motif": "diamonds",
+ "brand": {
+  "name": "BigLobster",
+  "site": "biglobster.top"
+ },
+ "beats": [
+  {
+   "kind": "hook",
+   "onscreen": "Your SME is *late* to AI?",
+   "kicker": "2026 guide",
+   "from": 0,
+   "duration": 96,
+   "number": 0,
+   "broll": null
+  },
+  {
+   "kind": "point",
+   "onscreen": "Start with *one* boring process",
+   "from": 96,
+   "duration": 165,
+   "number": 1,
+   "broll": null
+  },
+  {
+   "kind": "stat",
+   "value": "73%",
+   "label": "of SMEs saw *time savings* in 3 months",
+   "from": 261,
+   "duration": 150,
+   "number": 2,
+   "broll": null
+  },
+  {
+   "kind": "list",
+   "onscreen": "Pick tasks that are",
+   "items": [
+    "Repetitive",
+    "Rule-based",
+    "Measurable"
+   ],
+   "from": 411,
+   "duration": 180,
+   "number": 3,
+   "broll": null
+  },
+  {
+   "kind": "quote",
+   "onscreen": "Automate the *process*, not the chaos",
+   "from": 591,
+   "duration": 135,
+   "number": 4,
+   "broll": null
+  },
+  {
+   "kind": "cta",
+   "onscreen": "Read the full guide",
+   "url": "https://biglobster.top/blog/when-to-adopt-ai-sme-2026",
+   "from": 726,
+   "duration": 120,
+   "number": 0,
+   "broll": null
+  }
+ ],
+ "words": [
+  {
+   "text": "Is",
+   "startMs": 0,
+   "endMs": 464,
+   "page": 0
+  },
+  {
+   "text": "your",
+   "startMs": 504,
+   "endMs": 967,
+   "page": 0
+  },
+  {
+   "text": "small",
+   "startMs": 1007,
+   "endMs": 1471,
+   "page": 0
+  },
+  {
+   "text": "business",
+   "startMs": 1511,
+   "endMs": 1974,
+   "page": 0
+  },
+  {
+   "text": "late",
+   "startMs": 2014,
+   "endMs": 2478,
+   "page": 1
+  },
+  {
+   "text": "to",
+   "startMs": 2518,
+   "endMs": 2981,
+   "page": 1
+  },
+  {
+   "text": "AI",
+   "startMs": 3021,
+   "endMs": 3485,
+   "page": 1
+  },
+  {
+   "text": "Here",
+   "startMs": 3525,
+   "endMs": 3989,
+   "page": 1
+  },
+  {
+   "text": "is",
+   "startMs": 4029,
+   "endMs": 4492,
+   "page": 2
+  },
+  {
+   "text": "the",
+   "startMs": 4532,
+   "endMs": 4996,
+   "page": 2
+  },
+  {
+   "text": "honest",
+   "startMs": 5036,
+   "endMs": 5499,
+   "page": 2
+  },
+  {
+   "text": "answer",
+   "startMs": 5539,
+   "endMs": 6003,
+   "page": 2
+  },
+  {
+   "text": "Start",
+   "startMs": 6043,
+   "endMs": 6506,
+   "page": 3
+  },
+  {
+   "text": "with",
+   "startMs": 6546,
+   "endMs": 7010,
+   "page": 3
+  },
+  {
+   "text": "one",
+   "startMs": 7050,
+   "endMs": 7514,
+   "page": 3
+  },
+  {
+   "text": "boring",
+   "startMs": 7554,
+   "endMs": 8017,
+   "page": 3
+  },
+  {
+   "text": "process",
+   "startMs": 8057,
+   "endMs": 8521,
+   "page": 4
+  },
+  {
+   "text": "you",
+   "startMs": 8561,
+   "endMs": 9024,
+   "page": 4
+  },
+  {
+   "text": "repeat",
+   "startMs": 9064,
+   "endMs": 9528,
+   "page": 4
+  },
+  {
+   "text": "every",
+   "startMs": 9568,
+   "endMs": 10031,
+   "page": 4
+  },
+  {
+   "text": "week",
+   "startMs": 10071,
+   "endMs": 10535,
+   "page": 5
+  },
+  {
+   "text": "Seventy",
+   "startMs": 10575,
+   "endMs": 11039,
+   "page": 5
+  },
+  {
+   "text": "three",
+   "startMs": 11079,
+   "endMs": 11542,
+   "page": 5
+  },
+  {
+   "text": "percent",
+   "startMs": 11582,
+   "endMs": 12046,
+   "page": 5
+  },
+  {
+   "text": "of",
+   "startMs": 12086,
+   "endMs": 12549,
+   "page": 6
+  },
+  {
+   "text": "small",
+   "startMs": 12589,
+   "endMs": 13053,
+   "page": 6
+  },
+  {
+   "text": "firms",
+   "startMs": 13093,
+   "endMs": 13556,
+   "page": 6
+  },
+  {
+   "text": "saw",
+   "startMs": 13596,
+   "endMs": 14060,
+   "page": 6
+  },
+  {
+   "text": "time",
+   "startMs": 14100,
+   "endMs": 14564,
+   "page": 7
+  },
+  {
+   "text": "savings",
+   "startMs": 14604,
+   "endMs": 15067,
+   "page": 7
+  },
+  {
+   "text": "within",
+   "startMs": 15107,
+   "endMs": 15571,
+   "page": 7
+  },
+  {
+   "text": "three",
+   "startMs": 15611,
+   "endMs": 16074,
+   "page": 7
+  },
+  {
+   "text": "months",
+   "startMs": 16114,
+   "endMs": 16578,
+   "page": 8
+  },
+  {
+   "text": "Pick",
+   "startMs": 16618,
+   "endMs": 17081,
+   "page": 8
+  },
+  {
+   "text": "tasks",
+   "startMs": 17121,
+   "endMs": 17585,
+   "page": 8
+  },
+  {
+   "text": "that",
+   "startMs": 17625,
+   "endMs": 18089,
+   "page": 8
+  },
+  {
+   "text": "are",
+   "startMs": 18129,
+   "endMs": 18592,
+   "page": 9
+  },
+  {
+   "text": "repetitive",
+   "startMs": 18632,
+   "endMs": 19096,
+   "page": 9
+  },
+  {
+   "text": "rule",
+   "startMs": 19136,
+   "endMs": 19599,
+   "page": 9
+  },
+  {
+   "text": "based",
+   "startMs": 19639,
+   "endMs": 20103,
+   "page": 9
+  },
+  {
+   "text": "and",
+   "startMs": 20143,
+   "endMs": 20606,
+   "page": 10
+  },
+  {
+   "text": "measurable",
+   "startMs": 20646,
+   "endMs": 21110,
+   "page": 10
+  },
+  {
+   "text": "Automate",
+   "startMs": 21150,
+   "endMs": 21614,
+   "page": 10
+  },
+  {
+   "text": "the",
+   "startMs": 21654,
+   "endMs": 22117,
+   "page": 10
+  },
+  {
+   "text": "process",
+   "startMs": 22157,
+   "endMs": 22621,
+   "page": 11
+  },
+  {
+   "text": "not",
+   "startMs": 22661,
+   "endMs": 23124,
+   "page": 11
+  },
+  {
+   "text": "the",
+   "startMs": 23164,
+   "endMs": 23628,
+   "page": 11
+  },
+  {
+   "text": "chaos",
+   "startMs": 23668,
+   "endMs": 24131,
+   "page": 11
+  },
+  {
+   "text": "Read",
+   "startMs": 24171,
+   "endMs": 24635,
+   "page": 12
+  },
+  {
+   "text": "the",
+   "startMs": 24675,
+   "endMs": 25139,
+   "page": 12
+  },
+  {
+   "text": "full",
+   "startMs": 25179,
+   "endMs": 25642,
+   "page": 12
+  },
+  {
+   "text": "guide",
+   "startMs": 25682,
+   "endMs": 26146,
+   "page": 12
+  },
+  {
+   "text": "at",
+   "startMs": 26186,
+   "endMs": 26649,
+   "page": 13
+  },
+  {
+   "text": "biglobster",
+   "startMs": 26689,
+   "endMs": 27153,
+   "page": 13
+  },
+  {
+   "text": "dot",
+   "startMs": 27193,
+   "endMs": 27656,
+   "page": 13
+  },
+  {
+   "text": "top",
+   "startMs": 27696,
+   "endMs": 28160,
+   "page": 13
+  }
+ ],
+ "durationInFrames": 846,
+ "cover": {
+  "title": "Is your SME late to AI?",
+  "kicker": "2026 guide"
+ },
+ "thumb": {
+  "title": "When should an SME adopt AI?"
+ }
+}

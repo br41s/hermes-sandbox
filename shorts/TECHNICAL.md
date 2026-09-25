@@ -1,5 +1,10 @@
 # Social Shorts — technical design
 
+> BigLobster's own daily shorts now run on the **Shorts Studio** (Remotion in
+> GitHub Actions, word-level karaoke, automatic QA, API publishing):
+> see `STUDIO.md`. This document still describes the rented `shorts` SKU, whose
+> in-container ffmpeg renderer is unchanged.
+
 The eighth rentable bl-site-package SKU. One blog post per run becomes 3–5 vertical
 MP4s for Instagram Reels and TikTok, plus a `captions.md` of per-network copy.
 

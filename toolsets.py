@@ -327,8 +327,8 @@ TOOLSETS = {
     },
 
     "shorts": {
-        "description": "Vertical short-form video: stock B-roll search and ffmpeg render to 1080x1920 MP4",
-        "tools": ["shorts_render"],
+        "description": "Vertical short-form video: ffmpeg render (rented agent) and the Remotion Shorts Studio with publishing (BigLobster)",
+        "tools": ["shorts_render", "shorts_studio"],
         "includes": []
     },
 

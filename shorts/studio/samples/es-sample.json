@@ -1,0 +1,42 @@
+{
+ "lang": "es",
+ "article": {
+  "url": "https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
+  "title": "¿Cuándo debe una pyme adoptar la IA? Guía 2026",
+  "slug": "when-to-adopt-ai-sme-2026"
+ },
+ "style": {"palette": "teal-amber", "motif": "rings"},
+ "beats": [
+  {"kind": "hook", "kicker": "Guía 2026", "onscreen": "¿Tu pyme llega *tarde* a la IA?",
+   "vo": "¿Tu pyme llega tarde a la inteligencia artificial? Probablemente no. Pero esperar otro año te va a salir caro.",
+   "broll": "business owner laptop"},
+  {"kind": "point", "onscreen": "Empieza por *un* proceso aburrido",
+   "vo": "Empieza por un proceso aburrido que repites cada semana. Facturas, correos de seguimiento, confirmaciones de reserva. Aburrido es bueno: aburrido es predecible.",
+   "broll": "office paperwork"},
+  {"kind": "point", "onscreen": "Mide las horas *antes* de automatizar",
+   "vo": "Antes de comprar nada, apunta cuántas horas te come ese proceso cada semana. Ese número es tu punto de partida, y la única forma honesta de saber si la herramienta se paga sola.",
+   "broll": "calendar planning"},
+  {"kind": "stat", "value": "73%", "label": "de las pymes ahorró *tiempo* en 3 meses",
+   "vo": "El setenta y tres por ciento de las pymes que hicieron exactamente esto ahorró tiempo real en tres meses.",
+   "broll": "team meeting office"},
+  {"kind": "list", "onscreen": "Buenas primeras tareas", "items": ["Repetitivas", "Con reglas claras", "Fáciles de medir"],
+   "vo": "Las mejores primeras tareas son repetitivas, con reglas claras y fáciles de medir. Si no lo puedes medir, no puedes demostrar que funcionó.",
+   "broll": "checklist desk"},
+  {"kind": "quote", "onscreen": "Automatiza el *proceso*, no el caos",
+   "vo": "Y ordena el proceso antes de automatizarlo. La IA hace más rápido un proceso desordenado, no mejor.",
+   "broll": "whiteboard planning"},
+  {"kind": "cta", "onscreen": "Lee la guía completa",
+   "url": "https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
+   "vo": "La guía completa, paso a paso, está en biglobster punto top. Enlace en la descripción."}
+ ],
+ "covers": {"cover_title": "¿Tu pyme llega tarde a la IA?", "thumb_title": "¿Cuándo adoptar la IA?"},
+ "social": {
+  "youtube": {"title": "¿Cuándo debe una pyme adoptar la IA?",
+   "description": "Empieza por un proceso aburrido. Guía completa: https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
+   "tags": ["IA", "pymes", "automatización"]},
+  "instagram": "¿Tu pyme llega tarde a la IA? Probablemente no — pero aquí es donde empezar.\n\n#IA #Pymes #Automatización",
+  "facebook": "¿Tu pyme llega tarde a la IA? Empieza por un proceso aburrido. Guía completa: https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
+  "x": "¿Tu pyme llega tarde a la IA? Empieza por un proceso aburrido. Guía completa 👇 https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html"
+ },
+ "music": {"mood": "corporate"}
+}

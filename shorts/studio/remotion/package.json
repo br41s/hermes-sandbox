@@ -1,0 +1,23 @@
+{
+  "name": "biglobster-shorts-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion template for BigLobster shorts. Rendered in GitHub Actions by plugins/shorts/studio/build.py \u2014 see shorts/STUDIO.md.",
+  "scripts": {
+    "prestudio": "mkdir -p public/fonts && cp node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2 public/fonts/",
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@remotion/cli": "4.0.528",
+    "@remotion/fonts": "4.0.528",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.528"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}
