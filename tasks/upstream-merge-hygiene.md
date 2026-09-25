@@ -39,17 +39,37 @@ Half the work for a tenth of the wait.
 
 ## Automation
 
-`scripts/upstream_drift.py` — silent while drift is under the threshold, then
-nags. Run it as a no-agent cron job (empty stdout = no message):
+`scripts/upstream_drift.py` reports **on every run** — "up to date", "behind,
+merge not due yet", or "merge is due" (the OLDEST unmerged upstream tag is
+older than 30 days). One Telegram message a week, never zero:
 
-```bash
-hermes cron create '0 9 * * 1' --no-agent --script upstream_drift.py \
-    --name 'Upstream drift' --deliver telegram
-```
+- **Primary — `.github/workflows/upstream-drift.yml`**, Mondays 07:17 UTC. Full
+  clone, so it carries the real commit and conflict counts. Needs repo secrets
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` and optionally `TELEGRAM_THREAD_ID`.
+  The job fails if the message did not go out. Run it by hand from the Actions
+  tab (`workflow_dispatch`) to test.
+- **Fallback — Hermes no-agent cron**, Tuesdays, seeded by
+  `docker/cont-init.d/03-biglobster-config` as `upstream_drift.sh`. It runs with
+  `--defer-to-actions`: silent if the workflow succeeded in the last 72h,
+  otherwise it reports itself (remote mode, no conflict count) and says why the
+  workflow did not. Register once in the container shell:
+
+  ```bash
+  hermes cron create '0 9 * * 2' --no-agent --script upstream_drift.sh \
+      --name upstream-drift --deliver telegram
+  ```
+
+**No message on a Tuesday means both paths are down.** That is the only state
+that should ever be silent.
+
+Until 2026-09-25 the check was silent by design under the threshold, and it
+measured the threshold against upstream's NEWEST tag. Upstream releases every
+3-10 days, so that tag was never 30 days old: it said nothing from v2026.7.20
+through v2026.9.24 while drift grew to 14 releases and 109 conflicted files.
 
 The production image has no `.git` (`.dockerignore` excludes it), so in the
-container it falls back to the GitHub API and compares against the
-`UPSTREAM_VERSION` file. Run it locally for the real conflict count.
+container it asks the GitHub API and compares against the `UPSTREAM_VERSION`
+file.
 
 **`UPSTREAM_VERSION` must be updated as part of every upstream merge** — it is
 the anchor the whole check hangs off.
@@ -71,13 +91,13 @@ the anchor the whole check hangs off.
 7. Update `UPSTREAM_VERSION` — **derive it, never type it**. The newest tag is
    the one on screen while you merge, and it is exactly the WRONG value: it is
    what you are merging *toward*, not what is merged. Recording an unmerged tag
-   silences the drift watcher until upstream's next release.
+   makes the drift watcher report "up to date" through real drift.
 
    ```bash
    for t in $(git tag -l --sort=-v:refname); do \
      git merge-base --is-ancestor $t HEAD 2>/dev/null && { echo $t > UPSTREAM_VERSION; break; }; done
    cat UPSTREAM_VERSION
-   python3 scripts/upstream_drift.py   # must be silent, exit 0
+   python3 scripts/upstream_drift.py   # must exit 0: "up to date", or "not due yet"
    ```
 
    `upstream_drift.py` now refuses to run if the recorded tag is not an ancestor

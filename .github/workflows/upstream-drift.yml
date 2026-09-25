@@ -1,0 +1,90 @@
+name: Upstream drift
+
+# Weekly report of how far this fork is behind NousResearch/hermes-agent,
+# delivered to Telegram on EVERY run — "up to date" included, because a
+# watchdog that only speaks when something is wrong is indistinguishable from
+# a dead one. The previous check did exactly that and said nothing for two
+# months while the fork fell 14 releases behind.
+#
+# Primary of two: runs from a full clone, so it carries the real conflict
+# count. The Hermes cron job `upstream-drift` (docker/cont-init.d/
+# 03-biglobster-config) runs Tuesdays with --defer-to-actions: it stays quiet
+# if this workflow SUCCEEDED in the last 72h and reports itself otherwise. The
+# job therefore fails whenever the Telegram message did not go out.
+#
+# Needs repo secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, and optionally
+# TELEGRAM_THREAD_ID for a forum topic — the same values as the container's
+# TELEGRAM_BOT_TOKEN / TELEGRAM_HOME_CHANNEL / TELEGRAM_HOME_CHANNEL_THREAD_ID.
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'   # Mondays 07:17 UTC; off the hour, where GitHub queues
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    if: github.repository == 'br41s/hermes-sandbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # merge-base / merge-tree need real history; a shallow clone would
+          # make every upstream tag look unmerged.
+          fetch-depth: 0
+
+      - name: Measure drift
+        id: drift
+        run: |
+          git remote add -t main upstream https://github.com/NousResearch/hermes-agent.git
+          set +e
+          python3 scripts/upstream_drift.py > report.txt 2> error.txt
+          rc=$?
+          set -e
+          cat report.txt error.txt
+          # 0 and 1 are reports (1 = merge is due) and always carry text.
+          # Anything else, or a report with no text, means the check itself
+          # broke — send that instead of an empty message.
+          failed=false
+          if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ ! -s report.txt ]; then
+            failed=true
+            { echo "❌ Upstream drift check FAILED (exit $rc) — the check itself, not the drift."
+              head -c 3000 error.txt; } > report.txt
+          fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ secrets.TELEGRAM_THREAD_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID repo secrets are not set"
+            exit 1
+          fi
+          printf '\n%s\n' "$RUN_URL" >> report.txt
+          args=(--data-urlencode "chat_id=$TELEGRAM_CHAT_ID"
+                --data-urlencode "text@report.txt"
+                --data-urlencode "disable_web_page_preview=true")
+          if [ -n "$TELEGRAM_THREAD_ID" ]; then
+            args+=(--data-urlencode "message_thread_id=$TELEGRAM_THREAD_ID")
+          fi
+          # Plain text, no parse_mode: nothing in the report needs escaping.
+          resp=$(curl -sS --retry 3 --retry-delay 5 \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" "${args[@]}")
+          if ! printf '%s' "$resp" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)'; then
+            echo "::error::Telegram refused the message: $(printf '%s' "$resp" | head -c 300)"
+            exit 1
+          fi
+          echo "Delivered to Telegram."
+
+      - name: Fail if the check itself failed
+        if: steps.drift.outputs.failed == 'true'
+        run: |
+          echo "::error::upstream_drift.py failed — see the Measure drift step"
+          exit 1
