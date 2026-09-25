@@ -260,7 +260,8 @@ def _remotion(remotion_dir: Path, args: List[str], what: str, timeout: int = 180
     if browser:
         cmd.append(f"--browser-executable={browser}")
     started = time.time()
-    proc = subprocess.run(cmd, cwd=str(remotion_dir), capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(cmd, cwd=str(remotion_dir), stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or proc.stdout or "").strip().splitlines()[-25:])
         raise BuildError(f"remotion {what} failed:\n{tail}")
