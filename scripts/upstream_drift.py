@@ -124,8 +124,8 @@ def _api_release_tags() -> list[tuple[str, str]] | None:
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         print(f"upstream-drift: could not reach the GitHub API: {exc}", file=sys.stderr)
         return None
-    found = [(t["name"], t["commit"]["url"]) for t in tags
-             if _TAG_RE.match(t.get("name", ""))]
+    found = [(t["name"], (t.get("commit") or {}).get("url", "")) for t in tags
+             if isinstance(t, dict) and _TAG_RE.match(t.get("name") or "")]
     return sorted(found, key=lambda t: _version_key(t[0]), reverse=True)
 
 
@@ -282,7 +282,10 @@ def _actions_reported(window_hours: int) -> tuple[bool, str]:
             return False, f"could not reach the GitHub API: {exc}"
         if runs:
             break
-    ok = [r for r in runs if r.get("conclusion") == "success"]
+    # Newest first by our own sort: the API's ordering is undocumented.
+    ok = sorted((r for r in runs if r.get("conclusion") == "success"),
+                key=lambda r: r.get("run_started_at") or r.get("created_at") or "",
+                reverse=True)
     if not ok:
         return False, "no successful run on record" if runs else "it has never run"
     started = ok[0].get("run_started_at") or ok[0].get("created_at") or ""
@@ -320,5 +323,22 @@ def main() -> int:
     return rc
 
 
+def _entry() -> int:
+    """main(), with any crash turned into exit 2.
+
+    An uncaught exception exits 1 — the same code as "merge is due" — and
+    the Hermes wrapper delivers exit 1 as a normal report, so a crash with
+    empty stdout would read as a silent run. Exit 2 is "the check broke".
+    """
+    try:
+        return main()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        print("upstream-drift: crashed — see the traceback above", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_entry())

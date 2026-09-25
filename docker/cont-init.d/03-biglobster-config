@@ -1111,14 +1111,21 @@ cat > "$HERMES_HOME/scripts/upstream_drift.sh" <<'DRIFT'
 #!/bin/bash
 # Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
 cd /opt/hermes 2>/dev/null || { echo "upstream-drift: /opt/hermes missing" >&2; exit 2; }
-.venv/bin/python scripts/upstream_drift.py --defer-to-actions
+out=$(.venv/bin/python scripts/upstream_drift.py --defer-to-actions)
 rc=$?
+[ -n "$out" ] && printf '%s\n' "$out"
 # Exit 1 means "merge is due", which is a REPORT, not a failure — the cron
 # runner would otherwise mark the job errored every week it has something to
-# say. Exit 2 means the check itself broke: pass it through, so the runner
-# delivers its "watchdog script failed" alert instead of a silent run. (This
-# used to be `|| true`, which turned a dead GitHub API into silence.)
-[ "$rc" -eq 1 ] && exit 0
+# say. Anything else non-zero means the check itself broke: pass it through, so
+# the runner delivers its "watchdog script failed" alert instead of a silent
+# run. (This used to be `|| true`, which turned a dead GitHub API into silence.)
+# A report always has text, so exit 1 with EMPTY stdout is a crash that got
+# past the script's own handler (a SyntaxError exits 1 before it can run).
+if [ "$rc" -eq 1 ]; then
+    [ -n "$out" ] && exit 0
+    echo "upstream-drift: exited 1 with no report — treating it as a crash" >&2
+    exit 2
+fi
 exit "$rc"
 DRIFT
 chmod +x "$HERMES_HOME/scripts/upstream_drift.sh"

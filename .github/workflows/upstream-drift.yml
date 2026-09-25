@@ -44,12 +44,17 @@ jobs:
           python3 scripts/upstream_drift.py > report.txt 2> error.txt
           rc=$?
           set -e
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
           cat report.txt error.txt
-          if [ "$rc" -eq 2 ]; then
-            { echo "❌ Upstream drift check FAILED — the check itself, not the drift."
+          # 0 and 1 are reports (1 = merge is due) and always carry text.
+          # Anything else, or a report with no text, means the check itself
+          # broke — send that instead of an empty message.
+          failed=false
+          if { [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; } || [ ! -s report.txt ]; then
+            failed=true
+            { echo "❌ Upstream drift check FAILED (exit $rc) — the check itself, not the drift."
               head -c 3000 error.txt; } > report.txt
           fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
 
       - name: Send to Telegram
         env:
@@ -79,7 +84,7 @@ jobs:
           echo "Delivered to Telegram."
 
       - name: Fail if the check itself failed
-        if: steps.drift.outputs.rc == '2'
+        if: steps.drift.outputs.failed == 'true'
         run: |
-          echo "::error::upstream_drift.py exited 2 — see the Measure drift step"
+          echo "::error::upstream_drift.py failed — see the Measure drift step"
           exit 1

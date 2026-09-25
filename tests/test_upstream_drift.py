@@ -153,6 +153,14 @@ class TestDeferToActions:
         ok, _ = self._runs(drift, monkeypatch, {"workflow_runs": [{"conclusion": "failure", "run_started_at": _ago(0)}, {"conclusion": "success", "run_started_at": _ago(1)}]})
         assert ok
 
+    def test_newest_success_wins_whatever_the_api_order(self, drift, monkeypatch):
+        """The API's ordering is undocumented; an old run listed first must not decide."""
+        ok, _ = self._runs(drift, monkeypatch, {"workflow_runs": [
+            {"conclusion": "success", "run_started_at": _ago(9)},
+            {"conclusion": "success", "run_started_at": _ago(1)},
+        ]})
+        assert ok
+
     def test_last_week_success_does_not_count(self, drift, monkeypatch):
         ok, why = self._runs(drift, monkeypatch, {"workflow_runs": [{"conclusion": "success", "run_started_at": _ago(8)}]})
         assert not ok and "8 days ago" in why
@@ -174,6 +182,29 @@ class TestDeferToActions:
         monkeypatch.setattr(drift, "_api_get", boom)
         ok, why = drift._actions_reported(72)
         assert not ok and "could not reach" in why
+
+
+class TestCrashIsExitTwo:
+    """An uncaught exception must exit 2, never 1.
+
+    Exit 1 is "merge is due", which the Hermes wrapper delivers as a normal
+    report; a crash exiting 1 with empty stdout would be a silent run.
+    """
+
+    def test_crash_in_main_exits_2_with_traceback(self, drift, monkeypatch, capsys):
+        def boom():
+            raise KeyError("commit")
+
+        monkeypatch.setattr(drift, "main", boom)
+        assert drift._entry() == 2
+        err = capsys.readouterr().err
+        assert "KeyError" in err and "crashed" in err
+
+    def test_malformed_tag_entries_do_not_crash(self, drift, monkeypatch):
+        payload = [{"name": "v2026.9.24"}, {"name": "v2026.9.21", "commit": None},
+                   "not-a-dict", {"name": "v2026.7.20", "commit": {"url": "u"}}]
+        monkeypatch.setattr(drift, "_api_get", lambda url: payload)
+        assert drift._api_release_tags() == [("v2026.9.24", ""), ("v2026.9.21", ""), ("v2026.7.20", "u")]
 
 
 class TestRecordedVersionMustBeMerged:
