@@ -23,12 +23,11 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
     .venv/bin/python3 scripts/sync_prompt_drift.py --yes
 
 A job whose live prompt was edited in place since its last sync is reported as
-blocked rather than overwritten (same guard as `cronjob_tools.sync_prompt`);
+blocked rather than overwritten (same guard as `cron/fork_ext/prompt_sync.py`);
 --force overrides that.
 """
 
 import argparse
-import hashlib
 import os
 import sys
 from pathlib import Path
@@ -37,6 +36,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))
 
+from cron.fork_ext.prompt_sync import prompt_sha as _prompt_sha  # noqa: E402
 from cron.jobs import list_jobs, update_job  # noqa: E402
 from tools.cronjob_tools import _scan_cron_prompt  # noqa: E402
 
@@ -46,18 +46,13 @@ def _read_source(source: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _prompt_sha(text: str) -> str:
-    """Baseline hash, identical to the one cronjob_tools.sync_prompt records."""
-    return hashlib.sha256(text.strip().encode()).hexdigest()
-
-
 def find_drift(sources: list[str] | None, *, force: bool = False) -> dict:
     """Group jobs with a prompt_source by drift status.
 
     Returns {"unchanged": [...], "changed": [...], "blocked": [...], "missing_file": [...]}
     keyed lists of (job, source, new_text_or_None, detail).
 
-    Carries the same clobber guard as ``cronjob_tools.sync_prompt``: a job whose
+    Carries the same clobber guard as ``cron.fork_ext.prompt_sync``: a job whose
     live prompt no longer hashes to ``prompt_synced_sha`` was edited in place
     since its last sync, and syncing would destroy that edit. Those land in
     "blocked" so the rest of the sweep still runs. ``force`` skips the check.
@@ -151,7 +146,7 @@ def main() -> int:
         update_job(job["id"], {
             "prompt": file_text,
             "prompt_source": source,
-            # Without this the next cronjob_tools.sync_prompt compares the live
+            # Without this the next cronjob(action='sync_prompt') compares the live
             # prompt against a baseline this script never advanced, reads its own
             # write as a hand-edit, and refuses.
             "prompt_synced_sha": _prompt_sha(file_text),

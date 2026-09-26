@@ -323,7 +323,7 @@ on branch + git identity between the two jobs.
 >
 > **Do not use `hermes cron edit --prompt` as the shortcut.** It writes the live
 > side directly, so `prompt_synced_sha` no longer matches and the *next*
-> `sync_prompt` refuses (`tools/cronjob_tools.py:963`) — correctly, since it can no
+> `sync_prompt` refuses (`cron/fork_ext/prompt_sync.py`) — correctly, since it can no
 > longer tell whether it would be discarding someone's emergency fix. Always let
 > `sync_prompt` be the writer.
 
