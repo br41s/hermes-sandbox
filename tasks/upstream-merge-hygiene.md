@@ -74,6 +74,22 @@ file.
 **`UPSTREAM_VERSION` must be updated as part of every upstream merge** — it is
 the anchor the whole check hangs off.
 
+## Keep fork code out of upstream files
+
+Every fork hunk inside an upstream file is a future conflict, and after upstream
+rewrites that file it becomes "re-apply our intent onto unfamiliar code". So:
+
+- **Fork code lives in fork-owned modules** — `hermes_cli/fork_ext/`,
+  `cron/fork_ext/` (neither exists upstream) — and the upstream file keeps a
+  one-to-three-line call site or re-export. `hermes_cli/web_server.py` includes
+  one router; `cron/scheduler.py` imports its fork helpers in three blocks.
+- **Fork tests live in `*_fork.py` files**, never appended to upstream test files,
+  and never in `tests/cli/` or `tests/run_agent/` (upstream renames both).
+- **Resolve a merge by re-anchoring the call site, not by re-pasting a copy.**
+  `cli.py` carried 306 lines of stale handler copies for months because an old
+  merge re-pasted code upstream had moved (#332); it now differs from upstream by
+  one hunk, and `tests/hermes_cli/test_cli_fork.py` fails if the copies return.
+
 ## The merge itself
 
 1. `git fetch upstream --tags` and merge the newest **tag**, never `upstream/main`
