@@ -285,6 +285,13 @@ Never conclude an agent skipped a step from `agent.log` alone. Pull the trace.
 
 ## Secrets
 
+**No-agent cron scripts never see `GITHUB_TOKEN` or `GH_TOKEN`.** The runner strips
+them (and the Telegram/Slack bot tokens) from every script's env —
+`tools/environments/local.py` `_ALWAYS_STRIP_KEYS`. A script that needs GitHub must
+read a `HERMES_`-prefixed variable of its own, or go unauthenticated against a public
+repo. Falling back to `GITHUB_TOKEN` looks right in tests and is dead in production:
+it left the deploy-drift and dependency-alert signals blind until 2026-09-26.
+
 Keys live in Zeabur env vars and propagate to profile `.env` files. **Never print a variable
 table or `env[N].value` into a session transcript** — path-based redaction does not catch
 those, and keys have leaked here that way before.
