@@ -51,7 +51,7 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset({
     # authentication: the handler requires an ``x-hermes-secret`` header
     # matching ``HERMES_CALLBACK_SECRET`` (checked with hmac.compare_digest,
     # fails closed if unset — see ``_verify_delegate_secret`` in
-    # ``web_server.py``). That header check — not this allowlist — is the
+    # ``fork_ext/web.py``). That header check — not this allowlist — is the
     # real security boundary; listed here so BOTH the session-token
     # middleware and the OAuth gate bypass it in lockstep.
     "/api/delegate",
