@@ -76,8 +76,9 @@ Consequences to hold in mind:
 ### One long agent run starves every other agent
 
 `cron/scheduler.py` dispatches every job that sets `profile` or `workdir` on a
-**single-thread sequential pool** — profile execution mutates `os.environ` and a
-context-local `HERMES_HOME`, so two cannot safely overlap. One slow job therefore
+**single-thread sequential pool** (`cron/fork_ext/dispatch.py`) — a workdir job
+still writes `os.environ["TERMINAL_CWD"]`, and the lane keeps profile runs in the
+order they have always had. One slow job therefore
 blocks all the others, and from outside a queued run is indistinguishable from a
 dead one: the waiting job sits in `claimed` with no log output at all.
 
@@ -89,8 +90,17 @@ The defence is **bounding each agent, not widening the pool**. The agent loop
 already hard-stops at `max_iterations=90` (`run_agent.py:434`), so the ceiling is
 ~90 tool calls; what matters is that a job's queue fits inside it —
 `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that. Widening the pool
-would mean removing the env mutation first; treat that as a separate, riskier
-piece of work and do not fold it into a bug fix.
+would mean removing the `TERMINAL_CWD` write first; treat that as a separate,
+riskier piece of work and do not fold it into a bug fix.
+
+**A profile job's `.env` never reaches `os.environ`.** `_job_profile_context`
+(`cron/fork_ext/profile_scope.py`) installs it as the run's secret scope, a
+ContextVar, so read a profile key with `agent.secret_scope.get_secret` or
+`hermes_cli.config.get_env_value` — a bare `os.getenv` in code a profile job runs
+gets the DEFAULT profile's value (a rental billing BigLobster's key, or worse,
+the wrong client's site). Child processes get the scope through
+`hermes_cli/fork_ext/profile_env.py::child_env_overlay`. This is what lets
+upstream v2026.8.31 delete `_terminal_cwd_lock` safely.
 
 Corollary when triaging: before calling a quiet cron job dead, check whether
 another profile/workdir job is running. `hermes cron runs <job_id>` shows the
