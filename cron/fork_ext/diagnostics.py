@@ -42,7 +42,7 @@ def abandoned_agent_threads() -> int:
     in ``_run_job_impl``'s ``finally`` must not be read as a kill: on an
     inactivity timeout the agent thread survives it, holding its full heap
     (three such orphans accumulated on 2026-09-22 before anyone noticed), and
-    only ``_exit_hard_if_threads_abandoned`` in ``hermes_cli/cron.py`` gets
+    only ``exit_hard_if_threads_abandoned`` in ``cron/fork_ext/cli.py`` gets
     the process out.
     """
     with _ABANDONED_LOCK:

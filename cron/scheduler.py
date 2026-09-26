@@ -19,7 +19,6 @@ import re
 import shutil
 import subprocess
 import sys
-from contextlib import contextmanager
 import threading
 import time
 
@@ -540,6 +539,7 @@ def _shutdown_parallel_pool() -> None:
     if _sequential_pool is not None:
         _sequential_pool.shutdown(wait=True, cancel_futures=False)
         _sequential_pool = None
+    _fork_shutdown_sequential()  # fork: drain the profile/workdir lane too (cron/fork_ext/dispatch.py)
 
 
 atexit.register(_shutdown_parallel_pool)
@@ -600,50 +600,14 @@ def _get_lock_paths() -> tuple[Path, Path]:
     return lock_dir, lock_dir / ".tick.lock"
 
 
-@contextmanager
-def _job_run_lock(job_id: str):
-    """Non-blocking per-job exclusion lock. Yields True if acquired (run the
-    job), False if another run of the SAME job_id already holds it (skip — the
-    in-flight run will do the work).
-
-    Why: the scheduler tick and the webhook direct-trigger both reach run_job(),
-    and the ``.tick.lock`` only serializes ticks — a webhook path bypasses it.
-    A burst of PR webhook events (opened + synchronize + ...) plus the periodic
-    poll can launch several concurrent runs of one job. For the auditor that
-    means two runs each list the same PR as pending (neither has marked it yet,
-    since the mark happens mid-review) and both post a review — the duplicate
-    reviews seen on FinView #206. A plain file flock is enough: same-host,
-    same-user processes, auto-released on close or process death (no stale
-    lock). Keyed under the DEFAULT hermes home and acquired BEFORE the per-job
-    profile context, so two concurrent triggers can't both mutate the global
-    HERMES_HOME/os.environ profile state (that mutation is not concurrency-safe;
-    see _job_profile_context). Degrades to a no-op (runs anyway) where POSIX
-    flock is unavailable (Windows/dev) or the lock dir can't be created."""
-    if fcntl is None:
-        yield True
-        return
-    lock_dir = _get_hermes_home() / "cron"
-    try:
-        lock_dir.mkdir(parents=True, exist_ok=True)
-        fh = open(lock_dir / f".job-{job_id}.lock", "w", encoding="utf-8")
-    except OSError:
-        yield True
-        return
-    try:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, BlockingIOError):
-            yield False
-            return
-        try:
-            yield True
-        finally:
-            try:
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
-    finally:
-        fh.close()
+# Per-job run guard + the sequential profile/workdir lane (fork): see
+# cron/fork_ext/run_guard.py and cron/fork_ext/dispatch.py.
+from cron.fork_ext.run_guard import _job_run_lock, guarded_run_job  # noqa: E402,F401
+from cron.fork_ext.dispatch import (  # noqa: E402
+    dispatch_job_async,  # noqa: F401 - re-exported; gateway/platforms/webhook.py calls it here
+    shutdown_sequential_executor as _fork_shutdown_sequential,
+    submit_sequential_jobs as _fork_submit_sequential,
+)
 
 
 # Abandoned-thread counter + stuck-agent stack dump (fork): see
@@ -2799,31 +2763,9 @@ from cron.fork_ext.isolated_checkout import (  # noqa: E402
 )
 
 
-def run_job(
-    job: dict, *, defer_agent_teardown: Optional[list] = None
-) -> tuple[bool, str, str, Optional[str]]:
-    """Execute a single cron job, applying any per-job profile override.
-
-    Serialized per job_id: if another run of this same job is already in
-    flight (a concurrent webhook trigger or the periodic tick), this call
-    returns a SILENT success (no output → no delivery, no error alert) instead
-    of launching a second concurrent run that would re-review the same PRs.
-    See _job_run_lock for the full rationale (duplicate auditor reviews).
-
-    The profile context still wraps the whole run (fail-closed via
-    ProfileResolutionError), and ``defer_agent_teardown`` is forwarded through
-    to the impl so upstream's delivery-ordering fix (#58720) still works.
-    """
-    job_id = job["id"]
-    with _job_run_lock(job_id) as acquired:
-        if not acquired:
-            logger.info(
-                "Job '%s': another run already in progress — skipping this "
-                "trigger (silent, the in-flight run handles it)", job_id,
-            )
-            return True, "", "", None
-        with _job_profile_context(job_id, job.get("profile")):
-            return _run_job_impl(job, defer_agent_teardown=defer_agent_teardown)
+def run_job(job: dict, **kwargs) -> tuple[bool, str, str, Optional[str]]:
+    """Upstream's ``_run_job_impl(job, **kwargs)`` under the fork's per-job lock and profile: see cron/fork_ext/run_guard.py."""
+    return guarded_run_job(job, _run_job_impl, **kwargs)
 
 
 def _guard_job_credential_exfil(job: dict) -> None:
@@ -4144,72 +4086,6 @@ def _notify_provider_jobs_changed() -> None:
         logger.debug("on_jobs_changed notify failed: %s", e)
 
 
-def dispatch_job_async(job: dict) -> dict:
-    """Enqueue a job on the SAME pools ``tick`` uses, fire-and-forget, and
-    return immediately without running it inline.
-
-    Why this exists: a job with a profile (or workdir) mutates process-global
-    state inside ``run_job`` — most importantly the profile's
-    ``GITHUB_TOKEN``/``GH_TOKEN`` in ``os.environ``. ``tick`` keeps those jobs
-    on the single-thread SEQUENTIAL pool so only one runs at a time. But the
-    webhook direct-trigger used to run ``run_one_job`` INLINE (in the gateway
-    event loop), concurrently with a tick-dispatched profile job — the two then
-    raced on ``os.environ`` and one profile's identity leaked into the other's
-    ``gh``/``git`` subprocess. That is how biglobster content PRs got authored
-    as ``hermes-auditor`` (so the auditor skipped its own PR): a content job's
-    ``gh pr create`` inherited the auditor's leaked token while the auditor ran
-    from a PR webhook. Routing webhook runs through the same sequential pool
-    serializes them with tick's profile jobs, so no two identities mutate the
-    env at once — and it also stops the multi-minute run from blocking the
-    event loop.
-
-    Honors the same in-flight dedup guard as tick (``_running_job_ids``): a job
-    already running (from a tick or a prior trigger) is not re-dispatched.
-    Fire-and-forget — the caller does not wait for the run. Returns
-    ``{"queued": bool, "reason": str | None}``.
-    """
-    job_id = job.get("id")
-    if not job_id:
-        return {"queued": False, "reason": "job has no id"}
-    if _interpreter_shutting_down():
-        return {"queued": False, "reason": "interpreter shutting down"}
-
-    # Same partition rule as tick: profile/workdir jobs are env-mutating and
-    # MUST run on the single-thread sequential pool; everything else is
-    # parallel-safe.
-    is_sequential = bool(
-        (job.get("workdir") or "").strip() or (job.get("profile") or "").strip()
-    )
-    pool = (
-        _get_sequential_pool()
-        if is_sequential
-        else _get_parallel_pool(_parallel_pool_max_workers)
-    )
-
-    with _running_lock:
-        if job_id in _running_job_ids:
-            return {"queued": False, "reason": "already running"}
-        _running_job_ids.add(job_id)
-
-    ctx = contextvars.copy_context()
-
-    def _run_and_release(j=job, c=ctx):
-        try:
-            return c.run(run_one_job, j)
-        finally:
-            with _running_lock:
-                _running_job_ids.discard(j["id"])
-
-    try:
-        pool.submit(_run_and_release)
-        return {"queued": True, "reason": None}
-    except Exception as submit_err:
-        with _running_lock:
-            _running_job_ids.discard(job_id)
-        logger.error("dispatch_job_async: job '%s' not dispatched: %s", job_id, submit_err)
-        return {"queued": False, "reason": f"dispatch failed: {submit_err}"}
-
-
 def tick(
     verbose: bool = True,
     adapters=None,
@@ -4307,25 +4183,7 @@ def tick(
             body."""
             return run_one_job(job, adapters=adapters, loop=loop, verbose=verbose)
 
-        # Partition due jobs: those with a per-job workdir and/or profile mutate
-        # process-global runtime state inside run_job. Workdir jobs temporarily
-        # set os.environ["TERMINAL_CWD"]; profile jobs use a context-local
-        # Hermes home override, scheduler _hermes_home hook, and temporary
-        # profile .env load into os.environ with snapshot/restore. They queue on
-        # the single-thread sequential pool to run one at a time so they can't
-        # corrupt each other. That alone only keeps sequential jobs from
-        # overlapping EACH OTHER; run_job's _terminal_cwd_lock is what
-        # additionally stops a concurrently firing workdir-less parallel-pool
-        # job from observing the override. Jobs with neither field stay
-        # parallel-safe.
-        sequential_jobs = [
-            j for j in due_jobs
-            if (j.get("workdir") or "").strip() or (j.get("profile") or "").strip()
-        ]
-        parallel_jobs = [
-            j for j in due_jobs
-            if not ((j.get("workdir") or "").strip() or (j.get("profile") or "").strip())
-        ]
+        parallel_jobs = due_jobs
 
         _results: list = []
         _all_futures: list = []
@@ -4403,21 +4261,8 @@ def tick(
                 )
                 return None
 
-        # Sequential pass for env-mutating (workdir) jobs.
-        # Queued to a persistent single-thread pool so they run one at a time
-        # WITHOUT blocking the ticker thread — a long workdir job no
-        # longer starves the rest of the schedule (same fix as the parallel
-        # pass, just serialized).  The in-flight guard prevents a still-running
-        # job from being re-queued on the next tick.
-        if sequential_jobs:
-            seq_pool = _get_sequential_pool()
-            for job in sequential_jobs:
-                fut = _submit_with_guard(job, seq_pool)
-                if fut is None:
-                    continue
-                _all_futures.append(fut)
-                if not sync:
-                    _results.append(True)  # optimistically counted
+        # Fork: profile/workdir jobs run one at a time on the fork's own lane (cron/fork_ext/dispatch.py).
+        parallel_jobs = _fork_submit_sequential(parallel_jobs, _submit_with_guard, _all_futures, _results, sync)
 
         # Parallel pass — persistent pool, non-blocking dispatch.
         # Jobs that are already running (from a previous tick) are skipped.

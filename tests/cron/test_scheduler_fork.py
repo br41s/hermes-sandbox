@@ -344,10 +344,34 @@ class TestJobRunLock:
         assert (ok, resp) == (True, "resp")
 
 
+    def test_run_job_forwards_every_keyword_to_impl(self, tmp_path, monkeypatch):
+        """The wrapper must not name upstream's keywords: from v2026.8.31
+        run_one_job also passes extra_prompt / execution_id / cancel_event,
+        and a wrapper that rejected them would fail every cron run."""
+        import cron.scheduler as sched
+
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+        seen = {}
+        monkeypatch.setattr(
+            sched, "_run_job_impl",
+            lambda job, **kw: (seen.update(kw), (True, "out", "resp", None))[1],
+        )
+        holder: list = []
+        sched.run_job(
+            {"id": "kwjob"}, defer_agent_teardown=holder,
+            extra_prompt="x", execution_id="e1", cancel_event=None,
+        )
+        assert seen == {
+            "defer_agent_teardown": holder, "extra_prompt": "x",
+            "execution_id": "e1", "cancel_event": None,
+        }
+
+
 class TestDispatchJobAsync:
-    """Webhook-triggered jobs must enqueue on the scheduler's own pools (so
+    """Webhook-triggered jobs must enqueue on the scheduler's own lanes (so
     profile jobs serialize with tick and can't leak os.environ identity across
-    concurrent runs), not run inline."""
+    concurrent runs), not run inline. The sequential lane is the fork's own
+    executor in cron/fork_ext/dispatch.py."""
 
     class _InlinePool:
         def submit(self, fn):
@@ -359,10 +383,11 @@ class TestDispatchJobAsync:
 
     def test_profile_job_queues_on_sequential_pool(self, monkeypatch):
         import cron.scheduler as sched
+        from cron.fork_ext import dispatch as fork_dispatch
 
         calls = {"run": 0, "seq": 0, "par": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
-        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j1")
 
@@ -387,10 +412,11 @@ class TestDispatchJobAsync:
 
     def test_workdirless_job_uses_parallel_pool(self, monkeypatch):
         import cron.scheduler as sched
+        from cron.fork_ext import dispatch as fork_dispatch
 
         calls = {"seq": 0, "par": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: None)
-        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j3")
 
