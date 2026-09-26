@@ -229,6 +229,7 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
             f"profile {raw_profile!r} could not be resolved: {exc}"
         ) from exc
 
+    from hermes_cli.fork_ext.profile_env import profile_run
     from agent.secret_scope import (
         build_profile_secret_scope,
         reset_secret_scope,
@@ -261,7 +262,8 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
             normalized_profile,
             profile_home,
         )
-        yield normalized_profile
+        with profile_run():
+            yield normalized_profile
     finally:
         if scope_token is not None:
             reset_secret_scope(scope_token)

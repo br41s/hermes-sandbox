@@ -131,7 +131,7 @@ def test_children_of_a_profile_run_inherit_its_keys_through_the_usual_filter(ren
 def test_fal_submits_with_the_profiles_own_key(rental_profile, monkeypatch):
     from hermes_cli.fork_ext import profile_env
 
-    monkeypatch.setattr(profile_env, "_fal_clients", {})
+    monkeypatch.setattr(profile_env, "_fal_clients", profile_env.OrderedDict())
 
     class FakeSyncClient:
         def __init__(self, key):
@@ -150,3 +150,48 @@ def test_fal_submits_with_the_profiles_own_key(rental_profile, monkeypatch):
     # The process's own key: the module client already reads it.
     monkeypatch.setenv("FAL_KEY", "fal-process-key")
     assert profile_env.fal_client_for_current_key(FakeFal) is FakeFal
+
+
+def test_a_home_override_outside_a_cron_profile_run_adds_nothing_to_children(rental_profile):
+    """The dashboard, kanban, memory OAuth and gateway paths set home
+    overrides (and may bind a scope) too; only _job_profile_context's run
+    may overlay a profile's keys onto a child."""
+    from agent.secret_scope import (
+        build_profile_secret_scope,
+        reset_secret_scope,
+        set_secret_scope,
+    )
+    from hermes_cli.fork_ext.profile_env import child_env_overlay
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    _root, profile_home = rental_profile
+    home_token = set_hermes_home_override(profile_home)
+    scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
+    try:
+        assert child_env_overlay() == {}
+    finally:
+        reset_secret_scope(scope_token)
+        reset_hermes_home_override(home_token)
+
+
+def test_keyed_fal_clients_are_bounded_and_not_keyed_by_the_raw_key(monkeypatch):
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+    from hermes_cli.fork_ext import profile_env
+
+    monkeypatch.setattr(profile_env, "_fal_clients", profile_env.OrderedDict())
+    monkeypatch.delenv("FAL_KEY", raising=False)
+
+    class FakeFal:
+        class SyncClient:
+            def __init__(self, key):
+                self.key = key
+
+    for i in range(profile_env._FAL_CLIENTS_MAX + 3):
+        token = set_secret_scope({"FAL_KEY": f"fal-key-{i}"})
+        try:
+            assert profile_env.fal_client_for_current_key(FakeFal).key == f"fal-key-{i}"
+        finally:
+            reset_secret_scope(token)
+
+    assert len(profile_env._fal_clients) == profile_env._FAL_CLIENTS_MAX
+    assert not any(k.startswith("fal-key-") for k in profile_env._fal_clients)
