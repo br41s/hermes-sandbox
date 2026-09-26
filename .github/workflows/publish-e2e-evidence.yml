@@ -20,7 +20,8 @@ concurrency:
 jobs:
   publish:
     name: Publish inline E2E evidence
-    if: github.event.workflow_run.event == 'pull_request'
+    # fork: needs GH_IMAGE_SESSION_TOKEN and upstream's e2e artifacts, neither of which exists here.
+    if: github.repository == 'NousResearch/hermes-agent' && github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: gh-image
