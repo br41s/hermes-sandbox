@@ -141,7 +141,7 @@ class TestDDGSProviderSearch:
         monkeypatch.delitem(sys.modules, "ddgs", raising=False)
         monkeypatch.delitem(sys.modules, "plugins.web.ddgs.provider", raising=False)
         # search() now tries a lazy-install first (see
-        # test_search_attempts_lazy_install_before_importing below) — block
+        # test_search_attempts_lazy_install_before_importing in the _fork file) — block
         # it here too, or this test would attempt a real `pip install ddgs`
         # against the network.
         monkeypatch.setattr(
@@ -162,34 +162,6 @@ class TestDDGSProviderSearch:
         result = DDGSWebSearchProvider().search("q", limit=5)
         assert result["success"] is False
         assert "ddgs" in result["error"].lower()
-
-    def test_search_attempts_lazy_install_before_importing(self, monkeypatch):
-        """search() must call tools.lazy_deps.ensure("search.ddgs") so an
-        explicit `web.search_backend: ddgs` config (e.g. a freshly
-        provisioned rented tenant, before the package has ever been used
-        on this host) can actually install itself, instead of permanently
-        failing with "ddgs package is not installed" (#174) — the other
-        web search backends (exa, firecrawl, parallel) already do this at
-        their own SDK-import chokepoint; ddgs never did.
-        """
-        monkeypatch.delitem(sys.modules, "ddgs", raising=False)
-        monkeypatch.delitem(sys.modules, "plugins.web.ddgs.provider", raising=False)
-        _install_fake_ddgs(monkeypatch, text_results=[
-            {"title": "T", "href": "https://e.example", "body": "B"},
-        ])
-        # _install_fake_ddgs already stubs tools.lazy_deps.ensure to a no-op —
-        # override it here with a spy so this test can assert the call shape.
-        calls = []
-        monkeypatch.setattr(
-            "tools.lazy_deps.ensure",
-            lambda feature, **kw: calls.append((feature, kw)),
-        )
-        from plugins.web.ddgs.provider import DDGSWebSearchProvider
-
-        result = DDGSWebSearchProvider().search("q", limit=5)
-
-        assert result["success"] is True
-        assert calls == [("search.ddgs", {"prompt": False})]
 
     def test_runtime_error_returns_failure(self, monkeypatch):
         _install_fake_ddgs(monkeypatch, text_raises=RuntimeError("rate limited 202"))

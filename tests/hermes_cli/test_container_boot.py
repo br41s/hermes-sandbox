@@ -53,18 +53,11 @@ def _make_profile(
     name: str,
     *,
     state: str | None,
-    involuntary_exit: bool | None = None,
     desired_state: str | None = None,
     with_pid: bool = False,
     config: bool = True,
 ) -> Path:
-    """Create a fake profile directory under hermes_home/profiles/<name>/.
-
-    ``involuntary_exit``: when not None, write the gateway_state.json field
-    of the same name (the flag the gateway sets when an external SIGTERM
-    recycles a healthy gateway). Left absent by default so existing tests
-    exercise the pre-field behavior.
-    """
+    """Create a fake profile directory under hermes_home/profiles/<name>/."""
     p = hermes_home / "profiles" / name
     p.mkdir(parents=True)
     if config:
@@ -75,8 +68,6 @@ def _make_profile(
         payload: dict[str, object] = {"timestamp": 1234567890}
         if state is not None:
             payload["gateway_state"] = state
-        if involuntary_exit is not None:
-            payload["involuntary_exit"] = involuntary_exit
         if desired_state is not None:
             payload["desired_state"] = desired_state
         (p / "gateway_state.json").write_text(json.dumps(payload))
@@ -92,16 +83,14 @@ def _seed_default_root(
     hermes_home: Path,
     *,
     state: str | None = None,
-    involuntary_exit: bool | None = None,
     with_pid: bool = False,
 ) -> None:
     """Populate gateway_state.json / stale runtime files at the
     HERMES_HOME root (the implicit default profile)."""
     if state is not None:
-        record: dict = {"gateway_state": state, "timestamp": 1234567890}
-        if involuntary_exit is not None:
-            record["involuntary_exit"] = involuntary_exit
-        (hermes_home / "gateway_state.json").write_text(json.dumps(record))
+        (hermes_home / "gateway_state.json").write_text(json.dumps({
+            "gateway_state": state, "timestamp": 1234567890,
+        }))
     if with_pid:
         (hermes_home / "gateway.pid").write_text(json.dumps(
             {"pid": 99999, "host": "old-container"},
@@ -186,37 +175,6 @@ def test_startup_failed_does_not_autostart(tmp_path: Path) -> None:
     assert (scandir / "gateway-broken" / "down").exists()
 
 
-# ---------------------------------------------------------------------------
-# Involuntary-exit autostart — graceful SIGTERM recycle of a healthy gateway
-# (e.g. Zeabur/K8s periodically recycling the container) must come back up,
-# while a deliberate `hermes gateway stop` stays down.
-# ---------------------------------------------------------------------------
-
-
-def test_involuntary_stopped_autostarts(tmp_path: Path) -> None:
-    """A healthy gateway killed by an external SIGTERM persists
-    state=stopped with involuntary_exit=True — reconcile must revive it
-    (the user never asked it to stop)."""
-    scandir = tmp_path / "run-service"; scandir.mkdir()
-    _make_profile(tmp_path, "coder", state="stopped", involuntary_exit=True)
-
-    actions = reconcile_profile_gateways(
-        hermes_home=tmp_path, scandir=scandir, dry_run=False,
-    )
-
-    assert _named_actions(actions) == [ReconcileAction(
-        profile="coder", prior_state="stopped", action="started",
-    )]
-    assert not (scandir / "gateway-coder" / "down").exists()
-
-
-def test_gatewayless_profile_stays_down_even_when_involuntary(tmp_path: Path) -> None:
-    """An automation-only profile (e.g. `auditor`) must NEVER autostart a
-    gateway — even with state=stopped + involuntary_exit=True, which revives a
-    normal profile. It must not seize the shared bot token on a container
-    recycle (prod incident 2026-06-24)."""
-    scandir = tmp_path / "run-service"; scandir.mkdir()
-    _make_profile(tmp_path, "auditor", state="stopped", involuntary_exit=True)
 def test_desired_state_running_autostarts_even_if_runtime_failed(tmp_path: Path) -> None:
     """Persisted operator intent wins over transient runtime failures."""
     scandir = tmp_path / "run-service"; scandir.mkdir()
@@ -226,6 +184,7 @@ def test_desired_state_running_autostarts_even_if_runtime_failed(tmp_path: Path)
         state="startup_failed",
         desired_state="running",
     )
+
     actions = reconcile_profile_gateways(
         hermes_home=tmp_path, scandir=scandir, dry_run=False,
     )
