@@ -77,13 +77,13 @@ def test_hard_exit_terminates_a_wedged_runner():
 # ---------------------------------------------------------------- the counter
 
 def test_counter_starts_at_zero_and_increments():
-    from cron import scheduler
+    from cron.fork_ext import diagnostics
 
-    before = scheduler.abandoned_agent_threads()
-    scheduler._note_abandoned_agent_thread()
-    assert scheduler.abandoned_agent_threads() == before + 1
-    scheduler._note_abandoned_agent_thread()
-    assert scheduler.abandoned_agent_threads() == before + 2
+    before = diagnostics.abandoned_agent_threads()
+    diagnostics._note_abandoned_agent_thread()
+    assert diagnostics.abandoned_agent_threads() == before + 1
+    diagnostics._note_abandoned_agent_thread()
+    assert diagnostics.abandoned_agent_threads() == before + 2
 
 
 # ------------------------------------------------------------------- the CLI

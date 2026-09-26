@@ -111,7 +111,7 @@ class CronScheduler(ABC):
             return 0
 
         logger = logging.getLogger("cron.scheduler_provider")
-        from cron.jobs import mark_job_interrupted
+        from cron.fork_ext.interrupted import mark_job_interrupted
 
         for row in recovered:
             job_id = row.get("job_id")

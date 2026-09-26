@@ -135,7 +135,7 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
     Also covers runs killed mid-flight by a container restart. Those never
     reach ``mark_job_run``, so the scheduler's restart recovery stamps
     ``last_status='interrupted'`` plus ``last_interrupted_at`` WITHOUT
-    advancing ``last_run_at`` (see ``cron.jobs.mark_job_interrupted``). The
+    advancing ``last_run_at`` (see ``cron.fork_ext.interrupted``). The
     window and dedup key therefore have to read the interruption's own clock —
     keying off ``last_run_at`` would date the incident to the previous
     *successful* run and could age it straight out of the window.

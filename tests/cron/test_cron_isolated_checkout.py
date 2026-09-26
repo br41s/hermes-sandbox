@@ -1,4 +1,4 @@
-"""Tests for per-run isolated checkouts (cron/scheduler.py).
+"""Tests for per-run isolated checkouts (cron/fork_ext/isolated_checkout.py).
 
 Background: cron AGENT jobs used to share one physical git working tree as their
 workdir (e.g. /opt/data/biglobster for the biglobster SEO agent + the content
@@ -66,11 +66,11 @@ def checkout_base(tmp_path, monkeypatch):
 
 class TestIsGitWorktree:
     def test_git_tree_detected(self, source_repo):
-        from cron.scheduler import _is_git_worktree
+        from cron.fork_ext.isolated_checkout import _is_git_worktree
         assert _is_git_worktree(str(source_repo)) is True
 
     def test_plain_dir_not_detected(self, tmp_path):
-        from cron.scheduler import _is_git_worktree
+        from cron.fork_ext.isolated_checkout import _is_git_worktree
         assert _is_git_worktree(str(tmp_path)) is False
 
 
@@ -80,14 +80,14 @@ class TestIsGitWorktree:
 
 class TestProvisionPassthrough:
     def test_kill_switch_returns_original(self, source_repo, checkout_base, monkeypatch):
-        from cron.scheduler import _provision_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout
         monkeypatch.setenv("HERMES_CRON_ISOLATE_WORKDIR", "0")
         eff, cleanup = _provision_isolated_checkout("job1", "biglobster", str(source_repo))
         assert eff == str(source_repo)
         assert cleanup is None
 
     def test_non_git_workdir_returns_original(self, tmp_path, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout
         plain = tmp_path / "plain"
         plain.mkdir()
         eff, cleanup = _provision_isolated_checkout("job1", "x", str(plain))
@@ -95,7 +95,7 @@ class TestProvisionPassthrough:
         assert cleanup is None
 
     def test_empty_workdir_returns_original(self, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("job1", "x", "")
         assert eff == ""
         assert cleanup is None
@@ -107,7 +107,7 @@ class TestProvisionPassthrough:
 
 class TestProvisionClone:
     def test_creates_separate_clone(self, source_repo, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("jobA", "biglobster", str(source_repo))
         try:
             assert cleanup == eff
@@ -123,7 +123,7 @@ class TestProvisionClone:
             _cleanup_isolated_checkout(cleanup)
 
     def test_origin_points_at_source_remote(self, source_repo, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("jobA", "bl", str(source_repo))
         try:
             url = subprocess.run(
@@ -137,7 +137,7 @@ class TestProvisionClone:
     def test_tokenized_source_origin_stripped_in_clone(self, source_repo, checkout_base):
         """A PAT baked into the source tree's origin URL must NOT land in the
         ephemeral clone's .git/config — the leak this migration closes."""
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
 
         _git(
             ["remote", "set-url", "origin",
@@ -156,7 +156,7 @@ class TestProvisionClone:
             _cleanup_isolated_checkout(cleanup)
 
     def test_commit_identity_copied(self, source_repo, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("jobA", "bl", str(source_repo))
         try:
             email = subprocess.run(
@@ -170,7 +170,7 @@ class TestProvisionClone:
     def test_isolated_from_dirty_source_tree(self, source_repo, checkout_base):
         """The incident: a dirty tracked edit in the shared tree must NOT leak
         into the clone, and reverting in the clone must NOT touch the source."""
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
 
         # Agent A leaves uncommitted work in the shared tree.
         dirty = source_repo / "web" / "article.html"
@@ -206,7 +206,7 @@ class TestStripUrlCredentials:
         ("https://user:p%40ss@github.com/o/r.git", "https://github.com/o/r.git"),
     ])
     def test_strip(self, url, expected):
-        from cron.scheduler import _strip_url_credentials
+        from cron.fork_ext.isolated_checkout import _strip_url_credentials
         assert _strip_url_credentials(url) == expected
 
 
@@ -216,19 +216,19 @@ class TestStripUrlCredentials:
 
 class TestCleanup:
     def test_cleanup_removes_ephemeral(self, source_repo, checkout_base):
-        from cron.scheduler import _provision_isolated_checkout, _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("jobA", "bl", str(source_repo))
         assert Path(eff).is_dir()
         _cleanup_isolated_checkout(cleanup)
         assert not Path(eff).exists()
 
     def test_cleanup_none_is_noop(self):
-        from cron.scheduler import _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _cleanup_isolated_checkout
         _cleanup_isolated_checkout(None)  # must not raise
 
     def test_cleanup_refuses_non_ephemeral_path(self, source_repo, checkout_base):
         """Guard: never rmtree a path that isn't one of our ephemeral dirs."""
-        from cron.scheduler import _cleanup_isolated_checkout
+        from cron.fork_ext.isolated_checkout import _cleanup_isolated_checkout
         _cleanup_isolated_checkout(str(source_repo))
         assert source_repo.is_dir()  # still there
 
@@ -237,7 +237,7 @@ class TestSafeDirectory:
     def test_git_helper_disables_dubious_ownership_guard(self):
         """Provisioning must tolerate a source tree owned by another user
         (shared clone is hermes-owned; maintenance may run as root)."""
-        import cron.scheduler as sched
+        import cron.fork_ext.isolated_checkout as sched
 
         captured = {}
 
@@ -266,7 +266,7 @@ class TestCrossDeviceFallback:
         """When the base is on a different filesystem than the source, the
         hardlink clone fails with 'Invalid cross-device link' and we must retry
         with --no-hardlinks instead of aborting the run."""
-        import cron.scheduler as sched
+        import cron.fork_ext.isolated_checkout as sched
 
         calls = []
 
@@ -294,7 +294,7 @@ class TestCrossDeviceFallback:
 
     def test_non_crossdevice_clone_failure_still_fails_closed(self, checkout_base, monkeypatch):
         """A clone failure that ISN'T cross-device must not retry — it fails closed."""
-        import cron.scheduler as sched
+        import cron.fork_ext.isolated_checkout as sched
 
         class R:
             returncode, stdout, stderr = 128, "", "fatal: some other error"
@@ -307,7 +307,7 @@ class TestCrossDeviceFallback:
 
 class TestSweep:
     def test_sweeps_old_keeps_fresh(self, checkout_base):
-        from cron.scheduler import _sweep_stale_checkouts
+        from cron.fork_ext.isolated_checkout import _sweep_stale_checkouts
         old = checkout_base / "cron-checkout-bl-old-123"
         fresh = checkout_base / "cron-checkout-bl-fresh-456"
         unrelated = checkout_base / "something-else"
