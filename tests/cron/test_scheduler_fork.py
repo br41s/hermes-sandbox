@@ -345,9 +345,10 @@ class TestJobRunLock:
 
 
 class TestDispatchJobAsync:
-    """Webhook-triggered jobs must enqueue on the scheduler's own pools (so
+    """Webhook-triggered jobs must enqueue on the scheduler's own lanes (so
     profile jobs serialize with tick and can't leak os.environ identity across
-    concurrent runs), not run inline."""
+    concurrent runs), not run inline. The sequential lane is the fork's own
+    executor in cron/fork_ext/dispatch.py."""
 
     class _InlinePool:
         def submit(self, fn):
@@ -359,10 +360,11 @@ class TestDispatchJobAsync:
 
     def test_profile_job_queues_on_sequential_pool(self, monkeypatch):
         import cron.scheduler as sched
+        from cron.fork_ext import dispatch as fork_dispatch
 
         calls = {"run": 0, "seq": 0, "par": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
-        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j1")
 
@@ -387,10 +389,11 @@ class TestDispatchJobAsync:
 
     def test_workdirless_job_uses_parallel_pool(self, monkeypatch):
         import cron.scheduler as sched
+        from cron.fork_ext import dispatch as fork_dispatch
 
         calls = {"seq": 0, "par": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: None)
-        monkeypatch.setattr(sched, "_get_sequential_pool", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
+        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j3")
 
