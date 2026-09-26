@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 
 from hermes_cli import web_server
 from hermes_cli.dashboard_auth.public_paths import PUBLIC_API_PATHS
+from hermes_cli.fork_ext import web as fork_web
 
 SECRET = "test-delegate-secret"
 
@@ -61,7 +62,7 @@ def test_delegate_path_is_public():
 def test_no_secret_configured_fails_closed(monkeypatch):
     monkeypatch.delenv("HERMES_CALLBACK_SECRET", raising=False)
     scheduled = []
-    monkeypatch.setattr(web_server, "_delegate_background",
+    monkeypatch.setattr(fork_web, "_delegate_background",
                         lambda *a, **kw: scheduled.append(a))
     client, pa, ph = _client()
     try:
@@ -76,7 +77,7 @@ def test_no_secret_configured_fails_closed(monkeypatch):
 def test_missing_header_401(monkeypatch):
     monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
     scheduled = []
-    monkeypatch.setattr(web_server, "_delegate_background",
+    monkeypatch.setattr(fork_web, "_delegate_background",
                         lambda *a, **kw: scheduled.append(a))
     client, pa, ph = _client()
     try:
@@ -91,7 +92,7 @@ def test_missing_header_401(monkeypatch):
 def test_wrong_secret_401(monkeypatch):
     monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
     scheduled = []
-    monkeypatch.setattr(web_server, "_delegate_background",
+    monkeypatch.setattr(fork_web, "_delegate_background",
                         lambda *a, **kw: scheduled.append(a))
     client, pa, ph = _client()
     try:
@@ -114,7 +115,7 @@ def test_valid_secret_accepted(monkeypatch):
     async def _fake_background(*a, **kw):
         scheduled.append(a)
 
-    monkeypatch.setattr(web_server, "_delegate_background", _fake_background)
+    monkeypatch.setattr(fork_web, "_delegate_background", _fake_background)
     client, pa, ph = _client()
     try:
         resp = client.post(
@@ -144,7 +145,7 @@ def test_valid_secret_accepted(monkeypatch):
 def test_unsafe_webhook_url_rejected(monkeypatch, webhook_url):
     monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
     scheduled = []
-    monkeypatch.setattr(web_server, "_delegate_background",
+    monkeypatch.setattr(fork_web, "_delegate_background",
                         lambda *a, **kw: scheduled.append(a))
     client, pa, ph = _client()
     try:

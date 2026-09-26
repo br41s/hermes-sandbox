@@ -4,7 +4,7 @@ Two failures this pins down, both seen in production on 2026-09-14 when the
 sweep pushed four drifted prompts:
 
 1. It wrote ``prompt`` without ``prompt_synced_sha``, so the baseline stayed at
-   whatever the *previous* sync recorded. The next ``cronjob_tools.sync_prompt``
+   whatever the *previous* sync recorded. The next ``cronjob(action="sync_prompt")``
    then read this script's own write as a hand-edit and refused.
 2. It called ``update_job`` directly, bypassing the clobber guard — meaning the
    one tool built for unattended fan-out was the one that would silently destroy

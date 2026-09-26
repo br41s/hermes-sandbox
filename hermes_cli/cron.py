@@ -6,8 +6,6 @@ pause/resume/run/remove, status, and tick.
 """
 
 import json
-import logging
-import os
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -16,6 +14,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from hermes_cli.colors import Colors, color
+from cron.fork_ext import cli as _fork_cli  # fork: `hermes cron` extensions
 
 # Gateway-lifecycle command detection lives in ``cron.lifecycle_guard`` so it
 # can be shared across every job-creation path (CLI + the agent's ``cronjob``
@@ -165,24 +164,10 @@ def cron_list(show_all: bool = False):
         workdir = job.get("workdir")
         if workdir:
             print(f"    Workdir:   {workdir}")
-        profile = job.get("profile")
-        if profile:
-            print(f"    Profile:   {profile}")
 
         # Execution history
         last_status = job.get("last_status")
-        if last_status == "interrupted":
-            # last_run_at still points at the last run that actually COMPLETED,
-            # so don't pair it with this status — print the two clocks apart or
-            # the line reads as "the 09:25 run was interrupted", which is wrong.
-            print(f"    Last run:  {job.get('last_run_at') or 'never'}  (completed)")
-            print(
-                f"    {color('⚠ Interrupted:', Colors.RED)} "
-                f"{job.get('last_interrupted_at', '?')} — killed before it finished; "
-                f"not retried"
-            )
-            print(f"      inspect: hermes cron runs {job.get('id', '?')}")
-        elif last_status:
+        if not _fork_cli.print_list_rows(job) and last_status:  # fork: Profile, interrupted runs
             last_run = job.get("last_run_at", "?")
             if last_status == "ok":
                 status_display = color("ok", Colors.GREEN)
@@ -350,8 +335,8 @@ def cron_create(args):
         skills=_normalize_skills(getattr(args, "skill", None), getattr(args, "skills", None)),
         script=getattr(args, "script", None),
         workdir=getattr(args, "workdir", None),
-        profile=getattr(args, "profile", None),
         no_agent=getattr(args, "no_agent", False) or None,
+        **_fork_cli.job_api_kwargs(args),
     )
     if not result.get("success"):
         print(color(f"Failed to create job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -368,8 +353,7 @@ def cron_create(args):
         print("  Mode: no-agent (script stdout delivered directly)")
     if job_data.get("workdir"):
         print(f"  Workdir: {job_data['workdir']}")
-    if job_data.get("profile"):
-        print(f"  Profile: {job_data['profile']}")
+    _fork_cli.print_job_details(job_data)
     print(f"  Next run: {result['next_run_at']}")
     _warn_if_gateway_not_running()
     return 0
@@ -416,10 +400,8 @@ def cron_edit(args):
         skills=final_skills,
         script=getattr(args, "script", None),
         workdir=getattr(args, "workdir", None),
-        profile=getattr(args, "profile", None),
         no_agent=getattr(args, "no_agent", None),
-        progress_ping=getattr(args, "progress_ping", None),
-        prompt_source=getattr(args, "prompt_source", None),
+        **_fork_cli.job_api_kwargs(args),
     )
     if not result.get("success"):
         print(color(f"Failed to update job: {result.get('error', 'unknown error')}", Colors.RED))
@@ -437,41 +419,16 @@ def cron_edit(args):
         print(f"  Script: {updated['script']}")
     if updated.get("no_agent"):
         print("  Mode: no-agent (script stdout delivered directly)")
-    if updated.get("progress_ping") is False:
-        print("  Kickoff ping: off (silent on start)")
+    _fork_cli.print_kickoff_ping(updated)
     if updated.get("workdir"):
         print(f"  Workdir: {updated['workdir']}")
-    if updated.get("profile"):
-        print(f"  Profile: {updated['profile']}")
-    if updated.get("prompt_source"):
-        print(f"  Prompt source: {updated['prompt_source']}")
-    return 0
-
-
-def cron_sync_prompt(args):
-    result = _cron_api(
-        action="sync_prompt",
-        job_id=args.job_id,
-        prompt_source=getattr(args, "prompt_source", None),
-    )
-    if not result.get("success"):
-        print(color(f"Failed to sync prompt: {result.get('error', 'unknown error')}", Colors.RED))
-        return 1
-    verb = "Synced" if result.get("changed") else "Already up to date"
-    print(color(f"{verb}: {result.get('message', '')}", Colors.GREEN))
+    _fork_cli.print_job_details(updated)
     return 0
 
 
 def _job_action(action: str, job_id: str, success_verb: str) -> int:
     result = _cron_api(action=action, job_id=job_id)
-    if action == "run":
-        # BEFORE any printing. A wedged run can leave stdout as a pipe nobody
-        # reads — an operator's `zeabur service exec` that dropped, a closed
-        # terminal — and once its buffer fills, print() blocks forever. That
-        # stranded the very process this exit exists to reap: observed
-        # 2026-09-22, main thread parked in process_bootstrap.write() at the
-        # "Triggered job:" line while the run had already been recorded failed.
-        _exit_hard_if_threads_abandoned(0)
+    _fork_cli.reap_if_wedged(action)  # fork: before any print; a blocked stdout would strand it
     if not result.get("success"):
         print(color(f"Failed to {action} job: {result.get('error', 'unknown error')}", Colors.RED))
         return 1
@@ -491,62 +448,11 @@ def _job_action(action: str, job_id: str, success_verb: str) -> int:
     return 0
 
 
-def _exit_hard_if_threads_abandoned(rc: int) -> int:
-    """Terminate instead of hanging when a wedged agent thread was abandoned.
-
-    ``hermes cron run`` executes the agent IN THIS PROCESS (``_cron_api`` ->
-    ``cronjob_tool``), so an inactivity timeout leaves a live thread here that
-    nothing can stop. ``concurrent.futures`` then joins it at interpreter exit,
-    so returning normally hangs forever: the run is reported, the failure is
-    delivered, and the process still sits there holding ~280 MB.
-
-    That is how four orphans accumulated on 2026-09-22 — the oldest 1h32m,
-    on a container down to 213 MB free. They had to be killed by hand.
-
-    The work is finished by the time this runs: the run record is written and
-    the failure delivered. Only the wedged thread remains, and it will never
-    make progress, so exiting is strictly better than waiting for it.
-
-    ``os._exit`` skips atexit deliberately — the atexit hook is the thing that
-    hangs. Buffers are flushed first, by hand, since nothing else will.
-    """
-    try:
-        from cron.scheduler import abandoned_agent_threads
-
-        stuck = abandoned_agent_threads()
-    except Exception:
-        return rc
-    if not stuck:
-        return rc
-
-    # Same hazard as the caller's prints: if stdout is a pipe with no reader
-    # this message would hang and defeat the whole point. Non-blocking means a
-    # partial or dropped line, which is the right trade when the alternative is
-    # a process that never exits.
-    try:
-        os.set_blocking(sys.stdout.fileno(), False)
-        os.set_blocking(sys.stderr.fileno(), False)
-    except Exception:
-        pass
-    try:
-        print(color(
-            f"  {stuck} agent thread(s) wedged and cannot be stopped — exiting "
-            f"so this process does not linger holding memory.", Colors.YELLOW,
-        ))
-    except Exception:
-        pass
-    try:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        logging.shutdown()
-    except Exception:
-        pass
-    os._exit(rc)
-
-
 def cron_command(args):
     """Handle cron subcommands."""
     subcmd = getattr(args, 'cron_command', None)
+    if subcmd in _fork_cli.SUBCOMMANDS:  # fork: sync-prompt; run that reaps wedged threads
+        return _fork_cli.SUBCOMMANDS[subcmd](args)
 
     if subcmd is None or subcmd == "list":
         show_all = getattr(args, 'all', False)
@@ -571,9 +477,6 @@ def cron_command(args):
     if subcmd == "edit":
         return cron_edit(args)
 
-    if subcmd in {"sync-prompt", "sync_prompt"}:
-        return cron_sync_prompt(args)
-
     if subcmd == "pause":
         return _job_action("pause", args.job_id, "Paused")
 
@@ -581,9 +484,7 @@ def cron_command(args):
         return _job_action("resume", args.job_id, "Resumed")
 
     if subcmd == "run":
-        return _exit_hard_if_threads_abandoned(
-            _job_action("run", args.job_id, "Triggered")
-        )
+        return _job_action("run", args.job_id, "Triggered")
 
     if subcmd in {"remove", "rm", "delete"}:
         return _job_action("remove", args.job_id, "Removed")

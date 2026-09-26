@@ -64,7 +64,7 @@ def test_shutdown_does_not_stop_a_running_agent_thread():
     assert rc is None, (
         "the process exited on its own, so ThreadPoolExecutor no longer blocks "
         "interpreter shutdown on a running worker. Re-check whether the hard "
-        "exit in hermes_cli/cron.py is still needed."
+        "exit in cron/fork_ext/cli.py is still needed."
     )
 
 
@@ -91,16 +91,16 @@ def test_counter_starts_at_zero_and_increments():
 def test_cli_returns_normally_when_nothing_was_abandoned(monkeypatch):
     """The overwhelmingly common path must not hard-exit."""
     from cron import scheduler
-    from hermes_cli import cron as cli
+    from cron.fork_ext import cli
 
     monkeypatch.setattr(scheduler, "abandoned_agent_threads", lambda: 0)
-    assert cli._exit_hard_if_threads_abandoned(0) == 0
-    assert cli._exit_hard_if_threads_abandoned(3) == 3
+    assert cli.exit_hard_if_threads_abandoned(0) == 0
+    assert cli.exit_hard_if_threads_abandoned(3) == 3
 
 
 def test_cli_hard_exits_when_a_thread_was_abandoned(monkeypatch):
     from cron import scheduler
-    from hermes_cli import cron as cli
+    from cron.fork_ext import cli
 
     monkeypatch.setattr(scheduler, "abandoned_agent_threads", lambda: 2)
 
@@ -112,13 +112,13 @@ def test_cli_hard_exits_when_a_thread_was_abandoned(monkeypatch):
 
     monkeypatch.setattr(cli.os, "_exit", fake_exit)
     with pytest.raises(SystemExit):
-        cli._exit_hard_if_threads_abandoned(0)
+        cli.exit_hard_if_threads_abandoned(0)
     assert called["code"] == 0, "the caller's exit code must be preserved"
 
 
 def test_cli_survives_a_broken_scheduler_import(monkeypatch):
     """A diagnostic helper must never turn into the reason a run fails."""
-    from hermes_cli import cron as cli
+    from cron.fork_ext import cli
 
     import builtins
 
@@ -130,7 +130,7 @@ def test_cli_survives_a_broken_scheduler_import(monkeypatch):
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr(builtins, "__import__", boom)
-    assert cli._exit_hard_if_threads_abandoned(7) == 7
+    assert cli.exit_hard_if_threads_abandoned(7) == 7
 
 
 # ------------------------------------ the reap must beat a blocked stdout ---
@@ -162,10 +162,10 @@ def test_exit_happens_even_when_stdout_is_a_full_unread_pipe(tmp_path):
         "except BlockingIOError:\n"
         "    pass\n"
         "os.set_blocking(1, True)\n"
-        "from hermes_cli import cron as cli\n"
+        "from cron.fork_ext import cli\n"
         "import cron.scheduler as sched\n"
         "sched._note_abandoned_agent_thread()\n"
-        "cli._exit_hard_if_threads_abandoned(0)\n"
+        "cli.exit_hard_if_threads_abandoned(0)\n"
         "os._exit(99)\n",  # only reached if the helper failed to exit
         encoding="utf-8",
     )
