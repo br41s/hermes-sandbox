@@ -5,7 +5,6 @@ Expose a single compressed action-oriented tool to avoid schema/context bloat.
 Compatibility wrappers remain for direct Python callers and legacy tests.
 """
 
-import hashlib
 import json
 import logging
 import re
@@ -923,101 +922,9 @@ def cronjob(
                 result["execution_error"] = exec_result["error"]
             return json.dumps({"success": True, "job": result}, indent=2)
 
-        if normalized == "sync_prompt":
-            # Pushes the repo .prompt file's current content into the job's
-            # live `prompt` field. prompt_source only records a path for
-            # incidents.sweep's drift *detector* (see prompt_drift_incidents) —
-            # it never copies content on its own, so a repo-side prompt fix
-            # silently never reaches the running job until someone manually
-            # re-types it via `update(prompt=...)`. This action closes that
-            # loop with one call instead of a copy-paste round trip.
-            source = prompt_source if prompt_source is not None else job.get("prompt_source")
-            if not source:
-                return tool_error(
-                    "Job has no prompt_source and none was provided. Set one with "
-                    "cronjob(action='update', prompt_source='<repo/path.prompt>') or "
-                    "pass prompt_source directly to this call.",
-                    success=False,
-                )
-            repo_root = Path(__file__).resolve().parent.parent
-            file_path = repo_root / source
-            try:
-                file_text = file_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                return tool_error(f"Could not read prompt_source '{source}': {exc}", success=False)
-            scan_error = _scan_cron_prompt(file_text)
-            if scan_error:
-                return tool_error(scan_error, success=False)
-            live_text = job.get("prompt") or ""
-            if file_text.strip() == live_text.strip():
-                return json.dumps(
-                    {
-                        "success": True,
-                        "changed": False,
-                        "message": f"Job '{job['name']}' prompt already matches {source} — nothing to sync.",
-                        "job": _format_job(job),
-                    },
-                    indent=2,
-                )
-
-            # Clobber guard. This action only ever pushes repo -> live, so a fix
-            # applied ONLY to the live job (the emergency path: a job is failing
-            # in production and someone edits its prompt in place) is silently
-            # destroyed by the next sync. That is not hypothetical for this repo
-            # — the Gap Hunter's output-limit fix reached the live job days
-            # before it reached the .prompt file.
-            #
-            # `prompt_synced_sha` records what this action last wrote. If the
-            # live prompt no longer hashes to it, someone changed the live side
-            # since, and their edit is what a sync would overwrite. Refuse and
-            # make them look, rather than deciding for them which side wins.
-            #
-            # First sync of a job has no baseline and cannot be judged, so it
-            # proceeds and records one — but says so, because that is exactly
-            # the case an automated caller must not run unattended.
-            live_sha = hashlib.sha256(live_text.strip().encode()).hexdigest()
-            baseline = job.get("prompt_synced_sha")
-            if baseline and live_sha != baseline and not force:
-                return tool_error(
-                    f"Refusing to sync '{job['name']}': the live prompt has been "
-                    f"edited since the last sync, so this would overwrite that "
-                    f"edit with {source}.\n"
-                    f"  live sha256:     {live_sha[:12]}\n"
-                    f"  last synced sha: {baseline[:12]}\n"
-                    "Diff the two before deciding. If the live edit is the fix, "
-                    "port it INTO the repo file and sync that. If the repo is "
-                    "genuinely newer, re-run with force=True.",
-                    success=False,
-                )
-
-            updates: Dict[str, Any] = {
-                "prompt": file_text,
-                "prompt_synced_sha": hashlib.sha256(file_text.strip().encode()).hexdigest(),
-            }
-            if job.get("prompt_source") != source:
-                updates["prompt_source"] = source
-            updated = update_job(job_id, updates)
-            result = {
-                "success": True,
-                "changed": True,
-                "message": f"Job '{job['name']}' prompt synced from {source} ({len(file_text)} chars).",
-                "job": _format_job(updated),
-            }
-            if not baseline:
-                result["warning"] = (
-                    "No previous sync was recorded for this job, so a live-only "
-                    "edit could not have been detected — this sync was not "
-                    "verified against a baseline. A baseline is recorded now; "
-                    "future syncs are guarded. Automated callers should treat a "
-                    "missing baseline as needing human review."
-                )
-            elif force and live_sha != baseline:
-                result["warning"] = (
-                    f"force=True overrode the clobber guard: the live prompt "
-                    f"({live_sha[:12]}) had been edited since the last sync "
-                    f"({baseline[:12]}) and that edit is now gone."
-                )
-            return json.dumps(result, indent=2)
+        if normalized == "sync_prompt":  # fork: body in cron/fork_ext/prompt_sync.py
+            from cron.fork_ext.prompt_sync import sync_prompt
+            return sync_prompt(job, prompt_source, force)
 
         if normalized == "update":
             updates: Dict[str, Any] = {}
