@@ -19,7 +19,11 @@ still mutates the env, so the fork owns its own single-thread lane in
 **Whoever merges upstream: this file must pass against the merged
 ``cron/scheduler.py`` before the merge is committed.** If that one line is lost
 in conflict resolution, every profile job silently goes parallel, and these
-tests are what notice.
+tests are what notice. Dry-run 2026-09-26 against v2026.8.31 merged into this
+branch: the tick re-anchor was that one line, the file passed 20/20, and it
+failed (3 tests) with the line removed. Also re-anchor, outside tick: the
+``_fork_shutdown_sequential()`` line in ``_shutdown_parallel_pool`` and the
+``def run_job(`` -> ``def _run_job_impl(`` rename of upstream's body.
 
 Method: the real ``tick`` / ``dispatch_job_async`` → ``run_one_job`` path, with
 only ``run_job`` (and the store/delivery side effects) replaced. The fake
@@ -148,21 +152,36 @@ def lane(monkeypatch):
     monkeypatch.delenv("HERMES_CRON_MAX_PARALLEL", raising=False)
 
     due: list = []
-    monkeypatch.setattr(sched, "get_due_jobs", lambda: list(due))
-    monkeypatch.setattr(sched, "advance_next_run", lambda *_a, **_kw: None)
-    monkeypatch.setattr(sched, "save_job_output", lambda *_a, **_kw: None)
-    monkeypatch.setattr(sched, "mark_job_run", lambda *_a, **_kw: None)
-    monkeypatch.setattr(sched, "_deliver_result", lambda *_a, **_kw: None)
-    monkeypatch.setattr(sched, "_send_kickoff_ping", lambda *_a, **_kw: None)
-    monkeypatch.setattr(sched, "claim_dispatch", lambda *_a, **_kw: True)
-    # v2026.8.31+: tick's _process_job re-claims each job against the store
-    # right before running it; these jobs only exist in ``due``.
-    if hasattr(sched, "claim_job_for_fire"):
-        def _claim(job_id, return_job=False, **_kw):
-            job = next((j for j in due if j["id"] == job_id), None)
-            return dict(job) if (return_job and job is not None) else job is not None
 
-        monkeypatch.setattr(sched, "claim_job_for_fire", _claim)
+    def _stub(name, value):
+        # raising=False: this gate must run against the MERGED scheduler, and
+        # upstream renames these (advance_next_run -> advance_next_runs at
+        # v2026.8.31). Stubbing a name the module no longer has is harmless.
+        monkeypatch.setattr(sched, name, value, raising=False)
+
+    store: dict = {}  # every job ever served as due, as the real store would hold it
+
+    def _get_due_jobs():
+        store.update((j["id"], j) for j in due)
+        return list(due)
+
+    _stub("get_due_jobs", _get_due_jobs)
+    _stub("advance_next_run", lambda *_a, **_kw: None)
+    _stub("advance_next_runs", lambda *_a, **_kw: None)
+    _stub("save_job_output", lambda *_a, **_kw: None)
+    _stub("mark_job_run", lambda *_a, **_kw: None)
+    _stub("_deliver_result", lambda *_a, **_kw: None)
+    _stub("_send_kickoff_ping", lambda *_a, **_kw: None)
+    _stub("claim_dispatch", lambda *_a, **_kw: True)
+
+    # v2026.8.31+: tick's _process_job re-claims each job against the store
+    # when the lane actually starts it — possibly after a later tick has
+    # replaced ``due`` — so the claim reads ``store``, not ``due``.
+    def _claim(job_id, return_job=False, **_kw):
+        job = store.get(job_id)
+        return dict(job) if (return_job and job is not None) else job is not None
+
+    _stub("claim_job_for_fire", _claim)
 
     def _upstream_pool_is_not_the_lane(*_a, **_kw):
         raise AssertionError(
