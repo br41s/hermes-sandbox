@@ -458,4 +458,8 @@ constraint-dependencies = [
   # not an extra) as well as typer/modal/ddgs, so the floor is worth holding
   # rather than reasoning about which of four parents might reach it.
   "click>=8.3.3,<9",  # CVE-2026-7246
+  # anyio is the async I/O layer under httpx, starlette, mcp, openai and
+  # anthropic — every outbound HTTP call and every inbound web request runs
+  # through it. 4.14.2 fixes a critical (CVSS 9.3) and a medium (6.8) advisory.
+  "anyio>=4.14.2,<5",  # CVE-2026-63374 (GHSA-82r6-8w77-94w6), GHSA-5p39-cfhj-2xmp
 ]
