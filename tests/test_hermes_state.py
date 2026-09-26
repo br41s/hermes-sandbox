@@ -824,6 +824,10 @@ class TestFTS5Search:
         traced_connections = [db._conn]
         if read_conn is not db._conn:
             traced_connections.append(read_conn)
+            # fork: search_messages borrows from the read pool; hand the traced
+            # connection back so it is the one reused (with WAL active the pool
+            # otherwise opens a fresh, untraced connection and this reads 0).
+            db._read_pool.put_nowait(read_conn)
         for conn in traced_connections:
             conn.set_trace_callback(statements.append)
 

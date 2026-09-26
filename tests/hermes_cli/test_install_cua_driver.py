@@ -263,6 +263,12 @@ class TestInstallCuaDriverUpgrade:
                  return_value="/usr/local/bin/cua-driver",
              ), \
              patch.object(tools_config, "_clear_stale_cua_install_lock"), \
+             patch.object(tools_config, "_cua_install_lock_held", return_value=False), \
+             patch.object(
+                 # fork: the quiet path HEADs github.com first; unmocked, the
+                 # network guard makes it "unreachable" and the refresh skips.
+                 tools_config, "_cua_release_endpoint_reachable", return_value=True,
+             ), \
              patch.object(
                  tools_config,
                  "_repair_cua_driver_autostart_windows",
