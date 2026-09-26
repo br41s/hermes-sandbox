@@ -253,7 +253,7 @@ class TestJobProfileContextFailsClosed:
     GitHub account instead of its dedicated hermes-auditor bot)."""
 
     def test_valid_profile_yields_normalized_name(self, tmp_path, monkeypatch):
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         profile_dir = tmp_path / "profiles" / "auditor"
         profile_dir.mkdir(parents=True)
@@ -269,13 +269,13 @@ class TestJobProfileContextFailsClosed:
             assert resolved == "auditor"
 
     def test_no_profile_yields_none(self):
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         with _job_profile_context("job-1", None) as resolved:
             assert resolved is None
 
     def test_unresolvable_profile_raises_instead_of_falling_back(self, monkeypatch):
-        from cron.scheduler import _job_profile_context, ProfileResolutionError
+        from cron.fork_ext.profile_scope import _job_profile_context, ProfileResolutionError
 
         def _boom(name):
             raise FileNotFoundError(f"Profile '{name}' does not exist.")
@@ -434,7 +434,7 @@ class TestJobSubprocessIdentityTripwire:
         return root / active
 
     def test_sibling_profile_home_fails_closed(self, tmp_path, monkeypatch):
-        from cron.scheduler import _job_profile_context, ProfileIdentityError
+        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
 
         root = self._profiles(tmp_path, monkeypatch, "finview").parent
         # Exactly the production shape: the previous (auditor) run's HOME
@@ -450,7 +450,7 @@ class TestJobSubprocessIdentityTripwire:
         assert "another profile" in str(exc.value)
 
     def test_own_profile_home_is_accepted(self, tmp_path, monkeypatch):
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         own = self._profiles(tmp_path, monkeypatch, "finview")
         monkeypatch.setattr(
@@ -465,7 +465,7 @@ class TestJobSubprocessIdentityTripwire:
         """The ``auto`` home policy keeps the real OS-user home on non-container
         installs. That is not another profile's identity, so it must not fail —
         demanding a profile home here would break every host deployment."""
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         self._profiles(tmp_path, monkeypatch, "finview")
         real_home = tmp_path / "home" / "brais"
@@ -478,7 +478,7 @@ class TestJobSubprocessIdentityTripwire:
             assert resolved == "finview"
 
     def test_no_subprocess_home_override_is_accepted(self, tmp_path, monkeypatch):
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         self._profiles(tmp_path, monkeypatch, "finview")
         monkeypatch.setattr(
@@ -497,7 +497,7 @@ class TestJobSubprocessIdentityTripwire:
         profiles all have a ``home/``, so this install pins identity per
         profile and a job under ``earthsaver`` would silently run as the owner
         account."""
-        from cron.scheduler import _job_profile_context, ProfileIdentityError
+        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
 
         root = tmp_path / "profiles"
         (root / "earthsaver").mkdir(parents=True)
@@ -521,7 +521,7 @@ class TestJobSubprocessIdentityTripwire:
         policy no profile has a ``home/`` and the real OS-user home is the
         correct answer. Calibrating off the siblings is what allows one check
         to be strict in production and quiet here."""
-        from cron.scheduler import _job_profile_context
+        from cron.fork_ext.profile_scope import _job_profile_context
 
         root = tmp_path / "profiles"
         (root / "finview").mkdir(parents=True)
@@ -545,7 +545,7 @@ class TestJobSubprocessIdentityTripwire:
         import os
 
         from hermes_constants import get_hermes_home_override
-        from cron.scheduler import _job_profile_context, ProfileIdentityError
+        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
 
         root = self._profiles(tmp_path, monkeypatch, "finview").parent
         monkeypatch.setattr(

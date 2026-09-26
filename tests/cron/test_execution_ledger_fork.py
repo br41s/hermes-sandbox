@@ -167,7 +167,9 @@ def test_supersession_compares_instants_not_strings(monkeypatch, tmp_path):
     stored[0]["last_run_at"] = "2026-09-17T12:30:00+00:00"
     jobs.save_jobs(stored)
 
-    assert jobs.mark_job_interrupted(
+    from cron.fork_ext.interrupted import mark_job_interrupted
+
+    assert mark_job_interrupted(
         job["id"],
         reason="killed",
         at="2026-09-17T18:05:00+07:00",
