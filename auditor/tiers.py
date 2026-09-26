@@ -47,6 +47,7 @@ _SYSTEM_DIR_PREFIXES = (
     "tools/",
     "toolsets/",
     "evals/",
+    "fork_evals/",  # the fork's own evals; upstream ships its own evals/ package
     "incidents/",
     "auditor/",
     "agent/",

@@ -4,8 +4,8 @@ Guards against a repeat of the post-migration misroute: scheduled jobs silently
 posting to a frozen 'origin' (old private DM) instead of an explicit forum
 destination. Reuses the real routing auditor over synthetic jobs.
 """
-from evals.checks.cron_routing import audit_cron_routing, audit_summary, routing_hazard
-from evals.run import evaluate, load_case
+from fork_evals.checks.cron_routing import audit_cron_routing, audit_summary, routing_hazard
+from fork_evals.run import evaluate, load_case
 
 FORUM_CHAT = -1004224848555  # supergroup/forum (negative)
 DM_CHAT = 123456789          # private DM (positive)

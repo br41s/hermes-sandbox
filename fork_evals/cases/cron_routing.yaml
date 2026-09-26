@@ -7,7 +7,7 @@ description: >
 
 scenario:
   kind: function_call
-  module: evals.checks.cron_routing
+  module: fork_evals.checks.cron_routing
   function: audit_summary
   args: []   # audit the live cron jobs
 
@@ -25,4 +25,4 @@ assertions:
 source_hints:
   - cron/jobs.py
   - cron/scheduler.py
-  - evals/checks/cron_routing.py
+  - fork_evals/checks/cron_routing.py

@@ -10,7 +10,7 @@ description: >
 
 scenario:
   kind: function_call
-  module: evals.checks.profile_git_auth
+  module: fork_evals.checks.profile_git_auth
   function: audit_summary
   args: []   # audit the live profile homes
 
@@ -26,4 +26,4 @@ assertions:
 source_hints:
   - docker/cont-init.d/03-biglobster-config
   - hermes_constants.py
-  - evals/checks/profile_git_auth.py
+  - fork_evals/checks/profile_git_auth.py

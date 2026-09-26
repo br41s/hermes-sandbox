@@ -7,7 +7,7 @@ description: >
 
 scenario:
   kind: function_call
-  module: evals.checks.dashboard_gate
+  module: fork_evals.checks.dashboard_gate
   function: audit_summary
   args: []   # audit the live PUBLIC_API_PATHS allowlist
 
@@ -25,4 +25,4 @@ assertions:
 source_hints:
   - hermes_cli/dashboard_auth/public_paths.py
   - hermes_cli/dashboard_auth/middleware.py
-  - evals/checks/dashboard_gate.py
+  - fork_evals/checks/dashboard_gate.py

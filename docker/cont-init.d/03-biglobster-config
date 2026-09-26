@@ -419,6 +419,12 @@ overrides = {
     # default). Enforced on main + every profile so the budget is uniform.
     ("agent", "max_turns"): 90,
 }
+# Cost ceilings the upstream merge would otherwise raise; applied only where a
+# config does not set them (see the loop below). Values = today's defaults.
+pin_if_missing = {
+    ("delegation", "max_iterations"): 50,
+    ("delegation", "max_concurrent_children"): 3,
+}
 default_model = os.environ.get("HERMES_DEFAULT_MODEL", "")
 
 # Source of truth for which Telegram thread each profile owns: the per-profile
@@ -506,6 +512,17 @@ def _reconcile_config(config_path, label, is_rented=False, byok_images=False):
             if not isinstance(cfg.get(section), dict):
                 cfg[section] = {}
             if cfg[section].get(key) != val:
+                cfg[section][key] = val
+                changed = True
+        # Written only where ABSENT, never forced: pins today's value so the
+        # next upstream merge cannot raise it silently, while a profile that
+        # chose its own limit keeps it. Upstream v2026.9.x raises the
+        # delegation defaults 50 -> 250 iterations and 3 -> 10 parallel
+        # children — a 5x cost ceiling on every profile that never set them.
+        for (section, key), val in pin_if_missing.items():
+            if not isinstance(cfg.get(section), dict):
+                cfg[section] = {}
+            if key not in cfg[section]:
                 cfg[section][key] = val
                 changed = True
         # Undo what earlier boots imposed. Skipping the override above is not

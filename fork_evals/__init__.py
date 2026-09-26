@@ -7,5 +7,5 @@ Repair Itself").
 
 Loop: trace -> judge -> diagnose -> human-approved diff -> verify -> regression-lock.
 
-Entry point: ``python -m evals.run <case_name>`` (see ``evals/README.md``).
+Entry point: ``python -m fork_evals.run <case_name>`` (see ``fork_evals/README.md``).
 """

@@ -12,9 +12,9 @@ blocks), so environment-variable references like ``$GITHUB_TOKEN`` or
 ``os.environ["GITHUB_TOKEN"]`` — the safe pattern — are never flagged.
 
 CLI:
-    python -m evals.checks.secret_scan --cron          # scan live cron jobs
-    python -m evals.checks.secret_scan --text "..."    # scan a string
-    python -m evals.checks.secret_scan --file path     # scan a file
+    python -m fork_evals.checks.secret_scan --cron          # scan live cron jobs
+    python -m fork_evals.checks.secret_scan --text "..."    # scan a string
+    python -m fork_evals.checks.secret_scan --file path     # scan a file
 Exit code 1 if any credential-shaped string is found.
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ def scan_cron_jobs() -> List[Tuple[str, List[Finding]]]:
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m evals.checks.secret_scan")
+    parser = argparse.ArgumentParser(prog="python -m fork_evals.checks.secret_scan")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--cron", action="store_true", help="scan live cron jobs (default)")
     group.add_argument("--text", help="scan a literal string")

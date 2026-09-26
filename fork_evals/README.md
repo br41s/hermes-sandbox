@@ -15,16 +15,16 @@ trace  ->  judge  ->  diagnose  ->  human-approved diff  ->  verify  ->  regress
 
 ```bash
 # Deterministic judge (no model call — same path CI uses):
-uv run python -m evals.run fallback_switch_notice
+uv run python -m fork_evals.run fallback_switch_notice
 
 # LLM-as-judge (needs `hermes` CLI on PATH + provider creds):
-uv run python -m evals.run fallback_switch_notice --llm-judge
+uv run python -m fork_evals.run fallback_switch_notice --llm-judge
 
 # TypeSafe System One judge (needs TYPESAFE_API_KEY):
-uv run python -m evals.run fallback_switch_notice --typesafe-judge
+uv run python -m fork_evals.run fallback_switch_notice --typesafe-judge
 
 # On failure, ask a sub-agent to propose a fix (printed, never applied):
-uv run python -m evals.run fallback_switch_notice --diagnose --trace-id <langfuse_trace_id>
+uv run python -m fork_evals.run fallback_switch_notice --diagnose --trace-id <langfuse_trace_id>
 ```
 
 Exit code is `0` if all assertions pass, `1` otherwise.

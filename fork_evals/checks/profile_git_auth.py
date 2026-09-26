@@ -18,7 +18,7 @@ detour to SSH is caught before every push silently fails.
 It is a **read-only auditor**: it parses the on-disk credential / config /
 remote files (no subprocess, no network) and reuses the runtime's own profile
 discovery (``hermes_constants.get_default_hermes_root``). Tokens are NEVER
-echoed — only their shape/length, matching ``evals/checks/secret_scan``.
+echoed — only their shape/length, matching ``fork_evals/checks/secret_scan``.
 
 Failure modes detected (each one actually occurred):
   1. ``home/.git-credentials`` missing / empty / blanked (token rewritten ``***``).

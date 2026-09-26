@@ -8,8 +8,8 @@ from unittest import mock
 
 import pytest
 
-from evals import judge as judge_mod
-from evals.judge import NOUL_FAIL_BELOW, NOUL_PASS_ABOVE, judge
+from fork_evals import judge as judge_mod
+from fork_evals.judge import NOUL_FAIL_BELOW, NOUL_PASS_ABOVE, judge
 
 ASSERTION = {"text": "the reply names the fallback model", "check": {"must_contain": ["gpt"]}}
 

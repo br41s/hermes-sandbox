@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from evals.checks.profile_git_auth import (
+from fork_evals.checks.profile_git_auth import (
     _discover_profile_homes,
     _profile_label,
     audit_profile_git_auth,
@@ -25,7 +25,7 @@ from evals.checks.profile_git_auth import (
     git_auth_hazard,
     remote_hazard,
 )
-from evals.run import evaluate, load_case
+from fork_evals.run import evaluate, load_case
 
 # Shape-only fake — never a real credential.
 FAKE_TOKEN = "ghp_FAKE0000example0000token0000NOTREAL"

@@ -18,7 +18,7 @@
 # on their own and start alerting again — prefer those for "waiting on
 # upstream", so the wait cannot become permanent by accident.
 #
-# Triage of record: docs/security/dependency-alert-triage.md (2026-09-18).
+# Triage of record: ops/security/dependency-alert-triage.md (2026-09-18).
 
 # --- starlette: bumping REGRESSES the fix we pinned for -----------------------
 # We pin starlette==1.0.1 across every extra that exposes a Starlette-backed

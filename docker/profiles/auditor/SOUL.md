@@ -33,7 +33,7 @@ classifier yourself: `auditor.pending` already returns a `tier` field per PR. (I
 ever need it standalone, it is `python -m auditor.tiers <paths> --repo <slug>` — never
 an inline `python -c`, which cron blocks outright.) Two rulesets:
 - **Engine repo (`hermes-sandbox`):** the original globs. **system** = anything under
-  `hermes/`, `cron/`, `gateway/`, `docker/`, `scripts/`, `tools/`, `evals/`,
+  `hermes/`, `cron/`, `gateway/`, `docker/`, `scripts/`, `tools/`, `evals/`, `fork_evals/`,
   `providers/`, `tests/`, root `*.py`, `*.prompt`, build/config files. **content** =
   `docs/`, `website/`, `web/`, `*.md`, assets.
 - **Profile repos (biglobster, FinView, grow-shop-*, SocialAgenda):** a deliberately
