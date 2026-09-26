@@ -470,7 +470,8 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
 
     sanitized: dict[str, str] = {}
 
-    for key, value in (base_env or {}).items():
+    from hermes_cli.fork_ext.profile_env import child_env_overlay
+    for key, value in ({**(base_env or {}), **child_env_overlay()}).items():
         if key in _ALWAYS_STRIP_KEYS:
             continue
         if key.startswith(_HERMES_PROVIDER_ENV_FORCE_PREFIX):
@@ -1161,7 +1162,8 @@ def _make_run_env(env: dict) -> dict:
     except Exception:
         _is_passthrough = lambda _: False  # noqa: E731
 
-    merged = dict(os.environ | env)
+    from hermes_cli.fork_ext.profile_env import child_env_overlay
+    merged = dict(os.environ | child_env_overlay() | env)
     run_env = {}
     for k, v in merged.items():
         if k in _ALWAYS_STRIP_KEYS:

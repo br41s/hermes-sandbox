@@ -105,7 +105,8 @@ class OpenRouterVideoGenProvider(VideoGenProvider):
         return "OpenRouter"
 
     def is_available(self) -> bool:
-        if not os.environ.get("OPENROUTER_API_KEY"):
+        from agent.secret_scope import get_secret
+        if not get_secret("OPENROUTER_API_KEY"):
             logger.debug("video_gen/openrouter: OPENROUTER_API_KEY not set — provider unavailable")
             return False
         try:
@@ -169,7 +170,8 @@ class OpenRouterVideoGenProvider(VideoGenProvider):
                 provider="openrouter",
             )
 
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        from agent.secret_scope import get_secret
+        api_key = get_secret("OPENROUTER_API_KEY")
         if not api_key:
             logger.warning("video_gen/openrouter: OPENROUTER_API_KEY not set")
             return error_response(

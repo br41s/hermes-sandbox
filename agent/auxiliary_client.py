@@ -839,6 +839,29 @@ def _peek_pool_entry(provider: str) -> Optional[Any]:
     return None
 
 
+def _scoped_key_env(name: str) -> str:
+    """Read a provider API key env var through the profile secret scope.
+
+    Auxiliary-client resolution runs both inside agent turns (secret scope
+    installed — its verdict is authoritative under multiplex, so a scoped
+    miss must NOT borrow another profile's process-env key) and on unscoped
+    startup/CLI probe paths, which keep the legacy ``os.environ`` read via
+    the ``UnscopedSecretError`` fallback (Slack pattern, #59739).
+    """
+    if not name:
+        return ""
+    try:
+        from agent.secret_scope import UnscopedSecretError, get_secret
+
+        try:
+            return (get_secret(name) or "").strip()
+        except UnscopedSecretError:
+            pass
+    except Exception:
+        pass
+    return (os.getenv(name) or "").strip()
+
+
 def _pool_runtime_api_key(entry: Any) -> str:
     if entry is None:
         return ""
@@ -2051,7 +2074,7 @@ def _try_openrouter(explicit_api_key: str = None, model: str = None) -> Tuple[Op
         # the OPENROUTER_API_KEY env-var path rather than failing outright.
         logger.debug("Auxiliary client: OpenRouter pool exhausted, trying OPENROUTER_API_KEY")
 
-    or_key = explicit_api_key or os.getenv("OPENROUTER_API_KEY")
+    or_key = explicit_api_key or _scoped_key_env("OPENROUTER_API_KEY")
     if not or_key:
         _mark_provider_unhealthy("openrouter", ttl=60)
         return None, None
@@ -2068,7 +2091,7 @@ def _describe_openrouter_unavailable() -> str:
             return "OpenRouter credential pool has no usable entries (credentials may be exhausted)"
         if not _pool_runtime_api_key(entry):
             return "OpenRouter credential pool entry is missing a runtime API key"
-    if not str(os.getenv("OPENROUTER_API_KEY") or "").strip():
+    if not _scoped_key_env("OPENROUTER_API_KEY"):
         return "OPENROUTER_API_KEY not set"
     return "no usable OpenRouter credentials found"
 
@@ -5851,7 +5874,7 @@ def auxiliary_max_tokens_param(value: int, *, model: Optional[str] = None) -> di
     misses the case where a custom base URL serves e.g. ``gpt-5.4``.
     """
     custom_base = _current_custom_base_url()
-    or_key = os.getenv("OPENROUTER_API_KEY")
+    or_key = _scoped_key_env("OPENROUTER_API_KEY")
     # Use max_completion_tokens for direct OpenAI-compatible providers that reject
     # max_tokens on newer GPT-4o/o-series/GPT-5-style models.
     _custom_host = base_url_hostname(custom_base) or ""

@@ -174,6 +174,10 @@ class TestRunJobProfileContext:
                 observed["profile_env_shared_during_init"] = os.environ.get(
                     "HERMES_PROFILE_TEST_SHARED"
                 )
+                from agent.secret_scope import get_secret
+
+                observed["scoped_only_during_init"] = get_secret("HERMES_PROFILE_TEST_ONLY")
+                observed["scoped_shared_during_init"] = get_secret("HERMES_PROFILE_TEST_SHARED")
                 observed["hermes_home_during_init"] = str(get_hermes_home())
                 observed["scheduler_home_during_init"] = str(sched._get_hermes_home())
                 observed["skip_context_files"] = kwargs.get("skip_context_files")
@@ -188,6 +192,10 @@ class TestRunJobProfileContext:
                 observed["profile_env_shared_during_run"] = os.environ.get(
                     "HERMES_PROFILE_TEST_SHARED"
                 )
+                from agent.secret_scope import get_secret
+
+                observed["scoped_only_during_run"] = get_secret("HERMES_PROFILE_TEST_ONLY")
+                observed["scoped_shared_during_run"] = get_secret("HERMES_PROFILE_TEST_SHARED")
                 observed["hermes_home_during_run"] = str(get_hermes_home())
                 observed["scheduler_home_during_run"] = str(sched._get_hermes_home())
                 return {"final_response": "done", "messages": []}
@@ -249,7 +257,9 @@ class TestRunJobProfileContext:
         success, _output, response, error = sched.run_job(job)
 
         assert success is True, f"run_job failed: error={error!r} response={response!r}"
-        assert observed["dotenv_paths"] == [str(profile_home / ".env")]
+        # The profile's .env is the run's secret scope, never loaded into
+        # os.environ (cron/fork_ext/profile_scope.py).
+        assert "dotenv_paths" not in observed
         assert observed["env_home_during_init"] == str(root)
         assert observed["env_home_during_run"] == str(root)
         assert observed["hermes_home_during_init"] == str(profile_home.resolve())
@@ -260,26 +270,25 @@ class TestRunJobProfileContext:
         assert os.environ["HERMES_HOME"] == str(root)
         assert sched._get_hermes_home() == root
 
-    def test_profile_dotenv_environment_is_restored(
+    def test_profile_dotenv_is_scoped_not_loaded_into_os_environ(
         self, isolated_cron_profile_home, monkeypatch
     ):
-        from hermes_cli import env_loader
+        """A profile job reads its own .env through the secret scope, and the
+        process environment never carries it — so a job running concurrently
+        on another thread cannot read the profile's keys. This is the
+        guarantee that lets upstream v2026.8.31 drop _terminal_cwd_lock."""
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
-        (profile_home / ".env").write_text("", encoding="utf-8")
+        (profile_home / ".env").write_text(
+            "HERMES_PROFILE_TEST_SHARED=profile-value\n"
+            "HERMES_PROFILE_TEST_ONLY=profile-only\n",
+            encoding="utf-8",
+        )
         observed: dict = {}
         self._install_agent_stubs(monkeypatch, observed)
         monkeypatch.setenv("HERMES_PROFILE_TEST_SHARED", "outer")
         monkeypatch.delenv("HERMES_PROFILE_TEST_ONLY", raising=False)
-
-        def fake_load_dotenv_with_fallback(path, *, override):
-            observed.setdefault("dotenv_paths", []).append(str(path))
-            os.environ["HERMES_PROFILE_TEST_SHARED"] = "profile-value"
-            os.environ["HERMES_PROFILE_TEST_ONLY"] = "profile-only"
-            os.environ["HERMES_CRON_TIMEOUT"] = "123"
-
-        monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
 
         job = {
             "id": "env-profile",
@@ -291,11 +300,17 @@ class TestRunJobProfileContext:
         success, _output, _response, error = sched.run_job(job)
 
         assert success is True, error
-        assert observed["dotenv_paths"] == [str(profile_home / ".env")]
-        assert observed["profile_env_only_during_init"] == "profile-only"
-        assert observed["profile_env_shared_during_init"] == "profile-value"
-        assert observed["profile_env_only_during_run"] == "profile-only"
-        assert observed["profile_env_shared_during_run"] == "profile-value"
+        assert "dotenv_paths" not in observed
+        # The job itself sees its profile's values through get_secret ...
+        assert observed["scoped_only_during_init"] == "profile-only"
+        assert observed["scoped_shared_during_init"] == "profile-value"
+        assert observed["scoped_only_during_run"] == "profile-only"
+        assert observed["scoped_shared_during_run"] == "profile-value"
+        # ... while the process environment is untouched throughout.
+        assert observed["profile_env_only_during_init"] is None
+        assert observed["profile_env_shared_during_init"] == "outer"
+        assert observed["profile_env_only_during_run"] is None
+        assert observed["profile_env_shared_during_run"] == "outer"
         assert os.environ["HERMES_PROFILE_TEST_SHARED"] == "outer"
         assert "HERMES_PROFILE_TEST_ONLY" not in os.environ
         assert os.environ["HERMES_CRON_TIMEOUT"] == "0"
