@@ -337,7 +337,10 @@ class TestWellKnownSkillSource:
 
     @patch("tools.skills_hub._write_index_cache")
     @patch("tools.skills_hub._read_index_cache", return_value=None)
-    @patch("tools.skills_hub.httpx.get")
+    # fork: upstream still patches httpx.get, but the index is fetched via
+    # _guarded_http_get (an httpx.Client) — the mock never applied and the test
+    # passed on a live example.com 404, which the fork's network guard blocks.
+    @patch("tools.skills_hub._guarded_http_get")
     def test_fetch_rejects_unsafe_file_paths_from_well_known_endpoint(self, mock_get, _mock_read_cache, _mock_write_cache):
         def fake_get(url, *args, **kwargs):
             if url.endswith("/index.json"):
