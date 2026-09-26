@@ -34,6 +34,37 @@ def test_scheduler_call_sites_resolve_the_moved_objects():
         assert getattr(sched, name) is getattr(diagnostics, name), name
 
 
+def test_profile_scope_names_resolve_the_moved_objects():
+    """run_job, the home-target lookups and tools/cronjob_tools.py all reach
+    these through ``cron.scheduler``."""
+    import cron.scheduler as sched
+    from cron.fork_ext import profile_scope
+
+    for name in (
+        "ProfileIdentityError",
+        "ProfileResolutionError",
+        "_job_profile_context",
+        "_read_profile_env_value",
+    ):
+        assert getattr(sched, name) is getattr(profile_scope, name), name
+    assert profile_scope.logger is sched.logger
+
+
+def test_home_target_lookup_still_reads_the_profile_env(monkeypatch, tmp_path):
+    """The call site in cron.scheduler must still reach the moved reader."""
+    import cron.scheduler as sched
+
+    calls = []
+
+    def fake_read(profile, key):
+        calls.append((profile, key))
+        return "-100123"
+
+    monkeypatch.setattr(sched, "_read_profile_env_value", fake_read)
+    assert sched._get_home_target_chat_id("telegram", "support") == "-100123"
+    assert calls and calls[0][0] == "support"
+
+
 def test_abandoned_counter_is_shared_across_both_names():
     """``hermes_cli/cron.py`` reads the count through ``cron.scheduler``."""
     import cron.scheduler as sched
