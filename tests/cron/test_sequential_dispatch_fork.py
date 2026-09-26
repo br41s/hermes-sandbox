@@ -84,7 +84,7 @@ class _Recorder:
         with self._lock:
             return self.started.setdefault(job_id, threading.Event())
 
-    def run_job(self, job, *, defer_agent_teardown=None):
+    def run_job(self, job, **_kwargs):  # upstream adds keywords over time
         job_id = job["id"]
         seq = self.mutates_env(job)
         thread = threading.current_thread().name
@@ -155,6 +155,14 @@ def lane(monkeypatch):
     monkeypatch.setattr(sched, "_deliver_result", lambda *_a, **_kw: None)
     monkeypatch.setattr(sched, "_send_kickoff_ping", lambda *_a, **_kw: None)
     monkeypatch.setattr(sched, "claim_dispatch", lambda *_a, **_kw: True)
+    # v2026.8.31+: tick's _process_job re-claims each job against the store
+    # right before running it; these jobs only exist in ``due``.
+    if hasattr(sched, "claim_job_for_fire"):
+        def _claim(job_id, return_job=False, **_kw):
+            job = next((j for j in due if j["id"] == job_id), None)
+            return dict(job) if (return_job and job is not None) else job is not None
+
+        monkeypatch.setattr(sched, "claim_job_for_fire", _claim)
 
     def _upstream_pool_is_not_the_lane(*_a, **_kw):
         raise AssertionError(

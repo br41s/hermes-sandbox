@@ -344,6 +344,29 @@ class TestJobRunLock:
         assert (ok, resp) == (True, "resp")
 
 
+    def test_run_job_forwards_every_keyword_to_impl(self, tmp_path, monkeypatch):
+        """The wrapper must not name upstream's keywords: from v2026.8.31
+        run_one_job also passes extra_prompt / execution_id / cancel_event,
+        and a wrapper that rejected them would fail every cron run."""
+        import cron.scheduler as sched
+
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+        seen = {}
+        monkeypatch.setattr(
+            sched, "_run_job_impl",
+            lambda job, **kw: (seen.update(kw), (True, "out", "resp", None))[1],
+        )
+        holder: list = []
+        sched.run_job(
+            {"id": "kwjob"}, defer_agent_teardown=holder,
+            extra_prompt="x", execution_id="e1", cancel_event=None,
+        )
+        assert seen == {
+            "defer_agent_teardown": holder, "extra_prompt": "x",
+            "execution_id": "e1", "cancel_event": None,
+        }
+
+
 class TestDispatchJobAsync:
     """Webhook-triggered jobs must enqueue on the scheduler's own lanes (so
     profile jobs serialize with tick and can't leak os.environ identity across

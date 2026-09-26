@@ -16,7 +16,7 @@ upstream's file. ``cron.scheduler.run_job`` is a one-line call into
 
 import logging
 from contextlib import contextmanager
-from typing import Callable, Optional
+from typing import Callable
 
 try:
     import fcntl
@@ -76,11 +76,9 @@ def _job_run_lock(job_id: str):
         fh.close()
 
 
-def guarded_run_job(
-    job: dict, impl: Callable, *, defer_agent_teardown: Optional[list] = None
-) -> tuple:
-    """Run ``impl(job, defer_agent_teardown=...)`` under the per-job lock and
-    the job's profile.
+def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
+    """Run ``impl(job, **kwargs)`` under the per-job lock and the job's
+    profile.
 
     Serialized per job_id: if another run of this same job is already in
     flight (a concurrent webhook trigger or the periodic tick), this returns a
@@ -89,8 +87,11 @@ def guarded_run_job(
     ``_job_run_lock`` for the full rationale (duplicate auditor reviews).
 
     The profile context wraps the whole run (fail-closed via
-    ProfileResolutionError), and ``defer_agent_teardown`` is forwarded to the
-    impl so upstream's delivery-ordering fix (#58720) still works.
+    ProfileResolutionError). Every keyword is forwarded to the impl untouched —
+    today that is ``defer_agent_teardown`` (upstream's delivery-ordering fix,
+    #58720); from v2026.8.31 ``run_one_job`` also passes ``extra_prompt``,
+    ``execution_id`` and ``cancel_event``, and a wrapper that named its
+    keywords would reject every run with a TypeError.
     """
     import cron.scheduler as sched
 
@@ -103,4 +104,4 @@ def guarded_run_job(
             )
             return True, "", "", None
         with sched._job_profile_context(job_id, job.get("profile")):
-            return impl(job, defer_agent_teardown=defer_agent_teardown)
+            return impl(job, **kwargs)

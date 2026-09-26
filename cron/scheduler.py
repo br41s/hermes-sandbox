@@ -2761,11 +2761,9 @@ from cron.fork_ext.isolated_checkout import (  # noqa: E402
 )
 
 
-def run_job(
-    job: dict, *, defer_agent_teardown: Optional[list] = None
-) -> tuple[bool, str, str, Optional[str]]:
-    """Run upstream's body (``_run_job_impl``) under the fork's per-job lock and profile: see cron/fork_ext/run_guard.py."""
-    return guarded_run_job(job, _run_job_impl, defer_agent_teardown=defer_agent_teardown)
+def run_job(job: dict, **kwargs) -> tuple[bool, str, str, Optional[str]]:
+    """Upstream's ``_run_job_impl(job, **kwargs)`` under the fork's per-job lock and profile: see cron/fork_ext/run_guard.py."""
+    return guarded_run_job(job, _run_job_impl, **kwargs)
 
 
 def _guard_job_credential_exfil(job: dict) -> None:
