@@ -539,6 +539,7 @@ def _shutdown_parallel_pool() -> None:
     if _sequential_pool is not None:
         _sequential_pool.shutdown(wait=True, cancel_futures=False)
         _sequential_pool = None
+    _fork_shutdown_sequential()  # fork: drain the profile/workdir lane too (cron/fork_ext/dispatch.py)
 
 
 atexit.register(_shutdown_parallel_pool)
@@ -604,6 +605,7 @@ def _get_lock_paths() -> tuple[Path, Path]:
 from cron.fork_ext.run_guard import _job_run_lock, guarded_run_job  # noqa: E402,F401
 from cron.fork_ext.dispatch import (  # noqa: E402
     dispatch_job_async,  # noqa: F401 - re-exported; gateway/platforms/webhook.py calls it here
+    shutdown_sequential_executor as _fork_shutdown_sequential,
     submit_sequential_jobs as _fork_submit_sequential,
 )
 

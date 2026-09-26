@@ -74,8 +74,12 @@ def get_sequential_executor() -> concurrent.futures.ThreadPoolExecutor:
 
 def shutdown_sequential_executor() -> None:
     """Shut the executor down (waiting for the running job, keeping queued
-    ones) and forget it, so the next use creates a fresh one. Registered
-    with ``atexit``, like upstream's pool shutdown."""
+    ones) and forget it, so the next use creates a fresh one.
+
+    ``cron.scheduler._shutdown_parallel_pool`` calls this, exactly as it used
+    to shut down upstream's sequential pool — tests rely on that call to drain
+    the lane between cases. Also registered with ``atexit`` on its own, so the
+    lane is still drained at exit if a merge ever drops that call."""
     global _sequential_executor
     with _sequential_executor_lock:
         executor, _sequential_executor = _sequential_executor, None

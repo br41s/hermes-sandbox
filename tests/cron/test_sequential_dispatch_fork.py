@@ -294,6 +294,25 @@ def test_webhook_dispatch_shares_the_tick_lane(lane, monkeypatch, tmp_path):
     assert rec.runs[hook_plain][1].startswith("cron-parallel")
 
 
+def test_shutdown_parallel_pool_drains_the_fork_lane():
+    """``_shutdown_parallel_pool`` shut down the sequential pool before the
+    lane moved here, and tests use it to drain between cases; a run left on
+    the lane would otherwise execute under the NEXT test's monkeypatches."""
+    import cron.scheduler as sched
+    from cron.fork_ext import dispatch
+
+    finished = threading.Event()
+    executor = dispatch.get_sequential_executor()
+    executor.submit(lambda: (time.sleep(0.2), finished.set()))
+
+    sched._shutdown_parallel_pool()
+
+    assert finished.is_set(), "shutdown returned while a lane job was still running"
+    assert dispatch._sequential_executor is None
+    assert dispatch.get_sequential_executor() is not executor
+    dispatch.shutdown_sequential_executor()
+
+
 def test_scheduler_call_sites_resolve_the_fork_lane():
     """The names tick, run_job and the webhook reach through cron.scheduler
     are the fork module's objects, not stale copies."""
