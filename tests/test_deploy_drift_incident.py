@@ -108,11 +108,60 @@ class TestFailsLoudNotSilent:
         assert out[0].id.startswith("deploy-drift-blind:not-an-ancestor:")
         assert "NOT on main" in out[0].detail
 
-    def test_no_token_is_blind_not_silent(self, monkeypatch, tmp_path):
+    def test_no_token_still_reads_the_public_repo(self, monkeypatch):
+        """Regression: the watcher is a no-agent cron script, and the runner
+        strips GITHUB_TOKEN / GH_TOKEN from every script's env. Requiring a
+        token made this signal report BLIND (no-token) on every sweep, though
+        the repo is public and compare needs no credential."""
+        from incidents import sweep as sweep_mod
+
         for var in ("HERMES_DEPLOY_DRIFT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
-        out = deploy_drift_incidents(running_sha=RUNNING)
-        assert len(out) == 1 and out[0].id.startswith("deploy-drift-blind:no-token:")
+        seen = {}
+
+        def fake_fetch(repo, base, token):
+            seen["token"] = token
+            return {"status": "identical", "ahead_by": 0}
+
+        monkeypatch.setattr(sweep_mod, "_fetch_deploy_compare", fake_fetch)
+        assert deploy_drift_incidents(running_sha=RUNNING) == []
+        assert seen == {"token": ""}
+
+    def test_unauthenticated_request_sends_no_authorization_header(self, monkeypatch):
+        import io
+        import urllib.request
+
+        from incidents import sweep as sweep_mod
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["auth"] = req.get_header("Authorization")
+            return io.BytesIO(b'{"status": "identical", "ahead_by": 0}')
+
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        assert sweep_mod._fetch_deploy_compare("o/r", RUNNING, "") == {
+            "status": "identical", "ahead_by": 0}
+        assert captured == {"auth": None}
+
+    def test_spent_unauthenticated_rate_limit_is_blind_and_says_so(self, monkeypatch):
+        import urllib.error
+        import urllib.request
+        from email.message import Message
+
+        from incidents import sweep as sweep_mod
+
+        def fake_urlopen(req, timeout=None):
+            hdrs = Message()
+            hdrs["X-RateLimit-Remaining"] = "0"
+            raise urllib.error.HTTPError(req.full_url, 403, "rate limited", hdrs, None)
+
+        for var in ("HERMES_DEPLOY_DRIFT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        out = sweep_mod.deploy_drift_incidents(running_sha=RUNNING)
+        assert len(out) == 1 and out[0].id.startswith("deploy-drift-blind:api-403:")
+        assert "rate limit" in out[0].detail and "HERMES_DEPLOY_DRIFT_GITHUB_TOKEN" in out[0].detail
 
     def test_missing_build_sha_inside_the_image_is_blind(self, tmp_path):
         # tmp_path exists, so this looks like a deployment with no stamp.

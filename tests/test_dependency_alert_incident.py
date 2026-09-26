@@ -81,10 +81,34 @@ def test_medium_and_low_never_produce_an_incident():
     assert dependency_alert_incidents(alerts=alerts) == []
 
 
-def test_missing_token_degrades_to_silence_not_an_exception(monkeypatch):
-    """Same contract as the Langfuse signal: never take the sweep down."""
+def test_missing_token_is_blind_not_silent(monkeypatch, tmp_path):
+    """Never take the sweep down — but never answer "nothing new" either.
+
+    Regression: this returned [] with no token, and inside the watcher there is
+    never one unless HERMES_DEP_ALERT_GITHUB_TOKEN is set — the cron runner
+    strips GITHUB_TOKEN / GH_TOKEN from every no-agent script's env. The signal
+    was therefore silently blind, which reads exactly like a clean queue.
+    """
+    from incidents import sweep as sweep_mod
+
     for var in ("HERMES_DEP_ALERT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
         monkeypatch.delenv(var, raising=False)
+    # Inside the deployment: /opt/hermes exists.
+    monkeypatch.setattr(sweep_mod, "_BUILD_SHA_FILE", tmp_path / ".hermes_build_sha")
+    out = dependency_alert_incidents()
+    assert len(out) == 1
+    assert out[0].id.startswith("depalert-blind:no-token:")
+    assert "HERMES_DEP_ALERT_GITHUB_TOKEN" in out[0].detail
+
+
+def test_missing_token_outside_a_deployment_is_not_applicable(monkeypatch, tmp_path):
+    """A laptop or CI has no token and nothing to be blind to."""
+    from incidents import sweep as sweep_mod
+
+    for var in ("HERMES_DEP_ALERT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(sweep_mod, "_BUILD_SHA_FILE",
+                        tmp_path / "not-a-deployment" / ".hermes_build_sha")
     assert dependency_alert_incidents() == []
 
 

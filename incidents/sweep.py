@@ -713,17 +713,26 @@ def _fetch_deploy_compare(repo: str, base: str, token: str) -> Optional[dict]:
     import urllib.request
 
     url = f"https://api.github.com/repos/{repo}/compare/{base}...main"
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}",
+    headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-    })
+    }
+    # The repo is public, so compare needs no credential; a token only buys
+    # rate limit. Unauthenticated is 60/h per egress IP, and this is one call
+    # an hour.
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         if exc.code in _BLIND_STATUSES:
-            raise DependencyAlertBlind(exc.code, f"compare {base}...main") from exc
+            detail = f"compare {base}...main"
+            if not token and (exc.headers or {}).get("X-RateLimit-Remaining") == "0":
+                detail += (" — unauthenticated rate limit (60/h per IP) is spent; "
+                           "set HERMES_DEPLOY_DRIFT_GITHUB_TOKEN")
+            raise DependencyAlertBlind(exc.code, detail) from exc
         return None
     except Exception:
         return None
@@ -790,22 +799,24 @@ def deploy_drift_incidents(*, compare: Optional[dict] = None,
         repo = repo or (os.environ.get("HERMES_DEPLOY_DRIFT_REPO")
                         or os.environ.get("GITHUB_REPOSITORY")
                         or "br41s/hermes-sandbox").strip()
-        token = token or (os.environ.get("HERMES_DEPLOY_DRIFT_GITHUB_TOKEN")
-                          or os.environ.get("GITHUB_TOKEN")
-                          or os.environ.get("GH_TOKEN") or "").strip()
-        if not token:
-            return [_deploy_drift_blind(
-                "no-token",
-                "no GitHub token resolved (HERMES_DEPLOY_DRIFT_GITHUB_TOKEN / "
-                "GITHUB_TOKEN / GH_TOKEN) — cannot read how far main has moved.",
-                now=now)]
+        # A token is optional: the repo is public. And inside the watcher only
+        # HERMES_DEPLOY_DRIFT_GITHUB_TOKEN can arrive at all — it runs as a
+        # no-agent cron script, and the runner strips GITHUB_TOKEN / GH_TOKEN
+        # from every script's env (tools/environments/local.py
+        # _ALWAYS_STRIP_KEYS). Requiring a token is what kept this signal
+        # BLIND (no-token) on every sweep since it shipped.
+        token = token if token is not None else (
+            os.environ.get("HERMES_DEPLOY_DRIFT_GITHUB_TOKEN")
+            or os.environ.get("GITHUB_TOKEN")
+            or os.environ.get("GH_TOKEN") or "").strip()
         try:
             compare = _fetch_deploy_compare(repo, running_sha, token)
         except DependencyAlertBlind as blind:
             return [_deploy_drift_blind(
                 f"api-{blind.status}",
                 f"the compare API refused: HTTP {blind.status} for "
-                f"{repo} {running_sha}...main.",
+                f"{repo} {running_sha}...main"
+                + (f" ({blind.detail})" if blind.detail else "") + ".",
                 now=now)]
         if compare is None:
             return []   # transient; try again next hour
@@ -1031,8 +1042,30 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
         token = token or (os.environ.get("HERMES_DEP_ALERT_GITHUB_TOKEN")
                           or os.environ.get("GITHUB_TOKEN")
                           or os.environ.get("GH_TOKEN") or "").strip()
-        if not token:
+        if not token and not _BUILD_SHA_FILE.parent.is_dir():
+            # A laptop or CI: no deployment, and no reason to expect a token.
+            # "Not applicable", same rule as the deploy-drift build stamp.
             return []
+        if not token:
+            # Loud, not []: this used to return nothing, which inside the
+            # watcher was permanent — it runs as a no-agent cron script and
+            # the runner strips GITHUB_TOKEN / GH_TOKEN from every script's
+            # env, so only HERMES_DEP_ALERT_GITHUB_TOKEN can ever arrive. An
+            # empty answer read as "no new alerts".
+            return [Incident(
+                id=f"depalert-blind:no-token:{now.strftime('%Y-%m-%d')}",
+                kind="dependency",
+                title="Dependency alert signal is BLIND (no token)",
+                detail=(f"repo: {repo}\n"
+                        "No token reached the watcher. Cron scripts never see "
+                        "GITHUB_TOKEN / GH_TOKEN (the runner strips them), so set "
+                        "HERMES_DEP_ALERT_GITHUB_TOKEN — a PAT with "
+                        "`Code scanning alerts: Read` on this repo.\n"
+                        "Until then the dependency signal reports nothing new "
+                        "every hour regardless of what is actually in the queue."),
+                handoff=("set HERMES_DEP_ALERT_GITHUB_TOKEN in the Zeabur env, "
+                         "redeploy, and confirm the next sweep drops this alert"),
+            )]
         try:
             alerts = _fetch_dependency_alerts(repo, token)
         except DependencyAlertBlind as blind:

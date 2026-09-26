@@ -110,6 +110,14 @@ and `files[]` together. Token resolution mirrors `dependency_alert_incidents`
 exactly: `HERMES_DEPLOY_DRIFT_GITHUB_TOKEN` -> `GITHUB_TOKEN` -> `GH_TOKEN`.
 Cost is one call per hourly sweep.
 
+> **Correction 2026-09-26.** Inside the watcher only the `HERMES_`-prefixed
+> variable can ever arrive: it runs as a no-agent cron script, and the runner
+> strips `GITHUB_TOKEN` / `GH_TOKEN` from every script's env
+> (`tools/environments/local.py` `_ALWAYS_STRIP_KEYS`). Requiring a token made
+> the signal report `BLIND (no-token)` on every sweep. The repo is public, so
+> compare now goes out unauthenticated when no token is set (60/h per IP, one
+> call an hour); a token only buys rate limit.
+
 > **Verified 2026-09-22 against the founding case.** `compare/777a10031...2cd61760e`
 > returns `ahead_by: 11`, `total_commits: 11`, `files: 13`.
 >
