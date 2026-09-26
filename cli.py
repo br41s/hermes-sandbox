@@ -5897,7 +5897,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         if getattr(self, "_resize_recovery_pending", False):
             return
         now = time.monotonic()
-        if hasattr(self, "_app") and self._app and (now - getattr(self, "_last_invalidate", 0.0)) >= min_interval:
+        # None sentinel, not 0.0 — monotonic's epoch is arbitrary (boot on Linux), so on
+        # a fresh VM ``now`` can be < min_interval and a 0.0 sentinel would swallow the
+        # first repaint (same class as _schedule_focus_regain_redraw below).
+        last = getattr(self, "_last_invalidate", None)
+        if hasattr(self, "_app") and self._app and (last is None or now - last >= min_interval):
             self._last_invalidate = now
             try:
                 self._app.invalidate()
@@ -5990,8 +5994,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         per ``min_interval`` seconds.
         """
         now = time.monotonic()
-        last = getattr(self, "_last_focus_regain_redraw", 0.0)
-        if now - last < min_interval:
+        # Sentinel is None, not 0.0: time.monotonic() counts from an arbitrary epoch
+        # (boot on Linux). On a fresh VM (CI runners, containers) ``now`` can be smaller
+        # than ``min_interval``, and ``now - 0.0 < min_interval`` would suppress the
+        # FIRST redraw ever requested (CI run 32494557030: uptime < 60s made the
+        # min_interval=60 rate-limit test fail both attempts).
+        last = getattr(self, "_last_focus_regain_redraw", None)
+        if last is not None and now - last < min_interval:
             return
         self._last_focus_regain_redraw = now
         self._force_full_redraw()
