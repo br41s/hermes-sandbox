@@ -2079,7 +2079,9 @@ class TestFinishTraceUsesUpdateTrace:
         assert len(roots) == 1
         root = roots[0]
         assert root.ended is True
-        assert any("output" in u for u in root.trace_updates)
+        # Fork: langfuse>=4 (pyproject) has no trace-level I/O call, so the
+        # plugin sets I/O on the root observation only — never update_trace.
+        assert root.trace_updates == []
         assert any("output" in u for u in root.updates)
         assert mod._TRACE_STATE == {}
 
