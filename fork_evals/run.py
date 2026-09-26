@@ -1,6 +1,6 @@
 """Self-repair eval loop — CLI orchestrator.
 
-    python -m evals.run <case_name> [--typesafe-judge] [--llm-judge] [--diagnose]
+    python -m fork_evals.run <case_name> [--typesafe-judge] [--llm-judge] [--diagnose]
                                     [--trace-id ID] [--model M] [--provider P]
 
 Flow: load case -> run scenario -> judge each assertion -> report. If any
@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
-from evals.judge import JudgeResult, judge
+from fork_evals.judge import JudgeResult, judge
 
 _CASES_DIR = Path(__file__).resolve().parent / "cases"
 
@@ -87,7 +87,7 @@ def _print_report(case: Dict[str, Any], output: str, results) -> bool:
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m evals.run")
+    parser = argparse.ArgumentParser(prog="python -m fork_evals.run")
     parser.add_argument("case", help="case name (e.g. fallback_switch_notice) or path")
     parser.add_argument("--typesafe-judge", action="store_true", help="use TypeSafe System One as judge (needs TYPESAFE_API_KEY)")
     parser.add_argument("--llm-judge", action="store_true", help="use the model as judge (needs hermes CLI + creds)")
@@ -103,7 +103,7 @@ def main(argv: List[str] | None = None) -> int:
     passed = _print_report(case, output, results)
 
     if not passed and args.diagnose:
-        from evals.diagnose import run_diagnose
+        from fork_evals.diagnose import run_diagnose
 
         failures = [" ".join((a.get("text") or "").split()) + f" ({r.reason})" for a, r in results if not r.passed]
         print("\n=== diagnose (proposed fix — review before applying) ===")

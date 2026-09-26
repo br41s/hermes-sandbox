@@ -1,4 +1,4 @@
-"""Regression lock for safety net #2 — credential scanner (evals/checks/secret_scan).
+"""Regression lock for safety net #2 — credential scanner (fork_evals/checks/secret_scan).
 
 Guards two failure modes that have real cost:
   * MISS — a live token shape slips through (the original incident: a bare
@@ -8,8 +8,8 @@ Guards two failure modes that have real cost:
 
 All tokens below are obviously fake (FAKE / zeros / NOTREAL) — shape only.
 """
-from evals.checks.secret_scan import scan_for_credentials, scan_text_summary
-from evals.run import evaluate, load_case
+from fork_evals.checks.secret_scan import scan_for_credentials, scan_text_summary
+from fork_evals.run import evaluate, load_case
 
 # Shape-only fakes — never real credentials.
 LEAKY = {

@@ -420,6 +420,8 @@ it writes from. Sold to a client without one it goes quiet on every run.
 
 ## Fork-specific docs
 
+- `ops/` — deploy runbooks, incident write-ups, security procedures. Never put fork-only
+  docs in `docs/`: upstream folded it into the public `website/` (see `ops/README.md`)
 - `AGENT_RENTAL_SETUP.md` — rental provisioning, incl. whitelisting `43.157.39.241` on 443
 - `BIGLOBSTER_SETUP.md` — BigLobster profile wiring
 - `hermes-already-has-routines.md` — what upstream provides before you build scheduling

@@ -4,12 +4,12 @@ This is the artifact the self-repair eval loop "graduates" a passing case into:
 a hermetic pytest that runs in CI with no model calls. It guards two things —
 the notice's behaviour directly, and that the eval harness + seed case agree.
 
-Seed case + loop: ``evals/cases/fallback_switch_notice.yaml`` / ``evals/run.py``.
+Seed case + loop: ``fork_evals/cases/fallback_switch_notice.yaml`` / ``fork_evals/run.py``.
 """
 from types import SimpleNamespace
 
 from agent.chat_completion_helpers import fallback_switch_notice
-from evals.run import evaluate, load_case
+from fork_evals.run import evaluate, load_case
 
 
 def _fallback_agent():

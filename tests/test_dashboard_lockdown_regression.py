@@ -6,15 +6,15 @@ through an unauthenticated panel). Two failure modes:
   * SUB-PATH LEAK — an exact-match allowlist entry accidentally exposing
     sub-paths or look-alike prefixes.
 
-Uses the real gate decision + live allowlist via evals/checks/dashboard_gate.
+Uses the real gate decision + live allowlist via fork_evals/checks/dashboard_gate.
 """
-from evals.checks.dashboard_gate import (
+from fork_evals.checks.dashboard_gate import (
     EXPECTED_PUBLIC,
     audit_public_allowlist,
     audit_summary,
     gate_decision,
 )
-from evals.run import evaluate, load_case
+from fork_evals.run import evaluate, load_case
 from hermes_cli.dashboard_auth.public_paths import PUBLIC_API_PATHS
 
 

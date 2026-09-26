@@ -16,6 +16,8 @@ def test_system_code_paths_are_system():
         "scripts/git-guard/pre-commit",
         "tools/cronjob_tools.py",
         "evals/run.py",
+        "fork_evals/run.py",
+        "fork_evals/cases/cron_routing.yaml",
         "tests/test_x.py",
     ]:
         assert classify([p]) == "system", p

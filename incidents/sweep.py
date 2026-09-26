@@ -1104,7 +1104,7 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
                     f"lockfile: {lockfile}\n"
                     f"reachability: {tier}\n"
                     f"advisories ({len(ids)}): {shown}"),
-            handoff=(f"triage {pkg} {version} in {lockfile} against docs/security/dependency-alert-triage.md — "
+            handoff=(f"triage {pkg} {version} in {lockfile} against ops/security/dependency-alert-triage.md — "
                      f"classify as accepted / unreachable / patchable / real exposure. "
                      f"If accepted, record it in osv-scanner.toml with the reason "
                      f"rather than leaving it to alert again"),
@@ -1134,7 +1134,7 @@ def _dep_rollup(incidents: List[Incident]) -> List[Incident]:
                 f"Reported as one brief — a batch this size is a lockfile-wide shift "
                 f"or a scanner/config change, not {len(incidents)} separate decisions."),
         handoff=("open the Security tab (Code Scanning > osv-scanner) and triage the batch "
-                 "against docs/security/dependency-alert-triage.md — group by package, not by alert"),
+                 "against ops/security/dependency-alert-triage.md — group by package, not by alert"),
     )]
 
 
