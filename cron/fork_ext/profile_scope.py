@@ -243,7 +243,17 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
         # is built from the scheduler's own home before this context is
         # entered, so without this a profile job read the DEFAULT profile's
         # .env through every get_secret() call.
-        scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
+        #
+        # The scope is the process environment with the profile's .env over
+        # it — exactly what the job used to see once load_hermes_dotenv had
+        # merged the .env into os.environ. get_secret() treats a scope as
+        # authoritative, so a key the profile .env deliberately leaves out
+        # (a rental's EXA/HF keys) must still resolve to the process value,
+        # as it did before; and os.environ now only ever holds the process's
+        # own values, so carrying it over cannot hand one profile another's.
+        scope_token = set_secret_scope(
+            {**os.environ, **build_profile_secret_scope(profile_home)}
+        )
         _assert_own_subprocess_identity(job_id, normalized_profile, profile_home)
         logger.info(
             "Job '%s': using Hermes profile '%s' (%s)",

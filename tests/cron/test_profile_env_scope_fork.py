@@ -29,6 +29,7 @@ def rental_profile(tmp_path, monkeypatch):
     for key in ("BL_SITE_URL", "FAL_KEY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-process-key")
+    monkeypatch.setenv("EXA_API_KEY", "exa-process-key")
     return root, profile_home
 
 
@@ -50,6 +51,11 @@ def test_profile_keys_reach_scoped_readers_but_not_os_environ(rental_profile):
         assert get_env_value("OPENROUTER_API_KEY") == "or-client-key"
         assert get_secret("FAL_KEY") == "fal-client-key"
         assert get_secret("OPENROUTER_API_KEY") == "or-client-key"
+        # A key the profile .env leaves out (a rental's EXA key) still
+        # resolves to the process value, as it did when the .env was merged
+        # into os.environ.
+        assert get_secret("EXA_API_KEY") == "exa-process-key"
+        assert get_env_value("EXA_API_KEY") == "exa-process-key"
         assert "BL_SITE_URL" not in os.environ
         assert "FAL_KEY" not in os.environ
         assert os.environ["OPENROUTER_API_KEY"] == "or-process-key"
@@ -109,7 +115,10 @@ def test_children_of_a_profile_run_inherit_its_keys_through_the_usual_filter(ren
 
     assert child_env_overlay() == {}
     with _profile_context():
-        assert child_env_overlay()["BL_SITE_URL"] == "https://client.example"
+        overlay = child_env_overlay()
+        assert overlay["BL_SITE_URL"] == "https://client.example"
+        # Only what the profile changes is overlaid, not the whole process env.
+        assert "EXA_API_KEY" not in overlay and "PATH" not in overlay
         for env in (_sanitize_subprocess_env(os.environ.copy()), _make_run_env({})):
             assert env["BL_SITE_URL"] == "https://client.example"
             # Provider keys stay stripped from children, as before.
@@ -137,4 +146,7 @@ def test_fal_submits_with_the_profiles_own_key(rental_profile, monkeypatch):
         assert profile_env.fal_client_for_current_key(FakeFal) is client
 
     # No key in scope or env: the module itself, i.e. the old call.
+    assert profile_env.fal_client_for_current_key(FakeFal) is FakeFal
+    # The process's own key: the module client already reads it.
+    monkeypatch.setenv("FAL_KEY", "fal-process-key")
     assert profile_env.fal_client_for_current_key(FakeFal) is FakeFal
