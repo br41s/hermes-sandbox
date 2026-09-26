@@ -7454,6 +7454,20 @@ def run_conversation(
                         agent._truncated_tool_args_retries = 0
                         agent._cleanup_task_resources(effective_task_id)
                         _final_response = "Response truncated due to output length limit"
+                        # Fork: the retry nudges above are synthetic (and get
+                        # merged into one user turn by role-alternation repair);
+                        # drop them so the transcript closes tool -> assistant
+                        # as upstream intends, instead of ending on a user turn.
+                        while (
+                            messages
+                            and messages[-1].get("role") == "user"
+                            and isinstance(messages[-1].get("content"), str)
+                            and _TRUNCATED_TOOL_ARGS_NUDGE in messages[-1]["content"]
+                            and not messages[-1]["content"].replace(
+                                _TRUNCATED_TOOL_ARGS_NUDGE, ""
+                            ).strip()
+                        ):
+                            messages.pop()
                         # Same tool-tail close as interrupt / invalid-tool
                         # exhaustion — this path never reaches finalize_turn.
                         close_interrupted_tool_sequence(messages, _final_response)

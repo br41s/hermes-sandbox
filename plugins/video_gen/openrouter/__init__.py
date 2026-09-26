@@ -158,7 +158,7 @@ class OpenRouterVideoGenProvider(VideoGenProvider):
         resolution: str = DEFAULT_RESOLUTION,
         negative_prompt: Optional[str] = None,
         audio: Optional[bool] = None,
-        seed: Optional[int] = None,
+        seed=None,  # interface parity only: this backend has no seed control (supports_seed: False)
         **kwargs: Any,
     ) -> Dict[str, Any]:
         prompt = (prompt or "").strip()

@@ -22,6 +22,10 @@ from hermes_cli.dashboard_auth.public_paths import PUBLIC_API_PATHS
 # allowlist that is NOT here is a regression of the dashboard lockdown.
 EXPECTED_PUBLIC: frozenset[str] = frozenset({
     "/api/status",            # liveness probe (portal wildcard health)
+    # Desktop/backend readiness probe (upstream v2026.8.31). Read-only:
+    # returns {ok, version, auth_required}. Discloses the Hermes version
+    # without a login — accepted, the same build is public on GHCR.
+    "/api/health",
     "/api/config/defaults",   # read-only schema/defaults for the SPA
     "/api/config/schema",
     "/api/model/info",        # read-only model metadata

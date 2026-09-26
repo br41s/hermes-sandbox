@@ -273,7 +273,13 @@ def test_ci_jobs_only_gate_on_detect_outputs_that_detect_actually_declares():
     the composite action re-exported it, but ci.yaml's ``detect`` job did not,
     so ``needs.detect.outputs.rust`` was never anything but "".
     """
-    ci = _yaml(".github/workflows/ci.yaml")
+    # Fork: keeps its standard-runner orchestrator as ci.yml (upstream renamed
+    # it ci.yaml at v2026.8.31 and moved it to larger runners); the wiring rule
+    # applies to whichever one exists.
+    ci_path = ".github/workflows/ci.yaml"
+    if not (_REPO / ci_path).exists():
+        ci_path = ".github/workflows/ci.yml"
+    ci = _yaml(ci_path)
     declared = set(ci["jobs"]["detect"]["outputs"])
 
     referenced: set[str] = set()

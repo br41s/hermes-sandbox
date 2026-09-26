@@ -43,7 +43,8 @@ def binary(name: str) -> str:
 
 def run(cmd: List[str], what: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
                               timeout=timeout, check=True)
     except subprocess.CalledProcessError as exc:
         tail = " / ".join((exc.stderr or "").strip().splitlines()[-8:])

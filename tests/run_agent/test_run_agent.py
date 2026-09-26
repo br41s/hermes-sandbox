@@ -4584,7 +4584,10 @@ class TestRunConversation:
         bad_resp = _mock_response(
             content="", finish_reason="tool_calls", tool_calls=[bad_tc],
         )
-        agent.client.chat.completions.create.side_effect = [good_resp, bad_resp]
+        # Fork: a truncated tool call is first retried twice with a "write
+        # smaller" nudge (agent/conversation_loop.py, _TRUNCATED_TOOL_ARGS_NUDGE)
+        # before the turn closes; keep truncating through those retries.
+        agent.client.chat.completions.create.side_effect = [good_resp, bad_resp, bad_resp, bad_resp]
 
         with (
             patch("run_agent.handle_function_call", return_value='{"success":true}'),
