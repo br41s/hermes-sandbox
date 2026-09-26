@@ -99,7 +99,8 @@ class TestRunJobSessionPersistenceFork:
             "enabled": True,
         }
         with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
-             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", side_effect=lambda jid, return_job=False, **_kw: dict(job)), \
              patch("cron.scheduler.run_one_job", return_value=True), \
              patch("cron.scheduler.create_execution", return_value={"id": "exec-1"}) as mock_create:
             assert tick(verbose=False, sync=True, adapters=None) == 1
@@ -119,7 +120,8 @@ class TestRunJobSessionPersistenceFork:
             "enabled": True,
         }
         with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
-             patch("cron.scheduler.advance_next_run"), \
+             patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", side_effect=lambda jid, return_job=False, **_kw: dict(job)), \
              patch("cron.scheduler.run_one_job", return_value=True), \
              patch("cron.scheduler.create_execution", return_value={"id": "exec-2"}) as mock_create:
             assert tick(verbose=False, sync=True, adapters={"telegram": object()}) == 1
@@ -232,7 +234,11 @@ class TestKickoffPing:
         manager.attach_mock(ping_mock, "ping")
         manager.attach_mock(run_mock, "run")
 
-        with patch("cron.scheduler.get_due_jobs", return_value=[self._telegram_job()]), \
+        job = self._telegram_job()
+        with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
+             patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler.claim_job_for_fire", side_effect=lambda jid, return_job=False, **_kw: dict(job)), \
+             patch("cron.scheduler.claim_dispatch", return_value=True), \
              patch("cron.scheduler._send_kickoff_ping", ping_mock), \
              patch("cron.scheduler.run_job", run_mock), \
              patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \

@@ -17,24 +17,28 @@
 import { useStore } from '@nanostores/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { atom, computed } from 'nanostores'
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 import { useModelControls } from '@/app/session/hooks/use-model-controls'
 import { blobToDataUrl } from '@/app/session/hooks/use-prompt-actions/utils'
+import { resolveStoredSession } from '@/app/session/hooks/use-session-actions/utils'
 import { ModelMenuPanel } from '@/app/shell/model-menu-panel'
 import { formatRefValue } from '@/components/assistant-ui/directive-text'
 import { CenteredThreadSpinner } from '@/components/assistant-ui/thread/status'
 import { findGroupOfPane } from '@/components/pane-shell/tree/model'
-import { $layoutTree, moveTreePane, setTreeGroupHeaderHidden } from '@/components/pane-shell/tree/store'
+import { $layoutTree, closeTreePane, moveTreePane, setTreeGroupTabStrip } from '@/components/pane-shell/tree/store'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { transcribeAudio } from '@/hermes'
 import { useI18n } from '@/i18n'
 import type { ChatMessage } from '@/lib/chat-messages'
-import { sessionTitle } from '@/lib/chat-runtime'
-import { createComposerAttachmentScope } from '@/store/composer'
+import { NEW_SESSION_TITLE, sessionTitle } from '@/lib/chat-runtime'
+import { transcribeAudioClientDirect } from '@/lib/voice-client-direct'
+import { createComposerAttachmentScope, draftTitleFor } from '@/store/composer'
 import { $pinnedSessionIds, pinSession, unpinSession } from '@/store/layout'
+import { $activeGatewayProfile } from '@/store/profile'
+import { $projectTree } from '@/store/projects'
 import { sessionAwaitingInput } from '@/store/prompts'
 import {
   $gatewayState,
@@ -43,22 +47,26 @@ import {
   sessionMatchesStoredId,
   sessionPinId
 } from '@/store/session'
-import { $sessionColorById, sessionColorFor } from '@/store/session-color'
+import { requestForSessionProfile } from '@/store/session-request-router'
 import {
   $sessionStates,
+  $sessionTileDelegateRevision,
   $sessionTiles,
   closeSessionTile,
-  discardSessionTile,
   patchSessionTile,
   type SessionTile,
-  sessionTileDelegate
+  sessionTileDelegate,
+  sessionTileOwnerRoute
 } from '@/store/session-states'
+import type { SessionInfo } from '@/types/hermes'
 
 import type { SessionDragPayload } from './composer/inline-refs'
 import { type ComposerScope, ComposerScopeProvider } from './composer/scope'
 import { useComposerActions } from './hooks/use-composer-actions'
 import { paneMirror } from './pane-mirror'
+import { SessionDraftTitle } from './session-draft-title'
 import { startSessionDrag } from './session-drag'
+import { SessionStatusDot } from './session-status-dot'
 import { useSessionTileActions } from './session-tile-actions'
 import { type SessionView, SessionViewProvider } from './session-view'
 import { SessionContextMenu } from './sidebar/session-actions-menu'
@@ -67,6 +75,26 @@ import { lastVisibleMessageIsUser } from './thread-loading'
 import { ChatView } from '.'
 
 const NO_MESSAGES: ChatMessage[] = []
+
+export function sessionTileResumeFailure(
+  message: string,
+  durableSessionFound: boolean | undefined,
+  tileStillUnbound: boolean
+): string | undefined {
+  if (!tileStillUnbound) {
+    return undefined
+  }
+
+  if (!/session not found|\b404\b/i.test(message)) {
+    return message
+  }
+
+  if (durableSessionFound) {
+    return 'Session is still available — retry resuming it.'
+  }
+
+  return 'Session unavailable — you can retry resuming it.'
+}
 
 /** The tile's SessionView: the same atom shape the primary chat renders
  *  from, computed from this session's slice of `$sessionStates`. */
@@ -96,8 +124,26 @@ function buildTileView(storedSessionId: string): SessionView {
     $reasoningEffort: computed($state, state => state?.reasoningEffort ?? ''),
     $runtimeId,
     // Constant for the tile's lifetime — a plain atom, not a computed.
-    $storedId: atom(storedSessionId)
+    $storedId: atom(storedSessionId),
+    $turnStartedAt: computed($state, state => state?.turnStartedAt ?? null)
   }
+}
+
+// Module-level constants so these ChatView props are referentially stable —
+// tiles have no pin/delete affordance, and transcription needs no per-tile state.
+const noop = () => undefined
+
+const tileTranscribeAudio = async (audio: Blob) => {
+  // Client-direct first (profile's own STT provider, no gateway audio hop);
+  // relay when the provider is not client-callable. Same ladder as the main
+  // composer's transcribeVoiceAudio.
+  const direct = await transcribeAudioClientDirect(audio)
+
+  if (direct !== null) {
+    return direct
+  }
+
+  return (await transcribeAudio(await blobToDataUrl(audio), audio.type)).transcript
 }
 
 function TileChat({
@@ -109,9 +155,18 @@ function TileChat({
   storedSessionId: string
   view: SessionView
 }) {
-  const { gatewayRef, requestGateway } = useGatewayRequest()
+  const { gateway, requestGateway } = useGatewayRequest()
   const queryClient = useQueryClient()
-  const { selectModel } = useModelControls({ queryClient, requestGateway })
+  const ownerRoute = sessionTileOwnerRoute(storedSessionId)
+
+  const requestTileGateway = useCallback(
+    <T,>(method: string, params?: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal): Promise<T> =>
+      requestForSessionProfile<T>(ownerRoute, requestGateway, method, params, timeoutMs, signal),
+    [ownerRoute, requestGateway]
+  )
+
+  const { selectModel } = useModelControls({ queryClient, requestGateway: requestTileGateway })
+  const activeGatewayProfile = useStore($activeGatewayProfile)
   const cwd = useStore(view.$cwd)
   const gatewayOpen = useStore($gatewayState) === 'open'
 
@@ -121,24 +176,55 @@ function TileChat({
   const scope = useMemo<ComposerScope>(
     () => ({
       $awaitingInput: sessionAwaitingInput(runtimeId),
+      $messages: view.$messages,
       attachments,
-      popoutAllowed: false,
-      readMessages: () => view.$messages.get(),
       target: `tile:${storedSessionId}`
     }),
     [attachments, runtimeId, storedSessionId, view.$messages]
   )
 
-  const actions = useSessionTileActions({ runtimeId, scope, storedSessionId })
+  // Tile actions must keep the persisted owner route. The ambient gateway hook
+  // follows foreground focus and can point at another backend during restore or
+  // reconnect, which turns a recoverable stale runtime into "session not found".
+  const actions = useSessionTileActions({ requestGateway: requestTileGateway, runtimeId, scope, storedSessionId })
 
   // The same attach/pick/paste/drop pipeline the primary composer uses,
   // pointed at this tile's chips + session.
   const composer = useComposerActions({
     activeSessionId: runtimeId,
     currentCwd: cwd,
-    requestGateway,
-    scope: { add: attachments.add, remove: attachments.remove, target: scope.target }
+    requestGateway: requestTileGateway,
+    scope: {
+      add: attachments.add,
+      remove: attachments.remove,
+      target: scope.target,
+      update: attachments.update,
+      updateIfCurrent: attachments.updateIfCurrent
+    }
   })
+
+  // ChatView is memo()d — every callback prop must be referentially stable or
+  // the memo never holds and each tile-level render (idle ticks, unrelated
+  // store updates) re-renders the whole chat shell. The individual composer
+  // functions are useCallback'd inside useComposerActions, so hoisting these
+  // wrappers onto them keeps identity stable across renders.
+  const { addContextRefAttachment, pasteClipboardImage, pickContextPaths, pickImages, removeAttachment } = composer
+
+  const onAddUrl = useCallback(
+    (url: string) => addContextRefAttachment(`@url:${formatRefValue(url)}`, url),
+    [addContextRefAttachment]
+  )
+
+  const onPasteClipboardImage = useCallback(
+    (opts?: { silent?: boolean }) => pasteClipboardImage(opts),
+    [pasteClipboardImage]
+  )
+
+  const onPickFiles = useCallback(() => void pickContextPaths('file'), [pickContextPaths])
+  const onPickFolders = useCallback(() => void pickContextPaths('folder'), [pickContextPaths])
+  const onPickImages = useCallback(() => void pickImages(), [pickImages])
+  const onRemoveAttachment = useCallback((id: string) => void removeAttachment(id), [removeAttachment])
+  const onRetryResume = useCallback(() => patchSessionTile(storedSessionId, { error: undefined }), [storedSessionId])
 
   // Per-tile model menu — rendered under this tile's SessionView so the pill
   // + switch target THIS runtime, not the primary (which may be mid-turn).
@@ -146,42 +232,42 @@ function TileChat({
     () =>
       gatewayOpen ? (
         <ModelMenuPanel
-          gateway={gatewayRef.current || undefined}
           onSelectModel={selectModel}
-          requestGateway={requestGateway}
+          profile={ownerRoute?.targetProfile || ownerRoute?.profile || activeGatewayProfile}
+          requestGateway={requestTileGateway}
         />
       ) : null,
-    [gatewayOpen, gatewayRef, requestGateway, selectModel]
+    [activeGatewayProfile, gatewayOpen, ownerRoute?.profile, ownerRoute?.targetProfile, requestTileGateway, selectModel]
   )
 
   return (
     <SessionViewProvider value={view}>
       <ComposerScopeProvider value={scope}>
         <ChatView
-          gateway={gatewayRef.current}
+          gateway={gateway}
           modelMenuContent={modelMenuContent}
-          onAddContextRef={composer.addContextRefAttachment}
-          onAddUrl={url => composer.addContextRefAttachment(`@url:${formatRefValue(url)}`, url)}
+          onAddContextRef={addContextRefAttachment}
+          onAddUrl={onAddUrl}
           onAttachDroppedItems={composer.attachDroppedItems}
           onAttachImageBlob={composer.attachImageBlob}
-          onBranchInNewChat={() => undefined}
+          onAttachPrCommentUrl={composer.attachPrCommentUrl}
           onCancel={actions.cancelRun}
-          onDeleteSelectedSession={() => undefined}
+          onDeleteSelectedSession={noop}
           onDismissError={actions.dismissError}
           onEdit={actions.editMessage}
-          onPasteClipboardImage={opts => composer.pasteClipboardImage(opts)}
-          onPickFiles={() => void composer.pickContextPaths('file')}
-          onPickFolders={() => void composer.pickContextPaths('folder')}
-          onPickImages={() => void composer.pickImages()}
+          onPasteClipboardImage={onPasteClipboardImage}
+          onPickFiles={onPickFiles}
+          onPickFolders={onPickFolders}
+          onPickImages={onPickImages}
           onReload={actions.reloadFromMessage}
-          onRemoveAttachment={id => void composer.removeAttachment(id)}
+          onRemoveAttachment={onRemoveAttachment}
           onRestoreToMessage={actions.restoreToMessage}
-          onRetryResume={() => patchSessionTile(storedSessionId, { error: undefined })}
+          onRetryResume={onRetryResume}
           onSteer={actions.steerPrompt}
           onSubmit={actions.submitText}
           onThreadMessagesChange={actions.handleThreadMessagesChange}
-          onToggleSelectedPin={() => undefined}
-          onTranscribeAudio={async audio => (await transcribeAudio(await blobToDataUrl(audio), audio.type)).transcript}
+          onToggleSelectedPin={noop}
+          onTranscribeAudio={tileTranscribeAudio}
         />
       </ComposerScopeProvider>
     </SessionViewProvider>
@@ -191,15 +277,70 @@ function TileChat({
 export function SessionTilePane({ storedSessionId }: { storedSessionId: string }) {
   const tiles = useStore($sessionTiles)
   const tile = tiles.find(t => t.storedSessionId === storedSessionId)
+  const ownerRoute = tile?.ownerRoute
   const runtimeId = tile?.runtimeId ?? null
   const gatewayOpen = useStore($gatewayState) === 'open'
+  const delegateRevision = useStore($sessionTileDelegateRevision)
   const resumingRef = useRef(false)
   const view = useMemo(() => buildTileView(storedSessionId), [storedSessionId])
+
+  const storedSessionStillExists = useCallback(
+    () => $sessions.get().some(s => sessionMatchesStoredId(s, storedSessionId)),
+    [storedSessionId]
+  )
+
+  // A tab-strip "+"/⌘T tab is created UNLISTED — its session stays out of
+  // $sessions (no sidebar clutter) until it's actually used, so the tab shows
+  // "New session". The moment this tile has a message, pull its row into
+  // $sessions via the lightweight by-id lookup so the tab (and a sidebar row)
+  // resolve the real title. `resolveStoredSession` no-ops when it's already
+  // listed, and 404s harmlessly for an in-memory draft that hasn't persisted a
+  // turn yet — so we retry across that brief persist lag and stop as soon as it
+  // lands (a global turn-complete refresh may beat us to it).
+  const hasMessages = useStore(view.$messagesEmpty) === false
+
+  useEffect(() => {
+    const alreadyListed = storedSessionStillExists
+
+    if (!runtimeId || !hasMessages || alreadyListed()) {
+      return
+    }
+
+    let cancelled = false
+    let timer: number | undefined
+
+    const attempt = (remaining: number) => {
+      if (cancelled || alreadyListed()) {
+        return
+      }
+
+      void resolveStoredSession(storedSessionId, ownerRoute)
+        .then(resolved => {
+          if (cancelled || resolved || remaining <= 0) {
+            return
+          }
+
+          timer = window.setTimeout(() => attempt(remaining - 1), 500)
+        })
+        .catch(() => undefined)
+    }
+
+    attempt(6)
+
+    return () => {
+      cancelled = true
+
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [hasMessages, ownerRoute, runtimeId, storedSessionId, storedSessionStillExists])
 
   // Same gating as the primary's route resume (use-route-resume): never fire
   // session.resume before the gateway is OPEN. Persisted tiles mount at boot
   // while it's still connecting — an ungated resume rejected there and
   // latched every restored tile into the error card.
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (!gatewayOpen || runtimeId || tile?.error || resumingRef.current) {
       return
@@ -216,22 +357,32 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
     delegate
       .resumeTile(storedSessionId)
       .then(id => patchSessionTile(storedSessionId, { error: undefined, runtimeId: id }))
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         const message = err instanceof Error ? err.message : String(err)
 
-        // A gone session (404 / "Session not found") is terminal — a stale or
-        // cross-profile persisted tile. Discard it instead of latching an error
-        // that re-retries on every reconnect (the "Session not found" spam).
-        if (/session not found|\b404\b/i.test(message)) {
-          discardSessionTile(storedSessionId)
-        } else {
+        if (!/session not found|\b404\b/i.test(message)) {
           patchSessionTile(storedSessionId, { error: message })
+
+          return
+        }
+
+        // A recents page is not authoritative, and resolveStoredSession()
+        // intentionally treats transient probe failures like a miss. Await it
+        // before releasing this resume attempt, then fail safe: a tile may be
+        // retried by the user, but must never be deleted on an inconclusive
+        // reconnect-time lookup.
+        const durableSession = await resolveStoredSession(storedSessionId, ownerRoute).catch(() => undefined)
+        const current = $sessionTiles.get().find(candidate => candidate.storedSessionId === storedSessionId)
+        const error = sessionTileResumeFailure(message, Boolean(durableSession), Boolean(current && !current.runtimeId))
+
+        if (error) {
+          patchSessionTile(storedSessionId, { error })
         }
       })
       .finally(() => {
         resumingRef.current = false
       })
-  }, [gatewayOpen, runtimeId, storedSessionId, tile?.error])
+  }, [delegateRevision, gatewayOpen, ownerRoute, runtimeId, storedSessionId, tile?.error])
 
   // The gateway (re)opening invalidates any latched error — it likely came
   // from a not-yet-open gateway or the previous connection. Clearing it
@@ -275,23 +426,43 @@ export function SessionTilePane({ storedSessionId }: { storedSessionId: string }
 // Tile -> pane contribution sync (call once from the app root).
 // ---------------------------------------------------------------------------
 
+/** Resolve a tile's stored row: the recents list first, then the project
+ *  tree. A session opened as a tab from a project group is often older than
+ *  the paginated recents page, so it has no `$sessions` row at all until new
+ *  activity lands it there — resolving through the tree keeps its tab titled
+ *  and tinted instead of a grey "Session" placeholder. */
+export function tileStoredRow(storedSessionId: string): SessionInfo | undefined {
+  const match = (s: SessionInfo) => sessionMatchesStoredId(s, storedSessionId)
+
+  return (
+    $sessions.get().find(match) ??
+    $projectTree
+      .get()
+      .flatMap(p => [...p.repos.flatMap(r => r.groups.flatMap(g => g.sessions)), ...(p.previewSessions ?? [])])
+      .find(match)
+  )
+}
+
+/** The tab's REGISTERED name. Deliberately the bare placeholder for a draft
+ *  rather than its live composer title (`tabTitle` renders that): re-registering
+ *  per keystroke would re-render the strip, and holding the draft's text here
+ *  would let the registered name already match the row that lands on send —
+ *  skipping the re-register that hands the tab back to this string. */
 function tileTitle(storedSessionId: string): string {
-  const stored = $sessions.get().find(s => sessionMatchesStoredId(s, storedSessionId))
+  const stored = tileStoredRow(storedSessionId)
+  const explicit = $sessionTiles.get().find(tile => tile.storedSessionId === storedSessionId)?.workspaceTabTitle
 
-  return stored ? sessionTitle(stored) : 'Session'
+  return stored ? sessionTitle(stored) : explicit || NEW_SESSION_TITLE
 }
 
-/** The tab's lead-dot color — the tile's session resolved through the SAME
- *  shared map the sidebar reads, so a row and its tab always agree. */
-function tileAccent(storedSessionId: string): string | undefined {
-  return sessionColorFor($sessions.get().find(s => sessionMatchesStoredId(s, storedSessionId)))
-}
-
-/** The `@session` link payload for a tile tab drag — id + owning profile + title. */
+/** The `@session` link payload for a tile tab drag — id + owning profile + title.
+ *  Resolved at drag time, so an unsent tab drags under its draft name. */
 function tileDragPayload(storedSessionId: string): SessionDragPayload {
-  const stored = $sessions.get().find(s => sessionMatchesStoredId(s, storedSessionId))
+  const stored = tileStoredRow(storedSessionId)
+  const explicit = $sessionTiles.get().find(tile => tile.storedSessionId === storedSessionId)?.workspaceTabTitle
+  const title = stored ? sessionTitle(stored) : explicit || draftTitleFor(storedSessionId) || NEW_SESSION_TITLE
 
-  return { id: storedSessionId, profile: stored?.profile ?? '', title: tileTitle(storedSessionId) }
+  return { id: storedSessionId, profile: stored?.profile ?? '', title }
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +528,40 @@ export function stackSessionTilesIntoMain(): void {
   }
 }
 
+/** The three scalars the tab menu actually renders, derived from the stored
+ *  row. Subscribing to `$sessions` + `$projectTree` wholesale re-rendered
+ *  every tab's menu wrapper on ANY session-list or tree churn (polls, title
+ *  updates in other sessions) — for a context menu that's almost never open.
+ *  Same class as the TreeGroup fix (#72245): derive narrowly, bail out unless
+ *  the derived values change. */
+function useTileMenuRow(storedSessionId: string): { pinId: string; profile?: string; title: string } {
+  const cache = useRef<{ key: string; value: { pinId: string; profile?: string; title: string } } | null>(null)
+
+  const subscribe = useCallback((onChange: () => void) => {
+    const offSessions = $sessions.listen(onChange)
+    const offTree = $projectTree.listen(onChange)
+
+    return () => {
+      offSessions()
+      offTree()
+    }
+  }, [])
+
+  return useSyncExternalStore(subscribe, () => {
+    const stored = tileStoredRow(storedSessionId)
+    const pinId = stored ? sessionPinId(stored) : storedSessionId
+    const title = tileTitle(storedSessionId)
+    const profile = stored?.profile
+    const key = `${pinId}\u0000${title}\u0000${profile ?? ''}`
+
+    if (cache.current?.key !== key) {
+      cache.current = { key, value: { pinId, profile, title } }
+    }
+
+    return cache.current.value
+  })
+}
+
 /** A session TAB's context menu: the full session verb set (pin, copy id, new
  *  window, branch, rename, archive, delete) — the SAME menu a sidebar row
  *  gets, targeted through the tile delegate (whose verbs are generic over
@@ -378,10 +583,8 @@ export function SessionTabMenu({
   /** Layout-tree pane id — powers the Close-others/right/all verbs. */
   tabPaneId: string
 }) {
-  const sessions = useStore($sessions)
+  const { pinId, profile, title } = useTileMenuRow(storedSessionId)
   const pinnedSessionIds = useStore($pinnedSessionIds)
-  const stored = sessions.find(s => sessionMatchesStoredId(s, storedSessionId))
-  const pinId = stored ? sessionPinId(stored) : storedSessionId
   const pinned = pinnedSessionIds.includes(pinId)
 
   return (
@@ -394,11 +597,11 @@ export function SessionTabMenu({
         onHideTabBar={onHideTabBar}
         onPin={() => (pinned ? unpinSession(pinId) : pinSession(pinId))}
         pinned={pinned}
-        profile={stored?.profile}
+        profile={profile}
         sessionId={storedSessionId}
         surface="tab"
         tabPaneId={tabPaneId}
-        title={tileTitle(storedSessionId)}
+        title={title}
       >
         {children}
       </SessionContextMenu>
@@ -407,9 +610,10 @@ export function SessionTabMenu({
 }
 
 /** The MAIN tab's menu: the same session verbs targeting the primary's loaded
- *  session, plus the bar's off switch (the bar sticky-shows once a tab is
- *  ever gained; this is the explicit way back). A fresh draft has no session —
- *  no menu. */
+ *  session, plus Close (the tab empties to a fresh draft — the workspace pane
+ *  itself never leaves the tree) and the bar's off switch (the bar sticky-shows
+ *  once a tab is ever gained; this is the explicit way back). A fresh draft has
+ *  no session — no menu. */
 export function WorkspaceTabMenu({ children }: { children: React.ReactElement }) {
   const selected = useStore($selectedStoredSessionId)
 
@@ -418,7 +622,7 @@ export function WorkspaceTabMenu({ children }: { children: React.ReactElement })
     const group = tree ? findGroupOfPane(tree, 'workspace') : null
 
     if (group) {
-      setTreeGroupHeaderHidden(group.id, true)
+      setTreeGroupTabStrip(group.id, 'never')
     }
   }
 
@@ -427,7 +631,12 @@ export function WorkspaceTabMenu({ children }: { children: React.ReactElement })
   }
 
   return (
-    <SessionTabMenu onHideTabBar={hideTabBar} storedSessionId={selected} tabPaneId="workspace">
+    <SessionTabMenu
+      onClose={() => closeTreePane('workspace')}
+      onHideTabBar={hideTabBar}
+      storedSessionId={selected}
+      tabPaneId="workspace"
+    >
       {children}
     </SessionTabMenu>
   )
@@ -437,7 +646,10 @@ export function WorkspaceTabMenu({ children }: { children: React.ReactElement })
  *  `$sessions`). Tiles dock against main on the chosen edge, flex width. */
 export const watchSessionTiles = paneMirror<SessionTile>({
   source: $sessionTiles,
-  also: [$sessions, $sessionColorById],
+  // $projectTree: a tile whose session is older than the recents page resolves
+  // its title through the tree, which loads after the tiles register. (The tab's
+  // status dot subscribes to color/state itself, so it needs no `also` entry.)
+  also: [$sessions, $projectTree],
   key: t => t.storedSessionId,
   prefix: 'session-tile',
   dir: t => t.dir,
@@ -445,7 +657,20 @@ export const watchSessionTiles = paneMirror<SessionTile>({
   before: t => t.before,
   minWidth: '20rem',
   title: tileTitle,
-  accent: tileAccent,
+  // The tab's status dot — the SAME primitive the sidebar row renders, keyed by
+  // the stored id, so a session's status/color can never disagree between the
+  // two surfaces. Self-subscribing (live state + resolved color), so the strip
+  // needn't re-sync when it changes.
+  tabLead: storedSessionId => (
+    <SessionStatusDot session={tileStoredRow(storedSessionId)} storedSessionId={storedSessionId} />
+  ),
+  // Until the first turn lists a row there is no title to register, so the tab
+  // takes its name from the composer instead — live, without re-registering.
+  tabTitle: storedSessionId =>
+    tileStoredRow(storedSessionId) ||
+    $sessionTiles.get().some(tile => tile.storedSessionId === storedSessionId && tile.workspaceTabTitle) ? null : (
+      <SessionDraftTitle scope={storedSessionId} />
+    ),
   render: storedSessionId => <SessionTilePane storedSessionId={storedSessionId} />,
   tabWrap: (storedSessionId, tab) => (
     <SessionTabMenu
@@ -457,9 +682,9 @@ export const watchSessionTiles = paneMirror<SessionTile>({
     </SessionTabMenu>
   ),
   // A tile's tab drags like a sidebar row — stack / split / drop-to-link — with
-  // its tap (activate) + double-tap (hide bar) preserved. Always takes the drag.
-  tabDrag: (storedSessionId, event, onTap, double) => {
-    startSessionDrag(tileDragPayload(storedSessionId), event, { double, onTap })
+  // its tap (activate) preserved. Always takes the drag.
+  tabDrag: (storedSessionId, event, onTap) => {
+    startSessionDrag(tileDragPayload(storedSessionId), event, { onTap })
 
     return true
   },
