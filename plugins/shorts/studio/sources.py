@@ -40,6 +40,18 @@ class SourceError(RuntimeError):
     pass
 
 
+
+def _pexels_key() -> str:
+    """PEXELS_API_KEY through the profile secret scope, so a rental's own key
+    (BYOK) is used inside its cron run. The studio renderer imports this module
+    in GitHub Actions without the Hermes tree's dependencies, so it falls back
+    to the plain environment when ``agent.secret_scope`` is unavailable."""
+    try:
+        from agent.secret_scope import get_secret
+    except Exception:
+        return (os.environ.get("PEXELS_API_KEY") or "").strip()
+    return (get_secret("PEXELS_API_KEY") or "").strip()
+
 def _client():
     import httpx
 
@@ -63,7 +75,7 @@ def _slug(query: str) -> str:
 
 
 def pexels_candidates(query: str) -> List[Dict]:
-    key = (os.environ.get("PEXELS_API_KEY") or "").strip()
+    key = _pexels_key()
     if not key:
         return []
     from plugins.shorts.stock import StockError, search_clips

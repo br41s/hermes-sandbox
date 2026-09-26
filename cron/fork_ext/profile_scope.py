@@ -177,10 +177,15 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
     .env/config loading, script resolution, AIAgent construction, and downstream
     get_hermes_home() callers agree on the same home.
 
-    Some existing provider/config paths still load profile .env values through
-    os.environ, so profile jobs also snapshot and restore the process
-    environment on exit. tick() runs profile jobs sequentially to keep that
-    temporary mutation isolated from other scheduled jobs.
+    The profile's ``.env`` is installed as this run's secret scope
+    (``agent.secret_scope.set_secret_scope``, a ContextVar) and is never
+    written into ``os.environ``: ``get_secret``/``get_env_value`` readers see
+    the profile's values, terminal and script children get them through
+    ``child_env_overlay``, and a job running concurrently on another thread
+    keeps seeing only the process environment. That is what lets upstream
+    v2026.8.31 drop ``_terminal_cwd_lock`` without a plain job reading a
+    profile job's keys. The snapshot/restore of ``os.environ`` below stays as
+    a backstop for any code that still writes there.
 
     Raises ``ProfileResolutionError`` (rather than falling back to the
     scheduler's default profile) if the configured profile can't be resolved —
@@ -224,9 +229,21 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
             f"profile {raw_profile!r} could not be resolved: {exc}"
         ) from exc
 
+    from agent.secret_scope import (
+        build_profile_secret_scope,
+        reset_secret_scope,
+        set_secret_scope,
+    )
+
     override_token = None
+    scope_token = None
     try:
         override_token = set_hermes_home_override(profile_home)
+        # Replaces the scheduler's scope for the length of the run: that one
+        # is built from the scheduler's own home before this context is
+        # entered, so without this a profile job read the DEFAULT profile's
+        # .env through every get_secret() call.
+        scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
         _assert_own_subprocess_identity(job_id, normalized_profile, profile_home)
         logger.info(
             "Job '%s': using Hermes profile '%s' (%s)",
@@ -236,6 +253,8 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
         )
         yield normalized_profile
     finally:
+        if scope_token is not None:
+            reset_secret_scope(scope_token)
         if override_token is not None:
             reset_hermes_home_override(override_token)
         # Delta-based restore: remove added keys, restore changed keys.

@@ -373,7 +373,8 @@ class GitHubAuth:
                 return self._cached_token
 
         # 1. Environment variable
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        from agent.secret_scope import get_secret
+        token = get_secret("GITHUB_TOKEN") or get_secret("GH_TOKEN")
         if token:
             self._cached_token = token
             self._cached_method = "pat"

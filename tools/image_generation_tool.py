@@ -511,7 +511,8 @@ def _submit_fal_request(model: str, arguments: Dict[str, Any]):
     request_headers = {"x-idempotency-key": str(uuid.uuid4())}
     managed_gateway = _resolve_managed_fal_gateway()
     if managed_gateway is None:
-        return fal_client.submit(model, arguments=arguments, headers=request_headers)
+        from hermes_cli.fork_ext.profile_env import fal_client_for_current_key
+        return fal_client_for_current_key(fal_client).submit(model, arguments=arguments, headers=request_headers)
 
     managed_client = _get_managed_fal_client(managed_gateway)
     try:

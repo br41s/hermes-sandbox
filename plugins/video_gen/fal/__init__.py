@@ -371,7 +371,8 @@ def _submit_fal_video_request(endpoint: str, arguments: Dict[str, Any]):
     request_headers = {"x-idempotency-key": str(uuid.uuid4())}
     managed_gateway = _resolve_managed_fal_video_gateway()
     if managed_gateway is None:
-        return _fal_client.submit(endpoint, arguments=arguments, headers=request_headers)
+        from hermes_cli.fork_ext.profile_env import fal_client_for_current_key
+        return fal_client_for_current_key(_fal_client).submit(endpoint, arguments=arguments, headers=request_headers)
 
     managed_client = _get_managed_fal_video_client(managed_gateway)
     try:

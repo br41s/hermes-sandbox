@@ -30,9 +30,21 @@ class StockError(RuntimeError):
     """Raised when stock search cannot be performed or returns nothing usable."""
 
 
+
+def _pexels_key() -> str:
+    """PEXELS_API_KEY through the profile secret scope, so a rental's own key
+    (BYOK) is used inside its cron run. The studio renderer imports this module
+    in GitHub Actions without the Hermes tree's dependencies, so it falls back
+    to the plain environment when ``agent.secret_scope`` is unavailable."""
+    try:
+        from agent.secret_scope import get_secret
+    except Exception:
+        return (os.environ.get("PEXELS_API_KEY") or "").strip()
+    return (get_secret("PEXELS_API_KEY") or "").strip()
+
 def api_key() -> Optional[str]:
     """Return the configured Pexels key, or None when stock search is off."""
-    value = (os.environ.get("PEXELS_API_KEY") or "").strip()
+    value = _pexels_key()
     return value or None
 
 

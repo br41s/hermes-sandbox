@@ -3186,6 +3186,10 @@ def _run_job_impl(
     # `cron-seq` pool that runs alongside `cron-parallel`, which is the same
     # change that turned the `_hermes_home` global into a live leak (see
     # `_job_profile_context`). The env is that bug's twin; this closes it.
+    #
+    # Profile jobs no longer write their .env into os.environ at all (it is
+    # the run's secret scope instead), so this is now a backstop rather than
+    # the guarantee — which is what lets upstream v2026.8.31 delete the lock.
     _holds_cwd_write = _job_workdir is not None or bool(str(job.get("profile") or "").strip())
     if _holds_cwd_write:
         _terminal_cwd_lock.acquire_write()
@@ -3219,7 +3223,10 @@ def _run_job_impl(
             reset_secret_source_cache,
         )
         reset_secret_source_cache()
-        load_hermes_dotenv(hermes_home=_get_hermes_home())
+        # A profile job's .env is its secret scope, never os.environ: see
+        # cron/fork_ext/profile_scope.py (_job_profile_context).
+        if not str(job.get("profile") or "").strip():
+            load_hermes_dotenv(hermes_home=_get_hermes_home())
 
         delivery_target = _resolve_delivery_target(job)
         if delivery_target:
