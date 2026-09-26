@@ -130,10 +130,18 @@ def test_cli_caps_prs_per_run_and_reports_the_remainder(monkeypatch, capsys, tmp
 
 
 def test_default_limit_fits_the_agent_iteration_budget():
-    """~6-8 iterations per PR against ``run_agent`` ``max_iterations=90``."""
-    import re
-    src = (REPO_ROOT / "run_agent.py").read_text(encoding="utf-8")
-    max_iters = int(re.search(r"max_iterations: int = (\d+)", src).group(1))
+    """~6-8 iterations per PR against the agent's turn cap.
+
+    Upstream v2026.8.31 made the loop's own default unlimited; the cap the
+    auditor actually runs under is ``agent.max_turns``, which the boot hook
+    pins on every profile (docker/cont-init.d/03-biglobster-config).
+    """
+    import ast
+    src = (REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
+    start = src.index("pin_if_missing = {")
+    end = src.index("}", start) + 1
+    pins = ast.literal_eval(src[start + len("pin_if_missing = "):end])
+    max_iters = pins[("agent", "max_turns")]
     assert pending.DEFAULT_LIMIT * 8 < max_iters, (
         f"limit {pending.DEFAULT_LIMIT} x 8 iterations exceeds the {max_iters} cap"
     )

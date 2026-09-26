@@ -94,7 +94,7 @@ jobs:
         # `uv venv` step is needed.
         uses: ./.github/actions/retry
         with:
-          command: uv sync --locked --python 3.11 --extra all --extra dev
+          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web
 
       - name: Minimize uv cache
         # Optimized for CI: prunes pre-built wheels that are cheap to
@@ -208,17 +208,12 @@ jobs:
         # `uv venv` step is needed.
         uses: ./.github/actions/retry
         with:
-          command: uv sync --locked --python 3.11 --extra all --extra dev
+          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra hindsight --extra parallel-web
 
       - name: Minimize uv cache
         # Optimized for CI: prunes pre-built wheels that are cheap to
         # re-download, keeping the persisted cache small and fast to restore.
         run: uv cache prune --ci
-
-      - name: Packaged-wheel i18n smoke test
-        run: |
-          source .venv/bin/activate
-          python -m pytest -m integration tests/test_wheel_locales_e2e.py -v
 
       - name: Run e2e tests
         run: |

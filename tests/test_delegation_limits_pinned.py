@@ -24,7 +24,8 @@ BOOT_SCRIPT = REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config"
 SEED_CONFIG = REPO_ROOT / "docker" / "config.yaml"
 
 EXPECTED = {("delegation", "max_iterations"): 50,
-            ("delegation", "max_concurrent_children"): 3}
+            ("delegation", "max_concurrent_children"): 3,
+            ("agent", "max_turns"): 90}
 
 
 @pytest.fixture(scope="module")
@@ -63,12 +64,15 @@ def test_absent_keys_are_written(boot_text: str, pins: dict) -> None:
     cfg = {"agent": {"max_turns": 90}}
     assert _apply(boot_text, pins, cfg) is True
     assert cfg["delegation"] == {"max_iterations": 50, "max_concurrent_children": 3}
+    assert cfg["agent"] == {"max_turns": 90}
 
 
 def test_a_profiles_own_choice_is_kept(boot_text: str, pins: dict) -> None:
-    cfg = {"delegation": {"max_iterations": 120, "max_concurrent_children": 5}}
+    cfg = {"delegation": {"max_iterations": 120, "max_concurrent_children": 5},
+           "agent": {"max_turns": 200}}
     assert _apply(boot_text, pins, cfg) is False
     assert cfg["delegation"] == {"max_iterations": 120, "max_concurrent_children": 5}
+    assert cfg["agent"] == {"max_turns": 200}
 
 
 def test_is_idempotent(boot_text: str, pins: dict) -> None:

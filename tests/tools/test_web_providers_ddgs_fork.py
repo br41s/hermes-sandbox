@@ -67,8 +67,14 @@ class TestDDGSProviderLazyInstall:
             "tools.lazy_deps.ensure",
             lambda feature, **kw: calls.append((feature, kw)),
         )
+        from plugins.web.ddgs import provider as ddgs_provider
         from plugins.web.ddgs.provider import DDGSWebSearchProvider
 
+        # v2026.8.31 runs the search in a spawn worker, which cannot see the
+        # fake ddgs; route through the in-process helper like upstream's tests.
+        from tests.tools.test_web_providers_ddgs import _force_inprocess_search
+
+        _force_inprocess_search(monkeypatch, ddgs_provider)
         result = DDGSWebSearchProvider().search("q", limit=5)
 
         assert result["success"] is True

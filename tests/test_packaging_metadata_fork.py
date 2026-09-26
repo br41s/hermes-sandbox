@@ -82,6 +82,14 @@ def _lazy_deps_pinned_specs():
 
 _PIN_OK_MARKER = "pin-literal-ok"
 
+# Upstream test files whose off-version pins are fixture data for lockfile /
+# dependency-sync parsing, not claims about what we ship. Listed here rather
+# than marked inline so upstream's files stay byte-identical across merges.
+_UPSTREAM_FIXTURE_PIN_FILES = {
+    "tests/hermes_cli/test_early_recovery.py",
+    "tests/hermes_cli/test_update_self_lock.py",
+}
+
 
 def _test_pin_literals():
     """(file, lineno, spec) for every `pkg==version` literal under tests/.
@@ -92,6 +100,8 @@ def _test_pin_literals():
     """
     out = []
     for path in sorted((REPO_ROOT / "tests").rglob("*.py")):
+        if path.relative_to(REPO_ROOT).as_posix() in _UPSTREAM_FIXTURE_PIN_FILES:
+            continue
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except Exception:
