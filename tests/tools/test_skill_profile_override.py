@@ -34,11 +34,11 @@ _DYNAMIC_PATH_NAMES = (
     "AUDIT_LOG", "TAPS_FILE", "INDEX_CACHE_DIR", "HERMES_INDEX_CACHE_FILE",
     "MANIFEST_FILE",
 )
-# tools.skills_sync is not here: since v2026.8.31 it is upstream's module,
-# whose path names are real constants read by per-call resolvers, not
+# tools.skills_sync, skills_tool and skill_manager_tool are not here: they are
+# upstream's modules (v2026.8.31 / v2026.9.24), whose path names are real
+# constants read by per-call resolvers (``_skills_dir()``), not
 # __getattr__-served — popping them would break the module.
 _SKILL_MODULES = (
-    "tools.skills_tool", "tools.skill_manager_tool",
     "tools.skills_hub",
 )
 
@@ -116,8 +116,9 @@ def test_skill_manage_edit_resolves_overridden_profile(profile_layout):
 @pytest.mark.parametrize(
     "module_name, attr",
     [
-        ("tools.skills_tool", "SKILLS_DIR"),
-        ("tools.skill_manager_tool", "SKILLS_DIR"),
+        # v2026.9.24: both skill tools resolve per call via _skills_dir().
+        ("tools.skills_tool", "_skills_dir"),
+        ("tools.skill_manager_tool", "_skills_dir"),
         ("tools.skills_hub", "HUB_DIR"),
         # v2026.8.31: upstream resolves this per call instead of via a module
         # attribute (tools/skills_sync.py:_manifest_file), which covers the

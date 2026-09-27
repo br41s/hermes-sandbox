@@ -418,6 +418,12 @@ overrides = {
     # model's summary surfaced as a RuntimeError. Raised to 90 (run_agent's own
     # default). Enforced on main + every profile so the budget is uniform.
     ("agent", "max_turns"): 90,
+    # One default gateway serves Telegram; other profiles are reached through
+    # subprocesses. Upstream v2026.9.24 turns multiplexing on at boot and rewrites
+    # this key to true; hermes_cli/fork_ext/multiplex.py makes an explicit false
+    # still mean standalone. Forced, so adopting multiplex stays a deliberate change
+    # (drop this pin and that module together), never a boot-time drift.
+    ("gateway", "multiplex_profiles"): False,
 }
 # Cost ceilings the upstream merge would otherwise raise; applied only where a
 # config does not set them (see the loop below). Values = today's defaults.

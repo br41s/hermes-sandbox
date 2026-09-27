@@ -5,7 +5,7 @@ file keeps one-line call sites only. (The parser half — flags and the
 ``sync-prompt`` sub-parser — is ``hermes_cli/subcommands/cron_fork_ext.py``,
 kept out of this package so building the CLI parser never imports ``cron``.)
 
-- ``hermes_cli/cron.py`` calls :func:`print_list_rows`, :func:`job_api_kwargs`,
+- ``hermes_cli/cron.py`` calls :func:`list_rows`, :func:`job_api_kwargs`,
   :func:`print_kickoff_ping`, :func:`print_job_details` and
   :func:`reap_if_wedged`, and dispatches :data:`SUBCOMMANDS` before its own.
 
@@ -21,7 +21,7 @@ module at load time, and late binding keeps monkeypatches of its
 import logging
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 from hermes_cli.colors import Colors, color
 
@@ -45,28 +45,33 @@ def job_api_kwargs(args) -> Dict[str, Any]:
 # ------------------------------------------------------------------ output
 
 
-def print_list_rows(job: Dict[str, Any]) -> bool:
-    """Print the fork's ``cron list`` rows for *job*, right after Workdir.
+def list_rows(job: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """The fork's ``cron list`` rows for *job*, as upstream ``_job_rows`` ``(label, value)``
+    pairs; ``hermes_cli/cron.py`` places them right after Workdir.
 
-    Returns True when the job's last run was interrupted and its "Last run"
-    lines were printed here, so the caller must skip its own.
+    An interrupted run gets its own "Last run" rows here, and upstream's is skipped
+    (see :func:`replaces_last_run`).
     """
-    profile = job.get("profile")
-    if profile:
-        print(f"    Profile:   {profile}")
-    if job.get("last_status") != "interrupted":
-        return False
+    rows: List[Tuple[str, str]] = []
+    if job.get("profile"):
+        rows.append(("Profile", job["profile"]))
+    if not replaces_last_run(job):
+        return rows
     # last_run_at still points at the last run that actually COMPLETED,
     # so don't pair it with this status — print the two clocks apart or
     # the line reads as "the 09:25 run was interrupted", which is wrong.
-    print(f"    Last run:  {job.get('last_run_at') or 'never'}  (completed)")
-    print(
-        f"    {color('⚠ Interrupted:', Colors.RED)} "
-        f"{job.get('last_interrupted_at', '?')} — killed before it finished; "
-        f"not retried"
-    )
-    print(f"      inspect: hermes cron runs {job.get('id', '?')}")
-    return True
+    rows.append(("Last run", f"{job.get('last_run_at') or 'never'}  (completed)"))
+    rows.append((
+        color("⚠ Interrupted", Colors.RED),
+        f" {job.get('last_interrupted_at', '?')} — killed before it finished; not retried",
+    ))
+    rows.append(("  inspect", f"hermes cron runs {job.get('id', '?')}"))
+    return rows
+
+
+def replaces_last_run(job: Dict[str, Any]) -> bool:
+    """True when :func:`list_rows` prints this job's "Last run" rows itself."""
+    return job.get("last_status") == "interrupted"
 
 
 def print_kickoff_ping(job: Dict[str, Any]) -> None:

@@ -46,6 +46,20 @@ def make_cron_provider():
 
 
 @pytest.fixture(autouse=True)
+def _fork_silence_kickoff_ping(request, monkeypatch):
+    """fork: the start-of-run kickoff ping (cron/fork_ext/kickoff.py) is one extra send per
+    run, which breaks upstream tests that count deliveries. Silence it inside runs; the fork's
+    own ``*_fork`` modules keep it, and they call the real function directly anyway."""
+    if request.module.__name__.endswith("_fork"):
+        yield
+        return
+    import cron.scheduler as sched
+
+    monkeypatch.setattr(sched, "_send_kickoff_ping", lambda *_a, **_k: None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _default_cron_test_model(monkeypatch):
     """Pin a default HERMES_MODEL so cron run_job tests have a resolvable model."""
     monkeypatch.setenv("HERMES_MODEL", "test-cron-default-model")

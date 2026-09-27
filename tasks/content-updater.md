@@ -510,6 +510,7 @@ prompt asked for.
 ### Four defects the runs exposed, all now fixed
 
 1. **GSC data never reached the scanner.** STEP 0b said to write
+<!-- no-tmp: ok — incident notes: the /tmp path was the bug -->
    `/tmp/gsc.json`; `/tmp` is outside `HERMES_WRITE_SAFE_ROOT` (/opt/data), so
    `write_file` denied it, no file existed, no `--gsc` was passed, and every
    article ranked at reach 1.0. The MCP call itself worked fine — the data just

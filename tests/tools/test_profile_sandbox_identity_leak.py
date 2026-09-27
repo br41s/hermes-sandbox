@@ -212,11 +212,19 @@ def test_two_profiles_never_share_a_sandbox_key(tmp_path, monkeypatch):
     (root / "profiles" / "auditor").mkdir(parents=True)
     (root / "profiles" / "finview").mkdir(parents=True)
 
-    _set_home(monkeypatch, root, root / "profiles" / "auditor")
-    auditor_key = terminal_tool._resolve_container_task_id(None)
+    import hermes_constants
 
-    _set_home(monkeypatch, root, root / "profiles" / "finview")
-    finview_key = terminal_tool._resolve_container_task_id(None)
+    # Production switches profile per cron job with the task-scoped override
+    # (cron/fork_ext/profile_scope.py), not by mutating HERMES_HOME in the env.
+    _set_home(monkeypatch, root, root)
+    keys = []
+    for profile in ("auditor", "finview"):
+        token = hermes_constants.set_hermes_home_override(root / "profiles" / profile)
+        try:
+            keys.append(terminal_tool._resolve_container_task_id(None))
+        finally:
+            hermes_constants.reset_hermes_home_override(token)
+    auditor_key, finview_key = keys
 
     assert auditor_key != finview_key
     assert auditor_key != "default" and finview_key != "default"

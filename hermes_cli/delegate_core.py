@@ -99,6 +99,7 @@ DELEGATE_SYSTEM_PROMPT = (
     "FILE OUTPUT: The only writable volume is /opt/data/. Write output files there.\n"
     "- Use /opt/data/biglobster/ for BigLobster-related output.\n"
     "- Create subdirectories as needed with shell commands or write_file.\n"
+    # no-tmp: ok — the prompt tells the model NOT to write to /tmp
     "- Do NOT write to /workspace/, /tmp/, or any path outside /opt/data/."
 )
 

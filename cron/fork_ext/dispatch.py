@@ -155,7 +155,7 @@ def dispatch_job_async(job: dict) -> dict:
     pool = (
         get_sequential_executor()
         if is_sequential(job)
-        else sched._get_parallel_pool(sched._parallel_pool_max_workers)
+        else sched._get_parallel_pool(sched._resolve_max_parallel_workers())
     )
 
     # Upstream's single dedupe owner (v2026.8.31): also makes the run visible
@@ -163,18 +163,21 @@ def dispatch_job_async(job: dict) -> dict:
     if not sched.try_register_running_job(job_id):
         return {"queued": False, "reason": "already running"}
 
+    # The home the claim was registered under: the worker's ``finally`` runs outside ``ctx``, so
+    # release under it explicitly (upstream v2026.9.24's _submit_with_guard does the same).
+    claim_home = sched._get_hermes_home()
     ctx = contextvars.copy_context()
 
-    def _run_and_release(j=job, c=ctx):
+    def _run_and_release(j=job, c=ctx, home=claim_home):
         try:
             return c.run(sched.run_one_job, j)
         finally:
-            sched.release_running_job(j["id"])
+            sched.release_running_job(j["id"], home=home)
 
     try:
         pool.submit(_run_and_release)
         return {"queued": True, "reason": None}
     except Exception as submit_err:
-        sched.release_running_job(job_id)
+        sched.release_running_job(job_id, home=claim_home)
         logger.error("dispatch_job_async: job '%s' not dispatched: %s", job_id, submit_err)
         return {"queued": False, "reason": f"dispatch failed: {submit_err}"}

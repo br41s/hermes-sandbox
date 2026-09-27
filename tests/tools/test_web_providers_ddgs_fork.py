@@ -67,8 +67,14 @@ class TestDDGSProviderLazyInstall:
             "tools.lazy_deps.ensure",
             lambda feature, **kw: calls.append((feature, kw)),
         )
-        from plugins.web.ddgs import provider as ddgs_provider
-        from plugins.web.ddgs.provider import DDGSWebSearchProvider
+        # import_module, not `from plugins.web.ddgs import provider`: with the
+        # sys.modules entry dropped above, that form returns the package's stale
+        # attribute while a second import loads a fresh module, so the helper
+        # below would patch a different module than the one under test.
+        import importlib
+
+        ddgs_provider = importlib.import_module("plugins.web.ddgs.provider")
+        DDGSWebSearchProvider = ddgs_provider.DDGSWebSearchProvider
 
         # v2026.8.31 runs the search in a spawn worker, which cannot see the
         # fake ddgs; route through the in-process helper like upstream's tests.

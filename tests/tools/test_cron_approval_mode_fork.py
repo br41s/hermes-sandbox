@@ -40,7 +40,7 @@ class TestCronInsideGatewayProcess:
         monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
 
         from unittest.mock import patch as mock_patch
-        with mock_patch("tools.approval._get_cron_approval_mode", return_value="deny"):
+        with mock_patch("tools.approval_context._get_cron_approval_mode", return_value="deny"):
             # The exact command shape from the incident trace: a benign
             # `python3 -c` that matches "script execution via -e/-c flag".
             result = check_all_command_guards(
@@ -62,7 +62,7 @@ class TestCronInsideGatewayProcess:
         monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
 
         from unittest.mock import patch as mock_patch
-        with mock_patch("tools.approval._get_cron_approval_mode", return_value="approve"):
+        with mock_patch("tools.approval_context._get_cron_approval_mode", return_value="approve"):
             result = check_all_command_guards("rm -rf /tmp/stuff", "local")
             assert result["approved"]
             assert result.get("status") != "pending_approval"
@@ -77,6 +77,6 @@ class TestCronInsideGatewayProcess:
         monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
 
         from unittest.mock import patch as mock_patch
-        with mock_patch("tools.approval._get_cron_approval_mode", return_value="deny"):
+        with mock_patch("tools.approval_context._get_cron_approval_mode", return_value="deny"):
             result = check_all_command_guards("ls -la", "local")
             assert result["approved"]

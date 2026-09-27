@@ -231,7 +231,7 @@ class TestSessionPropagationToChildren:
             trace_id="t", root_ctx=None, root_span=_Span(), session_id="sess-1",
         )
         mod._start_child_observation(
-            state, client=object(), name="LLM call 1",
+            state, name="LLM call 1",
             as_type="generation", input_value={},
         )
 
@@ -285,7 +285,7 @@ class TestSessionPropagationToChildren:
             trace_id="t", root_ctx=None, root_span=_Span(), session_id="sess-1",
         )
         obs = mod._start_child_observation(
-            state, client=object(), name="Tool: terminal",
+            state, name="Tool: terminal",
             as_type="tool", input_value={},
         )
         assert obs is not None

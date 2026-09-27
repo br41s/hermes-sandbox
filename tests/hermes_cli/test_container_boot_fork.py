@@ -88,21 +88,10 @@ def _named_actions(actions: list[ReconcileAction]) -> list[ReconcileAction]:
 # ---------------------------------------------------------------------------
 
 
-def test_involuntary_stopped_autostarts(tmp_path: Path) -> None:
-    """A healthy gateway killed by an external SIGTERM persists
-    state=stopped with involuntary_exit=True — reconcile must revive it
-    (the user never asked it to stop)."""
-    scandir = tmp_path / "run-service"; scandir.mkdir()
-    _make_profile(tmp_path, "coder", state="stopped", involuntary_exit=True)
-
-    actions = reconcile_profile_gateways(
-        hermes_home=tmp_path, scandir=scandir, dry_run=False,
-    )
-
-    assert _named_actions(actions) == [ReconcileAction(
-        profile="coder", prior_state="stopped", action="started",
-    )]
-    assert not (scandir / "gateway-coder" / "down").exists()
+# (The fork's `involuntary_exit` autostart test is gone: since v2026.9.24 the
+# gateway itself persists gateway_state=running on an unexpected signal
+# (gateway/run_shutdown.py, upstream #42675), so a recycled container's gateway
+# comes back through upstream's own "last seen running" rule.)
 
 
 def test_gatewayless_profile_stays_down_even_when_involuntary(tmp_path: Path) -> None:

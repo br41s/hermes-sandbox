@@ -48,6 +48,7 @@ configured.
    `.mcp.json`). Backed up first; confirmed `mcp_servers = {}` survives restart
    **and** image rebuild.
 3. **Confirmed no persistence** — container inspection: no miner processes,
+<!-- no-tmp: ok — incident write-up: names the miner path that was checked for -->
    `loadavg` idle, no `/tmp/.cache/.xmr`, all cron empty. **PID 1 = `s6-svscan`**
    (the container's own init, not the host) → the container escape **failed**; no
    host-level persistence possible from inside an unprivileged container.

@@ -328,8 +328,8 @@ bakes a `docker` stamp into `/opt/hermes/.install_method`, so every update test 
 PROVEN: mount a file containing `git` over `/opt/hermes/.install_method` and all six pass
 (plus the three baseline update files drop from ~48 failures to 29).
 ```bash
-printf 'git' > /tmp/install_method_git
-docker run ... -v /tmp/install_method_git:/opt/hermes/.install_method:ro ...
+printf 'git' > /tmp/install_method_git  # no-tmp: ok — one-off verification on a dev host
+docker run ... -v /tmp/install_method_git:/opt/hermes/.install_method:ro ...  # no-tmp: ok — one-off verification on a dev host
 ```
 
 **3 — root-user artifacts.** The suite runs as root, which ignores the permissions these
