@@ -308,7 +308,7 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     # installs so computer_use never dead-ends on `No module named 'mcp'`.
     "tool.computer_use": (
         "mcp==2.0.0",  # >=1.28.1: CVE-2026-52869/52870/59950 (server transports; stdio-only here)
-        "httpx2==2.7.0",  # mcp 2.x HTTP stack — keep in sync with pyproject [computer-use]
+        "httpx2==2.12.0",  # mcp 2.x HTTP stack; >=2.12: GHSA-7mj9-2mp8-4m2p — keep in sync with pyproject [computer-use]
         "starlette==1.3.1",  # CVE-2026-48710 — keep in sync with pyproject [computer-use]
     ),
     # HF Agent Trace Viewer upload (hermes trace upload / /upload-trace).
