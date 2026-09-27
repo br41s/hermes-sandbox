@@ -1,20 +1,21 @@
 """The fork's sequential cron lane (fork-owned).
 
 Every cron job that sets ``profile`` or ``workdir`` runs on ONE single-thread
-executor, one at a time, across ticks and across entry points. That is the
-fork's identity invariant: a profile run mutates process-global state
-(``os.environ`` gets the profile's ``.env`` — its ``GITHUB_TOKEN``/``GH_TOKEN``
-among it — plus the context-local ``HERMES_HOME`` override and
-``TERMINAL_CWD``), so two of them overlapping leaks one profile's credentials
-into the other's run. See ``cron/fork_ext/profile_scope.py`` and CLAUDE.md,
-"One long agent run starves every other agent".
+executor, one at a time, across ticks and across entry points (the tick and
+the webhook trigger).
 
-Why the fork owns this rather than using upstream's ``cron-seq`` pool:
-upstream v2026.8.31 (91cf5448d8) scoped workdir per run, deleted its
-sequential pool and ``_terminal_cwd_lock``, and dispatches every due job in
-parallel (``parallel_jobs = due_jobs``). That is safe for upstream and NOT for
-this fork, whose profile code still mutates the environment. Owning the lane
-here means the merge only has to re-anchor one call in upstream's ``tick``:
+History: a profile run used to load its ``.env`` (its ``GITHUB_TOKEN`` among
+it) into ``os.environ`` and a workdir run wrote ``TERMINAL_CWD``, so two
+overlapping runs leaked one identity into the other. Neither is true any
+more — the profile ``.env`` is the run's secret scope
+(``cron/fork_ext/profile_scope.py``, #338) and v2026.8.31 scopes the workdir
+per task — but the lane stays: it keeps profile runs in the order and pacing
+production has always had, and widening it is a separate decision (CLAUDE.md,
+"One long agent run starves every other agent").
+
+Upstream deleted its own sequential pool and dispatches every due job in
+parallel (``parallel_jobs = due_jobs``); the fork re-anchors one call in
+upstream's ``tick``:
 
     parallel_jobs = _fork_submit_sequential(parallel_jobs, _submit_with_guard, _all_futures, _results, sync)
 
@@ -44,12 +45,10 @@ _sequential_executor_lock = threading.Lock()
 
 
 def is_sequential(job: dict) -> bool:
-    """True for a job that must run on the single-thread lane.
-
-    A per-job ``workdir`` sets ``os.environ["TERMINAL_CWD"]``; a ``profile``
-    installs that profile's Hermes home and loads its ``.env`` into
-    ``os.environ`` for the run. Both are process-global, so such jobs must never
-    overlap each other. Jobs with neither field are parallel-safe.
+    """True for a job the fork runs on the single-thread lane: any job with a
+    ``profile`` or a ``workdir``. Neither mutates process-global state any more
+    (see the module docstring); the lane is kept by policy, and widening it is
+    a separate decision. Jobs with neither field go to upstream's parallel pool.
     """
     return bool((job.get("workdir") or "").strip() or (job.get("profile") or "").strip())
 
@@ -137,7 +136,7 @@ def dispatch_job_async(job: dict) -> dict:
     env at once — and it also stops the multi-minute run from blocking the
     event loop.
 
-    Honors the same in-flight dedup guard as tick (``_running_job_ids``): a job
+    Honors the same in-flight dedup guard as tick (``try_register_running_job``): a job
     already running (from a tick or a prior trigger) is not re-dispatched.
     Fire-and-forget — the caller does not wait for the run. Returns
     ``{"queued": bool, "reason": str | None}``.
@@ -159,10 +158,10 @@ def dispatch_job_async(job: dict) -> dict:
         else sched._get_parallel_pool(sched._parallel_pool_max_workers)
     )
 
-    with sched._running_lock:
-        if job_id in sched._running_job_ids:
-            return {"queued": False, "reason": "already running"}
-        sched._running_job_ids.add(job_id)
+    # Upstream's single dedupe owner (v2026.8.31): also makes the run visible
+    # to the gateway shutdown drain and the stale in-flight sweep.
+    if not sched.try_register_running_job(job_id):
+        return {"queued": False, "reason": "already running"}
 
     ctx = contextvars.copy_context()
 
@@ -170,14 +169,12 @@ def dispatch_job_async(job: dict) -> dict:
         try:
             return c.run(sched.run_one_job, j)
         finally:
-            with sched._running_lock:
-                sched._running_job_ids.discard(j["id"])
+            sched.release_running_job(j["id"])
 
     try:
         pool.submit(_run_and_release)
         return {"queued": True, "reason": None}
     except Exception as submit_err:
-        with sched._running_lock:
-            sched._running_job_ids.discard(job_id)
+        sched.release_running_job(job_id)
         logger.error("dispatch_job_async: job '%s' not dispatched: %s", job_id, submit_err)
         return {"queued": False, "reason": f"dispatch failed: {submit_err}"}

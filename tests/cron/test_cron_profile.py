@@ -223,7 +223,7 @@ class TestRunJobProfileContext:
             },
         )
 
-        monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None: "hi")
+        monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None, **_kw: "hi")
         monkeypatch.setattr(sched, "_resolve_origin", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_delivery_target", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_cron_enabled_toolsets", lambda job, cfg: None)
@@ -437,7 +437,14 @@ class TestTickProfilePartition:
         parallel_job = {"id": "b", "name": "B", "profile": None}
 
         monkeypatch.setattr(sched, "get_due_jobs", lambda: [profile_job, parallel_job])
-        monkeypatch.setattr(sched, "advance_next_run", lambda *_a, **_kw: None)
+        monkeypatch.setattr(sched, "advance_next_runs", lambda *_a, **_kw: None)
+        _jobs = {j["id"]: j for j in (profile_job, parallel_job)}
+        monkeypatch.setattr(
+            sched, "claim_job_for_fire",
+            lambda jid, return_job=False, **_kw: dict(_jobs[jid]) if return_job else True,
+        )
+        monkeypatch.setattr(sched, "claim_dispatch", lambda *_a, **_kw: True)
+        monkeypatch.setattr(sched, "_send_kickoff_ping", lambda *_a, **_kw: None)
 
         calls: list[tuple[str, str]] = []
 

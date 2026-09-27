@@ -424,6 +424,11 @@ overrides = {
 pin_if_missing = {
     ("delegation", "max_iterations"): 50,
     ("delegation", "max_concurrent_children"): 3,
+    # Upstream v2026.8.31 (c32119b12c) made the agent loop's default UNLIMITED;
+    # cron now takes its cap only from agent.max_turns. 90 is the budget
+    # auditor.pending's DEFAULT_LIMIT is sized against (CLAUDE.md, "One long
+    # agent run starves every other agent").
+    ("agent", "max_turns"): 90,
 }
 default_model = os.environ.get("HERMES_DEFAULT_MODEL", "")
 
@@ -518,7 +523,8 @@ def _reconcile_config(config_path, label, is_rented=False, byok_images=False):
         # next upstream merge cannot raise it silently, while a profile that
         # chose its own limit keeps it. Upstream v2026.9.x raises the
         # delegation defaults 50 -> 250 iterations and 3 -> 10 parallel
-        # children — a 5x cost ceiling on every profile that never set them.
+        # children — a 5x cost ceiling on every profile that never set them —
+        # and v2026.8.31 already made agent.max_turns unlimited by default.
         for (section, key), val in pin_if_missing.items():
             if not isinstance(cfg.get(section), dict):
                 cfg[section] = {}

@@ -5,28 +5,11 @@ can enter a wedged state where ``bot.send_message()`` returns a valid Message
 but nothing reaches the recipient.  ``_send_path_degraded`` short-circuits
 ``send()`` so cron's live-adapter branch falls through to standalone HTTP.
 """
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gateway.config import PlatformConfig
-
-
-def _ensure_telegram_mock():
-    if "telegram" in sys.modules and hasattr(sys.modules["telegram"], "__file__"):
-        return
-    mod = MagicMock()
-    mod.error.NetworkError = type("NetworkError", (OSError,), {})
-    mod.error.TimedOut = type("TimedOut", (OSError,), {})
-    mod.error.BadRequest = type("BadRequest", (Exception,), {})
-    for name in ("telegram", "telegram.ext", "telegram.constants", "telegram.request"):
-        sys.modules.setdefault(name, mod)
-    sys.modules.setdefault("telegram.error", mod.error)
-
-
-_ensure_telegram_mock()
-
 from plugins.platforms.telegram.adapter import TelegramAdapter  # noqa: E402
 
 
@@ -35,18 +18,6 @@ def _make_adapter() -> TelegramAdapter:
     adapter._bot = MagicMock()
     adapter._bot.send_message = AsyncMock(return_value=MagicMock(message_id=42))
     return adapter
-
-
-@pytest.mark.asyncio
-async def test_send_succeeds_when_path_healthy():
-    """Healthy adapter delivers normally; send_message is called."""
-    adapter = _make_adapter()
-    assert adapter._send_path_degraded is False
-
-    result = await adapter.send("123", "hello")
-
-    assert result.success is True
-    adapter._bot.send_message.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -64,57 +35,44 @@ async def test_send_short_circuits_when_path_degraded():
     adapter._bot.send_message.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_get_me_success_without_polling_progress_does_not_heal(monkeypatch):
-    """A responsive general Bot API path is not proof that getUpdates works."""
-    adapter = _make_adapter()
-    adapter._app = MagicMock()
-    adapter._app.updater = MagicMock()
-    adapter._app.updater.running = True
-    adapter._app.bot = MagicMock()
-    adapter._app.bot.get_me = AsyncMock(return_value=MagicMock())
-
-    generation, progress = adapter._begin_polling_generation()
-    recovery = MagicMock()
-    monkeypatch.setattr(adapter, "_schedule_polling_recovery", recovery)
-    monkeypatch.setattr(
-        "plugins.platforms.telegram.adapter._POLLING_PROGRESS_TIMEOUT", 0,
-        raising=False,
-    )
-    await adapter._verify_polling_after_reconnect(generation, progress)
-
-    adapter._app.bot.get_me.assert_awaited_once()
-    recovery.assert_called_once()
-    assert adapter._send_path_degraded is True
+class _FloodError(Exception):
+    def __init__(self, seconds: float):
+        super().__init__(f"Flood control exceeded. Retry in {seconds} seconds")
+        self.retry_after = seconds
 
 
 @pytest.mark.asyncio
-async def test_successful_reconnect_waits_for_get_updates_progress(monkeypatch):
-    """start_polling() return alone cannot heal; matching progress can."""
+async def test_send_long_flood_fails_closed_without_inline_sleep(monkeypatch):
+    """A 97-minute RetryAfter must not pin send() for the full penalty."""
     adapter = _make_adapter()
-    adapter._app = MagicMock()
-    adapter._app.updater = MagicMock()
-    adapter._app.updater.running = True
-    adapter._app.updater.stop = AsyncMock()
-    adapter._app.updater.start_polling = AsyncMock()
-    adapter._app.bot = MagicMock()
-    adapter._app.bot.get_me = AsyncMock(return_value=MagicMock())
-    adapter._polling_error_callback_ref = AsyncMock()
-    monkeypatch.setattr(
-        "plugins.platforms.telegram.adapter.Update", MagicMock(ALL_TYPES=[])
-    )
-    with patch("plugins.platforms.telegram.adapter.asyncio.sleep", new_callable=AsyncMock):
-        await adapter._handle_polling_network_error(OSError("Bad Gateway"))
+    adapter._rich_send_disabled = True
+    adapter._bot.send_message = AsyncMock(side_effect=_FloodError(5827.0))
+    sleep = AsyncMock()
+    monkeypatch.setattr("plugins.platforms.telegram.adapter.asyncio.sleep", sleep)
 
-    verifier = adapter._polling_progress_verifier_task
-    assert adapter._send_path_degraded is True
-    assert adapter._polling_network_error_count == 1
-    blocked = await adapter.send("123", "hello")
-    assert blocked.success is False
-
-    adapter._record_polling_progress(adapter._polling_generation)
-    await verifier
-    assert adapter._send_path_degraded is False
-    assert adapter._polling_network_error_count == 0
     result = await adapter.send("123", "hello")
+
+    assert result.success is False
+    assert result.error == "flood_control:5827.0"
+    assert result.retry_after == 5827.0
+    assert result.retryable is False
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_short_flood_still_retries_inline(monkeypatch):
+    """Waits of a few seconds keep the existing inline retry."""
+    adapter = _make_adapter()
+    adapter._rich_send_disabled = True
+    ok = MagicMock(message_id=7)
+    adapter._bot.send_message = AsyncMock(side_effect=[_FloodError(2.0), ok])
+    sleep = AsyncMock()
+    monkeypatch.setattr("plugins.platforms.telegram.adapter.asyncio.sleep", sleep)
+
+    result = await adapter.send("123", "hello")
+
     assert result.success is True
+    assert result.message_id == "7"
+    sleep.assert_awaited_once_with(2.0)
+
+

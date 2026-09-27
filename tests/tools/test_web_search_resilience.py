@@ -626,15 +626,14 @@ class TestResolveSearchFallbacks:
         """Even with every paid key present, the automatic fallback is keyless."""
         from plugins.web.exa.provider import ExaWebSearchProvider
         from plugins.web.ddgs.provider import DDGSWebSearchProvider
-        from plugins.web.tavily.provider import TavilyWebSearchProvider
         from plugins.web.firecrawl.provider import FirecrawlWebSearchProvider
         from plugins.web.parallel.provider import ParallelWebSearchProvider
 
         self._registry(
-            ExaWebSearchProvider, DDGSWebSearchProvider, TavilyWebSearchProvider,
+            ExaWebSearchProvider, DDGSWebSearchProvider,
             FirecrawlWebSearchProvider, ParallelWebSearchProvider,
         )
-        for var in ("EXA_API_KEY", "TAVILY_API_KEY", "FIRECRAWL_API_KEY",
+        for var in ("EXA_API_KEY", "FIRECRAWL_API_KEY",
                     "PARALLEL_API_KEY", "BRAVE_SEARCH_API_KEY"):
             monkeypatch.setenv(var, "k")
         monkeypatch.setattr(

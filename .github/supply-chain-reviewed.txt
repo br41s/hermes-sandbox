@@ -1,0 +1,5 @@
+# Install-hook files (root setup.py, setup.cfg, sitecustomize.py, usercustomize.py,
+# __init__.pth) that a maintainer reviewed and accepted, pinned to the exact content.
+# The supply-chain scan skips a flagged file only while its sha256 matches here.
+# Format: <path> <sha256> [note]. Editing this file needs the ci-reviewed label.
+setup.py b81382e9c4d1bc10694c42177edec65fdab9afe6511dd4c43b2279440b6ad13e upstream d84e11af4d wheel/sdist guard, byte-identical to v2026.8.31 (PR 339)

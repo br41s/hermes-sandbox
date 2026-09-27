@@ -34,9 +34,12 @@ _DYNAMIC_PATH_NAMES = (
     "AUDIT_LOG", "TAPS_FILE", "INDEX_CACHE_DIR", "HERMES_INDEX_CACHE_FILE",
     "MANIFEST_FILE",
 )
+# tools.skills_sync is not here: since v2026.8.31 it is upstream's module,
+# whose path names are real constants read by per-call resolvers, not
+# __getattr__-served — popping them would break the module.
 _SKILL_MODULES = (
     "tools.skills_tool", "tools.skill_manager_tool",
-    "tools.skills_hub", "tools.skills_sync",
+    "tools.skills_hub",
 )
 
 
@@ -116,7 +119,10 @@ def test_skill_manage_edit_resolves_overridden_profile(profile_layout):
         ("tools.skills_tool", "SKILLS_DIR"),
         ("tools.skill_manager_tool", "SKILLS_DIR"),
         ("tools.skills_hub", "HUB_DIR"),
-        ("tools.skills_sync", "MANIFEST_FILE"),
+        # v2026.8.31: upstream resolves this per call instead of via a module
+        # attribute (tools/skills_sync.py:_manifest_file), which covers the
+        # profile-cron case the fork's __getattr__ used to.
+        ("tools.skills_sync", "_manifest_file"),
     ],
 )
 def test_module_paths_track_override(profile_layout, module_name, attr):
@@ -126,12 +132,16 @@ def test_module_paths_track_override(profile_layout, module_name, attr):
     root, profile_home = profile_layout
     module = importlib.import_module(module_name)
 
-    default_val = getattr(module, attr)
+    def _resolve():
+        val = getattr(module, attr)
+        return val() if callable(val) else val
+
+    default_val = _resolve()
     assert str(root) in str(default_val)
 
     token = hc.set_hermes_home_override(profile_home)
     try:
-        overridden = getattr(module, attr)
+        overridden = _resolve()
     finally:
         hc.reset_hermes_home_override(token)
 

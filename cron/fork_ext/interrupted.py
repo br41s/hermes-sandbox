@@ -81,3 +81,28 @@ def mark_job_interrupted(job_id: str, *, reason: str, at: str,
             _jobs.save_jobs(jobs)
             return True
     return False
+
+
+def recover_interrupted_records() -> list:
+    """Run upstream's ledger recovery and return the rows it just marked.
+
+    ``cron.executions.recover_interrupted_executions`` returns only a count;
+    the restart hook (``CronScheduler.recover_interrupted``) needs the rows to
+    mark each job interrupted. Calling upstream's function unchanged (looked up
+    on its module, so tests that patch it still apply) and reading the fresh
+    ``unknown`` rows back keeps ``cron/executions.py`` identical to upstream.
+    """
+    from cron import executions
+    from hermes_time import now as _hermes_now
+
+    started = _hermes_now().isoformat()
+    count = executions.recover_interrupted_executions()
+    if not count:
+        return []
+    rows = executions.list_executions(limit=max(200, count * 4))
+    return [
+        row for row in rows
+        if row.get("status") == "unknown"
+        and (row.get("finished_at") or "") >= started
+        and (row.get("error") or "").startswith("Scheduler restarted after")
+    ][:count]

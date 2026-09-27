@@ -20,8 +20,12 @@ jobs:
           # Get the merge base between this PR and main
           MERGE_BASE=$(git merge-base origin/main HEAD)
 
-          # Find any new author emails in this PR's commits
-          NEW_EMAILS=$(git log ${MERGE_BASE}..HEAD --format='%ae' --no-merges | sort -u)
+          # Find any new author emails in this PR's commits.
+          # fork: --first-parent keeps to the PR branch's own line. An upstream
+          # sync brings thousands of NousResearch commits in through a merge's
+          # second parent; their attribution is upstream's (several are
+          # unmapped even upstream), not something this repo can supply.
+          NEW_EMAILS=$(git log ${MERGE_BASE}..HEAD --format='%ae' --no-merges --first-parent | sort -u)
 
           if [ -z "$NEW_EMAILS" ]; then
             echo "No new commits to check."

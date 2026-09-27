@@ -120,6 +120,25 @@ jobs:
           # same name (e.g. hermes_cli/setup.py — the CLI setup wizard) is unrelated
           # and produced false positives that trained reviewers to ignore the scanner.
           SETUP_HITS=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '^(setup\.py|setup\.cfg|sitecustomize\.py|usercustomize\.py|__init__\.pth)$' || true)
+          # fork: a maintainer can accept an install-hook change at the exact
+          # content they reviewed, by listing "<path> <sha256>" in
+          # .github/supply-chain-reviewed.txt. Any later edit changes the hash
+          # and the finding fires again; the list itself is CI-sensitive
+          # (scripts/ci/classify_changes.py), so editing it needs ci-reviewed.
+          REVIEWED=.github/supply-chain-reviewed.txt
+          if [ -n "$SETUP_HITS" ] && git cat-file -e "$HEAD:$REVIEWED" 2>/dev/null; then
+            UNREVIEWED=""
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              sum=$(git show "$HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1)
+              if git show "$HEAD:$REVIEWED" | awk -v f="$f" -v s="$sum" '$1 !~ /^#/ && $1 == f && $2 == s { found = 1 } END { exit !found }'; then
+                echo "::notice::$f matches its reviewed sha256 in $REVIEWED; accepted"
+              else
+                UNREVIEWED="${UNREVIEWED}${f}"$'\n'
+              fi
+            done <<< "$SETUP_HITS"
+            SETUP_HITS=$(printf '%s' "$UNREVIEWED" | sed '/^$/d')
+          fi
           if [ -n "$SETUP_HITS" ]; then
             FINDINGS="${FINDINGS}
           ### 🚨 CRITICAL: Install-hook file added or modified

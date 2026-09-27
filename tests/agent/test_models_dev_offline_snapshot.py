@@ -70,6 +70,9 @@ def test_explicit_config_gate_sees_the_key_with_models_dev_unavailable(monkeypat
     """
     from hermes_cli.auth import is_provider_explicitly_configured
 
+    # v2026.8.31's default config ships a MoA preset naming openrouter, which
+    # counts as an explicit selection on its own; isolate the env-key path.
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda *a, **k: {"model": {}})
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     assert is_provider_explicitly_configured("openrouter") is False
 

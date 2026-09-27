@@ -32,6 +32,7 @@ MUTATOR_ROUTE_TABLE: dict[str, str] = {
     "prompt.submit": "turn-path",
     "session.interrupt": "turn-path",
     "reload.mcp": "run-concurrent",
+    "session.save": "run-concurrent",
     "session.compress": "idle-gated",
     "prompt.submit.truncate": "idle-gated",
     "slash.model": "idle-gated",
@@ -71,6 +72,8 @@ def _build_sha() -> str:
             ["git", "rev-parse", "HEAD"],
             cwd=str(_repo_root()),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
             timeout=2,
         ).strip()
@@ -111,6 +114,8 @@ def _pid_command(pid: int) -> str:
         return subprocess.check_output(
             ["ps", "-p", str(pid), "-o", "command="],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
             timeout=2,
         ).strip()
@@ -265,6 +270,27 @@ class HostSupervisor:
         self.start()
         self._send_frame({"type": "interrupt", "sid": sid, "request_id": request_id or uuid.uuid4().hex})
 
+    def respond(self, sid: str, params: dict[str, Any], *, timeout: float = 15.0) -> dict:
+        """Deliver an interactive prompt response to the host that owns it."""
+        self.start()
+        request_id = uuid.uuid4().hex
+        q: queue.Queue[dict] = queue.Queue(maxsize=1)
+        with self._lock:
+            self._pending_controls[request_id] = q
+        try:
+            self._send_frame(
+                {
+                    "type": "respond",
+                    "sid": sid,
+                    "request_id": request_id,
+                    "params": dict(params),
+                }
+            )
+            return q.get(timeout=timeout)
+        finally:
+            with self._lock:
+                self._pending_controls.pop(request_id, None)
+
     def reload_mcp(self, sid: str, *, request_id: str | None = None) -> dict:
         return self.control(
             sid,
@@ -326,6 +352,11 @@ class HostSupervisor:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Lossy UTF-8 decode — the compute host emits UTF-8; a
+            # locale-mismatched byte must not raise inside the drain
+            # threads and kill the supervisor (#52649).
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             start_new_session=True,
         )
@@ -420,7 +451,7 @@ class HostSupervisor:
         if ftype in {"turn.end", "turn.error"}:
             self._complete_turn(frame)
             return
-        if ftype in {"control.ack", "control.error", "interrupt.ack", "reload_mcp.ack", "shutdown.ack"}:
+        if ftype in {"control.ack", "control.error", "respond.ack", "respond.error", "interrupt.ack", "reload_mcp.ack", "shutdown.ack"}:
             request_id = str(frame.get("request_id") or "")
             with self._lock:
                 q = self._pending_controls.get(request_id)
