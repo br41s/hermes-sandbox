@@ -39,6 +39,7 @@ class TestProfileAwareDeliveryTarget:
             "platform": "telegram",
             "chat_id": "-1004224848555",
             "thread_id": "2",
+            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
         }
 
     def test_profile_without_routing_env_falls_back_to_global(self, monkeypatch, profile_root):
@@ -51,6 +52,7 @@ class TestProfileAwareDeliveryTarget:
             "platform": "telegram",
             "chat_id": "-1004224848555",
             "thread_id": "1",
+            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
         }
 
     def test_unknown_profile_falls_back_to_global_without_raising(self, monkeypatch, profile_root):
@@ -61,6 +63,7 @@ class TestProfileAwareDeliveryTarget:
             "platform": "telegram",
             "chat_id": "-1004224848555",
             "thread_id": "1",
+            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
         }
 
     def test_profile_scoped_job_without_profile_field_uses_global(self, monkeypatch, profile_root):
@@ -78,6 +81,7 @@ class TestProfileAwareDeliveryTarget:
             "platform": "telegram",
             "chat_id": "-1004224848555",
             "thread_id": "1",
+            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
         }
 
 
@@ -105,7 +109,9 @@ class TestRunJobSessionPersistenceFork:
              patch("cron.scheduler.create_execution", return_value={"id": "exec-1"}) as mock_create:
             assert tick(verbose=False, sync=True, adapters=None) == 1
 
-        mock_create.assert_called_once_with("cli-trigger-job", source="cli")
+        mock_create.assert_called_once()
+        assert mock_create.call_args.args == ("cli-trigger-job",)
+        assert mock_create.call_args.kwargs["source"] == "cli"  # upstream adds scheduled_instant=
 
     def test_tick_records_builtin_source_with_gateway_adapters(self, tmp_path):
         """The gateway's own in-process ticker always passes `adapters` —
@@ -126,7 +132,9 @@ class TestRunJobSessionPersistenceFork:
              patch("cron.scheduler.create_execution", return_value={"id": "exec-2"}) as mock_create:
             assert tick(verbose=False, sync=True, adapters={"telegram": object()}) == 1
 
-        mock_create.assert_called_once_with("gateway-tick-job", source="builtin")
+        mock_create.assert_called_once()
+        assert mock_create.call_args.args == ("gateway-tick-job",)
+        assert mock_create.call_args.kwargs["source"] == "builtin"  # upstream adds scheduled_instant=
 
 
 class TestKickoffPing:
@@ -408,13 +416,15 @@ class TestDispatchJobAsync:
 
         calls = {"run": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
-        sched._running_job_ids.add("j2")
+        # The public claim API, not a raw add: since v2026.9.24 the in-flight set is keyed by
+        # (job id, home), so a bare id no longer registers anything.
+        assert sched.try_register_running_job("j2")
         try:
             res = sched.dispatch_job_async({"id": "j2", "profile": "auditor"})
             assert res["queued"] is False and res["reason"] == "already running"
             assert calls["run"] == 0
         finally:
-            sched._running_job_ids.discard("j2")
+            sched.release_running_job("j2")
 
     def test_workdirless_job_uses_parallel_pool(self, monkeypatch):
         import cron.scheduler as sched

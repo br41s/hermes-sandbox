@@ -15,8 +15,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          # Node 26: what the production image ships (Dockerfile node_source stage) and what
+          # upstream tests against. 22 tested a runtime nothing ships (voice-prefs failed on it).
+          node-version: 26
           cache: npm
+      - name: Use npm 12
+        # Node 26's bundled npm can fall in the range package.json's engines excludes
+        # (<11.10 || >=11.17), and .npmrc sets engine-strict. Same step as upstream.
+        run: npm --version | grep -q '^12\.' || npm i -g npm@12
       - uses: ./.github/actions/retry
         with:
           command: npm ci --ignore-scripts
@@ -33,7 +39,10 @@ jobs:
     name: Typecheck & Test
     needs: workspaces
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # apps/desktop (typecheck, ~2.4k vitest tests, an Electron pack, then fix) took 20m02s on a
+    # 4-core runner at v2026.9.24 and was cancelled by a 20-minute cap with every step green.
+    # Upstream runs the same payload as one 32-core job under 30 minutes.
+    timeout-minutes: 35
     strategy:
       matrix:
         package: ${{ fromJson(needs.workspaces.outputs.packages) }}
@@ -42,8 +51,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          # Node 26: what the production image ships (Dockerfile node_source stage) and what
+          # upstream tests against. 22 tested a runtime nothing ships (voice-prefs failed on it).
+          node-version: 26
           cache: npm
+      - name: Use npm 12
+        # Node 26's bundled npm can fall in the range package.json's engines excludes
+        # (<11.10 || >=11.17), and .npmrc sets engine-strict. Same step as upstream.
+        run: npm --version | grep -q '^12\.' || npm i -g npm@12
       - uses: ./.github/actions/retry
         with:
           command: npm ci

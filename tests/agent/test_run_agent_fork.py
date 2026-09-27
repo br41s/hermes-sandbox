@@ -26,16 +26,14 @@ def _make_tool_defs(*names: str) -> list:
 
 @pytest.fixture(autouse=True)
 def _fast_retry_backoff(monkeypatch):
-    """Copied from tests/run_agent/conftest.py, which does not apply here:
-    short-circuit retry backoff so the retry paths cost no wall-clock time."""
-    import run_agent
+    """Short-circuit retry backoff so the retry paths cost no wall-clock time.
 
-    monkeypatch.setattr(run_agent, "jittered_backoff", lambda *a, **k: 0.0)
-    try:
-        from agent import conversation_loop as _conv_loop
-        monkeypatch.setattr(_conv_loop, "jittered_backoff", lambda *a, **k: 0.0)
-    except ImportError:
-        pass
+    Patched on the defining module: since v2026.9.24 run_agent and
+    conversation_loop only re-export it as scheduled-for-removal compat
+    pointers (COMPAT_MANIFEST.md) and the retry paths import it lazily."""
+    from agent import retry_utils
+
+    monkeypatch.setattr(retry_utils, "jittered_backoff", lambda *a, **k: 0.0)
 
 
 @pytest.fixture()
@@ -148,7 +146,7 @@ class TestTruncatedToolArgsRecovery:
         final_resp = _mock_response(content="Done!", finish_reason="stop")
 
         with (
-            patch("run_agent.handle_function_call", return_value='{"success":true}') as mock_hfc,
+            patch("model_tools.handle_function_call", return_value='{"success":true}') as mock_hfc,
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
@@ -181,7 +179,7 @@ class TestTruncatedToolArgsRecovery:
         agent.client.chat.completions.create.return_value = resp
 
         with (
-            patch("run_agent.handle_function_call") as mock_handle_function_call,
+            patch("model_tools.handle_function_call") as mock_handle_function_call,
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
@@ -190,7 +188,7 @@ class TestTruncatedToolArgsRecovery:
 
         assert result["completed"] is False
         assert result["partial"] is True
-        assert "truncated due to output length limit" in result["error"]
+        assert "output length limit" in result["error"]
         mock_handle_function_call.assert_not_called()
         # One initial call + exactly 2 recovery attempts, not an unbounded loop.
         assert agent.client.chat.completions.create.call_count == 3

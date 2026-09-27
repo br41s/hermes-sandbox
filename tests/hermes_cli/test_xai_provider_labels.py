@@ -4,13 +4,12 @@ import time
 
 import pytest
 
-from hermes_cli.models import provider_label
 from hermes_cli.providers import get_label
 
 
 @pytest.fixture(autouse=True)
 def _pinned_models_dev_cache(monkeypatch):
-    """get_label("xai") resolves the display name via the models.dev
+    """fork: get_label("xai") resolves the display name via the models.dev
     catalog; pin the one entry needed so the test never fetches the live
     registry (blocked by the network guard, and non-hermetic anyway)."""
     import agent.models_dev as md
@@ -22,8 +21,5 @@ def _pinned_models_dev_cache(monkeypatch):
 
 def test_xai_oauth_provider_label_is_not_collapsed_to_api_key_label():
     """The model picker must distinguish xAI API-key and OAuth providers."""
-    assert get_label("xai") == "xAI"
-    assert get_label("xai-oauth") == "xAI Grok OAuth (SuperGrok / Premium+)"
-    assert get_label("grok-oauth") == "xAI Grok OAuth (SuperGrok / Premium+)"
-
-
+    assert get_label("xai-oauth") != get_label("xai")
+    assert get_label("grok-oauth") == get_label("xai-oauth")

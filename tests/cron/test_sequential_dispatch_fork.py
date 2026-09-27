@@ -313,6 +313,78 @@ def test_webhook_dispatch_shares_the_tick_lane(lane, monkeypatch, tmp_path):
     assert rec.runs[hook_plain][1].startswith("cron-parallel")
 
 
+def test_webhook_cron_job_event_shares_the_tick_lane(lane, monkeypatch, tmp_path):
+    """Upstream's ``cron_job`` webhook route (``run_event_job``) must queue a
+    profile/workdir job on the SAME lane as tick's, and leave a plain job on a
+    worker thread of its own, as upstream runs every event."""
+    import asyncio
+
+    import cron.jobs
+
+    sched, fork, due = lane
+    tick_ids = [_uid("tickp0"), _uid("tickp1")]
+    hook_seq = [_uid("evtp"), _uid("evtwd")]
+    hook_plain = _uid("evtplain")
+    events = {
+        hook_seq[0]: _job(hook_seq[0], profile="finview"),
+        hook_seq[1]: _job(hook_seq[1], workdir=str(tmp_path)),
+        hook_plain: _job(hook_plain),
+    }
+    monkeypatch.setattr(cron.jobs, "resolve_job_ref", events.get)
+    rec = _Recorder()
+    monkeypatch.setattr(sched, "run_job", rec.run_job)
+
+    due[:] = [_job(tick_ids[0], profile="auditor"), _job(tick_ids[1], profile="biglobster")]
+    assert sched.tick(verbose=False, sync=False) == 2
+    assert rec.started_event(tick_ids[0]).wait(5)
+
+    async def _fire_all():
+        await asyncio.gather(*(fork.run_event_job(ref, rec.run_job, job) for ref, job in events.items()))
+
+    asyncio.run(_fire_all())
+    rec.wait_for(tick_ids + hook_seq + [hook_plain])
+    _assert_serialized(rec, tick_ids + hook_seq)
+    assert not rec.runs[hook_plain][1].startswith("cron-seq")
+
+
+def test_webhook_cron_job_unresolvable_ref_fails_closed_onto_the_lane(lane, monkeypatch):
+    """A ref that cannot be resolved up front (ambiguous, store unreadable)
+    must not escape the lane: ``fire`` reports the error from there."""
+    import asyncio
+
+    import cron.jobs
+
+    _sched, fork, _due = lane
+
+    def _ambiguous(_ref):
+        raise cron.jobs.AmbiguousJobReference("two jobs are named 'x'")
+
+    monkeypatch.setattr(cron.jobs, "resolve_job_ref", _ambiguous)
+    ran_on = asyncio.run(fork.run_event_job("x", lambda: threading.current_thread().name))
+    assert ran_on.startswith("cron-seq"), ran_on
+
+
+def test_webhook_cron_job_on_the_lane_keeps_the_routed_profile_scope(lane, monkeypatch):
+    """The webhook resolves and runs the job under the ROUTED profile's scope
+    (a contextvar); the lane worker must see it, as upstream's to_thread did."""
+    import asyncio
+    import contextvars
+
+    import cron.jobs
+
+    _sched, fork, _due = lane
+    scope = contextvars.ContextVar("routed_profile", default="default")
+    monkeypatch.setattr(cron.jobs, "resolve_job_ref", lambda ref: _job(ref, profile="grow-shop"))
+
+    async def _fire():
+        scope.set("grow-shop")
+        return await fork.run_event_job("j", lambda: (threading.current_thread().name, scope.get()))
+
+    thread, seen = asyncio.run(_fire())
+    assert thread.startswith("cron-seq"), thread
+    assert seen == "grow-shop"
+
+
 def test_shutdown_parallel_pool_drains_the_fork_lane():
     """``_shutdown_parallel_pool`` shut down the sequential pool before the
     lane moved here, and tests use it to drain between cases; a run left on

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Tuple
 
-from cron.scheduler import _resolve_origin
+from cron.scheduler_delivery import _resolve_origin  # moved there in v2026.9.24
 
 
 def _effective_deliver(job: dict) -> str:

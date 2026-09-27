@@ -34,6 +34,7 @@ def _run_apply_profile_override(
 
     if active_profile and active_profile != "default":
         (hermes_root / "profiles" / active_profile).mkdir(parents=True, exist_ok=True)
+        (hermes_root / "profiles" / active_profile / "config.yaml").write_text("{}\n")  # identity marker
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     if hermes_home is not None:
@@ -105,6 +106,7 @@ class TestApplyProfileOverrideHermesHomeGuard:
         user_home = tmp_path / "home" / "hermes"
         profile_dir = user_home / ".hermes" / "profiles" / "elias"
         profile_dir.mkdir(parents=True, exist_ok=True)
+        (profile_dir / "config.yaml").write_text("{}\n")  # identity marker: a bare dir does not resolve
         (root_home / ".hermes").mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(Path, "home", lambda: root_home)
@@ -117,11 +119,14 @@ class TestApplyProfileOverrideHermesHomeGuard:
 
         monkeypatch.setattr(pwd, "getpwnam", lambda name: SimpleNamespace(pw_dir=str(user_home)))
 
-        from hermes_cli.main import _apply_profile_override
+        from hermes_cli.main import _apply_profile_override, _resolve_sudo_user_profile_env
         _apply_profile_override()
 
         assert os.environ.get("HERMES_HOME") == str(profile_dir)
         assert sys.argv == ["hermes", "gateway", "install", "--system"]
+        # Same identity gate as ``-p`` without sudo: a marker-less shell is not a profile.
+        (user_home / ".hermes" / "profiles" / "ghost" / "cron").mkdir(parents=True)
+        assert _resolve_sudo_user_profile_env("ghost") is None
 
 
 
@@ -162,8 +167,9 @@ class TestSupervisedChildIgnoresStickyProfile:
         hermes_root = tmp_path / ".hermes"
         hermes_root.mkdir(parents=True, exist_ok=True)
         (hermes_root / "active_profile").write_text("briefer")
-        (hermes_root / "profiles" / "briefer").mkdir(parents=True, exist_ok=True)
-        (hermes_root / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        for name in ("briefer", "coder"):
+            (hermes_root / "profiles" / name).mkdir(parents=True, exist_ok=True)
+            (hermes_root / "profiles" / name / "config.yaml").write_text("{}\n")  # identity marker
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("HERMES_HOME", raising=False)
@@ -265,6 +271,21 @@ class TestGeneralizedSupervisorMarkers:
         )
         assert result == str(hermes_root)
 
+    def test_desktop_ssh_serve_child_skips_active_profile(self, tmp_path, monkeypatch):
+        """A Desktop-owned `serve --ssh-session-token-file` child names its profile explicitly
+        (or none for the root home); the remote host's sticky active_profile must not re-home
+        it, or Settings read one profile's config.yaml while the user edits another."""
+        hermes_root = self._root_home(tmp_path)
+        result = _run_apply_profile_override(
+            tmp_path,
+            monkeypatch,
+            hermes_home=str(hermes_root),
+            active_profile="telegram_nick",
+            argv=["hermes", "serve", "--isolated", "--host", "127.0.0.1", "--port", "0",
+                  "--ssh-session-token-file", "/tmp/x/y.token"],
+        )
+        assert result == str(hermes_root)
+
     def test_generated_systemd_unit_exports_supervised_marker(
         self, tmp_path, monkeypatch
     ):
@@ -288,6 +309,34 @@ class TestGeneralizedSupervisorMarkers:
         assert "<key>HERMES_SUPERVISED_CHILD</key>" in plist
 
 
+class TestS6ContainerGatewayRun:
+    """Inside the s6 image a bare ``gateway run`` (the image's CMD) redirects to the supervised
+    ``gateway-default`` slot. It must keep that root identity whatever ``active_profile`` says;
+    otherwise every container boot starts the named slot the reconciler registered down."""
+
+    def test_the_redirected_run_keeps_the_root_home_despite_the_active_profile(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("hermes_cli.service_manager._s6_running", lambda: True)
+        root = tmp_path / ".hermes"
+        result = _run_apply_profile_override(
+            tmp_path, monkeypatch, hermes_home=str(root), active_profile="coder",
+            argv=["hermes", "gateway", "run"],
+        )
+        assert result == str(root)
+
+    def test_a_foreground_run_and_other_verbs_still_follow_the_active_profile(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("hermes_cli.service_manager._s6_running", lambda: True)
+        root = tmp_path / ".hermes"
+        for argv in (["hermes", "gateway", "run", "--no-supervise"], ["hermes", "chat"]):
+            result = _run_apply_profile_override(
+                tmp_path, monkeypatch, hermes_home=str(root), active_profile="coder", argv=argv,
+            )
+            assert result == str(root / "profiles" / "coder"), argv
+
+
 class TestApplyProfileOverrideSubcommandBoundary:
     """A subcommand's own --profile must not be hijacked by the global selector.
 
@@ -303,6 +352,7 @@ class TestApplyProfileOverrideSubcommandBoundary:
         argv untouched, so the flag reaches the cron subparser."""
         # A real coder profile exists — proving we still don't switch to it.
         (tmp_path / ".hermes" / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".hermes" / "profiles" / "coder" / "config.yaml").write_text("{}\n")  # identity marker
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         argv = ["hermes", "cron", "edit", "abc123", "--profile", "coder"]
@@ -322,6 +372,7 @@ class TestApplyProfileOverrideSubcommandBoundary:
         """`hermes -p coder cron list` must still switch HERMES_HOME to coder
         and strip the flag from argv."""
         (tmp_path / ".hermes" / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".hermes" / "profiles" / "coder" / "config.yaml").write_text("{}\n")  # identity marker
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setattr(sys, "argv", ["hermes", "-p", "coder", "cron", "list"])
@@ -341,6 +392,7 @@ class TestApplyProfileOverrideSubcommandBoundary:
         """`hermes profile use coder` — the bare 'profile' subcommand must not
         be confused with the --profile flag, and must not switch HERMES_HOME."""
         (tmp_path / ".hermes" / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".hermes" / "profiles" / "coder" / "config.yaml").write_text("{}\n")  # identity marker
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         argv = ["hermes", "profile", "use", "coder"]
@@ -358,6 +410,7 @@ class TestApplyProfileOverrideSubcommandBoundary:
         """`hermes -m <model> -p coder chat` — a top-level flag's VALUE is not
         the subcommand, so the scan must skip it and still find -p."""
         (tmp_path / ".hermes" / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".hermes" / "profiles" / "coder" / "config.yaml").write_text("{}\n")  # identity marker
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setattr(sys, "argv", ["hermes", "-m", "some/model", "-p", "coder", "chat"])

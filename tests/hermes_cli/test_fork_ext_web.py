@@ -3,8 +3,8 @@
 They were moved out of upstream's ``web_server.py`` so upstream merges stop
 conflicting. These tests pin what the move must not change: the routes are
 still served by the dashboard app, ahead of the SPA catch-all, and the cron
-copy route still reaches web_server's cron helpers (looked up at call time,
-so patching them on ``web_server`` still takes effect).
+copy route still reaches the cron helpers (looked up at call time on
+``web_server``, then ``web_server_cron`` where v2026.9.24 moved them).
 """
 
 import asyncio
@@ -66,8 +66,11 @@ def test_copy_cron_job_uses_web_server_helpers(monkeypatch):
             return source
         return {"id": "new", **kwargs}
 
-    monkeypatch.setattr(web_server, "_find_cron_job_profile", lambda job_id: "grow-shop")
-    monkeypatch.setattr(web_server, "_call_cron_for_profile", fake_call)
+    # v2026.9.24 moved these helpers to web_server_cron; fork_web._cron_helper falls back there.
+    from hermes_cli import web_server_cron
+
+    monkeypatch.setattr(web_server_cron, "_find_cron_job_profile", lambda job_id: "grow-shop")
+    monkeypatch.setattr(web_server_cron, "_call_cron_for_profile", fake_call)
 
     result = asyncio.run(fork_web.copy_cron_job("abc", to_profile="default"))
 

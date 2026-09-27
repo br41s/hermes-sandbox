@@ -2,7 +2,7 @@
 
 Every cron job that sets ``profile`` or ``workdir`` runs on ONE single-thread
 executor, one at a time, across ticks and across entry points (the tick and
-the webhook trigger).
+the webhook triggers: ``trigger_cron_job_id`` and upstream's ``cron_job``).
 
 History: a profile run used to load its ``.env`` (its ``GITHUB_TOKEN`` among
 it) into ``os.environ`` and a workdir run wrote ``TERMINAL_CWD``, so two
@@ -155,7 +155,7 @@ def dispatch_job_async(job: dict) -> dict:
     pool = (
         get_sequential_executor()
         if is_sequential(job)
-        else sched._get_parallel_pool(sched._parallel_pool_max_workers)
+        else sched._get_parallel_pool(sched._resolve_max_parallel_workers())
     )
 
     # Upstream's single dedupe owner (v2026.8.31): also makes the run visible
@@ -163,18 +163,54 @@ def dispatch_job_async(job: dict) -> dict:
     if not sched.try_register_running_job(job_id):
         return {"queued": False, "reason": "already running"}
 
+    # The home the claim was registered under: the worker's ``finally`` runs outside ``ctx``, so
+    # release under it explicitly (upstream v2026.9.24's _submit_with_guard does the same).
+    claim_home = sched._get_hermes_home()
     ctx = contextvars.copy_context()
 
-    def _run_and_release(j=job, c=ctx):
+    def _run_and_release(j=job, c=ctx, home=claim_home):
         try:
             return c.run(sched.run_one_job, j)
         finally:
-            sched.release_running_job(j["id"])
+            sched.release_running_job(j["id"], home=home)
 
     try:
         pool.submit(_run_and_release)
         return {"queued": True, "reason": None}
     except Exception as submit_err:
-        sched.release_running_job(job_id)
+        sched.release_running_job(job_id, home=claim_home)
         logger.error("dispatch_job_async: job '%s' not dispatched: %s", job_id, submit_err)
         return {"queued": False, "reason": f"dispatch failed: {submit_err}"}
+
+
+async def run_event_job(job_ref: str, fire: Callable, *args):
+    """Await ``fire(*args)`` for upstream's webhook ``cron_job`` route: on the
+    lane when ``job_ref`` names a profile/workdir job, otherwise on a worker
+    thread exactly as upstream does.
+
+    Upstream's ``_handle_cron_trigger`` runs ``execute_job_for_event`` through
+    ``asyncio.to_thread``, a fresh worker per event, so a profile/workdir job
+    fired by a webhook ran beside whatever held the lane. Only WHERE it runs
+    changes here: ``fire`` still resolves, claims, dedupes, injects the event
+    context and delivers when the lane reaches it, the same way tick's own
+    jobs claim when the lane starts them. A tick that fires the same job
+    first therefore wins the claim, and the event reports "already being
+    fired" as it would upstream.
+
+    Fails closed: a ref that cannot be resolved here (unknown, ambiguous, the
+    store unreadable) goes to the lane too, and ``fire`` reports the error.
+    """
+    import asyncio
+
+    try:
+        from cron.jobs import resolve_job_ref
+
+        job = resolve_job_ref(job_ref)
+    except Exception:
+        job = None
+    if job is not None and not is_sequential(job):
+        return await asyncio.to_thread(fire, *args)
+    # to_thread copies the caller's context (the routed profile's scope); a
+    # bare executor.submit does not, so carry it explicitly.
+    ctx = contextvars.copy_context()
+    return await asyncio.wrap_future(get_sequential_executor().submit(ctx.run, fire, *args))

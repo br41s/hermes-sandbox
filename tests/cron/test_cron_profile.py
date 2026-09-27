@@ -18,6 +18,9 @@ def isolated_cron_profile_home(tmp_path, monkeypatch):
     root = tmp_path / "hermes-root"
     profile_home = root / "profiles" / "support"
     profile_home.mkdir(parents=True)
+    # v2026.9.24: a dir is a profile only with an identity marker; SOUL.md is what
+    # `hermes profile create` always seeds.
+    (profile_home / "SOUL.md").write_text("", encoding="utf-8")
     (root / "cron").mkdir(parents=True)
 
     monkeypatch.setenv("HERMES_HOME", str(root))
@@ -224,7 +227,9 @@ class TestRunJobProfileContext:
         )
 
         monkeypatch.setattr(sched, "_build_job_prompt", lambda job, prerun_script=None, **_kw: "hi")
-        monkeypatch.setattr(sched, "_resolve_origin", lambda job: None)
+        import cron.scheduler_delivery as sched_delivery  # v2026.9.24 moved _resolve_origin here
+
+        monkeypatch.setattr(sched_delivery, "_resolve_origin", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_delivery_target", lambda job: None)
         monkeypatch.setattr(sched, "_resolve_cron_enabled_toolsets", lambda job, cfg: None)
         monkeypatch.setattr(sched, "_hermes_home", None)
@@ -461,7 +466,10 @@ class TestTickProfilePartition:
 
         assert n == 2
         ids = [job_id for job_id, _thread_name in calls]
-        assert ids.index("a") < ids.index("b")
+        # Each ran exactly once. No order between them: they run on different pools, so the
+        # profile-less job can legitimately finish first under load (it did, once, on a busy
+        # runner). The lane orders profile jobs among themselves, not against the parallel pool.
+        assert sorted(ids) == ["a", "b"]
         # Profile jobs dispatch to the persistent single-worker "cron-seq" pool
         # (never inline on the caller's thread — that pool exists precisely so
         # a slow profile job can't block the ticker) while profile-less jobs go

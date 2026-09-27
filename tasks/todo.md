@@ -12,6 +12,7 @@ The mailbox page-lock is a JSON advisory lock — it does NOT lock the filesyste
 
 ## Decisions (locked with CEO)
 - Mechanism: **local clone per run** (`git clone --local`), the proven gap-hunter
+  <!-- no-tmp: ok — names a pattern that was replaced -->
   `/tmp/biglobster-pr` pattern.
 - Scope: **auto for any agent job whose `workdir` is a git working tree**. No per-job
   opt-in. (no_agent script jobs are OUT of scope — they use absolute paths and are

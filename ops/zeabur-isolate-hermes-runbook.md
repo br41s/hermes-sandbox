@@ -140,6 +140,7 @@ Skip Clone entirely:
 1. New project → add Hermes service from **prebuilt image** `ghcr.io/br41s/hermes-sandbox:latest`
    (+ GHCR registry creds). Let it boot once (creates a fresh `/opt/data`).
 2. From the OLD Hermes terminal, tar ONLY the essentials:
+   <!-- no-tmp: ok — operator runbook step, run by hand on the old host -->
    `tar czf /tmp/hermes-core.tgz -C /opt/data config.yaml .env SOUL.md memories profiles`
    (exclude each profile's `workspace*`, `.cache`, `sessions` if large).
 3. Download it; upload + extract into the NEW service's `/opt/data`; restart.

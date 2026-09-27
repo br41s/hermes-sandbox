@@ -72,7 +72,7 @@ class TestStaleReadMark:
 
     def test_whole_file_write_refused_after_earlier_write(self, tmp_path, monkeypatch):
         from tools.skills_tool import skill_view
-        from tools.skill_manager_tool import _reset_background_review_read_marks
+        from tools.skill_manager_guards import _reset_background_review_read_marks
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
@@ -120,7 +120,7 @@ class TestStaleReadMark:
     def test_anchored_patch_still_allowed_after_earlier_patch(self, tmp_path, monkeypatch):
         """patch keeps working from one read — fuzzy matching fails closed."""
         from tools.skills_tool import skill_view
-        from tools.skill_manager_tool import _reset_background_review_read_marks
+        from tools.skill_manager_guards import _reset_background_review_read_marks
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
@@ -222,7 +222,7 @@ class TestUnrecordedSkillOwnership:
 
     def test_first_write_to_unrecorded_skill_is_refused(self, tmp_path, monkeypatch):
         from tools.skills_tool import skill_view
-        from tools.skill_manager_tool import _reset_background_review_read_marks
+        from tools.skill_manager_guards import _reset_background_review_read_marks
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):
@@ -250,7 +250,7 @@ class TestUnrecordedSkillOwnership:
 
     def test_agent_created_skill_is_still_curatable(self, tmp_path, monkeypatch):
         from tools.skills_tool import skill_view
-        from tools.skill_manager_tool import _reset_background_review_read_marks
+        from tools.skill_manager_guards import _reset_background_review_read_marks
 
         _reset_background_review_read_marks()
         with _curator_pass(tmp_path, monkeypatch=monkeypatch):

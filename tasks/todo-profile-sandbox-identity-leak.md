@@ -7,6 +7,7 @@ Cron jobs of different profiles shared ONE terminal sandbox.
 `tools/terminal_tool.py::_resolve_container_task_id` collapsed every tool-call
 task_id to the single key `"default"`, so `_active_environments["default"]` was
 one `LocalEnvironment` object shared by every job in the process, regardless of
+<!-- no-tmp: ok — describes where upstream puts the snapshot -->
 profile. That object owns a bash env snapshot file (`/tmp/hermes-snap-<id>.sh`)
 which `BaseEnvironment._wrap_command` `source`s at the top of every command —
 re-exporting the `HOME` captured when the environment was created, on top of the
@@ -28,6 +29,7 @@ the 5-minute idle reaper collects it.
                07:06:31  cron_3988cc0c189f (finview) starts, REUSES that env
                07:17:20  idle reaper finally cleans it up
 
+<!-- no-tmp: ok — quotes the snapshot path the bug produced -->
     /tmp/hermes-snap-944fb1db9df2.sh
       declare -x HOME="/opt/data/profiles/auditor/home"
       declare -x HERMES_HOME="/opt/data/profiles/auditor"

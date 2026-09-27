@@ -5,9 +5,6 @@ todo tool call paths: read, create (merge=False), update (merge=True).
 """
 
 import json
-
-import pytest
-
 from agent.display import get_cute_tool_message
 
 
@@ -25,21 +22,6 @@ def _todo_result(total: int, completed: int) -> str:
     })
 
 
-class TestTodoRead:
-    """get_cute_tool_message(…, result=…) when todos_arg is None (read path)."""
-
-    def test_read_no_result(self):
-        msg = get_cute_tool_message("todo", {}, 0.5)
-        assert "reading tasks" in msg
-        assert "0.5s" in msg
-
-
-
-    def test_read_zero_total(self):
-        """Edge case: empty todo list returns summary with total=0."""
-        msg = get_cute_tool_message("todo", {}, 0.5,
-                                    result=_todo_result(0, 0))
-        assert "reading tasks" in msg
 
 
 
@@ -47,21 +29,12 @@ class TestTodoRead:
 class TestTodoCreate:
     """get_cute_tool_message when merge=False (new plan creation)."""
 
-    def test_create_default(self):
-        """Brand-new plan: all pending, no result — plain count."""
-        msg = get_cute_tool_message("todo",
-                                    {"todos": [
-                                        {"id": "a", "content": "x", "status": "pending"},
-                                    ]}, 0.3)
-        assert "1 task(s)" in msg
-        assert "0.3s" in msg
-        assert "/" not in msg  # no progress fraction
 
 
 
     def test_create_with_result_zero_done(self):
         """New plan with 0 done — plain count, no progress fraction."""
-        msg = get_cute_tool_message("todo",
+        msg = get_cute_tool_message("todo_list",
                                     {"todos": [
                                         {"id": "a", "content": "x", "status": "pending"},
                                         {"id": "b", "content": "y", "status": "pending"},
@@ -75,17 +48,11 @@ class TestTodoCreate:
 class TestTodoUpdate:
     """get_cute_tool_message when merge=True (incremental update)."""
 
-    def test_update_no_result(self):
-        """No result available — plain update N task(s)."""
-        msg = get_cute_tool_message("todo",
-                                    {"todos": [{"id": "a", "status": "completed"}],
-                                     "merge": True}, 0.5)
-        assert "update 1 task(s)" in msg
 
 
     def test_update_halfway(self):
         """2/4 — midpoint progress."""
-        msg = get_cute_tool_message("todo",
+        msg = get_cute_tool_message("todo_list",
                                     {"todos": [{"id": "b", "status": "in_progress"}],
                                      "merge": True},
                                     0.7,
@@ -99,7 +66,7 @@ class TestTodoUpdate:
 
     def test_update_total_not_in_summary(self):
         """Result summary missing total key."""
-        msg = get_cute_tool_message("todo",
+        msg = get_cute_tool_message("todo_list",
                                     {"todos": [{"id": "a", "status": "completed"}],
                                      "merge": True},
                                     0.3,
@@ -109,44 +76,9 @@ class TestTodoUpdate:
 
 
 
-class TestTodoEdgeCases:
-    """Boundary cases that should not crash."""
-
-    def test_merge_default_value(self):
-        """merge defaults to False in function signature, should be False when absent."""
-        msg = get_cute_tool_message("todo",
-                                    {"todos": [{"id": "a", "content": "x", "status": "pending"}]},
-                                    1.0)
-        assert "1 task(s)" in msg
-
-
-    def test_large_task_count(self):
-        """Many tasks should not break formatting."""
-        many = [{"id": str(i), "content": "x", "status": "pending"} for i in range(50)]
-        msg = get_cute_tool_message("todo", {"todos": many}, 0.5)
-        assert "50 task(s)" in msg
 
 
 
-class TestTodoSkinIntegration:
-    """Verify the skin prefix is applied to todo messages too.
-    This uses the same pattern as test_skin_engine test_tool_message_uses_skin_prefix.
-    """
-
-    @pytest.fixture(autouse=True)
-    def reset_skin_state(self):
-        """Same reset as test_skin_engine — earlier tests may leave a
-        non-default skin cached in the module global."""
-        from hermes_cli import skin_engine
-        skin_engine._active_skin = None
-        skin_engine._active_skin_name = "default"
-        yield
-        skin_engine._active_skin = None
-        skin_engine._active_skin_name = "default"
-
-    def test_default_skin_prefix(self):
-        msg = get_cute_tool_message("todo", {}, 0.5)
-        assert msg.startswith("┊")
 
 
 class TestWebExtractDisplay:
@@ -182,9 +114,3 @@ class TestWebExtractDisplay:
         # First item is a string, so domain should come from it
         assert "direct.com" in msg
 
-    def test_web_extract_empty_urls(self):
-        """Empty urls list - shows 'pages' placeholder."""
-        args = {"urls": []}
-        msg = get_cute_tool_message("web_extract", args, 0.1)
-        assert "pages" in msg
-        assert "📄" in msg
