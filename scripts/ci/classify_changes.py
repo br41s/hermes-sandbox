@@ -94,6 +94,9 @@ _PY_RELEVANT_SITE = (
 # can't get push access — it runs on an ephemeral runner with zero write perms.
 _CI_REVIEW_FILES = {
     ".prettierrc",
+    # fork: install-hook changes a maintainer accepted by sha256; editing the
+    # list is how the supply-chain scan is overridden, so it needs review too.
+    ".github/supply-chain-reviewed.txt",
 }
 _CI_REVIEW_PATHS = (".github/workflows/", ".github/actions/")
 
