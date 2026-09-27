@@ -79,3 +79,33 @@ class TestDDGSProviderLazyInstall:
 
         assert result["success"] is True
         assert calls == [("search.ddgs", {"prompt": False})]
+
+
+class TestDDGSWorkerSeesDurableLazyTarget:
+    def test_spawned_worker_imports_ddgs_from_lazy_install_target(self, monkeypatch, tmp_path):
+        """The Docker image lazy-installs ddgs into HERMES_LAZY_INSTALL_TARGET
+        (/opt/data/lazy-packages), which the parent appends to sys.path at
+        runtime. Since v2026.8.31 the search runs in a spawned worker (#68096)
+        that starts from a fresh sys.path, so it must activate that target
+        itself — otherwise every search fails "No module named 'ddgs'" in
+        production while the package sits installed on disk (2026-09-27).
+        """
+        import plugins.web.ddgs.provider as prov
+
+        target = tmp_path / "lazy-packages"
+        (target / "ddgs").mkdir(parents=True)
+        (target / "ddgs" / "__init__.py").write_text(
+            "class DDGS:\n"
+            "    def __init__(self, **kw): pass\n"
+            "    def __enter__(self): return self\n"
+            "    def __exit__(self, *a): return False\n"
+            "    def text(self, query, max_results=5):\n"
+            "        yield {'title': 'Hit', 'href': 'https://e.example', 'body': query}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_LAZY_INSTALL_TARGET", str(target))
+        monkeypatch.setattr(prov, "_test_hook", None)
+
+        results = prov._run_ddgs_search_bounded("probe", 1)
+
+        assert [r["url"] for r in results] == ["https://e.example"]
