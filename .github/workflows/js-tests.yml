@@ -39,7 +39,10 @@ jobs:
     name: Typecheck & Test
     needs: workspaces
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # apps/desktop (typecheck, ~2.4k vitest tests, an Electron pack, then fix) took 20m02s on a
+    # 4-core runner at v2026.9.24 and was cancelled by a 20-minute cap with every step green.
+    # Upstream runs the same payload as one 32-core job under 30 minutes.
+    timeout-minutes: 35
     strategy:
       matrix:
         package: ${{ fromJson(needs.workspaces.outputs.packages) }}
