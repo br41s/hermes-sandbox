@@ -829,7 +829,7 @@ export default function CronPage() {
       await api.copyCronJob(copyJob.id, getJobProfile(copyJob), copyTargetProfile);
       showToast(`Copied to "${copyTargetProfile}" ✓`, "success");
       setCopyJob(null);
-      loadJobs();
+      loadJobs(selectedProfile);
     } catch (e) {
       showToast(`${t.status.error}: ${e}`, "error");
     } finally {
