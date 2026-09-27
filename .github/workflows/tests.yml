@@ -171,7 +171,9 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # v2026.9.24's core e2e suites (tenancy, chaos, delivery, history, sqlite) take ~6 min
+    # per-file in parallel; the old single-process run hit the 15-minute limit at 35%.
+    timeout-minutes: 40
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -220,11 +222,29 @@ jobs:
         # re-download, keeping the persisted cache small and fast to restore.
         run: uv cache prune --ci
 
-      - name: Run e2e tests
+      - name: Require a WAL-capable SQLite
+        # The state.db suites skip on a WAL-reset-vulnerable SQLite; fail
+        # instead of reporting green over zero coverage. (Same step as upstream.)
         run: |
           source .venv/bin/activate
-          python -m pytest tests/e2e/ -v --tb=short
+          python -c "import sqlite3, hermes_state_wal as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
+
+      - name: Run e2e tests
+        # One subprocess per file, in parallel, as upstream does: the core suites spawn real
+        # processes (serve, gateway, tui_gateway, MCP servers, SQLite writers) and must not
+        # share interpreter state. tests/e2e/core/upgrade is excluded: it exercises
+        # `hermes update` from N-1 release tags, and the fork deploys by image tag instead
+        # (scripts/deploy.sh); upstream runs it in its own 32-core job.
+        run: |
+          source .venv/bin/activate
+          mapfile -t files < <(find tests/e2e -name 'test_*.py' -not -path 'tests/e2e/core/upgrade/*' | sort)
+          scripts/run_tests.sh --include-integration "${files[@]}"
         env:
+          # Multi-process episodes legitimately run past the 300s default.
+          HERMES_TEST_FILE_TIMEOUT: "900"
+          # No automatic re-run: the torture chamber and exactly-once suites are race
+          # detectors, and a corruption that passes on retry is still a corruption.
+          HERMES_TEST_FILE_RETRIES: "0"
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
