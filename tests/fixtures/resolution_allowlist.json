@@ -728,5 +728,20 @@
     "path": "tools/bot_desktop/runtime.py",
     "symbol": "installable",
     "kind": "bare_which"
+  },
+  {
+    "path": "fork_evals/diagnose.py",
+    "symbol": "run_diagnose",
+    "kind": "bare_which"
+  },
+  {
+    "path": "fork_evals/judge.py",
+    "symbol": "_llm_judge",
+    "kind": "bare_which"
+  },
+  {
+    "path": "infographic/validate_infographic.py",
+    "symbol": "check_spelling",
+    "kind": "bare_which"
   }
 ]

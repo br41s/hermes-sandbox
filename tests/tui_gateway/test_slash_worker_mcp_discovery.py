@@ -51,6 +51,10 @@ def test_profile_local_mcp_tool_is_visible_in_slash_worker(tmp_path):
     (profile_home / "config.yaml").write_text(
         yaml.safe_dump(
             {
+                # The default 1.5s discovery bound is shorter than a cold Python MCP server's
+                # start on a loaded standard runner; the worker then answered /tools before the
+                # server registered (twice on PR #344). The bound is not what this test is about.
+                "mcp_discovery_timeout": 20,
                 "mcp_servers": {
                     "profileprobe": {
                         "enabled": True,

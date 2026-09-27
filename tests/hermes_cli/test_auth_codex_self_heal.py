@@ -117,14 +117,20 @@ def test_opt_out_never_adopts_codex_cli_login(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
+    # fork: the stale refresh token is rejected by a stub, not by auth.openai.com. The first call
+    # used to reach the real endpoint, which the fork's root conftest.py network guard blocks.
+    def _rejected(*_a, **_k):
+        raise AuthError("bad", provider="openai-codex", code="invalid_grant", relogin_required=True)
+
+    import hermes_cli.auth as _auth  # _refresh_codex_auth_tokens imports it from here at call time
+
+    monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", _rejected)
+    monkeypatch.setattr(_auth, "refresh_codex_oauth_pure", _rejected)
+
     with pytest.raises(AuthError) as info:
         resolve_codex_runtime_credentials()
     assert info.value.code == "codex_auth_missing_access_token"
 
-    def _rejected(*_a, **_k):
-        raise AuthError("bad", provider="openai-codex", code="invalid_grant", relogin_required=True)
-
-    monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", _rejected)
     with pytest.raises(AuthError) as info:
         _refresh_codex_auth_tokens(dict(STALE), 5.0)
     assert info.value.relogin_required  # surfaced, not papered over with the CLI pair

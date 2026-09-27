@@ -28,6 +28,9 @@ _NON_MIRROR_DIRS = {
     "fakes", "fixtures", "honcho_plugin", "install", "integration", "manual",
     "monitoring", "openviking_plugin", "perf_guards", "scripts", "secret_sources",
     "security", "skills", "verify", "website", "computer_use", "hermes_state",
+    # fork: script families invoked by path (cron denies execute_code), so their source
+    # dirs carry no __init__.py; the tests still mirror them by name.
+    "infographic", "onsite-seo",
 }
 
 # Root-level modules whose tests sit directly in tests/ (no package to mirror).

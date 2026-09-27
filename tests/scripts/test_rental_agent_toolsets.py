@@ -145,7 +145,8 @@ def test_the_live_agents_finally_have_their_publish_tool():
 
 def test_todo_survives_narrowing():
     # todo lives in the core set, so declaring toolsets would drop it. All
-    # three prompts use it, and losing it would be invisible.
+    # three prompts use it, and losing it would be invisible. (v2026.9.24 renamed
+    # the tool todo -> todo_list; the toolset is still "todo".)
     for agent_key in ("gap-hunter", "infographic", "maintenance"):
         _source, _display, _kind, toolsets = AGENT_SOURCES[agent_key]
-        assert "todo" in reachable_from(toolsets), agent_key
+        assert "todo_list" in reachable_from(toolsets), agent_key

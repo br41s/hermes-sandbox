@@ -172,8 +172,13 @@ class TestClawHubSource(unittest.TestCase):
         self.assertEqual(bundle.files["SKILL.md"], "# Skill")
         self.assertEqual(bundle.files["README.md"], "hello")
 
+    # fork: the ZIP download is streamed through _guarded_http_stream, which this test never
+    # mocked, so it reached the real network (the fork's root conftest.py network guard blocks
+    # that). A None response is "download unavailable": exactly the fallback under test.
+    @patch("tools.skills_hub_clawhub._guarded_http_stream")
     @patch("tools.skills_hub.httpx.get")
-    def test_fetch_falls_back_to_versions_list(self, mock_get):
+    def test_fetch_falls_back_to_versions_list(self, mock_get, mock_stream):
+        mock_stream.return_value.__enter__.return_value = None
         def side_effect(url, *args, **kwargs):
             if url.endswith("/skills/caldav-calendar"):
                 return _MockResponse(status_code=200, json_data={"slug": "caldav-calendar"})

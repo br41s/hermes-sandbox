@@ -43,7 +43,9 @@ def test_compute_host_line_json_hello_and_shutdown():
     assert proc.stdin is not None
     out = _stdout_queue(proc)
     try:
-        hello = _read_json_line(out)
+        # The first frame waits on a cold interpreter start plus imports; under CI's 8
+        # parallel workers that exceeded 2s once (PR #344). Later frames keep the tight bound.
+        hello = _read_json_line(out, timeout=15.0)
         assert hello["type"] == "hello"
         assert hello["host_pid"] == proc.pid
 

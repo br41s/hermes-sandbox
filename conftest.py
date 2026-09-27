@@ -82,8 +82,26 @@ def _is_local_address(address) -> bool:
                 return False
         if not isinstance(host, str):
             return False
-        return host in _LOOPBACK_HOSTS or host.startswith("127.")
+        return host in _LOOPBACK_HOSTS or host.startswith("127.") or _is_discard_only(host)
     return False
+
+
+# RFC 6666 discard-only prefix: never routed, so a connect there can reach nothing.
+# Tests use it on purpose as an IPv6 black hole (e.g. the Happy Eyeballs race in
+# tests/agent/test_codex_happy_eyeballs.py), and blocking it only tests the guard.
+_DISCARD_ONLY_V6 = None
+
+
+def _is_discard_only(host: str) -> bool:
+    global _DISCARD_ONLY_V6
+    import ipaddress
+
+    if _DISCARD_ONLY_V6 is None:
+        _DISCARD_ONLY_V6 = ipaddress.ip_network("100::/64")
+    try:
+        return ipaddress.ip_address(host.split("%", 1)[0]) in _DISCARD_ONLY_V6
+    except ValueError:
+        return False
 
 
 @pytest.fixture(autouse=True)
@@ -160,4 +178,35 @@ def _lazy_install_guard(request, monkeypatch):
     monkeypatch.setattr(
         _dep_ensure, "_find_install_script", lambda *a, **k: (None, None)
     )
+    yield
+
+
+# ── Doctor IPv6 probe ──────────────────────────────────────────────────────
+#
+# v2026.9.24's ``hermes doctor`` IPv6-route probe (doctor_connectivity) opens a
+# raw TCP connection to OpenRouter whenever an AAAA record resolves. It catches
+# only OSError, so the network guard's RuntimeError failed every doctor test on
+# CI runners, which resolve AAAA but have no IPv6 route. Upstream's own CI never
+# notices: the connect fails fast with ENETUNREACH there. Reproduce exactly that
+# here, the "no IPv6 route" answer, instead of weakening the guard. The probe's
+# own tests patch ``_tcp_connect`` themselves, after this, and are unaffected.
+
+
+@pytest.fixture(autouse=True)
+def _doctor_ipv6_probe_offline(request, monkeypatch):
+    """Answer doctor's IPv6 connect like a host with no IPv6 route."""
+    if not _guarded_suite_test(request):
+        yield
+        return
+    try:
+        import hermes_cli.doctor_connectivity as _conn
+    except Exception:
+        yield
+        return
+    import errno as _errno
+
+    def _no_route(*_a, **_k):
+        raise OSError(_errno.ENETUNREACH, "Network is unreachable (test suite is offline)")
+
+    monkeypatch.setattr(_conn, "_tcp_connect", _no_route)
     yield

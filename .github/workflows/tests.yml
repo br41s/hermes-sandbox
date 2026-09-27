@@ -115,6 +115,11 @@ jobs:
           source .venv/bin/activate
           scripts/run_tests.sh --files '${{ matrix.slice.files }}'
         env:
+          # fork: the flat per-file cap is 300s, sized for upstream's 32-core runners. On
+          # ubuntu-latest, tests/agent/test_run_agent.py (267 tests, ~0.7s of plugin discovery
+          # per agent init since v2026.9.24) was SIGKILL'd at 300s on PR #344 before main had
+          # cached its new duration. Still a hard bound; the durations cache raises it further.
+          HERMES_TEST_FILE_TIMEOUT: "600"
           # Ensure tests don't accidentally call real APIs
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
