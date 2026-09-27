@@ -106,6 +106,31 @@ section said "not in the production image" for all of them, which would have
 been false for four. The `dev: true` flag in the lockfile answers a different
 question than the one that matters.
 
+## 2026-09-27 — incident-watcher batch (8 packages)
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `httpx2`, `httpcore2` | **`uv.lock` — ships** | 2.7.0 → 2.12.0 | **Real exposure — patched.** GHSA-7mj9-2mp8-4m2p (both), GHSA-8xx6-hgc6-gc2m (httpx2). mcp 2.x's HTTP stack, used by every HTTP/SSE MCP server connection. Pin bumped in all three extras (`dev`, `mcp`, `computer-use`) and in `tools/lazy_deps.py`'s `tool.computer_use` self-heal pin, which has to match. |
+| `@xmldom/xmldom` | root lock, apps/desktop + tests-js | 0.8.13 → 0.8.15, 0.9.10 → 0.9.12 | **Patched, acceptance withdrawn.** Accepted on 2026-09-18 as absent from the image; the fixes are now past the 14-day release-age gate, so the patch was cheaper than a fresh set of ignores. Its 10 entries were removed from `osv-scanner.toml`. |
+| `fast-uri` | root lock (apps/desktop) + website | 3.1.5 → 3.1.7 | Same as xmldom: 6 ignore entries removed. **3.1.7, not 3.1.8**: 3.1.8 is 12 days old and got through only because of a stale `min-release-age-exclude`, now deleted. |
+| `browserslist`, `svgo` | website — never ships | semver-compatible | `npm audit fix`, no `--force`. |
+| `js-yaml`, `nanoid` | website — never ships | 4.3.1 → 4.3.2, 3.3.17 → 3.3.18 | Held back by exact `overrides` in `website/package.json` left over from the last fix. `audit fix` cannot move them past an override; they are bumped by hand and clear the docusaurus cascade. |
+
+Two process traps showed up here, and either one quietly undoes the release-age
+policy:
+
+- **Re-lock with `npm@12`, never the npm 10 bundled with Node.** npm 10 ignores
+  `min-release-age` (it resolved `fast-uri` 3.1.8) and rewrites the lockfile with
+  `"peer": true` churn. Every workflow here already does `npm i -g npm@12`; locally,
+  `npx -y npm@12 …`.
+- **A `min-release-age-exclude` has to be removed when its condition is met.** Each
+  one says "remove when X is > 2 wks old", and three of them (`fast-uri`, `js-yaml`,
+  `nanoid`) had outlived that. Left in place, an exclude lets the *next* release
+  through on day zero. Removed from both `.npmrc` files.
+
+Left open, not suppressed (medium/low, below the watcher's bar): `qs` in the docs
+site; `vitest`, `colord`, `joi`, `sanitize-html` in the root lock.
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
