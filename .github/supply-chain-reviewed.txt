@@ -2,4 +2,4 @@
 # __init__.pth) that a maintainer reviewed and accepted, pinned to the exact content.
 # The supply-chain scan skips a flagged file only while its sha256 matches here.
 # Format: <path> <sha256> [note]. Editing this file needs the ci-reviewed label.
-setup.py b81382e9c4d1bc10694c42177edec65fdab9afe6511dd4c43b2279440b6ad13e upstream d84e11af4d wheel/sdist guard, byte-identical to v2026.8.31 (PR 339)
+setup.py d476dd1c28d707acd72f1d0551d7178123832ae18b6e201ca1ac48cd040653ae upstream 283c4f058c root py_modules from the tree (os.listdir only; no network/exec), byte-identical to v2026.9.24 (PR 344)
