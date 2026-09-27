@@ -98,6 +98,11 @@ def main() -> int:
     query = str(request.get("query") or "")
     safe_limit = max(1, int(request.get("safe_limit") or 1))
     try:
+        # fork: this fresh interpreter lacks the durable lazy-install dir the
+        # parent appended to sys.path, where the Docker image keeps ddgs.
+        from tools.lazy_deps import activate_durable_lazy_target
+
+        activate_durable_lazy_target()
         # Import inside main so script startup stays light / patchable.
         from plugins.web.ddgs.provider import _run_ddgs_search
 
