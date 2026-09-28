@@ -124,7 +124,8 @@ def test_an_unreadable_served_set_leaves_the_routes_alone():
     assert cfg["gateway"]["profile_routes"] == before
 
 
-def test_main_config_gets_routes_and_profiles_do_not():
+def test_main_config_gets_routes_and_profiles_do_not(monkeypatch):
+    monkeypatch.setattr(br, "ROUTE_BOUND_TOPICS", True)  # pinned off while multiplex is rolled back
     main, profile = _cfg(_topic("grow-shop", 3)), _cfg(_topic("grow-shop", 3))
     br.reconcile_cfg(main, "main", {}, profiles_src=br.Path("/nonexistent"), served=SERVED)
     br.reconcile_cfg(profile, "grow-shop", {}, served=SERVED)
@@ -132,9 +133,11 @@ def test_main_config_gets_routes_and_profiles_do_not():
     assert "profile_routes" not in profile.get("gateway", {})
 
 
-def test_the_pin_is_on():
-    """Stage 2b adopted; rolling back is flipping this, which test_rollback_removes_only_ours covers."""
-    assert br.ROUTE_BOUND_TOPICS is True
+def test_the_pin_is_off_while_multiplex_is_rolled_back():
+    """Routes only take effect under multiplex, which is pinned off (see OVERRIDES); re-enable both
+    together. test_rollback_removes_only_ours covers what the next boot does with the routes."""
+    assert br.ROUTE_BOUND_TOPICS is False
+    assert br.OVERRIDES[("gateway", "multiplex_profiles")] is False
 
 
 # ── base.py handoff ────────────────────────────────────────────────────────────

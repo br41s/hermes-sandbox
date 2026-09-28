@@ -57,9 +57,9 @@ def test_cli_view_matches_the_boot_verdict(tmp_path, monkeypatch, value, expecte
     assert mm.default_gateway_multiplexes(tmp_path) is expected
 
 
-def test_boot_hook_pins_multiplex_on():
-    """Stage 2a of the adoption: the pin is explicit, so boot never decides it by itself.
-    Rolling back is flipping this to False, which the opt-out above still honours."""
+def test_boot_hook_pins_multiplex_off():
+    """Adoption rolled back on 2026-09-28 (see OVERRIDES in boot_reconcile.py): the explicit false
+    keeps the host standalone, which the opt-out tests above guarantee."""
     from hermes_cli.fork_ext.boot_reconcile import OVERRIDES
 
-    assert OVERRIDES[("gateway", "multiplex_profiles")] is True
+    assert OVERRIDES[("gateway", "multiplex_profiles")] is False

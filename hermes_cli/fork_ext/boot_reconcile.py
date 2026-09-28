@@ -104,13 +104,14 @@ OVERRIDES = {
     # model's summary surfaced as a RuntimeError. Raised to 90 (run_agent's own
     # default). Enforced on main + every profile so the budget is uniform.
     ("agent", "max_turns"): 90,
-    # Multiplex adoption, stage 2a: the one default gateway serves every profile and
-    # ticks each profile's own cron store (all empty at adoption: jobs still live in
-    # the default store with a `profile` field). Stage 2b (ROUTE_BOUND_TOPICS below)
-    # routes the group_topics `profile` bindings in-process. Rollback is
-    # setting this back to False: hermes_cli/fork_ext/multiplex.py keeps an explicit
-    # false meaning standalone until adoption is finished, then both go together.
-    ("gateway", "multiplex_profiles"): True,
+    # Multiplex adoption is ROLLED BACK (2026-09-28). With it on, every Telegram
+    # allow/deny list is read from the profile's secret scope only, never os.environ
+    # (gateway/platforms/_shared.py platform_gate_env), and TELEGRAM_ALLOWED_USERS /
+    # TELEGRAM_GROUP_ALLOWED_CHATS live only in the Zeabur service env: the adapter
+    # blocked every sender ("Blocked unauthorized user") and profile cron jobs lost
+    # Telegram delivery. Re-enable only once those keys reach the scope that reads
+    # them; hermes_cli/fork_ext/multiplex.py keeps an explicit false meaning standalone.
+    ("gateway", "multiplex_profiles"): False,
 }
 
 # Cost ceilings the upstream merge would otherwise raise; applied only where a
@@ -132,8 +133,9 @@ PIN_IF_MISSING = {
 # (gateway/platforms/base.py, which yields to a route). Rollback is setting this to
 # False: the next boot removes the generated routes and every bound topic falls back
 # to the subprocess. Routes a human added are never touched: only names with
-# ROUTE_NAME_PREFIX are ours.
-ROUTE_BOUND_TOPICS = True
+# ROUTE_NAME_PREFIX are ours. Off while multiplex is rolled back (routes need it; see
+# OVERRIDES): the next boot removes the generated routes.
+ROUTE_BOUND_TOPICS = False
 ROUTE_NAME_PREFIX = "fork-topic:"
 
 CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"

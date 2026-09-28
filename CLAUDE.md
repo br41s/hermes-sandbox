@@ -49,12 +49,17 @@ the `hermes-*` role profiles.
 Profile-scoped delegation runs in a **subprocess** with `HERMES_HOME=<profile home>` — the
 web server is pinned to `default`, and in-process env mutation would race.
 
-**Telegram topics bound to a profile are the exception (multiplex stage 2b).** The boot
-reconcile writes one `gateway.profile_routes` entry per `group_topics` topic that names a
-profile (`ROUTE_BOUND_TOPICS`, names prefixed `fork-topic:`), and the one gateway runs that
-topic's turns in-process under the profile. `gateway/platforms/base.py` only falls back to
-the per-turn subprocess when no route stamped `source.profile`. Rollback is
-`ROUTE_BOUND_TOPICS = False`; the next boot removes the generated routes.
+**Multiplex is rolled back (2026-09-28); topics bound to a profile use the subprocess.**
+Stage 2a (`multiplex_profiles: true`) and 2b (`ROUTE_BOUND_TOPICS`, in-process topic routes)
+shipped and silenced Telegram: under multiplex every allow/deny list is read from the
+profile's secret scope only (`gateway/platforms/_shared.py` `platform_gate_env`), never
+`os.environ`, and `TELEGRAM_ALLOWED_USERS` / `TELEGRAM_GROUP_ALLOWED_CHATS` live only in the
+Zeabur service env — so the adapter logged `Blocked unauthorized user` for every sender,
+and profile cron jobs failed `platform 'telegram' not configured/enabled`. Both pins are off
+in `hermes_cli/fork_ext/boot_reconcile.py`. **Before re-enabling: get those keys into the
+scope that reads them, never copy `TELEGRAM_BOT_TOKEN` into a profile (a satellite holding
+its own token is a fatal duplicate credential), and prove it by sending a plain message in
+General — tests alone passed both stages.**
 
 ### Cron jobs with a workdir inject that repo's context file
 
@@ -197,11 +202,11 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   on `/proc/1/comm` + `/run/s6/basedir`, so the s6 dispatch path is live in a Zeabur pod.
   Nobody has re-verified the full lifecycle there since, so reach for
   `/command/s6-svc -u /run/service/gateway-default` first and treat a working
-  `hermes gateway restart` as a pleasant surprise worth recording here. **With
-  multiplex on (stage 2a onward) the default gateway serves every profile: never bring
-  up a `gateway-<profile>` slot for a secondary**, which would double-serve it. Rollback
-  of the adoption is `("gateway", "multiplex_profiles"): False` in `OVERRIDES`
-  (`hermes_cli/fork_ext/boot_reconcile.py`, run by the boot hook); `hermes_cli/fork_ext/multiplex.py` keeps that meaning standalone.
+  `hermes gateway restart` as a pleasant surprise worth recording here. Multiplex is
+  pinned off (`("gateway", "multiplex_profiles"): False` in `OVERRIDES`,
+  `hermes_cli/fork_ext/boot_reconcile.py`; see "Multiplex is rolled back" above).
+  **Whenever it is on, the default gateway serves every profile: never bring up a
+  `gateway-<profile>` slot for a secondary**, which would double-serve it.
 - **Container restarts every 1–2h are benign** — Zeabur deployment rollouts re-serialise the
   env array, producing a new pod-template-hash and a k8s rolling restart. Not a crash, not
   OOM; there are no liveness probes. Self-heals in ~3 min. Do not chase it.
