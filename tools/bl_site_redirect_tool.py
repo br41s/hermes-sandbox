@@ -75,6 +75,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from tools.bl_site_client import request_json
 from tools.bl_site_health_tool import _sweepable
 from tools.bl_site_product_tool import _refuse_if_scripted, _tool_call
 from tools.bl_site_publish_tool import _get_jwt, _get_site_credentials
@@ -333,30 +334,14 @@ def _mark_legacy_processed(old_path: str) -> None:
 
 
 def _request(method: str, url: str, token: str, body: Optional[dict] = None) -> dict:
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        # 422 is the server's own validation refusing the proposal or the
-        # publish, and its body lists exactly what failed. Passed through
-        # verbatim: it is instructions for what to try next, not noise.
-        try:
-            payload = json.loads(detail)
-        except ValueError:
-            raise RuntimeError(f"HTTP {e.code} from {url}: {detail}") from e
-        if e.code == 422 and payload.get("blockers"):
-            raise RuntimeError(
-                "La redirección no pasa la validación del sitio: "
-                + "; ".join(payload["blockers"])
-            ) from e
-        raise RuntimeError(f"HTTP {e.code} from {url}: {payload.get('error', detail)}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"No se pudo contactar {url}: {e.reason}") from e
+    # 422 is the server's own validation refusing the proposal or the
+    # publish, and its body lists exactly what failed. Passed through
+    # verbatim: it is instructions for what to try next, not noise.
+    return request_json(
+        method, url, token=token, body=body, timeout=REQUEST_TIMEOUT,
+        refusal_prefix="La redirección no pasa la validación del sitio: ",
+        unreachable_prefix="No se pudo contactar",
+    )
 
 
 def _fetch_snapshot(url: str) -> str:

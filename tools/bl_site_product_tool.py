@@ -39,6 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from tools.bl_site_client import request_json
 from tools.bl_site_publish_tool import _get_jwt, _get_site_credentials
 
 # True only while the registry is dispatching a real tool call.
@@ -82,27 +83,12 @@ REQUEST_TIMEOUT = 30
 
 
 def _request(method: str, url: str, token: str, body: Optional[dict] = None) -> dict:
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        # 422 is the publishing gate refusing, and its body lists exactly what
-        # is missing. Passed through verbatim: it is instructions, not noise.
-        try:
-            payload = json.loads(detail)
-        except ValueError:
-            raise RuntimeError(f"HTTP {e.code} from {url}: {detail}") from e
-        if e.code == 422 and payload.get("blockers"):
-            raise RuntimeError(
-                "La ficha no cumple los requisitos para publicarse: "
-                + "; ".join(payload["blockers"])
-            ) from e
-        raise RuntimeError(f"HTTP {e.code} from {url}: {payload.get('error', detail)}") from e
+    # 422 is the publishing gate refusing, and its body lists exactly what
+    # is missing. Passed through verbatim: it is instructions, not noise.
+    return request_json(
+        method, url, token=token, body=body, timeout=REQUEST_TIMEOUT,
+        refusal_prefix="La ficha no cumple los requisitos para publicarse: ",
+    )
 
 
 def bl_site_product(
