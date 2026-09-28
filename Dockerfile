@@ -493,6 +493,12 @@ ENV HERMES_DISABLE_LAZY_INSTALLS=1
 # updates (an ABI stamp invalidates it if a rebuild bumps the interpreter).
 ENV HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages
 
+# Fork: under multiplex the launch profile's secret scope falls back to the
+# process env, as it did before multiplex (Zeabur injects keys that never reach
+# /opt/data/.env, the Telegram allowlists and bot token among them). Launch
+# profile only; .env still wins. hermes_cli/fork_ext/process_env_scope.py.
+ENV HERMES_FORK_SCOPE_PROCESS_ENV=1
+
 # Xfce, dbus and the display-allocation lock need one; containers have no logind
 # to create /run/user/<uid>. The default fallback ($HOME/.cache) is the /opt/data
 # volume, which a host-side install may share — two instances would then contend
