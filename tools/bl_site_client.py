@@ -7,9 +7,11 @@ password rotation stayed cached in the long-lived gateway process, so every late
 to that site failed with a 401 until the next restart.
 
 ``request_json`` is the one request path. On a 401 to an authenticated request it drops
-the cached token, logs in again once through the same login function that produced it,
-and retries that request once. A 401 means the site refused the request, so a write
-retried this way cannot apply twice.
+the cached token and logs in again through the newest login function for that site, so a
+rotated panel password is picked up. An idempotent request (GET, PUT, DELETE) is then
+retried once. A POST is not: it raises, and the next call gets the fresh token, so a
+create or publish is never sent twice even if a site handler, not its auth middleware,
+answered the 401.
 
 Each tool keeps its own error wording: the 422 ``blockers`` text is passed through as
 instructions for the agent, with a tool-specific prefix, exactly as before.
@@ -24,18 +26,24 @@ from typing import Callable, Optional
 
 # site_url -> JWT. Module-level so every tool shares one login per site and process.
 _jwt_cache: dict[str, str] = {}
-# site_url -> the login that produced the cached token, for a transparent re-login.
+# site_url -> the newest login for that site (current credentials), for a re-login.
 _relogin: dict[str, Callable[[], str]] = {}
+# Retried once after a re-login; anything else is only re-authenticated for the next call.
+_IDEMPOTENT = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
 
 def cached_token(site_url: str, login: Callable[[], str]) -> str:
-    """The cached JWT for ``site_url``, logging in through ``login`` when there is none."""
+    """The cached JWT for ``site_url``, logging in through ``login`` when there is none.
+
+    ``login`` is remembered on every call, cache hit included: it closes over the
+    caller's current password, and a re-login after a rotation must use that one.
+    """
+    _relogin[site_url] = login
     token = _jwt_cache.get(site_url)
     if token:
         return token
     token = login()
     _jwt_cache[site_url] = token
-    _relogin[site_url] = login
     return token
 
 
@@ -95,7 +103,7 @@ def request_json(
         detail = e.read().decode("utf-8", errors="replace")
         if e.code == 401 and token and not _retried:
             fresh = _fresh_token(url, token)
-            if fresh:
+            if fresh and method.upper() in _IDEMPOTENT:
                 return request_json(
                     method, url, token=fresh, body=body, headers=headers, timeout=timeout,
                     refusal_prefix=refusal_prefix, unreachable_prefix=unreachable_prefix,

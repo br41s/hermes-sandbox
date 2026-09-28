@@ -38,13 +38,14 @@ def site(monkeypatch):
     client._jwt_cache.clear()
     client._relogin.clear()
     monkeypatch.setattr(publish, "_get_automation_key", lambda: None)
-    state = {"logins": 0, "accepted": set(), "calls": [], "login_status": 200}
+    state = {"logins": 0, "accepted": set(), "calls": [], "login_status": 200, "password": "pw"}
 
     def fake_urlopen(req, timeout=None):
         url = req.full_url
         if url.endswith("/api/auth/login"):
-            if state["login_status"] != 200:
-                raise _http_error(url, state["login_status"], {"error": "bad password"})
+            sent = json.loads(req.data)["password"]
+            if state["login_status"] != 200 or sent != state["password"]:
+                raise _http_error(url, 401, {"error": "bad password"})
             state["logins"] += 1
             token = f"tok{state['logins']}"
             return _Resp(json.dumps({"token": token}).encode())
@@ -99,6 +100,37 @@ def test_a_second_caller_reuses_a_relogin_that_already_happened(site):
     # A caller still holding tok1 retries with the cached tok2 instead of logging in again.
     assert product._request("GET", f"{SITE}/api/products/queue", stale) == {"ok": True}
     assert site["logins"] == 2
+
+
+def test_a_rotated_panel_password_is_used_by_the_relogin(site):
+    """The motivating case: the client changes their panel password, which kills the
+    token AND the password the first login used. The profile's .env now carries the
+    new one, and the re-login must send that, not the one captured at first login."""
+    site["accepted"] = {"tok1"}
+    token = publish._get_jwt(SITE, "pw")
+
+    site["password"], site["accepted"] = "pw2", {"tok2"}
+    token_seen_by_a_later_call = publish._get_jwt(SITE, "pw2")  # cache hit: still tok1
+    assert token_seen_by_a_later_call == token == "tok1"
+
+    assert product._request("GET", f"{SITE}/api/products/queue", token) == {"ok": True}
+    assert site["logins"] == 2
+
+
+def test_a_post_is_reauthenticated_but_never_replayed(site):
+    """A 401 on a create or publish must not send it twice: it raises, and only the
+    NEXT call carries the fresh token."""
+    site["accepted"] = {"tok1"}
+    token = publish._get_jwt(SITE, "pw")
+    site["accepted"] = {"tok2"}
+
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        product._request("POST", f"{SITE}/api/redirects", token, {"x": 1})
+    assert [c[0] for c in site["calls"]] == ["POST"]
+
+    fresh = publish._get_jwt(SITE, "pw")
+    assert fresh == "tok2" and site["logins"] == 2
+    assert product._request("POST", f"{SITE}/api/redirects", fresh, {"x": 1}) == {"ok": True}
 
 
 def test_a_failed_login_is_not_retried(site):
