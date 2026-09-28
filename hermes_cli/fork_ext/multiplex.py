@@ -6,7 +6,8 @@ config.yaml on the next boot. The only thing left that keeps a host standalone i
 incidental blocker (a duplicate bot token, a secondary still running its own gateway).
 
 The fork is adopting multiplex in stages, and this opt-out is the rollback lever while
-it does. Stage 2a (``OVERRIDES`` in ``hermes_cli/fork_ext/boot_reconcile.py``, run by the boot
+it does. It was pulled on 2026-09-28: stages 2a/2b blocked every Telegram sender (see
+CLAUDE.md, "Multiplex is rolled back"), so the boot hook pins ``false`` again. Stage 2a (``OVERRIDES`` in ``hermes_cli/fork_ext/boot_reconcile.py``, run by the boot
 hook, pins the flag to ``true``) turned it on; stage 2b (``ROUTE_BOUND_TOPICS`` there) routes
 every profile-bound group topic in-process through ``gateway.profile_routes``, so the
 per-turn ``auto_profile`` subprocess is only the fallback. Rolling back is pinning ``false`` again, which this module
