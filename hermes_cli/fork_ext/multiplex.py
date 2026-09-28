@@ -6,8 +6,8 @@ config.yaml on the next boot. The only thing left that keeps a host standalone i
 incidental blocker (a duplicate bot token, a secondary still running its own gateway).
 
 The fork is adopting multiplex in stages, and this opt-out is the rollback lever while
-it does. Stage 2a (the boot hook in ``docker/cont-init.d/03-biglobster-config`` pins
-the flag to ``true``) turns it on with inbound routing unchanged: group-topic
+it does. Stage 2a (``OVERRIDES`` in ``hermes_cli/fork_ext/boot_reconcile.py``, run by the boot
+hook, pins the flag to ``true``) turns it on with inbound routing unchanged: group-topic
 ``auto_profile`` bindings still run in a per-turn subprocess until stage 2b adds
 ``gateway.profile_routes``. Rolling back is pinning ``false`` again, which this module
 keeps meaning standalone. Once adoption is finished, drop this module, the two call

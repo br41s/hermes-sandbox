@@ -193,8 +193,8 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   `hermes gateway restart` as a pleasant surprise worth recording here. **With
   multiplex on (stage 2a onward) the default gateway serves every profile: never bring
   up a `gateway-<profile>` slot for a secondary**, which would double-serve it. Rollback
-  of the adoption is `("gateway", "multiplex_profiles"): False` in the boot hook's
-  `overrides`; `hermes_cli/fork_ext/multiplex.py` keeps that meaning standalone.
+  of the adoption is `("gateway", "multiplex_profiles"): False` in `OVERRIDES`
+  (`hermes_cli/fork_ext/boot_reconcile.py`, run by the boot hook); `hermes_cli/fork_ext/multiplex.py` keeps that meaning standalone.
 - **Container restarts every 1–2h are benign** — Zeabur deployment rollouts re-serialise the
   env array, producing a new pod-template-hash and a k8s rolling restart. Not a crash, not
   OOM; there are no liveness probes. Self-heals in ~3 min. Do not chase it.
@@ -418,7 +418,7 @@ it writes from. Sold to a client without one it goes quiet on every run.
   per post and submits it, the Publisher collects and publishes. Neither waits on a
   render, and neither sits on the shared profile/workdir thread (see above). Their
   keys (`SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*`, `META_*`) live only in the
-  service env. **Do not add them to the boot hook's `inject`**, which would copy
+  service env. **Do not add them to `INJECT` in `hermes_cli/fork_ext/boot_reconcile.py`**, which would copy
   BigLobster's publishing tokens into every profile.
 - **Rendering is Remotion in `.github/workflows/shorts-studio.yml`**, never in the
   pod: ~1,800 browser frames a minute of video would starve the fleet.

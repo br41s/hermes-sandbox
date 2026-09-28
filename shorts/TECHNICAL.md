@@ -216,12 +216,13 @@ here as a rejected one.
 The boot hook needs **both halves** of the contract:
 
 ```python
-inject  = [..., "OPENROUTER_API_KEY", "PEXELS_API_KEY", ...]   # BigLobster's own profiles
-_exclude = ("OPENROUTER_API_KEY", "PEXELS_API_KEY")            # withheld from rented tenants
+# hermes_cli/fork_ext/boot_reconcile.py
+INJECT = [..., "OPENROUTER_API_KEY", "PEXELS_API_KEY", ...]          # BigLobster's own profiles
+TENANT_EXCLUDE = ("OPENROUTER_API_KEY", "PEXELS_API_KEY", ...)      # withheld from rented tenants
 ```
 
-`inject` alone is the bl-shoroban bug (2026-07-31): every boot overwrote the client's key
-with BigLobster's, silently billing tenant runs to us. `_exclude` alone would lose the
+`INJECT` alone is the bl-shoroban bug (2026-07-31): every boot overwrote the client's key
+with BigLobster's, silently billing tenant runs to us. `TENANT_EXCLUDE` alone would lose the
 rotation repair for BigLobster's own profiles that the grow-shop incident (2026-06-05)
 added. `tests/test_biglobster_github_token_propagation.py` now asserts both together and
 parses the lists out of the boot script rather than copying them — the previous

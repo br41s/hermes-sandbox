@@ -8,14 +8,11 @@ that writes the value.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from hermes_cli import gateway_multiplex_mode as mm
-
-_REPO = Path(__file__).resolve().parents[2]
 
 
 def _no_standalone_launcher(monkeypatch):
@@ -63,6 +60,6 @@ def test_cli_view_matches_the_boot_verdict(tmp_path, monkeypatch, value, expecte
 def test_boot_hook_pins_multiplex_on():
     """Stage 2a of the adoption: the pin is explicit, so boot never decides it by itself.
     Rolling back is flipping this to False, which the opt-out above still honours."""
-    hook = (_REPO / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
-    overrides = hook.split("overrides = {", 1)[1].split("\n}", 1)[0]
-    assert '("gateway", "multiplex_profiles"): True' in overrides
+    from hermes_cli.fork_ext.boot_reconcile import OVERRIDES
+
+    assert OVERRIDES[("gateway", "multiplex_profiles")] is True

@@ -12,80 +12,28 @@ design, so nothing reported it.
 Two distinct harms, and the billing one outlives the outage: rerouting a
 rental off its own FAL key moves its image spend onto our OpenRouter account.
 That is issue #174 (EXA_API_KEY billing every tenant's searches to us) in a
-second guise, which is why the fix reuses the same `_is_rented_tenant` marker.
+second guise, which is why the fix reuses the same `is_rented_tenant` marker.
 
-Content-assertion style (matching tests/test_auditor_provider_pinning.py):
-running the real cont-init script needs root + s6-setuidgid, so we assert the
-reconcile block's invariants on the script text and replay its logic on
-representative configs.
+The reconcile lives in ``hermes_cli/fork_ext/boot_reconcile.py`` and is called
+directly on representative configs and a fixture volume.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+import yaml
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-BOOT_SCRIPT = REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config"
-
-
-@pytest.fixture(scope="module")
-def boot_text() -> str:
-    if not BOOT_SCRIPT.exists():
-        pytest.skip("docker/cont-init.d/03-biglobster-config not present")
-    return BOOT_SCRIPT.read_text(encoding="utf-8")
-
-
-def test_override_still_exists_for_everyone_else(boot_text: str) -> None:
-    # The override is correct for our own profiles; the fix is scoped, not a
-    # removal. If this line goes, non-rented profiles lose their image backend.
-    assert '("image_gen", "provider"): "openrouter"' in boot_text
-
-
-def test_byok_tenants_skip_the_image_gen_override(boot_text: str) -> None:
-    assert 'if byok_images and (section, key) == ("image_gen", "provider"):' in boot_text
-
-
-def test_byok_requires_both_rented_and_own_fal_key(boot_text: str) -> None:
-    # A rental with no FAL_KEY has no backend of its own and must KEEP the
-    # override — losing image generation entirely would be a worse regression
-    # than the billing leak this fixes.
-    assert "_has_own_fal_key(prof / \".env\")" in boot_text
-    idx = boot_text.index("_has_own_fal_key(prof / \".env\")")
-    gate = boot_text.rindex("byok_images=", 0, idx)
-    assert "_is_rented_tenant(prof / \".env\")" in boot_text[gate:idx]
-
-
-def test_fal_key_marker_requires_a_value(boot_text: str) -> None:
-    # `^FAL_KEY=.+` not `^FAL_KEY=`: a provisioned-but-empty key must not count
-    # as BYOK, or the tenant is switched to a backend it cannot authenticate.
-    assert 'r"^FAL_KEY=.+"' in boot_text
-
-
-def test_curated_openrouter_model_not_applied_to_byok(boot_text: str) -> None:
-    assert "ig = None if byok_images else cfg.get(\"image_gen\")" in boot_text
+from hermes_cli.fork_ext import boot_reconcile as br
 
 
 def _replay(cfg: dict, byok_images: bool) -> bool:
-    """Replay the reconcile snippet's image_gen handling on one config."""
-    overrides = {("image_gen", "provider"): "openrouter"}
-    changed = False
-    for (section, key), val in overrides.items():
-        if byok_images and (section, key) == ("image_gen", "provider"):
-            continue
-        if not isinstance(cfg.get(section), dict):
-            cfg[section] = {}
-        if cfg[section].get(key) != val:
-            cfg[section][key] = val
-            changed = True
-    if byok_images and isinstance(cfg.get("image_gen"), dict):
-        for stale in ("provider", "openrouter"):
-            if stale in cfg["image_gen"]:
-                del cfg["image_gen"][stale]
-                changed = True
-        if not cfg["image_gen"]:
-            del cfg["image_gen"]
-    return changed
+    return br.reconcile_cfg(cfg, "bl-shoroban", {}, is_rented=True, byok_images=byok_images)
+
+
+def test_override_still_exists_for_everyone_else() -> None:
+    # The override is correct for our own profiles; the fix is scoped, not a
+    # removal. If it goes, non-rented profiles lose their image backend.
+    assert br.OVERRIDES[("image_gen", "provider")] == "openrouter"
 
 
 def test_byok_tenant_gets_image_gen_cleared() -> None:
@@ -108,6 +56,8 @@ def test_byok_tenant_is_idempotent_on_a_clean_config() -> None:
     # A second boot must not rewrite config.yaml: the reconcile only saves when
     # `changed`, and a needless save churns the volume on every restart.
     cfg = {"model": {"default": "x"}}
+    _replay(cfg, byok_images=True)
+    assert "image_gen" not in cfg
     assert _replay(cfg, byok_images=True) is False
     assert "image_gen" not in cfg
 
@@ -120,12 +70,55 @@ def test_byok_preserves_unrelated_image_gen_keys() -> None:
     assert cfg["image_gen"] == {"model": "fal-ai/flux-2-pro"}
 
 
+def test_curated_openrouter_model_not_applied_to_byok() -> None:
+    cfg = {"image_gen": {"model": "fal-ai/flux-2-pro"}}
+    _replay(cfg, byok_images=True)
+    assert "openrouter" not in cfg["image_gen"]
+
+
 def test_non_byok_profile_still_forced_to_openrouter() -> None:
     cfg: dict = {}
     assert _replay(cfg, byok_images=False) is True
-    assert cfg["image_gen"]["provider"] == "openrouter"
+    assert cfg["image_gen"] == {
+        "provider": "openrouter",
+        "openrouter": {"model": br.CURATED_OPENROUTER_IMAGE_MODEL},
+    }
 
 
 def test_non_byok_profile_is_idempotent() -> None:
-    cfg = {"image_gen": {"provider": "openrouter"}}
+    cfg: dict = {}
+    _replay(cfg, byok_images=False)
     assert _replay(cfg, byok_images=False) is False
+
+
+def _volume(tmp_path: Path, envs: dict[str, str]) -> Path:
+    home = tmp_path / "data"
+    for name, env in envs.items():
+        prof = home / "profiles" / name
+        prof.mkdir(parents=True)
+        (prof / "SOUL.md").write_text("soul", encoding="utf-8")
+        (prof / ".env").write_text(env, encoding="utf-8")
+        (prof / "config.yaml").write_text(
+            yaml.dump({"image_gen": {"provider": "openrouter"}}), encoding="utf-8")
+    return home
+
+
+def test_byok_requires_both_rented_and_own_fal_key(tmp_path) -> None:
+    # A rental with no FAL_KEY has no backend of its own and must KEEP the
+    # override — losing image generation entirely would be a worse regression
+    # than the billing leak this fixes. A provisioned-but-EMPTY FAL_KEY counts
+    # as none, or the tenant is switched to a backend it cannot authenticate.
+    home = _volume(tmp_path, {
+        "rental-fal": "BL_SITE_URL=https://a\nFAL_KEY=fk\n",
+        "rental-empty-fal": "BL_SITE_URL=https://b\nFAL_KEY=\n",
+        "rental-no-fal": "BL_SITE_URL=https://c\n",
+        "own-with-fal": "FAL_KEY=fk\n",
+    })
+    br.reconcile_configs(home, {}, profiles_src=tmp_path / "none")
+
+    def image_gen(name):
+        return yaml.safe_load((home / "profiles" / name / "config.yaml").read_text()).get("image_gen")
+
+    assert image_gen("rental-fal") is None
+    for keeps in ("rental-empty-fal", "rental-no-fal", "own-with-fal"):
+        assert image_gen(keeps)["provider"] == "openrouter", keeps
