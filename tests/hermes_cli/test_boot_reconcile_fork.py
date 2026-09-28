@@ -199,5 +199,10 @@ def test_runs_as_the_boot_hook_invokes_it(home):
 
 def test_the_hook_calls_the_module():
     hook = (REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
-    assert '"$PY" -m hermes_cli.fork_ext.boot_reconcile' in hook
+    [call] = [line for line in hook.splitlines() if "-m hermes_cli.fork_ext.boot_reconcile" in line]
+    # Without either, the import or HERMES_HOME silently fails and §1+§2 degrade to the
+    # hook's `|| echo Warning` fallback on every boot.
+    assert 'PYTHONPATH="$INSTALL_DIR"' in call
+    assert 'HERMES_HOME="$HERMES_HOME"' in call
+    assert 'as_hermes "$PY" -m hermes_cli.fork_ext.boot_reconcile' in call
     assert "overrides = {" not in hook and "inject = [" not in hook

@@ -42,8 +42,10 @@ def test_pins_match_the_seed_config() -> None:
 
 
 def test_absent_keys_are_written() -> None:
-    cfg = _apply({"agent": {"max_turns": 90}})
+    cfg = _apply({"agent": {"max_turns": 90, "reasoning_effort": "low"}})
     assert cfg["delegation"] == {"max_iterations": 50, "max_concurrent_children": 3}
+    # An existing agent section is extended, never replaced.
+    assert cfg["agent"] == {"max_turns": 90, "reasoning_effort": "low"}
 
 
 def test_a_profiles_own_delegation_choice_is_kept() -> None:
