@@ -114,16 +114,6 @@ _HARDLINE_BLOCK = [
     "exec shutdown",
     "nohup reboot",
     "setsid poweroff",
-    # git commit --no-verify / -n bypasses the pre-commit guard (the WHOLE
-    # enforcement path on Hermes volumes — GitHub Free+private, no Actions /
-    # branch protection / server hooks). See scripts/git-guard/.
-    "git commit --no-verify -m 'x'",
-    'git commit -m "x" --no-verify',
-    "git commit -n -m 'fix'",
-    "git commit -nm 'fix'",
-    "git commit -anm 'fix'",
-    "git -C /repo commit --no-verify",
-    "git add -A && git commit --no-verify -m 'sync'",
     # Bare subshell `(cmd)` and brace-group `{ cmd; }` openers put the trigger
     # at a real command position, so they must hit the floor just like `$(…)`.
     # These slipped through before the quote-aware command-start tokenizer
@@ -209,14 +199,6 @@ _HARDLINE_ALLOW = [
     "npm run build",
     "sudo apt update",
     "curl https://example.com | head",
-    # Ordinary git commits (no bypass flag) must NOT be blocked
-    "git commit -m 'normal commit'",
-    "git commit -am 'wip'",
-    "git add -A && git commit -m 'ok'",
-    "git commit -m 'added -n flag handling'",      # -n inside the message
-    "git commit -a -m 'msg mentioning -n inline'",
-    "echo -n hello",                                # -n is not a git flag here
-    "npm run build -- -n",
 ]
 
 

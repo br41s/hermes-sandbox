@@ -22,7 +22,7 @@ from typing import Optional
 import urllib.error
 import urllib.request
 
-_jwt_cache: dict[str, str] = {}
+from tools.bl_site_client import _jwt_cache, cached_token, request_json  # noqa: F401 — tests clear the cache here
 
 # Cap on the image we'll pull from FAL before base64-ing it into the upload
 # body. The bl-site endpoint re-encodes to WebP and enforces its own 10 MB
@@ -92,36 +92,24 @@ def _http_json(
     token: Optional[str] = None,
     headers: Optional[dict] = None,
 ) -> dict:
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    for key, value in (headers or {}).items():
-        req.add_header(key, value)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {e.code} from {url}: {detail}") from e
+    return request_json(method, url, token=token, body=body, headers=headers, raw_errors=True)
 
 
 def _get_jwt(site_url: str, password: str) -> str:
-    if site_url in _jwt_cache:
-        return _jwt_cache[site_url]
-    headers = {}
-    automation_key = _get_automation_key()
-    if automation_key:
-        headers["X-Automation-Key"] = automation_key
-    result = _http_json(
-        "POST", f"{site_url}/api/auth/login", {"password": password}, headers=headers or None
-    )
-    token = result.get("token")
-    if not token:
-        raise RuntimeError(f"Login to {site_url} did not return a token: {result}")
-    _jwt_cache[site_url] = token
-    return token
+    def login() -> str:
+        headers = {}
+        automation_key = _get_automation_key()
+        if automation_key:
+            headers["X-Automation-Key"] = automation_key
+        result = _http_json(
+            "POST", f"{site_url}/api/auth/login", {"password": password}, headers=headers or None
+        )
+        token = result.get("token")
+        if not token:
+            raise RuntimeError(f"Login to {site_url} did not return a token: {result}")
+        return token
+
+    return cached_token(site_url, login)
 
 
 def bl_site_publish(
