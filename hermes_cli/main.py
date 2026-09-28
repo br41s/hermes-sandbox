@@ -3635,7 +3635,9 @@ def main():
 
     # A handler's int return code becomes the exit code (None = success).
     if hasattr(args, "func"):
-        rc = args.func(args)
+        from hermes_cli.fork_ext.cli_pipes import quiet_broken_pipe  # fork: `hermes … | head` exits quietly
+        with quiet_broken_pipe():
+            rc = args.func(args)
         if isinstance(rc, int) and rc != 0:
             sys.exit(rc)
     else:
