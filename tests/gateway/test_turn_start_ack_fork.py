@@ -24,23 +24,51 @@ async def _drain() -> None:
         await asyncio.sleep(0)
 
 
-@pytest.mark.asyncio
-async def test_fresh_turn_schedules_the_ack_once(monkeypatch):
+def _live_turn_runner(monkeypatch):
+    """A runner whose fresh turn goes through the real _handle_message and the real ack method."""
     import gateway.run as gateway_run
 
-    runner = _make_runner()
+    runner, adapter = _ack_runner(monkeypatch)
     runner._handle_message_with_agent = AsyncMock(return_value="agent response")
-    runner._maybe_send_turn_start_ack = AsyncMock()
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+    return runner, adapter
 
+
+@pytest.mark.asyncio
+async def test_fresh_turn_delivers_the_ack_once(monkeypatch):
+    runner, adapter = _live_turn_runner(monkeypatch)
     event = _make_group_event("hello", thread_id="555")
+
     assert await runner._handle_message(event) == "agent response"
     await _drain()
 
-    runner._maybe_send_turn_start_ack.assert_awaited_once()
-    sent_event, sent_source = runner._maybe_send_turn_start_ack.await_args.args
-    assert sent_event is event
-    assert sent_source.chat_id == event.source.chat_id
+    adapter._send_with_retry.assert_awaited_once()
+    kwargs = adapter._send_with_retry.await_args.kwargs
+    assert kwargs["chat_id"] == event.source.chat_id
+    assert kwargs["content"] == "✅ recibido"
+
+
+@pytest.mark.asyncio
+async def test_a_slow_ack_is_retained_until_it_finishes(monkeypatch):
+    """The loop keeps only a weak reference to a task: an ack still sending when the handler
+    returns must stay registered on the runner, or it can be collected mid-send."""
+    runner, adapter = _live_turn_runner(monkeypatch)
+    release = asyncio.Event()
+
+    async def _slow_send(**_kwargs):
+        await release.wait()
+
+    adapter._send_with_retry = AsyncMock(side_effect=_slow_send)
+
+    await runner._handle_message(_make_group_event("hello", thread_id="555"))
+    await _drain()
+    pending = [t for t in runner._background_tasks if not t.done()]
+    assert len(pending) == 1, runner._background_tasks
+
+    release.set()
+    await _drain()
+    assert pending[0].done() and pending[0] not in runner._background_tasks
+    adapter._send_with_retry.assert_awaited_once()
 
 
 def _ack_runner(monkeypatch, *, enabled=True, text="✅ recibido"):

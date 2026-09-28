@@ -67,12 +67,15 @@ def _bind_lark_sdk_globals_when_installed():
     yield
 
 
+# fork: upstream modules that assert the exact sends of a turn, which the turn-start ack
+# (GatewayRunner._maybe_send_turn_start_ack) adds one to. Everything else runs with the ack live.
+# A module that starts failing on "✅ Mensaje recibido" after an upstream merge belongs here.
+_TURN_START_ACK_OFF = frozenset({"test_base_warning_owner_scope", "test_incomplete_gateway_turns"})
+
+
 @pytest.fixture(autouse=True)
 def _fork_silence_turn_start_ack(request, monkeypatch):
-    """fork: the turn-start ack (GatewayRunner._maybe_send_turn_start_ack) is one extra send per
-    fresh turn, which breaks upstream tests that count sends. Silence it; the fork's own ``*_fork``
-    modules keep it, and they exercise the real method."""
-    if request.module.__name__.endswith("_fork"):
+    if request.module.__name__.rsplit(".", 1)[-1] not in _TURN_START_ACK_OFF:
         yield
         return
     from gateway.run import GatewayRunner

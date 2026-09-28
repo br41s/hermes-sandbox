@@ -298,12 +298,15 @@ async def send_and_capture(adapter, text: str, platform: Platform, **event_kwarg
 
 
 # Parametrized fixtures for platform-generic tests
+# fork: upstream e2e modules that read a turn's last send, which the turn-start ack adds to.
+# Everything else, child-process gateways included, runs with the ack live. See the same list in
+# tests/gateway/conftest.py.
+_TURN_START_ACK_OFF = frozenset({"test_platform_commands"})
+
+
 @pytest.fixture(autouse=True)
 def _fork_silence_turn_start_ack(request, monkeypatch):
-    """fork: the turn-start ack is one extra send per fresh turn; upstream e2e tests read the last
-    send or count them. Silenced here as in tests/gateway/conftest.py; ``*_fork`` modules keep it.
-    Child-process gateways are unaffected by this and get it off through their config instead."""
-    if request.module.__name__.endswith("_fork"):
+    if request.module.__name__.rsplit(".", 1)[-1] not in _TURN_START_ACK_OFF:
         yield
         return
 
