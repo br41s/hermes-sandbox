@@ -61,6 +61,15 @@ scope that reads them, never copy `TELEGRAM_BOT_TOKEN` into a profile (a satelli
 its own token is a fatal duplicate credential), and prove it by sending a plain message in
 General — tests alone passed both stages.**
 
+The keys half is done by `hermes_cli/fork_ext/process_env_scope.py`. With
+`HERMES_FORK_SCOPE_PROCESS_ENV=1`, set in the Dockerfile, the launch profile's scope
+falls back to the process env, as it did before multiplex; `.env` still wins, and no
+secondary sees it. Before flipping the pins, run the read-only probe in the pod.
+`with-contenv` gives it the container env, which a bare exec may lack:
+`/command/with-contenv s6-setuidgid hermes /opt/hermes/.venv/bin/python -m hermes_cli.fork_ext.process_env_scope --check`.
+It must say `VERDICT: OK`. It also lists jobs in `profiles/*/cron/jobs.json`. Only
+multiplex runs those, so they start the moment it is on.
+
 ### Cron jobs with a workdir inject that repo's context file
 
 `tools/cronjob_tools.py` — a job with `workdir` set injects the project context file from

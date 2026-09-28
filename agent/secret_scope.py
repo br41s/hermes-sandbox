@@ -387,6 +387,12 @@ def build_profile_secret_scope(hermes_home: Path) -> Dict[str, str]:
     bridged = bridged_allow_all_users()
     if bridged is not None and _is_process_home(hermes_home):
         secrets.setdefault("GATEWAY_ALLOW_ALL_USERS", bridged)
+    # Fork: the launch profile keeps its process env under multiplex (Zeabur injects keys that
+    # never reach .env). hermes_cli/fork_ext/process_env_scope.py; .env still wins.
+    from hermes_cli.fork_ext import process_env_scope as _fork_process_env
+    if _fork_process_env.enabled() and _is_process_home(hermes_home):
+        for name, value in _fork_process_env.process_env_fallback().items():
+            secrets.setdefault(name, value)
     return secrets
 
 
