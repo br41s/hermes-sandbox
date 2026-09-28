@@ -7,9 +7,9 @@ incidental blocker (a duplicate bot token, a secondary still running its own gat
 
 The fork is adopting multiplex in stages, and this opt-out is the rollback lever while
 it does. Stage 2a (``OVERRIDES`` in ``hermes_cli/fork_ext/boot_reconcile.py``, run by the boot
-hook, pins the flag to ``true``) turns it on with inbound routing unchanged: group-topic
-``auto_profile`` bindings still run in a per-turn subprocess until stage 2b adds
-``gateway.profile_routes``. Rolling back is pinning ``false`` again, which this module
+hook, pins the flag to ``true``) turned it on; stage 2b (``ROUTE_BOUND_TOPICS`` there) routes
+every profile-bound group topic in-process through ``gateway.profile_routes``, so the
+per-turn ``auto_profile`` subprocess is only the fallback. Rolling back is pinning ``false`` again, which this module
 keeps meaning standalone. Once adoption is finished, drop this module, the two call
 sites in ``gateway_multiplex_mode.py`` and ``test_gateway_multiplex_optout_fork.py``.
 """

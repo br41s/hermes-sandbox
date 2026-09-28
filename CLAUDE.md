@@ -49,6 +49,13 @@ the `hermes-*` role profiles.
 Profile-scoped delegation runs in a **subprocess** with `HERMES_HOME=<profile home>` — the
 web server is pinned to `default`, and in-process env mutation would race.
 
+**Telegram topics bound to a profile are the exception (multiplex stage 2b).** The boot
+reconcile writes one `gateway.profile_routes` entry per `group_topics` topic that names a
+profile (`ROUTE_BOUND_TOPICS`, names prefixed `fork-topic:`), and the one gateway runs that
+topic's turns in-process under the profile. `gateway/platforms/base.py` only falls back to
+the per-turn subprocess when no route stamped `source.profile`. Rollback is
+`ROUTE_BOUND_TOPICS = False`; the next boot removes the generated routes.
+
 ### Cron jobs with a workdir inject that repo's context file
 
 `tools/cronjob_tools.py` — a job with `workdir` set injects the project context file from

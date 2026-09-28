@@ -4465,9 +4465,11 @@ class BasePlatformAdapter(ABC):
         try:
             await self._run_processing_hook("on_processing_start", event)
             event._turn_marker_handoff = self.gateway_runner is not None  # it can release the marker
-            # fork: a Telegram topic bound to a group_topics `profile` runs in that profile's subprocess.
+            # fork: a Telegram topic bound to a group_topics `profile` runs in that profile's subprocess,
+            # unless a gateway.profile_routes entry already routed it (source.profile): then upstream's
+            # in-process multiplex turn owns it (hermes_cli/fork_ext/boot_reconcile.py, stage 2b).
             _auto_profile = getattr(event, "auto_profile", None)
-            if _auto_profile:
+            if _auto_profile and not getattr(event.source, "profile", None):
                 response = await self._run_in_auto_profile(event, session_key, _auto_profile)
             else:
                 response = await self._message_handler(event)
