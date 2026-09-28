@@ -106,9 +106,8 @@ OVERRIDES = {
     ("agent", "max_turns"): 90,
     # Multiplex adoption, stage 2a: the one default gateway serves every profile and
     # ticks each profile's own cron store (all empty at adoption: jobs still live in
-    # the default store with a `profile` field). Inbound topic routing is unchanged:
-    # no gateway.profile_routes yet, so group_topics `profile` bindings still run in
-    # the fork's per-turn subprocess (stage 2b moves them in-process). Rollback is
+    # the default store with a `profile` field). Stage 2b (ROUTE_BOUND_TOPICS below)
+    # routes the group_topics `profile` bindings in-process. Rollback is
     # setting this back to False: hermes_cli/fork_ext/multiplex.py keeps an explicit
     # false meaning standalone until adoption is finished, then both go together.
     ("gateway", "multiplex_profiles"): True,
@@ -125,6 +124,17 @@ PIN_IF_MISSING = {
     # agent run starves every other agent").
     ("agent", "max_turns"): 90,
 }
+
+# Multiplex adoption, stage 2b: every Telegram topic bound to a profile in
+# telegram.extra.group_topics gets a matching gateway.profile_routes entry, so the one
+# gateway runs that topic's turns in-process under the profile (streaming, tool progress,
+# interrupts, /commands) instead of the fork's per-turn subprocess
+# (gateway/platforms/base.py, which yields to a route). Rollback is setting this to
+# False: the next boot removes the generated routes and every bound topic falls back
+# to the subprocess. Routes a human added are never touched: only names with
+# ROUTE_NAME_PREFIX are ours.
+ROUTE_BOUND_TOPICS = True
+ROUTE_NAME_PREFIX = "fork-topic:"
 
 CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"
 AUDITOR_ORCHESTRATOR_DEFAULT = "deepseek/deepseek-v4-flash-0731"
@@ -412,6 +422,80 @@ def reconcile_group_topics(cfg: dict, profiles_src: Path = PROFILES_SRC) -> bool
     return changed
 
 
+def topic_routes(cfg: dict, served: set) -> list:
+    """One ``profile_routes`` entry per group_topics topic bound to a served profile.
+
+    Keyed on chat_id + thread_id (the topic), sorted so the list is stable across boots.
+    A profile upstream does not serve is left out: a route to it makes the gateway drop
+    the message (``ProfileRouteRejected``), where the subprocess path still answers.
+    """
+    tg = cfg.get("telegram")
+    extra = tg.get("extra") if isinstance(tg, dict) else None
+    chats = extra.get("group_topics") if isinstance(extra, dict) else None
+    routes = {}
+    for chat in chats if isinstance(chats, list) else []:
+        if not isinstance(chat, dict) or chat.get("chat_id") in (None, ""):
+            continue
+        for topic in chat.get("topics") if isinstance(chat.get("topics"), list) else []:
+            if not isinstance(topic, dict):
+                continue
+            profile, thread = topic.get("profile"), topic.get("thread_id")
+            if not profile or thread in (None, "") or profile not in served:
+                continue
+            chat_id, thread_id = str(chat["chat_id"]), str(thread)
+            routes[(chat_id, thread_id)] = {
+                "name": f"{ROUTE_NAME_PREFIX}{profile}:{thread_id}",
+                "platform": "telegram",
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "profile": profile,
+            }
+    return [routes[k] for k in sorted(routes)]
+
+
+def _routes_slot(cfg: dict) -> tuple:
+    """``(container, key)`` holding the profile_routes upstream actually reads.
+
+    gateway/config_loader.py bridges a top-level ``profile_routes`` whose value is not None
+    ahead of ``gateway.profile_routes`` (mode "none", an empty list included), so writing
+    the nested key while a top-level one exists would be silently ignored.
+    """
+    if cfg.get("profile_routes") is not None:
+        return cfg, "profile_routes"
+    return _section(cfg, "gateway"), "profile_routes"
+
+
+def reconcile_profile_routes(cfg: dict, served: Optional[set], enabled: bool = True) -> bool:
+    """Replace our generated routes with the current bound topics; keep every other route.
+
+    ``served`` None (the served set could not be read) leaves the routes untouched rather
+    than guessing. ``enabled`` False removes ours: the rollback. Returns True if changed.
+    """
+    if served is None:
+        return False
+    container, key = _routes_slot(cfg)
+    current = container.get(key)
+    current = current if isinstance(current, list) else []
+    kept = [r for r in current
+            if not (isinstance(r, dict) and str(r.get("name", "")).startswith(ROUTE_NAME_PREFIX))]
+    wanted = kept + (topic_routes(cfg, served) if enabled else [])
+    if wanted == current:
+        return False
+    container[key] = wanted
+    return True
+
+
+def served_profiles() -> Optional[set]:
+    """Upstream's served-profile set (``profiles_to_serve``, a pure directory read), or None."""
+    try:
+        from hermes_cli.profiles import profiles_to_serve
+
+        return {name for name, _home in profiles_to_serve(multiplex=True)}
+    except Exception as e:
+        print(f"[03-biglobster] Warning: served profiles unreadable ({e}); profile_routes left as is")
+        return None
+
+
 def _section(cfg: dict, name: str) -> dict:
     """``cfg[name]`` as a dict, replacing anything else (None, a scalar) with ``{}``."""
     if not isinstance(cfg.get(name), dict):
@@ -427,8 +511,12 @@ def reconcile_cfg(
     is_rented: bool = False,
     byok_images: bool = False,
     profiles_src: Path = PROFILES_SRC,
+    served: Optional[set] = None,
 ) -> bool:
-    """Apply §2 to one parsed config in place. Returns True when anything changed."""
+    """Apply §2 to one parsed config in place. Returns True when anything changed.
+
+    ``served`` (main only) is the profile set upstream serves; None skips the route step.
+    """
     changed = False
     for (section, key), val in OVERRIDES.items():
         # BYOK images: a tenant with its own FAL_KEY keeps the in-tree FAL
@@ -625,6 +713,10 @@ def reconcile_cfg(
         # volume rebuild (DR) and back-fills missing bindings.
         if reconcile_group_topics(cfg, profiles_src):
             changed = True
+        # Stage 2b: route every bound topic in-process (after group_topics, so a binding
+        # rebuilt above is routed the same boot).
+        if reconcile_profile_routes(cfg, served, enabled=ROUTE_BOUND_TOPICS):
+            changed = True
     return changed
 
 
@@ -636,6 +728,7 @@ def reconcile_config(
     is_rented: bool = False,
     byok_images: bool = False,
     profiles_src: Path = PROFILES_SRC,
+    served: Optional[set] = None,
 ) -> None:
     """§2 for one config.yaml on disk: rewritten only when something changed, never raises.
 
@@ -657,7 +750,7 @@ def reconcile_config(
     try:
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         if reconcile_cfg(cfg, label, environ, is_rented=is_rented,
-                         byok_images=byok_images, profiles_src=profiles_src):
+                         byok_images=byok_images, profiles_src=profiles_src, served=served):
             atomic_config_write(config_path, cfg)
             print(f"[03-biglobster] {label}: reconciled config.yaml keys")
         else:
@@ -667,9 +760,15 @@ def reconcile_config(
 
 
 def reconcile_configs(home: Path, environ: Mapping[str, str],
-                      profiles_src: Path = PROFILES_SRC) -> None:
-    """§2 for main, then every real profile (after §1, so tenant markers are current)."""
-    reconcile_config(home / "config.yaml", "main", environ, profiles_src=profiles_src)
+                      profiles_src: Path = PROFILES_SRC, served: Optional[set] = None) -> None:
+    """§2 for main, then every real profile (after §1, so tenant markers are current).
+
+    ``served`` defaults to upstream's served-profile set, read once for main's routes.
+    """
+    if served is None:
+        served = served_profiles()
+    reconcile_config(home / "config.yaml", "main", environ, profiles_src=profiles_src,
+                     served=served)
     for prof in real_profiles(home):
         rented = is_rented_tenant(prof / ".env")
         reconcile_config(
