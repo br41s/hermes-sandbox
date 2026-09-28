@@ -16,7 +16,9 @@ jobs loaded a gateway config with no token and failed ``platform 'telegram' not
 configured/enabled``.
 
 The fix gives the launch profile back exactly what it had before multiplex: its
-``.env`` over the process environment. The scope builder calls
+``.env`` over the environment it was launched with, frozen when multiplex turns on
+(upstream's ``launch_secret_scope`` does the same for the bodies it binds; the
+authorization and cron-delivery paths build the scope directly and never reach it). The scope builder calls
 ``process_env_fallback()`` for the process home only, and adds each key with
 ``setdefault``, so the ``.env`` and external sources still win. Secondary profiles
 are untouched and never see these keys: a routed turn authorizes under the
@@ -60,11 +62,19 @@ def enabled() -> bool:
 
 
 def process_env_fallback() -> Dict[str, str]:
-    """Non-global process env keys for the launch profile's scope; ``{}`` when the flag is off."""
+    """Non-global launch env keys for the launch profile's scope; ``{}`` when the flag is off.
+
+    Read through upstream's ``tui_gateway.launch_profile_policy._launch_env``: once multiplex
+    is active that is the env frozen at activation (the gateway captures it where it flips
+    multiplex on, before any secondary profile has run), never the live ``os.environ``,
+    which a secondary's context could have touched since (#107422). Before activation it is
+    the live env, which is provably the launch profile's.
+    """
     if not enabled():
         return {}
     from agent.secret_scope import _is_global_env
-    return {k: v for k, v in os.environ.items() if k != FLAG and not _is_global_env(k)}
+    from tui_gateway.launch_profile_policy import _launch_env
+    return {k: v for k, v in _launch_env().items() if k != FLAG and not _is_global_env(k)}
 
 
 # ── the production probe ───────────────────────────────────────────────────────

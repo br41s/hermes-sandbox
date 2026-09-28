@@ -3502,6 +3502,11 @@ class GatewayRunner(
         try:
             from agent.secret_scope import set_multiplex_active
             set_multiplex_active(bool(getattr(self.config, "multiplex_profiles", False)))
+            if getattr(self.config, "multiplex_profiles", False):
+                # Fork: freeze the launch env at the flip, before any secondary profile runs
+                # (hermes_cli/fork_ext/process_env_scope.py reads it for the launch scope).
+                from tui_gateway.launch_profile_policy import capture_launch_env
+                capture_launch_env()
         except Exception:
             logger.debug("could not set multiplex-active flag", exc_info=True)
         self.adapters: Dict[Platform, BasePlatformAdapter] = {}

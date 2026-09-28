@@ -101,6 +101,40 @@ def test_default_profile_cron_delivery_sees_telegram_enabled(homes, monkeypatch)
     assert pconfig is not None and pconfig.enabled
 
 
+def test_under_multiplex_the_launch_scope_reads_the_env_frozen_at_activation(homes, monkeypatch):
+    """Keys that appear in os.environ after the flip (a secondary's context) never reach it."""
+    from tui_gateway.launch_profile_policy import capture_launch_env
+
+    launch, _ = homes
+    ss.set_multiplex_active(True)
+    capture_launch_env()
+    monkeypatch.setenv("LATE_SECONDARY_KEY", "leaked")
+    monkeypatch.setenv(ALLOWED, "someone-else")
+    scope = ss.build_profile_secret_scope(launch)
+    assert "LATE_SECONDARY_KEY" not in scope
+    assert scope[ALLOWED] == "178351069"
+
+
+def test_the_gateway_freezes_the_launch_env_when_it_turns_multiplex_on(homes, monkeypatch):
+    from gateway.config import GatewayConfig
+    from gateway.run import GatewayRunner
+    from tui_gateway import launch_profile_policy
+
+    assert launch_profile_policy._snapshot is None
+    GatewayRunner(GatewayConfig(multiplex_profiles=True))
+    assert launch_profile_policy._snapshot is not None
+    assert launch_profile_policy._snapshot[ALLOWED] == "178351069"
+
+
+def test_a_standalone_gateway_freezes_nothing(homes):
+    from gateway.config import GatewayConfig
+    from gateway.run import GatewayRunner
+    from tui_gateway import launch_profile_policy
+
+    GatewayRunner(GatewayConfig(multiplex_profiles=False))
+    assert launch_profile_policy._snapshot is None
+
+
 def test_the_image_turns_it_on():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert f"ENV {pes.FLAG}=1" in dockerfile
@@ -160,7 +194,14 @@ def test_probe_lists_jobs_only_multiplex_would_tick(homes, capsys):
 
 
 def test_probe_restores_multiplex_off_when_the_scope_build_raises(homes, monkeypatch):
-    def _boom(_home):
+    real = ss.build_profile_secret_scope
+
+    def _boom(home):
+        # The probe's upstream-view build (fallback suppressed) succeeds; the guarded
+        # multiplexed build is the one that raises.
+        if not pes.enabled():
+            return real(home)
+        assert ss.is_multiplex_active()  # really inside the guarded block
         raise OSError("unreadable .env")
 
     monkeypatch.setattr(ss, "build_profile_secret_scope", _boom)
