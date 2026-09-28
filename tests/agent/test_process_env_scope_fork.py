@@ -157,3 +157,37 @@ def test_probe_lists_jobs_only_multiplex_would_tick(homes, capsys):
         encoding="utf-8")
     pes.check()
     assert "grow-shop 3f6f866ce1af enabled deliver=telegram weekly" in capsys.readouterr().out
+
+
+def test_probe_restores_multiplex_off_when_the_scope_build_raises(homes, monkeypatch):
+    def _boom(_home):
+        raise OSError("unreadable .env")
+
+    monkeypatch.setattr(ss, "build_profile_secret_scope", _boom)
+    with pytest.raises(OSError):
+        pes.check()
+    assert ss.is_multiplex_active() is False
+    assert ss.current_secret_scope() is None
+
+
+def test_probe_refuses_to_run_inside_a_multiplexed_process(homes):
+    ss.set_multiplex_active(True)
+    with pytest.raises(RuntimeError, match="its own process"):
+        pes.check()
+
+
+def test_the_upstream_view_never_switches_the_fallback_off_for_anyone_else(homes, monkeypatch):
+    """The probe's flag-off build is context-local: os.environ keeps the flag throughout."""
+    import os
+
+    launch, _ = homes
+    seen = {}
+
+    def _spy(_home):
+        seen.update(flag=os.environ.get(pes.FLAG), enabled=pes.enabled())
+        return {}
+
+    monkeypatch.setattr(ss, "build_profile_secret_scope", _spy)
+    pes._upstream_scope(launch)
+    assert seen == {"flag": "1", "enabled": False}
+    assert pes.enabled() is True

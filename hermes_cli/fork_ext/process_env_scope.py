@@ -35,6 +35,7 @@ names and verdicts, never a value.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
 from pathlib import Path
@@ -46,7 +47,15 @@ FLAG = "HERMES_FORK_SCOPE_PROCESS_ENV"
 REQUIRED = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USERS", "TELEGRAM_GROUP_ALLOWED_CHATS")
 
 
+# Context-local off switch for the probe's upstream-scope build: never touches os.environ,
+# so a scope built on another thread or task keeps the fallback.
+_SUPPRESSED: contextvars.ContextVar[bool] = contextvars.ContextVar("_fork_process_env_suppressed",
+                                                                  default=False)
+
+
 def enabled() -> bool:
+    if _SUPPRESSED.get():
+        return False
     return os.environ.get(FLAG, "").strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -93,12 +102,11 @@ def _profile_store_jobs(home: Path):
 def _upstream_scope(home: Path) -> Dict[str, str]:
     """``home``'s scope as upstream builds it (flag off): ``.env`` plus external sources."""
     from agent.secret_scope import build_profile_secret_scope
-    saved = os.environ.pop(FLAG, None)
+    token = _SUPPRESSED.set(True)
     try:
         return build_profile_secret_scope(home)
     finally:
-        if saved is not None:
-            os.environ[FLAG] = saved
+        _SUPPRESSED.reset(token)
 
 
 def check() -> int:
@@ -116,6 +124,9 @@ def check() -> int:
     from gateway.platforms._shared import platform_gate_env
     from hermes_constants import get_process_hermes_home
 
+    if secret_scope.is_multiplex_active():
+        raise RuntimeError("process_env_scope.check() must run as its own process, "
+                           "never inside a multiplexed gateway")
     home = get_process_hermes_home()
     print(f"launch home: {home}")
     print(f"{FLAG}: {'on' if enabled() else 'OFF'}")
@@ -125,15 +136,16 @@ def check() -> int:
     fallback_only = sorted(k for k in os.environ
                            if k != FLAG and not secret_scope._is_global_env(k) and k not in upstream)
 
-    previous = secret_scope.is_multiplex_active()
-    secret_scope.set_multiplex_active(True)
-    token = secret_scope.set_secret_scope(secret_scope.build_profile_secret_scope(home),
-                                          profile_home=str(home))
+    token = None
     try:
+        secret_scope.set_multiplex_active(True)
+        token = secret_scope.set_secret_scope(secret_scope.build_profile_secret_scope(home),
+                                              profile_home=str(home))
         missing = [name for name in REQUIRED if not platform_gate_env(name)]
     finally:
-        secret_scope.reset_secret_scope(token)
-        secret_scope.set_multiplex_active(previous)
+        if token is not None:
+            secret_scope.reset_secret_scope(token)
+        secret_scope.set_multiplex_active(False)
 
     for name in REQUIRED:
         print(f"  {name}: {'missing' if name in missing else 'present'}")
