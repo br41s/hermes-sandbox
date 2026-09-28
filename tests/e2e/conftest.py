@@ -298,6 +298,22 @@ async def send_and_capture(adapter, text: str, platform: Platform, **event_kwarg
 
 
 # Parametrized fixtures for platform-generic tests
+@pytest.fixture(autouse=True)
+def _fork_silence_turn_start_ack(request, monkeypatch):
+    """fork: the turn-start ack is one extra send per fresh turn; upstream e2e tests read the last
+    send or count them. Silenced here as in tests/gateway/conftest.py; ``*_fork`` modules keep it.
+    Child-process gateways are unaffected by this and get it off through their config instead."""
+    if request.module.__name__.endswith("_fork"):
+        yield
+        return
+
+    async def _no_ack(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(GatewayRunner, "_maybe_send_turn_start_ack", _no_ack)
+    yield
+
+
 @pytest.fixture(params=[Platform.TELEGRAM, Platform.DISCORD, Platform.SLACK], ids=["telegram", "discord", "slack"])
 def platform(request):
     return request.param

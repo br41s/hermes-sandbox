@@ -67,6 +67,23 @@ def _bind_lark_sdk_globals_when_installed():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _fork_silence_turn_start_ack(request, monkeypatch):
+    """fork: the turn-start ack (GatewayRunner._maybe_send_turn_start_ack) is one extra send per
+    fresh turn, which breaks upstream tests that count sends. Silence it; the fork's own ``*_fork``
+    modules keep it, and they exercise the real method."""
+    if request.module.__name__.endswith("_fork"):
+        yield
+        return
+    from gateway.run import GatewayRunner
+
+    async def _no_ack(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(GatewayRunner, "_maybe_send_turn_start_ack", _no_ack)
+    yield
+
+
 def make_async_session_db(sync_mock=None):
     """Wrap a sync mock SessionDB in AsyncSessionDB so gateway code that awaits
     the facade works in tests. Returns (facade, sync_mock); configure return
