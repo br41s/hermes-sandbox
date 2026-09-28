@@ -90,8 +90,28 @@ def _profile_store_jobs(home: Path):
     return rows
 
 
+def _upstream_scope(home: Path) -> Dict[str, str]:
+    """``home``'s scope as upstream builds it (flag off): ``.env`` plus external sources."""
+    from agent.secret_scope import build_profile_secret_scope
+    saved = os.environ.pop(FLAG, None)
+    try:
+        return build_profile_secret_scope(home)
+    finally:
+        if saved is not None:
+            os.environ[FLAG] = saved
+
+
 def check() -> int:
-    """Simulate the multiplexed launch profile's scope and report. Names only, never values."""
+    """Simulate the multiplexed launch profile's scope and report. Names only, never values.
+
+    Run it as its own process (``--check``), never from a live gateway: it switches the
+    process-global multiplex flag and installs a scope for its duration.
+
+    NOT READY means a key in ``REQUIRED`` does not resolve through the scope a multiplexed
+    Telegram turn would read: the image lacks the flag, or the key is absent from the
+    environment this probe was started with (start it under ``with-contenv``, as the
+    gateway is).
+    """
     from agent import secret_scope
     from gateway.platforms._shared import platform_gate_env
     from hermes_constants import get_process_hermes_home
@@ -100,23 +120,27 @@ def check() -> int:
     print(f"launch home: {home}")
     print(f"{FLAG}: {'on' if enabled() else 'OFF'}")
 
+    # What the fallback has to cover: keys the process has and upstream's scope lacks.
+    upstream = _upstream_scope(home)
+    fallback_only = sorted(k for k in os.environ
+                           if k != FLAG and not secret_scope._is_global_env(k) and k not in upstream)
+
     previous = secret_scope.is_multiplex_active()
     secret_scope.set_multiplex_active(True)
     token = secret_scope.set_secret_scope(secret_scope.build_profile_secret_scope(home),
                                           profile_home=str(home))
     try:
         missing = [name for name in REQUIRED if not platform_gate_env(name)]
-        for name in REQUIRED:
-            print(f"  {name}: {'missing' if name in missing else 'present'}")
-        unseen = sorted(k for k in os.environ
-                        if k != FLAG and not secret_scope._is_global_env(k)
-                        and secret_scope.get_secret(k) is None)
-        print(f"process env keys the launch scope cannot see: {len(unseen)}")
-        for name in unseen:
-            print(f"  {name}")
     finally:
         secret_scope.reset_secret_scope(token)
         secret_scope.set_multiplex_active(previous)
+
+    for name in REQUIRED:
+        print(f"  {name}: {'missing' if name in missing else 'present'}")
+    covered = "covered by the fallback" if enabled() else "INVISIBLE under multiplex"
+    print(f"process env keys not in {home / '.env'} ({covered}): {len(fallback_only)}")
+    for name in fallback_only:
+        print(f"  {name}")
 
     rows = _profile_store_jobs(home)
     print(f"jobs in named profiles' own cron stores (multiplex ticks these): {len(rows)}")
@@ -124,7 +148,7 @@ def check() -> int:
         state = "enabled" if is_enabled else "disabled"
         print(f"  {prof} {job_id} {state} deliver={deliver or '-'} {name}")
 
-    ok = not missing and not unseen
+    ok = enabled() and not missing
     print("VERDICT: " + ("OK" if ok else "NOT READY"))
     return 0 if ok else 1
 

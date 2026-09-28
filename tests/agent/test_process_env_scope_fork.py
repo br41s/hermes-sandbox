@@ -123,10 +123,30 @@ def test_probe_reports_ready_and_never_prints_a_value(homes, monkeypatch, capsys
 
 
 def test_probe_says_not_ready_without_the_flag(homes, monkeypatch, capsys):
+    """The image predates this change: the keys exist but multiplex could not see them."""
     monkeypatch.delenv(pes.FLAG)
     assert pes.check() == 1
     out = capsys.readouterr().out
     assert f"{ALLOWED}: missing" in out and "VERDICT: NOT READY" in out
+    assert "(INVISIBLE under multiplex)" in out and f"  {ALLOWED}\n" in out
+
+
+def test_probe_says_not_ready_when_a_required_key_is_absent(homes, monkeypatch, capsys):
+    """Flag on, but the probe (or the gateway) was started without the container env."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_GROUP_ALLOWED_CHATS", "-1004224848555")
+    assert pes.check() == 1
+    out = capsys.readouterr().out
+    assert "TELEGRAM_BOT_TOKEN: missing" in out and "VERDICT: NOT READY" in out
+
+
+def test_probe_lists_what_only_the_fallback_supplies(homes, capsys):
+    """Measured against upstream's .env-only scope, so it is not empty by construction."""
+    pes.check()
+    out = capsys.readouterr().out
+    assert "(covered by the fallback)" in out
+    assert f"  {ALLOWED}\n" in out
+    assert "  OPENROUTER_API_KEY\n" not in out  # in .env: upstream already sees it
 
 
 def test_probe_lists_jobs_only_multiplex_would_tick(homes, capsys):
