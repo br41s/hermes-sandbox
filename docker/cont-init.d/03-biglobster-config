@@ -418,12 +418,14 @@ overrides = {
     # model's summary surfaced as a RuntimeError. Raised to 90 (run_agent's own
     # default). Enforced on main + every profile so the budget is uniform.
     ("agent", "max_turns"): 90,
-    # One default gateway serves Telegram; other profiles are reached through
-    # subprocesses. Upstream v2026.9.24 turns multiplexing on at boot and rewrites
-    # this key to true; hermes_cli/fork_ext/multiplex.py makes an explicit false
-    # still mean standalone. Forced, so adopting multiplex stays a deliberate change
-    # (drop this pin and that module together), never a boot-time drift.
-    ("gateway", "multiplex_profiles"): False,
+    # Multiplex adoption, stage 2a: the one default gateway serves every profile and
+    # ticks each profile's own cron store (all empty at adoption: jobs still live in
+    # the default store with a `profile` field). Inbound topic routing is unchanged:
+    # no gateway.profile_routes yet, so group_topics `profile` bindings still run in
+    # the fork's per-turn subprocess (stage 2b moves them in-process). Rollback is
+    # setting this back to False: hermes_cli/fork_ext/multiplex.py keeps an explicit
+    # false meaning standalone until adoption is finished, then both go together.
+    ("gateway", "multiplex_profiles"): True,
 }
 # Cost ceilings the upstream merge would otherwise raise; applied only where a
 # config does not set them (see the loop below). Values = today's defaults.

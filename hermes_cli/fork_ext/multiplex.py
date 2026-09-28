@@ -5,14 +5,13 @@ explicit ``false``: it is warned about, treated as unset, and rewritten to ``tru
 config.yaml on the next boot. The only thing left that keeps a host standalone is an
 incidental blocker (a duplicate bot token, a secondary still running its own gateway).
 
-Production does not run that topology. One default gateway serves Telegram; profile
-work reaches other profiles through subprocesses (group-topic ``auto_profile`` routing,
-profile-scoped delegation, cron's sequential lane), and the web server is pinned to
-``default`` (CLAUDE.md, "How Hermes manages the other projects"). Flipping that at
-boot, inside a 14k-commit upstream merge, is not a change to make by accident, so an
-explicit ``false`` still means standalone here. The boot hook
-(``docker/cont-init.d/03-biglobster-config``) pins it. Adopting multiplex is a
-separate, deliberate step: drop the pin and this module together.
+The fork is adopting multiplex in stages, and this opt-out is the rollback lever while
+it does. Stage 2a (the boot hook in ``docker/cont-init.d/03-biglobster-config`` pins
+the flag to ``true``) turns it on with inbound routing unchanged: group-topic
+``auto_profile`` bindings still run in a per-turn subprocess until stage 2b adds
+``gateway.profile_routes``. Rolling back is pinning ``false`` again, which this module
+keeps meaning standalone. Once adoption is finished, drop this module, the two call
+sites in ``gateway_multiplex_mode.py`` and ``test_gateway_multiplex_optout_fork.py``.
 """
 
 from __future__ import annotations

@@ -1,8 +1,9 @@
 """Fork: an explicit ``gateway.multiplex_profiles: false`` still means standalone.
 
 Upstream v2026.9.24 retired the opt-out (hermes_cli/fork_ext/multiplex.py explains
-why the fork keeps it). These pin the boot verdict, what CLI/dashboard processes
-read, and the boot hook that writes the value.
+why the fork keeps it: it is the rollback lever while multiplex is being adopted).
+These pin the boot verdict, what CLI/dashboard processes read, and the boot hook
+that writes the value.
 """
 
 from __future__ import annotations
@@ -59,7 +60,9 @@ def test_cli_view_matches_the_boot_verdict(tmp_path, monkeypatch, value, expecte
     assert mm.default_gateway_multiplexes(tmp_path) is expected
 
 
-def test_boot_hook_forces_the_opt_out():
+def test_boot_hook_pins_multiplex_on():
+    """Stage 2a of the adoption: the pin is explicit, so boot never decides it by itself.
+    Rolling back is flipping this to False, which the opt-out above still honours."""
     hook = (_REPO / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
     overrides = hook.split("overrides = {", 1)[1].split("\n}", 1)[0]
-    assert '("gateway", "multiplex_profiles"): False' in overrides
+    assert '("gateway", "multiplex_profiles"): True' in overrides
