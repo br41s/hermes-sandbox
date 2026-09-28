@@ -1345,6 +1345,10 @@ class GatewayInboundMixin:
         _claim_state.turn.started_ts = time.time()
         self._persist_active_agents()
         _run_generation = self._begin_session_run_generation(_quick_key)
+        # fork: "message received" ack for this fresh turn (busy follow-ups never reach here).
+        # Fire-and-forget so it never delays the agent; tracked like every other background task,
+        # because the loop only holds a weak reference and a slow send can outlive this handler.
+        self._retain_background_task(asyncio.create_task(self._maybe_send_turn_start_ack(event, source)))
 
         try:
             try:

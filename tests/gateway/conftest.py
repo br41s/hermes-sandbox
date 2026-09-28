@@ -67,6 +67,26 @@ def _bind_lark_sdk_globals_when_installed():
     yield
 
 
+# fork: upstream modules that assert the exact sends of a turn, which the turn-start ack
+# (GatewayRunner._maybe_send_turn_start_ack) adds one to. Everything else runs with the ack live.
+# A module that starts failing on "✅ Mensaje recibido" after an upstream merge belongs here.
+_TURN_START_ACK_OFF = frozenset({"test_base_warning_owner_scope", "test_incomplete_gateway_turns"})
+
+
+@pytest.fixture(autouse=True)
+def _fork_silence_turn_start_ack(request, monkeypatch):
+    if request.module.__name__.rsplit(".", 1)[-1] not in _TURN_START_ACK_OFF:
+        yield
+        return
+    from gateway.run import GatewayRunner
+
+    async def _no_ack(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(GatewayRunner, "_maybe_send_turn_start_ack", _no_ack)
+    yield
+
+
 def make_async_session_db(sync_mock=None):
     """Wrap a sync mock SessionDB in AsyncSessionDB so gateway code that awaits
     the facade works in tests. Returns (facade, sync_mock); configure return
