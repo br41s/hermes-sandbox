@@ -134,14 +134,12 @@ def test_default_limit_fits_the_agent_iteration_budget():
 
     Upstream v2026.8.31 made the loop's own default unlimited; the cap the
     auditor actually runs under is ``agent.max_turns``, which the boot hook
-    pins on every profile (docker/cont-init.d/03-biglobster-config).
+    pins on every profile (hermes_cli/fork_ext/boot_reconcile.py, run by the boot hook).
     """
-    import ast
-    src = (REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
-    start = src.index("pin_if_missing = {")
-    end = src.index("}", start) + 1
-    pins = ast.literal_eval(src[start + len("pin_if_missing = "):end])
-    max_iters = pins[("agent", "max_turns")]
+    from hermes_cli.fork_ext.boot_reconcile import OVERRIDES, PIN_IF_MISSING
+
+    max_iters = PIN_IF_MISSING[("agent", "max_turns")]
+    assert OVERRIDES[("agent", "max_turns")] == max_iters
     assert pending.DEFAULT_LIMIT * 8 < max_iters, (
         f"limit {pending.DEFAULT_LIMIT} x 8 iterations exceeds the {max_iters} cap"
     )

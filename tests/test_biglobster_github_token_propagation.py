@@ -10,11 +10,11 @@ value, both silently skipped GITHUB_TOKEN every boot: the divergent .env lines
 were never deduped and the gateway's load_dotenv (last-occurrence-wins) could
 load a revoked token, while no GH_TOKEN was ever produced at all.
 
-These are content assertions on the script text (matching
-``test_biglobster_git_credentials.py``): executing the real cont-init script
-needs root + s6-setuidgid, neither available in CI. The dedupe semantics of the
-embedded ``_sync_env_file`` are additionally exercised functionally below by
-replicating the function in-process.
+The token-resolution preamble is shell, so its tests below are content
+assertions on the script text (matching ``test_biglobster_git_credentials.py``):
+executing the real cont-init script needs root + s6-setuidgid, neither available
+in CI. §1's env sync lives in ``hermes_cli/fork_ext/boot_reconcile.py`` and is
+called directly.
 """
 from __future__ import annotations
 
@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 
 import pytest
+
+from hermes_cli.fork_ext import boot_reconcile as br
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOT_SCRIPT = REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config"
@@ -58,90 +60,44 @@ def test_token_is_exported_under_both_names(boot_text: str) -> None:
     assert "export GITHUB_TOKEN GH_TOKEN" in boot_text
 
 
-def _parse_inject(boot_text: str) -> list[str]:
-    """Read §1's ``inject`` allowlist out of the boot script."""
-    match = re.search(r"inject = \[(.*?)\n\]", boot_text, re.DOTALL)
-    assert match, "inject list not found"
-    body = "\n".join(
-        line for line in match.group(1).splitlines()
-        if not line.strip().startswith("#")
-    )
-    return re.findall(r'"([^"]+)"', body)
-
-
-def test_inject_list_includes_both_token_names(boot_text: str) -> None:
+def test_inject_list_includes_both_token_names() -> None:
     """§1 syncs GITHUB_TOKEN and GH_TOKEN into the main and per-profile .env."""
-    inject = _parse_inject(boot_text)
-    assert "GITHUB_TOKEN" in inject
-    assert "GH_TOKEN" in inject
+    assert "GITHUB_TOKEN" in br.INJECT
+    assert "GH_TOKEN" in br.INJECT
 
 
-def _parse_tenant_exclude(boot_text: str) -> list[str]:
-    """Read the keys held back from a rented tenant's per-profile sync."""
-    match = re.search(
-        r'_is_rented_tenant\(_prof_env\):.*?_exclude = \(([^)]*)\)',
-        boot_text,
-        re.DOTALL,
-    )
-    assert match, "rented-tenant _exclude tuple not found"
-    return re.findall(r'"([^"]+)"', match.group(1))
-
-
-def test_byok_keys_are_withheld_from_rented_tenants(boot_text: str) -> None:
+def test_byok_keys_are_withheld_from_rented_tenants() -> None:
     """The bl-shoroban contract: a rented client's own keys are never overwritten.
 
-    A BYOK key must be in `inject` (so BigLobster's OWN profiles keep the
+    A BYOK key must be in `INJECT` (so BigLobster's OWN profiles keep the
     rotation repair §1 exists to provide) AND in the rented-tenant exclude (so
     a boot never overwrites the client value provision_bl_client.py wrote).
-    Being in `inject` alone is the 2026-07-31 bug: every boot silently billed
+    Being in `INJECT` alone is the 2026-07-31 bug: every boot silently billed
     tenant runs to BigLobster.
     """
-    inject = _parse_inject(boot_text)
-    exclude = _parse_tenant_exclude(boot_text)
     for byok in ("OPENROUTER_API_KEY", "PEXELS_API_KEY"):
-        assert byok in inject, f"{byok} must sync to BigLobster's own profiles"
-        assert byok in exclude, f"{byok} is BYOK and must be withheld from tenants"
-    # FAL_KEY is per-client too, but has never been in `inject` at all, so it
-    # needs no exclusion. Adding it to `inject` without the exclude would
+        assert byok in br.INJECT, f"{byok} must sync to BigLobster's own profiles"
+        assert byok in br.TENANT_EXCLUDE, f"{byok} is BYOK and must be withheld from tenants"
+    # FAL_KEY is per-client too, but has never been in `INJECT` at all, so it
+    # needs no exclusion. Adding it to `INJECT` without the exclude would
     # reintroduce the bug.
-    assert "FAL_KEY" not in inject, "FAL_KEY is BYOK and must stay out of inject"
+    assert "FAL_KEY" not in br.INJECT, "FAL_KEY is BYOK and must stay out of INJECT"
 
 
-# --- functional check of the embedded _sync_env_file dedupe semantics --------
-# The allowlist is READ from the boot script rather than copied, because a
-# hand-maintained copy drifts: GSC_SERVICE_ACCOUNT_B64 was added to the script
-# and never mirrored here. Only the function body below is a replica; if the
-# §1 heredoc's _sync_env_file changes, update it here.
-def _sync_env_file_content(
-    content: str, environ: dict, inject: list[str], exclude: tuple[str, ...] = ()
-) -> str:
-    for var in inject:
-        if var in exclude:
-            continue
-        val = environ.get(var, "")
-        if not val:
-            continue
-        line_re = rf"^{re.escape(var)}=.*$"
-        matches = re.findall(line_re, content, flags=re.MULTILINE)
-        if len(matches) == 1:
-            content = re.sub(line_re, lambda _m: f"{var}={val}", content, flags=re.MULTILINE)
-        elif len(matches) > 1:
-            content = re.sub(rf"^{re.escape(var)}=.*(?:\n|$)", "", content, flags=re.MULTILINE)
-            if content and not content.endswith("\n"):
-                content += "\n"
-            content += f"{var}={val}\n"
-        else:
-            sep = "" if (not content or content.endswith("\n")) else "\n"
-            content += f"{sep}{var}={val}\n"
-    return content
+# --- §1's sync_env_file, on real files ----------------------------------------
 
 
-@pytest.fixture(scope="module")
-def inject(boot_text: str) -> list[str]:
-    return _parse_inject(boot_text)
+@pytest.fixture
+def sync(tmp_path):
+    def _sync(content: str, environ: dict, exclude: tuple[str, ...] = ()) -> str:
+        env_file = tmp_path / ".env"
+        env_file.write_text(content, encoding="utf-8")
+        br.sync_env_file(env_file, environ, exclude=exclude)
+        return env_file.read_text(encoding="utf-8")
+    return _sync
 
 
-def test_sync_collapses_divergent_duplicates(inject: list[str]) -> None:
+def test_sync_collapses_divergent_duplicates(sync) -> None:
     """The prod failure mode: two divergent GITHUB_TOKEN lines collapse to one
     canonical line (the valid, last one) and the stale one is removed."""
     prod = (
@@ -151,34 +107,26 @@ def test_sync_collapses_divergent_duplicates(inject: list[str]) -> None:
         "GITHUB_TOKEN=github_pat_VALID\n"
     )
     env = {"GITHUB_TOKEN": "github_pat_VALID", "GH_TOKEN": "github_pat_VALID"}
-    out = _sync_env_file_content(prod, env, inject)
+    out = sync(prod, env)
     assert re.findall(r"^GITHUB_TOKEN=.*$", out, re.MULTILINE) == ["GITHUB_TOKEN=github_pat_VALID"]
     assert re.findall(r"^GH_TOKEN=.*$", out, re.MULTILINE) == ["GH_TOKEN=github_pat_VALID"]
     assert "ghp_STALE" not in out
 
 
-def test_sync_is_idempotent(inject: list[str]) -> None:
+def test_sync_is_idempotent(sync) -> None:
     env = {"GITHUB_TOKEN": "github_pat_VALID", "GH_TOKEN": "github_pat_VALID"}
-    once = _sync_env_file_content("GITHUB_TOKEN=ghp_a\nGITHUB_TOKEN=ghp_b\n", env, inject)
-    twice = _sync_env_file_content(once, env, inject)
+    once = sync("GITHUB_TOKEN=ghp_a\nGITHUB_TOKEN=ghp_b\n", env)
+    twice = sync(once, env)
     assert once == twice
 
 
-def test_sync_single_line_preserves_position(inject: list[str]) -> None:
+def test_sync_single_line_preserves_position(sync) -> None:
     """A single existing line is replaced in place — no reordering churn."""
     single = "A=1\nGITHUB_TOKEN=ghp_x\nB=2\n"
-    out = _sync_env_file_content(single, {"GITHUB_TOKEN": "ghp_x"}, inject)
-    assert out == single
+    assert sync(single, {"GITHUB_TOKEN": "ghp_x"}) == single
 
 
-@pytest.fixture(scope="module")
-def tenant_exclude(boot_text: str) -> tuple[str, ...]:
-    return tuple(_parse_tenant_exclude(boot_text))
-
-
-def test_tenant_byok_keys_survive_a_boot_sync(
-    inject: list[str], tenant_exclude: tuple[str, ...]
-) -> None:
+def test_tenant_byok_keys_survive_a_boot_sync(sync) -> None:
     """The bl-shoroban regression, for both BYOK keys at once.
 
     A rented client's .env carries their own OpenRouter and Pexels keys. A boot
@@ -197,7 +145,7 @@ def test_tenant_byok_keys_survive_a_boot_sync(
         "PEXELS_API_KEY": "pexels-BIGLOBSTER",
         "HERMES_CALLBACK_URL": "https://biglobster.top/api/hermes-callback",
     }
-    out = _sync_env_file_content(tenant_env, biglobster_env, inject, tenant_exclude)
+    out = sync(tenant_env, biglobster_env, br.TENANT_EXCLUDE)
 
     assert "sk-or-CLIENT" in out and "sk-or-BIGLOBSTER" not in out
     assert "pexels-CLIENT" in out and "pexels-BIGLOBSTER" not in out
@@ -206,12 +154,10 @@ def test_tenant_byok_keys_survive_a_boot_sync(
     assert "HERMES_CALLBACK_URL=https://biglobster.top/api/hermes-callback" in out
 
 
-def test_biglobster_own_profile_still_gets_the_pexels_rotation(inject: list[str]) -> None:
+def test_biglobster_own_profile_still_gets_the_pexels_rotation(sync) -> None:
     """A profile that is NOT a rented tenant (no BL_SITE_URL) gets our key
-    refreshed, which is why PEXELS_API_KEY stays in `inject` at all."""
-    out = _sync_env_file_content(
-        "PEXELS_API_KEY=old-revoked\n", {"PEXELS_API_KEY": "new-live"}, inject
-    )
+    refreshed, which is why PEXELS_API_KEY stays in `INJECT` at all."""
+    out = sync("PEXELS_API_KEY=old-revoked\n", {"PEXELS_API_KEY": "new-live"})
     assert re.findall(r"^PEXELS_API_KEY=.*$", out, re.MULTILINE) == [
         "PEXELS_API_KEY=new-live"
     ]
@@ -228,64 +174,61 @@ def test_biglobster_own_profile_still_gets_the_pexels_rotation(inject: list[str]
 # reconcile tests below); HUGGINGFACE_API_KEY gates video_gen, which no
 # rented prompt uses at all.
 
-def test_shared_research_keys_are_withheld_from_rented_tenants(
-    inject: list[str], tenant_exclude: tuple[str, ...]
-) -> None:
+def test_shared_research_keys_are_withheld_from_rented_tenants() -> None:
     """Unlike the BYOK keys above, EXA_API_KEY/HUGGINGFACE_API_KEY must be
     withheld, full stop — there's no client-supplied replacement to fall
     back to (that's the whole point: tenants use the free ddgs backend, not
     their own Exa key)."""
     for shared in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
-        assert shared in inject, f"{shared} must still sync to BigLobster's own profiles"
-        assert shared in tenant_exclude, f"{shared} must be withheld from tenants"
+        assert shared in br.INJECT, f"{shared} must still sync to BigLobster's own profiles"
+        assert shared in br.TENANT_EXCLUDE, f"{shared} must be withheld from tenants"
 
 
-def test_excluded_keys_are_never_injected_into_a_tenant_env(
-    inject: list[str], tenant_exclude: tuple[str, ...]
-) -> None:
-    tenant_env = "BL_SITE_URL=https://client.example\n"
+def test_excluded_keys_are_never_injected_into_a_tenant_env(sync) -> None:
     biglobster_env = {"EXA_API_KEY": "exa-BIGLOBSTER", "HUGGINGFACE_API_KEY": "hf-BIGLOBSTER"}
-    out = _sync_env_file_content(tenant_env, biglobster_env, inject, tenant_exclude)
+    out = sync("BL_SITE_URL=https://client.example\n", biglobster_env, br.TENANT_EXCLUDE)
     assert "EXA_API_KEY" not in out
     assert "HUGGINGFACE_API_KEY" not in out
 
 
-def _strip_stale_research_keys(content: str) -> str:
-    """Replicates the defensive stripping added alongside _exclude — a
-    profile that already picked up EXA_API_KEY/HUGGINGFACE_API_KEY from a
-    boot before this fix shipped keeps the stale line forever otherwise,
-    since exclude only stops future overwrites."""
-    stripped = content
-    for var in ("EXA_API_KEY", "HUGGINGFACE_API_KEY"):
-        stripped = re.sub(rf"^{var}=.*(?:\n|$)", "", stripped, flags=re.MULTILINE)
-    return stripped
+def _home_with(tmp_path: Path, profiles: dict[str, str]) -> Path:
+    home = tmp_path / "data"
+    for name, env in profiles.items():
+        prof = home / "profiles" / name
+        prof.mkdir(parents=True)
+        (prof / "SOUL.md").write_text("soul", encoding="utf-8")
+        (prof / ".env").write_text(env, encoding="utf-8")
+    return home
 
 
-def test_stale_research_keys_are_stripped_from_an_already_contaminated_tenant() -> None:
+def test_stale_research_keys_are_stripped_from_an_already_contaminated_tenant(tmp_path) -> None:
     """The bl-shoroban-class regression, backfilled: a rented tenant .env
     written by a PRE-fix boot already carries BigLobster's keys. There is no
     manifest of already-provisioned tenants to hand-fix (provision_bl_client.py
     never writes these two — only the boot injector ever did), so this must
     self-heal from the SAME per-profile loop that already visits every
     tenant, every boot."""
-    contaminated = (
+    home = _home_with(tmp_path, {"bl-client": (
         "BL_SITE_URL=https://client.example\n"
         "OPENROUTER_API_KEY=sk-or-CLIENT\n"
         "EXA_API_KEY=exa-BIGLOBSTER\n"
         "HUGGINGFACE_API_KEY=hf-BIGLOBSTER\n"
-    )
-    out = _strip_stale_research_keys(contaminated)
+    )})
+    br.sync_envs(home, {"OPENROUTER_API_KEY": "sk-or-BIGLOBSTER"})
+    out = (home / "profiles" / "bl-client" / ".env").read_text(encoding="utf-8")
     assert "EXA_API_KEY" not in out
     assert "HUGGINGFACE_API_KEY" not in out
     # Untouched: the tenant's own key and the site marker survive.
-    assert "sk-or-CLIENT" in out
+    assert "sk-or-CLIENT" in out and "sk-or-BIGLOBSTER" not in out
     assert "BL_SITE_URL=https://client.example" in out
 
 
-def test_stale_key_stripping_is_idempotent() -> None:
-    once = _strip_stale_research_keys("EXA_API_KEY=a\nOTHER=1\n")
-    twice = _strip_stale_research_keys(once)
-    assert once == twice == "OTHER=1\n"
+def test_stale_key_stripping_leaves_our_own_profiles_alone(tmp_path) -> None:
+    home = _home_with(tmp_path, {"biglobster": "EXA_API_KEY=a\nOTHER=1\n"})
+    br.sync_envs(home, {"EXA_API_KEY": "exa-new"})
+    br.sync_envs(home, {"EXA_API_KEY": "exa-new"})
+    assert (home / "profiles" / "biglobster" / ".env").read_text(encoding="utf-8") == (
+        "EXA_API_KEY=exa-new\nOTHER=1\n")
 
 
 # --- Rented tenants get web.search_backend: ddgs forced (#174) --------------
@@ -297,54 +240,43 @@ def test_stale_key_stripping_is_idempotent() -> None:
 # per-tenant here is what actually stops a tenant's web_search from landing
 # on Exa, not just removing the key from their .env.
 
-def test_reconcile_config_accepts_is_rented_flag(boot_text: str) -> None:
-    # Prefix match, not the whole signature: the contract this guards is that
-    # the flag exists and defaults to False, and pinning the closing paren made
-    # the test fail for merely ADDING a later keyword-only knob (byok_images,
-    # see tests/test_rented_tenant_byok_images.py) that changed nothing here.
-    assert "def _reconcile_config(config_path, label, is_rented=False" in boot_text
+def _web(cfg: dict, is_rented: bool) -> bool:
+    return br.reconcile_cfg(cfg, "some-profile", {}, is_rented=is_rented)
 
 
-def test_is_rented_forces_ddgs_search_backend_not_generic_web_backend(boot_text: str) -> None:
-    idx = boot_text.index('cfg["web"]["search_backend"] = "ddgs"')
-    gate = boot_text.rindex("if is_rented:", 0, idx)
-    between = boot_text[gate:idx]
-    # Must sit inside the is_rented branch, and must be search_backend, never
-    # touching/overriding the generic ("web", "backend"): "exa" override.
-    assert 'cfg["web"].get("search_backend") != "ddgs"' in between
-    assert '"backend"' not in between
-
-
-def test_profile_loop_passes_is_rented_from_the_env_marker(boot_text: str) -> None:
-    assert "is_rented=_is_rented_tenant(prof / \".env\")" in boot_text
-
-
-def test_ddgs_reconcile_logic_on_sample_configs() -> None:
-    """Functionally replay the is_rented branch of _reconcile_config."""
-    def reconcile_web_backend(cfg: dict, is_rented: bool) -> bool:
-        changed = False
-        if is_rented:
-            if not isinstance(cfg.get("web"), dict):
-                cfg["web"] = {}
-            if cfg["web"].get("search_backend") != "ddgs":
-                cfg["web"]["search_backend"] = "ddgs"
-                changed = True
-        return changed
-
-    # Fresh tenant config: section created, ddgs forced.
+def test_ddgs_reconcile_on_sample_configs() -> None:
+    # Fresh tenant config: section created, ddgs forced, generic override kept.
     cfg: dict = {"model": {"default": "x"}}
-    assert reconcile_web_backend(cfg, is_rented=True) is True
-    assert cfg["web"]["search_backend"] == "ddgs"
+    _web(cfg, is_rented=True)
+    assert cfg["web"] == {"backend": "exa", "search_backend": "ddgs"}
 
     # Second boot: no change (idempotent).
-    assert reconcile_web_backend(cfg, is_rented=True) is False
+    assert _web(cfg, is_rented=True) is False
 
-    # BigLobster's own profile: never touched.
+    # BigLobster's own profile: never gets search_backend.
     own_cfg: dict = {"web": {"backend": "exa"}}
-    assert reconcile_web_backend(own_cfg, is_rented=False) is False
+    _web(own_cfg, is_rented=False)
     assert "search_backend" not in own_cfg["web"]
 
     # A tenant who had manually set something else gets corrected back.
     drifted_cfg: dict = {"web": {"search_backend": "exa", "extract_backend": "exa"}}
-    assert reconcile_web_backend(drifted_cfg, is_rented=True) is True
-    assert drifted_cfg["web"] == {"search_backend": "ddgs", "extract_backend": "exa"}
+    _web(drifted_cfg, is_rented=True)
+    assert drifted_cfg["web"]["search_backend"] == "ddgs"
+    assert drifted_cfg["web"]["extract_backend"] == "exa"
+
+
+def test_profile_loop_marks_rentals_by_their_env_marker(tmp_path) -> None:
+    """is_rented comes from BL_SITE_URL in the profile's .env, not from its name."""
+    import yaml
+
+    home = _home_with(tmp_path, {"client-without-prefix": "BL_SITE_URL=https://c\n",
+                                 "biglobster": "A=1\n"})
+    for name in ("client-without-prefix", "biglobster"):
+        (home / "profiles" / name / "config.yaml").write_text("{}\n", encoding="utf-8")
+    br.reconcile_configs(home, {}, profiles_src=tmp_path / "none")
+
+    def web(name):
+        return yaml.safe_load((home / "profiles" / name / "config.yaml").read_text())["web"]
+
+    assert web("client-without-prefix").get("search_backend") == "ddgs"
+    assert "search_backend" not in web("biglobster")
