@@ -225,14 +225,35 @@ def _full_report(threshold: int) -> int:
               "{ echo $t; break; }; done")
         return 1
 
+    # The opposite slip: the merge landed but UPSTREAM_VERSION was never bumped
+    # (v2026.8.31 and v2026.9.24 on 2026-09-28). The check then reported "merge
+    # is due, 14 releases behind" next to "0 commits behind". A full clone can
+    # derive the truth, so report from it and say the file is stale; the
+    # container's remote mode cannot, which is why the file must still be fixed.
+    recorded = current
+    for tag in tags:  # newest first
+        if _version_key(tag) <= _version_key(current):
+            break
+        if subprocess.run(["git", "merge-base", "--is-ancestor", tag, "HEAD"],
+                          capture_output=True, cwd=_REPO_ROOT).returncode == 0:
+            current = tag
+            break
+    stale = [] if current == recorded else [
+        f"UPSTREAM_VERSION is stale: it says {recorded}, but {current} is merged. "
+        f"Fix it (runbook step 7) or the container's fallback check keeps "
+        f"reporting drift that is not there."]
+
     unmerged = [t for t in tags if _version_key(t) > _version_key(current)]
     if not unmerged:
-        return _status(current, [], None, threshold, [])
+        rc = _status(current, [], None, threshold, [])
+        for line in stale:
+            print(f"    ⚠️ {line}")
+        return rc
 
     oldest_date = _run("git", "log", "-1", "--format=%cI", unmerged[-1], check=False)
     behind = _run("git", "rev-list", "--count", f"HEAD..{unmerged[0]}", check=False) or "?"
     detail = [f"{behind} commits behind · ~{_conflict_count(unmerged[0])} files "
-              f"would conflict merging {unmerged[0]}"]
+              f"would conflict merging {unmerged[0]}"] + [f"⚠️ {line}" for line in stale]
     return _status(current, unmerged,
                    _days_since(oldest_date) if oldest_date else None,
                    threshold, detail)

@@ -228,3 +228,35 @@ class TestRecordedVersionMustBeMerged:
         assert drift._full_report(30) == 1
         out = capsys.readouterr().out
         assert "NOT merged" in out and "v2099.1.1" in out
+
+
+class TestStaleRecordedVersion:
+    """The opposite slip: merged, but UPSTREAM_VERSION never bumped (2026-09-28).
+
+    The check said "merge is due, 14 releases behind" beside "0 commits behind".
+    With history available it reports from the newest merged tag and flags the file.
+    """
+
+    def test_reports_from_the_merged_tag_and_flags_the_file(self, drift, monkeypatch, capsys):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.7.20")
+        monkeypatch.setattr(drift, "_run", lambda *a, **k: "v2026.9.24\nv2026.9.21\nv2026.7.20")
+
+        class _Ancestor:
+            returncode = 0
+
+        monkeypatch.setattr(drift.subprocess, "run", lambda *a, **k: _Ancestor())
+        assert drift._full_report(30) == 0
+        out = capsys.readouterr().out
+        assert "up to date" in out and "v2026.9.24" in out
+        assert "UPSTREAM_VERSION is stale" in out and "v2026.7.20" in out
+
+    def test_a_current_file_adds_no_warning(self, drift, monkeypatch, capsys):
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.9.24")
+        monkeypatch.setattr(drift, "_run", lambda *a, **k: "v2026.9.24\nv2026.9.21")
+
+        class _Ancestor:
+            returncode = 0
+
+        monkeypatch.setattr(drift.subprocess, "run", lambda *a, **k: _Ancestor())
+        assert drift._full_report(30) == 0
+        assert "stale" not in capsys.readouterr().out
