@@ -180,6 +180,13 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   `deploy.sh` rollout does not.** Verified 2026-09-29: a restart at 12:23 UTC logged
   `exited UNCLEANLY` and cut off every in-flight or queued cron run ("interrupted by
   restart"), and the deploy at 12:39 exited cleanly. Restart through `deploy.sh`.
+  **The gateway's own drain must fit inside that grace too.** Shutdown waits for
+  in-flight chat turns and cron runs (`agent.restart_drain_timeout`,
+  `agent.cron_drain_timeout`); both are pinned to 10s in `boot_reconcile.py`
+  `OVERRIDES`, and a test keeps them under `S6_SERVICES_GRACETIME`. The seed asked
+  for 180s, so on 2026-09-29 a deploy made while an auditor run was stuck waited in
+  the drain and was killed at +25s; the 12:39 one was clean only because nothing
+  was running.
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only

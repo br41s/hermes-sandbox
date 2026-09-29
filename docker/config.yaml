@@ -33,7 +33,8 @@ mcp_servers: {}
 agent:
   max_turns: 90
   gateway_timeout: 1800
-  restart_drain_timeout: 180
+  restart_drain_timeout: 10
+  cron_drain_timeout: 10
   api_max_retries: 3
   service_tier: ''
   tool_use_enforcement: auto
