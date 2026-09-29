@@ -194,7 +194,7 @@ def test_runs_as_the_boot_hook_invokes_it(home):
     assert result.returncode == 0, result.stderr
     assert "biglobster: reconciled config.yaml keys" in result.stdout
     assert "OPENROUTER_API_KEY=k\n" in _env(prof / ".env")
-    assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is False
+    assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
 
 
 def test_the_hook_calls_the_module():
