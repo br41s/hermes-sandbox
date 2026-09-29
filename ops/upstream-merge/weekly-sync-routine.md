@@ -27,7 +27,10 @@ python3 scripts/upstream_drift.py
 - Merge **release tags only**, never `upstream/main`. The target is the newest
   upstream tag that is not an ancestor of `origin/main`.
 - If an open PR titled `Upstream merge: …` already exists, don't open a second one.
-  Bring that one up to the newest tag, or leave it and report why.
+  Bring that one up to the newest tag, or leave it and report why. If it has fallen
+  behind `main` or conflicts with it, merge `origin/main` into its branch first (a
+  merge commit, never a rebase), resolve with the same splice hunt and gate as step 2,
+  and push.
 - **If every tag is merged and no such PR is open, stop.** Reply
   "Upstream: up to date on <tag>", with no branch and no PR.
 
