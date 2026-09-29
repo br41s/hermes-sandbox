@@ -83,9 +83,10 @@ def process_env_fallback() -> Dict[str, str]:
 def _profile_store_jobs(home: Path):
     """``(profile, job_id, name, enabled, deliver)`` for jobs in named profiles' own stores.
 
-    Only multiplex ticks these (``cron/scheduler_provider.py``); the fork's own profile
-    jobs live in the default store with a ``profile`` field. Listed so that switching
-    multiplex on never silently starts a job nobody knew was there.
+    The gateway ticks these stores whether multiplex is on or off
+    (``gateway/run.py`` ``_cron_tick_profile_homes``); the fork's own profile jobs live
+    in the default store with a ``profile`` field. Listed so that no job runs that
+    nobody knew was there.
     """
     import json
     rows = []
@@ -165,7 +166,7 @@ def check() -> int:
         print(f"  {name}")
 
     rows = _profile_store_jobs(home)
-    print(f"jobs in named profiles' own cron stores (multiplex ticks these): {len(rows)}")
+    print(f"jobs in named profiles' own cron stores (the gateway ticks these): {len(rows)}")
     for prof, job_id, name, is_enabled, deliver in rows:
         state = "enabled" if is_enabled else "disabled"
         print(f"  {prof} {job_id} {state} deliver={deliver or '-'} {name}")

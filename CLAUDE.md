@@ -70,8 +70,9 @@ holding its own token is a fatal duplicate credential.
 one, run the read-only probe in the pod. `zeabur service exec` lacks `/command` on its PATH,
 and `with-contenv` needs it:
 `/usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv s6-setuidgid hermes env PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python -m hermes_cli.fork_ext.process_env_scope --check`.
-It must say `VERDICT: OK`. It also lists jobs in `profiles/*/cron/jobs.json`: only multiplex
-runs those. Then prove it with a plain message in General; tests alone passed both stages
+It must say `VERDICT: OK`. It also lists jobs in `profiles/*/cron/jobs.json`. The gateway
+ticks those stores whether multiplex is on or off (`gateway/run.py`
+`_cron_tick_profile_homes`), so rolling multiplex back does not stop them. Then prove it with a plain message in General; tests alone passed both stages
 the first time.
 
 ### Cron jobs with a workdir inject that repo's context file
@@ -101,9 +102,10 @@ Consequences to hold in mind:
 ### One long agent run starves every other agent
 
 `cron/scheduler.py` dispatches every job that sets `profile` or `workdir` on a
-**single-thread sequential pool** (`cron/fork_ext/dispatch.py`) — a workdir job
-still writes `os.environ["TERMINAL_CWD"]`, and the lane keeps profile runs in the
-order they have always had. One slow job therefore
+**single-thread sequential pool** (`cron/fork_ext/dispatch.py`). Nothing it once
+protected is shared any more: a workdir binds to the run's task id rather than
+`os.environ["TERMINAL_CWD"]`, and a profile's `.env` is a per-run scope. The lane is
+now policy only: it keeps profile runs in the order they have always had. One slow job therefore
 blocks all the others, and from outside a queued run is indistinguishable from a
 dead one: the waiting job sits in `claimed` with no log output at all.
 
@@ -114,9 +116,9 @@ exactly like a crash.
 The defence is **bounding each agent, not widening the pool**. The agent loop
 already hard-stops at `max_iterations=90` (`run_agent.py:434`), so the ceiling is
 ~90 tool calls; what matters is that a job's queue fits inside it —
-`auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that. Widening the pool
-would mean removing the `TERMINAL_CWD` write first; treat that as a separate,
-riskier piece of work and do not fold it into a bug fix.
+`auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that. Widening the pool is
+a separate decision, planned as stage 3 step 5 (`ops/multiplex-stage3-plan.md`, one
+job per profile at a time); do not fold it into a bug fix.
 
 **Every cron agent run also has a wall-clock ceiling: `HERMES_CRON_MAX_RUNTIME`,
 default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
