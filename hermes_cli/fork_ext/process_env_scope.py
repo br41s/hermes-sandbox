@@ -25,7 +25,7 @@ are untouched and never see these keys: a routed turn authorizes under the
 transport's profile (``GatewayRunner._under_authorization_profile``), which is
 the default one, so the allowlist does not need to be copied anywhere. Nothing is
 written to disk, and ``TELEGRAM_BOT_TOKEN`` never enters a profile's ``.env``
-(CLAUDE.md, "Multiplex is rolled back").
+(CLAUDE.md, "Multiplex is on").
 
 Opt-in through ``HERMES_FORK_SCOPE_PROCESS_ENV=1``, which the image sets
 (Dockerfile), so upstream's own scope tests keep upstream semantics.
