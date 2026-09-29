@@ -311,6 +311,9 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
     # provider and the operator debugged the wrong system).
     if re.search(r"idle for \d+s\s*\(limit \d+s\)", lower):
         return inactivity_notice(job_name, job_id)
+    # Fork: the per-run wall-clock cap (cron/fork_ext/max_runtime.py) is not a provider failure either.
+    if (_fork_notice := _fork_max_runtime_notice(job_name, job_id, lower)) is not None:
+        return _fork_notice
 
     # no_agent jobs never reach a model, so provider errors are structurally impossible for them:
     # gate on job MODE before classifying, or a script's own wording ("429", "timed out") would
@@ -1297,6 +1300,13 @@ from cron.fork_ext.diagnostics import (  # noqa: E402
     _note_abandoned_agent_thread,
     abandoned_agent_threads,  # noqa: F401 - re-exported; hermes_cli/cron.py reads it here
 )
+# Per-run wall-clock cap (fork): see cron/fork_ext/max_runtime.py.
+from cron.fork_ext.max_runtime import (  # noqa: E402
+    exceeded as _fork_max_runtime_exceeded,
+    max_runtime_seconds as _fork_max_runtime_seconds,
+    delivery_notice as _fork_max_runtime_notice,
+    raise_max_runtime as _fork_raise_max_runtime,
+)
 
 
 # Per-job profile scope (fork): see cron/fork_ext/profile_scope.py.
@@ -1945,6 +1955,8 @@ def _run_agent_with_watchdog(
     _cron_timeout = _cron_inactivity_seconds()
     _cron_inactivity_limit = _cron_timeout if _cron_timeout > 0 else None
     _POLL_INTERVAL = 5.0
+    _max_runtime = _fork_max_runtime_seconds()  # fork: wall-clock cap, cron/fork_ext/max_runtime.py
+    _run_started, _max_runtime_hit = time.monotonic(), False
     # Heartbeat the one-shot run_claim while alive: without it a long run looks like a dead owner
     # and gets re-dispatched / stale-removed out from under the live run.
     # Keep the one-shot run_claim fresh while the run is alive (#62002): the claim TTL is a dead-owner
@@ -2015,7 +2027,8 @@ def _run_agent_with_watchdog(
             # loop / hung ``get_activity_summary`` on this thread can no longer keep the 600s inactivity
             # limit from firing (#94285).
             _watch_thread.start()
-        if _cron_inactivity_limit is None and not _is_oneshot and cancel_event is None:
+        if (_cron_inactivity_limit is None and _max_runtime is None
+                and not _is_oneshot and cancel_event is None):
             result = _cron_future.result()
         else:
             result = None
@@ -2031,6 +2044,11 @@ def _run_agent_with_watchdog(
                     _dump_stuck_agent_stack(job_id, _idle_seconds())
                     _note_abandoned_agent_thread()
                     break
+                if _fork_max_runtime_exceeded(_run_started, _max_runtime):
+                    _dump_stuck_agent_stack(job_id, _idle_seconds(), reason="max runtime exceeded")
+                    _note_abandoned_agent_thread()
+                    _max_runtime_hit = True
+                    break
                 _abort_if_fire_claim_lost()
                 _heartbeat_run_claim_if_due()
     except Exception:
@@ -2044,6 +2062,8 @@ def _run_agent_with_watchdog(
 
     if _inactivity_timeout:
         _raise_inactivity_timeout(agent, job_name, _cron_inactivity_limit)
+    if _max_runtime_hit:
+        _fork_raise_max_runtime(agent, job_name, _max_runtime, _run_started)
 
     if not isinstance(result, dict):
         raise RuntimeError(

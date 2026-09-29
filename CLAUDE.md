@@ -118,6 +118,16 @@ already hard-stops at `max_iterations=90` (`run_agent.py:434`), so the ceiling i
 would mean removing the `TERMINAL_CWD` write first; treat that as a separate,
 riskier piece of work and do not fold it into a bug fix.
 
+**Every cron agent run also has a wall-clock ceiling: `HERMES_CRON_MAX_RUNTIME`,
+default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
+watchdog cannot catch a hung model call: a waiting stream refreshes the activity
+clock every 30s. On 2026-09-29 an `auditor-review` run hung after its fourth model
+call and held the lane for 95 minutes, with nothing logged. `merge-on-green` and a
+rental's Product Sheet Writer queued behind it, and the auditor looked down. At the
+ceiling the run dumps every thread's stack to the log, is interrupted and fails,
+and the lane moves on. A job that legitimately needs longer is a job to split, not
+a reason to raise the ceiling for everyone.
+
 **A profile job's `.env` never reaches `os.environ`.** `_job_profile_context`
 (`cron/fork_ext/profile_scope.py`) installs it as the run's secret scope, a
 ContextVar, so read a profile key with `agent.secret_scope.get_secret` or
