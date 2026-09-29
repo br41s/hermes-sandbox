@@ -46,6 +46,13 @@ Half the work for a tenth of the wait.
 
 ## Automation
 
+**The merge itself is prepared weekly.** A claude.ai Routine fires on Mondays with
+this repo attached and follows `ops/upstream-merge/weekly-sync-routine.md`: if a
+release is unmerged, it merges it on a branch per this runbook and opens one
+`Upstream merge: <tag>` PR. It never merges or deploys; that stays the owner's.
+The drift report below is the watchdog behind it: if it says "merge is due" while
+no such PR is open, the Routine isn't running.
+
 `scripts/upstream_drift.py` reports **on every run** — "up to date", "behind,
 merge not due yet", or "merge is due" (the OLDEST unmerged upstream tag is
 older than 30 days). One Telegram message a week, never zero:
