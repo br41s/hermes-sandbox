@@ -499,6 +499,15 @@ ENV HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages
 # profile only; .env still wins. hermes_cli/fork_ext/process_env_scope.py.
 ENV HERMES_FORK_SCOPE_PROCESS_ENV=1
 
+# Fork: let the gateway shut down cleanly. s6-overlay's defaults allow a service
+# 3s to stop before it is killed; the gateway's Telegram disconnect takes longer,
+# so every deploy and Zeabur restart SIGKILLed it mid-shutdown. The next boot then
+# saw an unclean exit and ran PRAGMA quick_check on the 2.2 GB state.db before
+# connecting Telegram: 4m12s of silence on 2026-09-29, all messages dropped.
+# 20s + 5s stays inside Kubernetes' default 30s termination grace.
+ENV S6_SERVICES_GRACETIME=20000
+ENV S6_KILL_GRACETIME=5000
+
 # Xfce, dbus and the display-allocation lock need one; containers have no logind
 # to create /run/user/<uid>. The default fallback ($HOME/.cache) is the /opt/data
 # volume, which a host-side install may share — two instances would then contend
