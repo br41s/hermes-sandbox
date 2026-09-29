@@ -162,6 +162,8 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   `PRAGMA quick_check` on the 2.2 GB `state.db` (`gateway/lifecycle_ledger.py`)
   before connecting Telegram. If `Previous gateway life … exited UNCLEANLY`
   shows up after a routine deploy again, the shutdown is outrunning that grace.
+  The incident watcher (`incidents/sweep.py`, `unclean_exit_incidents`) raises
+  each one in the incidents thread, with the `state.db` integrity verdict.
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only

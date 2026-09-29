@@ -1,5 +1,11 @@
 # Deploy automation — close the merge→production loop
 
+> **Status as of 2026-09-29: Half 1 shipped, Half 2 not started.** Half 1 (revised)
+> is `deploy_drift_incidents` in `incidents/sweep.py` (PR #311, 2026-09-22; token
+> dependency removed in #330); the build half is `ghcr-publish.yml` + `scripts/deploy.sh`.
+> Open: Half 2's gated `prompt-drift` remediation class — `remediation/registry.py` has
+> no such entry; prompts are still synced by hand.
+
 ## Context
 
 Every PR merge to `main` currently ends in the same manual dance, walked by

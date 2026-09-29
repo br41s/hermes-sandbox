@@ -1,5 +1,14 @@
 # Token Optimization — owl-alpha → paid main model
 
+> **Status as of 2026-09-29: partly done; the model facts below are out of date.**
+> owl-alpha is retired and the main model is `deepseek/deepseek-v4.1-flash` (CEO,
+> 2026-09-20; `BIGLOBSTER_SETUP.md`), not v4-pro. Shipped: auditor judge `session_id` +
+> DeepSeek pinning (PR #88) and the auditor-only `provider_routing.order: ["deepseek"]`
+> in `hermes_cli/fork_ext/boot_reconcile.py`. Open: pinning `provider_routing` on the
+> main profile — deferred "until deepseek main", which is now true — and levers 2b/2c/2d
+> and 3, never started. Upstream context compression now exists, contrary to the
+> "no runtime context compaction" note.
+
 **Goal:** cut token consumption A LOT so a paid model is affordable as the main
 model, without losing quality or data.
 

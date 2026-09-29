@@ -24,7 +24,7 @@
 #      Telegram poller that steals updates from production.
 #
 # ALWAYS compare the PASS COUNT and the failing FILENAMES against the recorded
-# baseline in tasks/upstream-merge-v2026.7.20.md — never the exit code, and
+# baseline in ops/upstream-merge/upstream-merge-v2026.7.20.md — never the exit code, and
 # never the raw failure count (the corpus grows).
 #
 # Usage:

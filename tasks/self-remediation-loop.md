@@ -1,5 +1,13 @@
 # Self-Remediation Loop — implementation plan
 
+> **Status as of 2026-09-29: open — Phase 3 not built.** Phases 0–2 shipped (PRs #83–#85,
+> plus the branch-confusion class in #86, 2026-06-26; classifier fix #309). Nothing in
+> `incidents/sweep.py` or `remediation/` executes a registered fix in `auto` mode, and the
+> Verification gate below is unrun. The only production caller of `guards.may_auto_act` is
+> `merge_on_green/watcher.py` (PR #217) — a separate loop reusing the Phase 0 guards, not
+> this Phase 3. `model-fallback` has no registry entry (see Phase 1), so the Phase 3
+> "dry-run on model-fallback" step has nothing to run against.
+
 Close the Decide→Act link in the autonomy loop: let the incident watcher
 *fix* known reversible failure classes, not only alert. Governed by a hybrid
 ledger (track record recommends promotion; CEO approves). Builds on the

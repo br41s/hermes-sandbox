@@ -2,6 +2,8 @@
 
 > **STATUS: SHIPPED & VERIFIED LIVE 2026-06-28** (PR #94 core, #95 hardening,
 > trace c4538230…). All tasks below done; kept for design record.
+> Note 2026-09-29: the helpers now live in `cron/fork_ext/isolated_checkout.py` (PR #335;
+> `cron/scheduler.py` re-imports them) and the test in `tests/cron/`; line refs below are dead.
 
 ## Problem
 Cron agents (biglobster SEO, gap-hunter) share ONE physical git working tree
@@ -119,14 +121,20 @@ per-repo risk-tier profiles and dead-cron handling below remain unbuilt.
 TOPOLOGY: each profile owns its OWN GitHub repo, not a path in hermes-sandbox.
 Repo set = union of `docker/profiles/<name>/repos.txt` + `hermes-sandbox`:
 biglobster, grow-shop-api, grow-shop-landing, FinView, SocialAgenda (+ engine).
-- [ ] Repo list: aggregate the `repos.txt` files (+ hermes-sandbox); cron loops
+STATUS 2026-09-29: only dead-cron handling remains. Repo list and per-repo tiers
+shipped in PR #82 (2026-06-26), before the note above was written.
+- [x] Repo list: aggregate the `repos.txt` files (+ hermes-sandbox); cron loops
       `auditor/pending.py --repo <slug>` per repo (pending.py already repo-agnostic).
-- [ ] Per-repo risk tiers: `tiers.py` is hermes-tuned only. Add tier profiles keyed
+      *(`auditor/pending.py` `review_repos()`, PR #82.)*
+- [x] Per-repo risk tiers: `tiers.py` is hermes-tuned only. Add tier profiles keyed
       by repo slug (biglobster Node site, FinView, grow-shop split, etc.) — without
       them, profile-repo content PRs over-review on the strong model.
+      *(`auditor/tiers.py` `classify(paths, repo)`: a narrow profile-repo allowlist
+      plus per-slug `_REPO_EXTRA_CONTENT_*` — biglobster only so far. PR #82.)*
 - [ ] Dead-cron handling: low-risk dead-cron PRs → patch-and-merge; high-risk →
       escalate to human (live agents already converse via PR comments).
-- [ ] PAT scope: `hermes-auditor` needs write on every gated repo (see Blocked).
+- [x] PAT scope: `hermes-auditor` needs write on every gated repo (see Blocked).
+      *(2026-09-29: `write` on all 7 repos per the GitHub collaborators API.)*
 
 ## Blocked on Brais — RESOLVED 2026-06-24
 - ~~Create GitHub bot account `hermes-auditor` + fine-grained PAT~~ — done; bot is
@@ -137,3 +145,13 @@ biglobster, grow-shop-api, grow-shop-landing, FinView, SocialAgenda (+ engine).
 - Phase 1: unit tests green; run `auditor/pending.py` against a throwaway PR; confirm
   it posts a sensible review comment in dry-run.
 - Phase 3: confirm a deliberately bad PR is blocked + escalated; a clean PR is merged.
+
+---
+
+# Make hermes-sandbox private — STILL OPEN (CEO)
+
+Carried over from Phase 6 of `ops/upstream-merge/upstream-merge-v2026.7.20.md`, which
+has the reasoning. As of 2026-09-29 the repo is still public.
+- [ ] Add GHCR pull credentials (PAT w/ `read:packages`) to the Zeabur service.
+- [ ] Flip the **package** to private → redeploy to prove the pull still works.
+- [ ] Flip the **repo** to private; verify the auditor still opens/reviews PRs.

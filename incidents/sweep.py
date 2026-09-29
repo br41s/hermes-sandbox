@@ -29,6 +29,10 @@ Signals:
     appends a JSON line to ``checkout-drift.jsonl`` when a BigLobster site
     checkout is both dirty and carries local commits origin/main doesn't have
     (never auto-resolved, so it needs a human look).
+  * Unclean gateway exits — ``gateway/lifecycle_ledger.py`` appends a
+    ``gateway.previous_unclean_exit`` line to ``logs/gateway-exit-diag.log`` when
+    a boot finds the previous life never ran an exit path (SIGKILL / OOM). Each
+    one cost a ``PRAGMA quick_check`` on state.db before Telegram connected.
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -61,6 +65,7 @@ LANGFUSE_WINDOW_HOURS = 2
 RUNAWAY_WINDOW_HOURS = 26  # one daily cycle + slack, matching CRON_FAILURE_WINDOW_HOURS
 RUNAWAY_DEFAULT_MAX_TURNS = 90  # run_agent's hard stop; see AIAgent(max_iterations=...)
 RUNAWAY_FRACTION = 0.95  # a run this close to the cap did not choose to stop
+UNCLEAN_EXIT_WINDOW_HOURS = 26  # older records are history, not news (the log is never pruned)
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
 
@@ -99,6 +104,11 @@ def _blocked_path() -> Path:
 def _checkout_drift_path() -> Path:
     from hermes_constants import get_hermes_home
     return get_hermes_home() / "incidents" / "checkout-drift.jsonl"
+
+
+def _exit_diag_path() -> Path:
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "logs" / "gateway-exit-diag.log"
 
 
 def _load_state(path: Path) -> dict:
@@ -635,6 +645,84 @@ def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
                 f"local commits already landed upstream (check for a merged PR with "
                 f"the same content) before resetting it to origin/main"
             ),
+        ))
+    return out
+
+
+def unclean_exit_incidents(path: Optional[Path] = None, *,
+                           now: Optional[datetime] = None,
+                           window_hours: int = UNCLEAN_EXIT_WINDOW_HOURS) -> List[Incident]:
+    """One incident per ``gateway.previous_unclean_exit`` record in the window.
+
+    An unclean exit costs more than the crash itself: the next boot runs
+    ``PRAGMA quick_check`` on the 2.2 GB state.db before it connects Telegram,
+    and ``drop_pending_on_cold_boot`` then discards everything sent meanwhile —
+    up to four minutes of silence after a deploy. s6-overlay's 3s default stop
+    grace caused 5 of 13 restarts between 27 and 29 Sep 2026; PR #360 raised it,
+    but if Zeabur's pod termination grace is shorter than that, the kubelet's
+    SIGKILL still wins. This signal is how we find out.
+
+    The log is shared with the CLI's ``_exit_diag`` (other tags) and is never
+    pruned, so records are filtered by tag and bounded by ``window_hours`` —
+    without the window the first sweep would deliver the file's whole history.
+    A missing or unreadable file is silence: no gateway has died uncleanly here.
+    """
+    path = path or _exit_diag_path()
+    now = now or _now()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    out: List[Incident] = []
+    for raw in lines:
+        try:
+            rec = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(rec, dict) or rec.get("tag") != "gateway.previous_unclean_exit":
+            continue
+        ts = rec.get("ts")
+        if not _within(ts, window_hours, now):
+            continue
+        prior_pid = rec.get("prior_pid")
+        verdict = str(rec.get("state_db_integrity") or "not recorded")
+        damaged = verdict not in ("ok", "absent")
+        oom = bool(rec.get("suspected_oom"))
+
+        detail = (
+            f"detected at boot: {ts}\n"
+            f"dead life: pid {prior_pid}, started {rec.get('prior_started_at') or 'unknown'}, "
+            f"last heartbeat {rec.get('last_heartbeat_at') or 'unknown'}\n"
+            f"suspected OOM: {'YES' if oom else 'no'}\n"
+            f"state.db integrity: {verdict}"
+        )
+        if damaged:
+            detail += ("\n⚠️ state.db may be DAMAGED — sessions can read as missing "
+                       "until it is repaired. Run `hermes doctor` in the pod first.")
+        if oom:
+            detail += ("\nMemory was critical at the last heartbeat, so the kernel OOM "
+                       "killer is the likelier cause than a shutdown race.")
+        else:
+            detail += ("\nLikely cause: a shutdown that outran the stop grace (s6's "
+                       "S6_SERVICES_GRACETIME/S6_KILL_GRACETIME in the Dockerfile, or "
+                       "Zeabur's pod termination grace), so the gateway was SIGKILLed "
+                       "mid-shutdown. If this lines up with a deploy, the grace is too short.")
+        detail += ("\nTelegram was not listening until the integrity check finished; "
+                   "messages sent in that gap were dropped (CLAUDE.md → Deployment).")
+
+        handoff = (f"gateway unclean exit at {ts} (prior pid {prior_pid}) — compare its "
+                   "time with the last `scripts/deploy.sh` rollout and read "
+                   "`Previous gateway life … exited UNCLEANLY` in gateway.log")
+        if damaged:
+            handoff = "run `hermes doctor` in the pod, then: " + handoff
+        out.append(Incident(
+            id=f"gateway-unclean:{ts}:{prior_pid}",
+            kind="gateway",
+            title=("Gateway died uncleanly — state.db FAILED its integrity check"
+                   if damaged else "Gateway died uncleanly (no shutdown path ran)"),
+            detail=detail,
+            handoff=handoff,
         ))
     return out
 
@@ -1216,6 +1304,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           deploy_drift: Optional[List[Incident]] = None,
           judge_liveness: Optional[List[Incident]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
+          unclean_exits: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1238,6 +1327,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     cd = checkout_drift if checkout_drift is not None else checkout_drift_incidents()
     dd = deploy_drift if deploy_drift is not None else deploy_drift_incidents(now=now)
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
+    ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -1271,7 +1361,8 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + cron_stale_incidents(jobs, now=now)
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
-                 + list(lf) + list(bc) + list(cd) + list(dd) + list(jl))
+                 + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
+                 + list(ue))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
