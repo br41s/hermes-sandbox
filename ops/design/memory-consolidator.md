@@ -1,5 +1,11 @@
 # Memory Consolidator — continuous factual-memory learning
 
+> **Status (2026-09-29): all four slices shipped** — PRs #130–#135 (2026-07-22/23).
+> Lives in `agent/memory_curator.py` + `hermes_cli/memory_curator.py`; opt-in via
+> `memory_curator.enabled` (default off, `docker/config.yaml`). The "open questions" below
+> were answered in code (K=5, CLI + Telegram digest, string-match dedup via
+> `MemoryStore.add`). Moved from `tasks/`.
+
 **Goal:** close the gap where lessons/corrections stay trapped in past sessions
 and never reach the bounded `memory` store. Do it by reusing the existing
 `curator` machinery, not a new weekly cron.

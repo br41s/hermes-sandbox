@@ -19,7 +19,7 @@ web/package-lock.json linguist-generated=true
 # the generator — the test suite checks both:
 #   uv lock
 #   python scripts/build_model_catalog.py
-# See tasks/upstream-merge-hygiene.md.
+# See ops/upstream-merge/upstream-merge-hygiene.md.
 #
 # NOTE: `merge=ours` needs the driver registered once per clone (it is not a
 # built-in). scripts/setup-merge-drivers.sh does it:

@@ -508,7 +508,7 @@ echo "[03-biglobster] Seeded scripts/incident_sweep.sh"
 #
 # In here it runs in REMOTE mode: the image excludes .git, so it asks the GitHub
 # API for upstream's tags and compares against the UPSTREAM_VERSION file.
-# Runbook: tasks/upstream-merge-hygiene.md
+# Runbook: ops/upstream-merge/upstream-merge-hygiene.md
 # Register the job ONCE (after deploy, in the container shell); --deliver
 # telegram goes to TELEGRAM_HOME_CHANNEL / _THREAD_ID:
 #   hermes cron create "0 9 * * 2" --no-agent --script upstream_drift.sh \

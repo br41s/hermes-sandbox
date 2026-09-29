@@ -1,5 +1,12 @@
 # Content Updater Agent — planning
 
+> **Status as of 2026-09-29: built, still dry-run.** The "nothing built" line below is
+> out of date: the prompt landed in PR #251, cron wiring notes in #253, the DRY_RUN branch
+> fix in #254 (all 2026-09-16). Open: `content-updater/biglobster-content-updater.prompt`
+> still says `DRY_RUN : true` (Next step 6, flip + `sync-prompt`, not done), and the
+> `web_search` backoff (defect 4) has no fix on main. The rental variant is
+> `tasks/content-updater-rental.md`.
+
 Status: **planning, nothing built.** Step 1 of the plan: use-case catalogue.
 Target: build → run on biglobster.top → sell as a bl-site-package rental.
 

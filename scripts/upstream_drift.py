@@ -54,7 +54,7 @@ from pathlib import Path
 UPSTREAM_REPO = "NousResearch/hermes-agent"
 FORK_REPO = os.environ.get("HERMES_FORK_REPO", "br41s/hermes-sandbox")
 ACTIONS_WORKFLOW = "upstream-drift.yml"
-RUNBOOK = "tasks/upstream-merge-hygiene.md"
+RUNBOOK = "ops/upstream-merge/upstream-merge-hygiene.md"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 # Upstream cuts same-day re-releases as a fourth component (v2026.8.16.2).
 _TAG_RE = re.compile(r"^v(\d{4})\.(\d+)\.(\d+)(?:\.(\d+))?$")

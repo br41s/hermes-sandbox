@@ -33,7 +33,7 @@ on a live instance. Enable with::
       enabled: true
 
 Later slices add approve-to-write, consolidation/eviction, and auto-graduation
-(see tasks/memory-consolidator.md). None of that lives here.
+(see ops/design/memory-consolidator.md). None of that lives here.
 """
 
 from __future__ import annotations
