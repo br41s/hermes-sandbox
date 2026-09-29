@@ -29,5 +29,9 @@ def quiet_broken_pipe() -> Iterator[None]:
         # Point stdout at /dev/null first: the interpreter flushes it again at shutdown, and
         # that flush would print "Exception ignored ... BrokenPipeError" instead.
         with contextlib.suppress(OSError, ValueError):
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, sys.stdout.fileno())
+            finally:
+                os.close(devnull)
         sys.exit(BROKEN_PIPE_EXIT)

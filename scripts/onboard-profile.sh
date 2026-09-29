@@ -338,7 +338,8 @@ fi
 echo "[9/9] Setting gateway auto-start state..."
 as_hermes sh -c "printf '{\"gateway_state\": \"running\"}\n' > '$PROFILE_DIR/gateway_state.json'"
 echo "      ✓ gateway_state.json → running"
-echo "      ↳ Restart the container to register gateway-$PROFILE_NAME via s6."
+echo "      ↳ Restart the container: the boot hook adds this profile's topic route, and the"
+echo "        default gateway serves it (multiplex: there is no gateway-$PROFILE_NAME slot)."
 
 # ── smoke test ────────────────────────────────────────────────────────────
 

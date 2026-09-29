@@ -155,9 +155,10 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   only after `agent.log` shows `Cold boot: dropping Telegram updates` followed
   by `Gateway running`, or a silent General reads as a broken deploy.
 
-  That gap was 4 minutes until `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME` in
-  the Dockerfile. With s6-overlay's 3s default, the old gateway was SIGKILLed
-  mid-shutdown on every deploy, so the new one saw an unclean exit and ran
+  That gap could be 4 minutes until `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`
+  in the Dockerfile. With s6-overlay's 3s default, the old gateway was often
+  SIGKILLed mid-shutdown (5 of 13 restarts, 27–29 Sep), so the new one saw an
+  unclean exit and ran
   `PRAGMA quick_check` on the 2.2 GB `state.db` (`gateway/lifecycle_ledger.py`)
   before connecting Telegram. If `Previous gateway life … exited UNCLEANLY`
   shows up after a routine deploy again, the shutdown is outrunning that grace.
