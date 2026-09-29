@@ -323,12 +323,15 @@ every moved job regardless (fact 12).
 
 | Option | Verdict |
 |---|---|
-| **A. Retarget to the profile's own topic** (`deliver: telegram`, bare). No code, delivery stays fail-closed, and the output lands where that profile's conversation already lives. | **Recommended default.** |
-| **B. Keep it a default-profile job.** If the output belongs in General because it spans profiles (a digest, for example), the job is the default profile's. It moves to no store, only if it needs no profile identity (no git, no profile keys). | For jobs that fit. A job that needs both a profile identity and General is two jobs: the profile job delivers locally, and a default job reads its output. |
+| **A. Retarget to the profile's own topic** (`deliver: telegram`, bare). No code, delivery stays fail-closed, and the output lands where that profile's conversation already lives. | **Decided, for every such job.** |
+| B. Keep it a default-profile job | **Rejected.** It would run the job with the default profile's keys. |
 | C. Add a route General → profile | **Rejected.** Routes are inbound too (fact 10): every General message would go to that profile. |
 | D. A fork outbound-only grant list in `SharedRouteAdapters` | **Rejected for now.** It is a new pattern, it widens a fail-closed boundary, and it patches an upstream file. Revisit only if A and B leave a job with no home. |
 
-**Decision needed:** A or B per General-delivering job, from the inventory.
+**Decided 2026-09-29: A.** Every profile job that posts to General is retargeted
+to its own profile's topic as part of its move. The inventory lists which jobs
+that covers. Retargeting a rental needs a topic first: rentals have no
+`routing.env` (section 1).
 
 ---
 
@@ -355,7 +358,7 @@ definitive per-profile list from the live env, names only.
 
 | Key(s) | Lost by | Effect | Close by |
 |---|---|---|---|
-| `HERMES_LANGFUSE_PUBLIC_KEY` / `_SECRET_KEY` / `_BASE_URL` (+ `_ENV`, `_RELEASE`, `_SAMPLE_RATE` if set) | every profile | no traces, no error (fact 4). Langfuse is our source of truth for agent behaviour | add them to `INJECT` (see note below) |
+| `HERMES_LANGFUSE_PUBLIC_KEY` / `_SECRET_KEY`, the base URL (+ `_ENV`, `_RELEASE`, `_SAMPLE_RATE` if set) | every profile | no traces, no error (fact 4). Langfuse is our source of truth for agent behaviour | BigLobster-owned profiles: `INJECT`, with BigLobster's two keys also in `TENANT_EXCLUDE`. Rentals: their own project, pinned at boot (see "Rental Langfuse" below). |
 | `HERMES_CRON_TIMEOUT` and other run-time `HERMES_CRON_*` **if set only in the service env** | every profile | the watchdog reverts to its default | `INJECT` them. (`HERMES_CRON_MAX_PARALLEL` is lost already, everywhere; if it matters, pin `cron.max_parallel_jobs` via `OVERRIDES`.) |
 | Auditor identity (`GITHUB_TOKEN`/`GH_TOKEN` = bot) | nobody | already in the auditor `.env` (`boot_reconcile.py:315`) | nothing. `HERMES_AUDITOR_GITHUB_TOKEN` by name is read only by `boot_reconcile.py` |
 | `HERMES_AUDITOR_JUDGE_*` knobs | auditor, if they are set in the service env | `auditor/llm.py` reads them through `_env_value` (`os.environ`, then `$HERMES_HOME/.env`) inside a **child** process, so the answer depends on the child-env row above. The probe must check the auditor's child env specifically. | stamp them into the auditor `.env` next to `HERMES_AUDITOR_SYSTEM_MODEL` (`boot_reconcile.py:337`) |
@@ -370,14 +373,53 @@ incident), and it keeps a profile's secrets inspectable in one file. A per-profi
 
 **The guard is a test, not a comment.** Step 0c adds a new assertion in
 `tests/test_biglobster_github_token_propagation.py`, where `INJECT` is already
-tested: `INJECT` never contains `TELEGRAM_BOT_TOKEN`, a `TELEGRAM_*ALLOWED*` key,
-`SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*` or `META_*`.
+tested. `INJECT` never contains any of these:
+- `TELEGRAM_BOT_TOKEN`, or any `TELEGRAM_*ALLOWED*` key;
+- `SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*` or `META_*`;
+- `HERMES_RENTAL_LANGFUSE_*`.
 
-**Decision needed: Langfuse keys for rentals.** Today rental runs trace into our
-Langfuse through the fork scope. `INJECT` for all profiles keeps parity. Leaving
-rentals out means `TENANT_EXCLUDE` grows, and rentals go dark to us.
-Recommendation: inject. These are our keys for our observability, and rentals
-already send their traces there.
+### Rental Langfuse: its own project (decided 2026-09-29)
+
+**Finding: BigLobster's Langfuse keys are within rental jobs' reach today.** A
+rental job is a fork `profile` job, and its scope is
+`{**os.environ, **profile .env}` (`profile_scope.py:255`). BigLobster's
+`HERMES_LANGFUSE_PUBLIC_KEY`/`_SECRET_KEY` live in the Zeabur service env, which
+is where `boot_reconcile.py:679` reads them. So every rental run resolves them
+through `get_secret`. A key in a client profile's reach can be read by that
+client's agent. This step closes a real exposure; it is not a tidy-up.
+
+**Decision:** rentals trace into a **separate Langfuse project with its own key
+pair**, so a leak from a rental profile exposes rental traces only.
+
+| | |
+|---|---|
+| Service vars | `HERMES_RENTAL_LANGFUSE_PUBLIC_KEY`, `HERMES_RENTAL_LANGFUSE_SECRET_KEY`, set in the Zeabur service env (done 2026-09-29) |
+| Written as | `HERMES_LANGFUSE_PUBLIC_KEY` / `HERMES_LANGFUSE_SECRET_KEY` in each rental's `.env`: the names the plugin reads, `HERMES_`-prefixed |
+| Base URL | keeps its unprefixed name (`CLAUDE.md`, Langfuse section). Same host, different project, and not a secret, so it goes into `INJECT` for every profile. Satellites need it written somewhere, because the scope does not see `os.environ`, and the plugin's fallback is `https://cloud.langfuse.com`. Note that `CLAUDE.md`'s curl example uses `$HERMES_LANGFUSE_BASE_URL`; the 0e probe (names only) settles which name the service env actually carries. |
+| Which profiles | rentals only: `is_rented_tenant` (`boot_reconcile.py:214`), i.e. `BL_SITE_URL` in the profile `.env`, which only `provision_bl_client.py` writes. **Not `INJECT`**, which reaches every profile. |
+| Model | the auditor-token step (§1b of `sync_envs`, run by `docker/cont-init.d/03-biglobster-config`): resolve with `_resolve`, write with `_pin_vars` |
+| Rotation | overwrite on **every boot**, never `setdefault`. A key rotated in Zeabur reaches every rental on the next boot, which closes the "rotated secrets do not reach profile `.env` files" trap (`CLAUDE.md`) for these keys. |
+| Unset | fail closed, like the auditor: strip both lines from every rental `.env` and log a names-only `WARNING`. Never leave BigLobster's keys in their place. |
+| BigLobster's keys | in `INJECT` **and** `TENANT_EXCLUDE`, so the shared loop never writes them into a rental. The pin then replaces any stale line under the same names. |
+| Logs | name and profile only. No boot line prints a value. |
+
+**Tests** (`tests/test_biglobster_github_token_propagation.py`). Both use sentinel
+values and assert on booleans, so a failure's output shows no value either:
+1. **No rental `.env` ever holds BigLobster's Langfuse keys.** Checked after
+   `sync_envs` with both key pairs set, with the rental pair unset, and starting
+   from a rental `.env` that already holds BigLobster's keys.
+2. **A changed service value replaces the old one in the rental `.env`.** Two
+   boots with different rental values end with exactly one line per key, holding
+   the new value.
+
+**Scope of the fix, in time:**
+- **Once the step deploys** with the vars set, the rental `.env` overrides the two
+  names in the fork scope, so `get_secret` in a rental run returns the rental
+  keys at once.
+- **BigLobster's values stay in `os.environ`, and therefore in the fork scope
+  under their own names, until that rental moves to its own store** (step 1,
+  cohort 3). Only the satellite scope, which is `.env` only, removes them
+  entirely. Rentals should therefore not wait long in the queue after this step.
 
 ---
 
@@ -439,7 +481,7 @@ behaviour does not change. It can ship as up to four PRs:
 |---|---|---|
 | 0a | `is_sequential` is also true when `_get_hermes_home()` is not the launch home. The tick, `dispatch_job_async` and `run_event_job` already run inside the store's scope. The webhook path gets its store from the home-override fallback in `_current_cron_store` (`jobs.py:164-167`), not from `use_cron_store`. Pin that with a test, because a re-pointed `CRON_DIR` would silently send lookups to the default store. | `tests/cron/test_sequential_dispatch_fork.py`, `tests/gateway/test_webhook_cron_job_lane_fork.py` |
 | 0b | A satellite-store run enters `profile_run()` and calls `_assert_own_subprocess_identity`, without the `os.environ` merge. One fork re-anchor in the run path, next to `run_guard.guarded_run_job`. | `tests/cron/test_profile_env_scope_fork.py`, `tests/cron/test_scheduler_fork.py` |
-| 0c | `INJECT` gains the Langfuse keys and any `HERMES_CRON_*` found in the service env; the auditor `.env` gains the `HERMES_AUDITOR_JUDGE_*` knobs; add the negative test from section 3. **This also fixes the probable stage 2b tracing gap (fact 5), so it is worth shipping on its own first.** | `tests/hermes_cli/test_boot_reconcile_fork.py` |
+| 0c | `INJECT` gains BigLobster's Langfuse keys (also added to `TENANT_EXCLUDE`), the base URL, and any `HERMES_CRON_*` found in the service env. The auditor `.env` gains the `HERMES_AUDITOR_JUDGE_*` knobs. Rentals get their own Langfuse pin (section 3, "Rental Langfuse"). Add the negative `INJECT` test and the two rental tests. **This also fixes the probable stage 2b tracing gap (fact 5), and it closes the rental exposure, so it is worth shipping on its own first.** | `tests/test_biglobster_github_token_propagation.py`, `tests/hermes_cli/test_boot_reconcile_fork.py` |
 | 0d | The incident sweep loads jobs from every served store (`use_cron_store` per `profiles_to_serve(multiplex=True)`). It prefixes incident ids with the profile **for non-default stores only**. Changing the ids of already-`seen` default incidents in `incidents/state.json` would re-alert every open one. | `tests/test_incident_sweep_regression.py` |
 | 0e | `process_env_scope --check` adds, per profile: the key names a fork job resolves that a satellite job would not, minus the deny set; the child-env view for the auditor; and the default-store `profile` jobs with their delivery class. It also corrects the "only multiplex ticks these" docstring. | `tests/agent/test_process_env_scope_fork.py` |
 | 0f | `hermes cron move` (section 2.2) | new `tests/cron/test_cron_move_fork.py`: ordering, both crash points, refusals, id/`next_run_at`/executions/notepad preserved, never calls `remove_job` |
@@ -455,8 +497,8 @@ starts.
 1. **Canary.** One BigLobster-owned job that delivers to its own topic, with no
    webhook trigger and no `context_from`, firing at least daily. Pick it from the
    inventory.
-2. **The rest of the BigLobster-owned profile jobs.** General-delivering ones only
-   after their A/B decision (section 2.3).
+2. **The rest of the BigLobster-owned profile jobs.** General-delivering ones are
+   retargeted to their profile's topic in the same move (section 2.3).
 3. **Rentals, one client first.** They write to client sites, and blog posts go
    live immediately. Check fact 11 per rental first.
 4. **Auditor, last.** It is identity-critical and gates merges.
@@ -608,6 +650,8 @@ rotated files included.** A grep of the default log alone passes trivially.
 | | 0e probe | per-profile "would lose" lists contain only the deny set |
 | | `incidents.sweep` dry run | lists jobs from every store |
 | | after 0g, the kickoff ping of a default-store Telegram job | ping arrives; no `kickoff ping raised` in any log |
+| | after 0c, a rental run | its trace appears in the **rental** Langfuse project (queried with the rental keys) and not in BigLobster's |
+| | after 0c, boot log | a names-only line per rental saying the rental Langfuse keys were pinned, and no values |
 | 1, per job | `hermes -p <p> cron list` | same id and `next_run_at` as before the move |
 | | `hermes cron list --all` | no longer shows it |
 | | after its next slot, `hermes -p <p> cron runs <id>` | exactly one run, `ok`, at the slot |
@@ -634,13 +678,17 @@ rotated files included.** A grep of the default log alone passes trivially.
 
 ---
 
-## 7. Decisions needed before step 1
+## 7. Decisions (2026-09-29)
 
-1. **General-delivering profile jobs:** A (retarget) or B (default job), per job.
-   Recommendation: A.
-2. **Langfuse keys for rentals:** inject or exclude. Recommendation: inject.
-3. **Step 5:** widen at all, and to what bound. Recommendation: one job per profile
-   at a time.
+1. **Profile jobs that post to General are retargeted to the profile's own
+   topic** (section 2.3, option A). Making them default-profile jobs would run
+   them with the default profile's keys.
+2. **Rentals trace into their own Langfuse project with their own key pair**,
+   pinned into rental `.env` files only, on every boot (section 3, "Rental
+   Langfuse"). It is not BigLobster's project, because a key in a client
+   profile's reach can be read by that client's agent.
+3. **Parallel runs come later, at one job per profile at a time, as step 5 on its
+   own after all the moves.** They are never combined with a move.
 
 Docs that stage 3 makes stale, updated in the step that makes them stale:
 - `CLAUDE.md`:
