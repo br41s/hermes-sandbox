@@ -56,8 +56,8 @@ def _note_abandoned_agent_thread() -> int:
         return _ABANDONED_AGENT_THREADS
 
 
-def _dump_stuck_agent_stack(job_id: str, idle_secs: float) -> None:
-    """Dump every thread's stack when a job hits the inactivity timeout.
+def _dump_stuck_agent_stack(job_id: str, idle_secs: float, reason: str = "inactivity timeout") -> None:
+    """Dump every thread's stack when a job hits the inactivity timeout or its max runtime.
 
     Capture what the agent is actually stuck on BEFORE we give up on it. The
     message this timeout produces names the last recorded *activity*, which is
@@ -77,12 +77,12 @@ def _dump_stuck_agent_stack(job_id: str, idle_secs: float) -> None:
         from hermes_cli.stackdump import dump_now, dump_path
         dump_now()
         logger.error(
-            "Job '%s': inactivity timeout after %.0fs — "
+            "Job '%s': %s (idle %.0fs) — "
             "all-thread stack dumped to %s",
-            job_id, idle_secs, dump_path(),
+            job_id, reason, idle_secs, dump_path(),
         )
     except Exception:
         logger.exception(
-            "Job '%s': inactivity timeout after %.0fs "
-            "(stack dump unavailable)", job_id, idle_secs,
+            "Job '%s': %s (idle %.0fs) "
+            "(stack dump unavailable)", job_id, reason, idle_secs,
         )

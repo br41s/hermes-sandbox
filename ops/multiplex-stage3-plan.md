@@ -494,7 +494,7 @@ behaviour does not change. It can ship as up to four PRs:
 | 0b | A satellite-store run enters `profile_run()` and calls `_assert_own_subprocess_identity`, without the `os.environ` merge. One fork re-anchor in the run path, next to `run_guard.guarded_run_job`. | `tests/cron/test_profile_env_scope_fork.py`, `tests/cron/test_scheduler_fork.py` |
 | 0c | `INJECT` gains BigLobster's Langfuse keys (also added to `TENANT_EXCLUDE`), the base URL, and any `HERMES_CRON_*` found in the service env. The auditor `.env` gains the `HERMES_AUDITOR_JUDGE_*` knobs. Rentals get their own Langfuse pin (section 3, "Rental Langfuse"). Add the negative `INJECT` test and the two rental tests. **This also fixes the probable stage 2b tracing gap (fact 5), and it closes the rental exposure, so it is worth shipping on its own first.** | `tests/test_biglobster_github_token_propagation.py`, `tests/hermes_cli/test_boot_reconcile_fork.py` |
 | 0d | The incident sweep loads jobs from every served store (`use_cron_store` per `profiles_to_serve(multiplex=True)`). It prefixes incident ids with the profile **for non-default stores only**. Changing the ids of already-`seen` default incidents in `incidents/state.json` would re-alert every open one. | `tests/test_incident_sweep_regression.py` |
-| 0e | `process_env_scope --check` adds, per profile: the key names a fork job resolves that a satellite job would not, minus the deny set; the child-env view for the auditor; and the default-store `profile` jobs with their delivery class. It also corrects the "only multiplex ticks these" docstring. | `tests/agent/test_process_env_scope_fork.py` |
+| 0e | `process_env_scope --check` adds, per profile: the key names a fork job resolves that a satellite job would not, minus the deny set; the child-env view for the auditor; and the default-store `profile` jobs with their delivery class. | `tests/agent/test_process_env_scope_fork.py` |
 | 0f | `hermes cron move` (section 2.2) | new `tests/cron/test_cron_move_fork.py`: ordering, both crash points, refusals, id/`next_run_at`/executions/notepad preserved, never calls `remove_job` |
 | 0g | The kickoff ping works for satellite jobs (fact 12). Send it after the run's secret scope is installed (`scheduler.py:3257`), and pass the resolved target so `SharedRouteAdapters` can authorize it. Check first whether default-store Telegram jobs are already affected. | `tests/cron/test_scheduler_fork.py` |
 
@@ -708,5 +708,7 @@ Docs that stage 3 makes stale, updated in the step that makes them stale:
   - "Rollback is both pins back to False" (step 4)
   - "One long agent run starves every other agent" (step 5)
   - "A profile job's `.env` never reaches `os.environ`" (step 2)
-  - the `TERMINAL_CWD` sentence (step 0)
-- the docstrings named in facts 1–2.
+
+Already corrected on 2026-09-29, ahead of stage 3: the `TERMINAL_CWD` sentences and
+the "only multiplex runs those" line in `CLAUDE.md`, and the `process_env_scope.py`
+docstring from fact 1.
