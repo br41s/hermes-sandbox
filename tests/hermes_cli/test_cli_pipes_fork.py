@@ -55,3 +55,20 @@ def test_hermes_subcommand_dispatch_goes_through_it(monkeypatch, tmp_path):
         main_mod.main()
 
     assert exc.value.code == BROKEN_PIPE_EXIT
+
+
+def test_the_devnull_descriptor_is_closed_after_the_redirect(monkeypatch):
+    import hermes_cli.fork_ext.cli_pipes as cli_pipes
+
+    opened, closed = [], []
+    real_open = cli_pipes.os.open
+    monkeypatch.setattr(cli_pipes.os, "open", lambda *a: opened.append(real_open(*a)) or opened[-1])
+    monkeypatch.setattr(cli_pipes.os, "dup2", lambda *_a: None)  # keep pytest's stdout attached
+    real_close = cli_pipes.os.close
+    monkeypatch.setattr(cli_pipes.os, "close", lambda fd: closed.append(fd) or real_close(fd))
+
+    with pytest.raises(SystemExit):
+        with quiet_broken_pipe():
+            raise BrokenPipeError(32, "Broken pipe")
+
+    assert opened and closed == opened
