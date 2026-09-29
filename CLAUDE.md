@@ -164,6 +164,10 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   shows up after a routine deploy again, the shutdown is outrunning that grace.
   The incident watcher (`incidents/sweep.py`, `unclean_exit_incidents`) raises
   each one in the incidents thread, with the `state.db` integrity verdict.
+  **A Zeabur `service restart` (or the panel's Restart) still kills uncleanly; a
+  `deploy.sh` rollout does not.** Verified 2026-09-29: a restart at 12:23 UTC logged
+  `exited UNCLEANLY` and cut off every in-flight or queued cron run ("interrupted by
+  restart"), and the deploy at 12:39 exited cleanly. Restart through `deploy.sh`.
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only
