@@ -149,6 +149,13 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   and prints how to verify. `--dry-run` prints every command without running
   one.
 
+  **"Pod is serving" does not mean Telegram is listening.** The script reports
+  when the container runs the new commit; the gateway connects Telegram later
+  (4½ minutes after the old one stopped, on the 2026-09-29 deploy), and
+  `drop_pending_on_cold_boot` discards every message sent in between. Test only
+  after `agent.log` shows `Cold boot: dropping Telegram updates` followed by
+  `Gateway running`, or a silent General reads as a broken deploy.
+
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only
   path that needs `$GHCR_TOKEN`, and the only one that refuses a dirty tree

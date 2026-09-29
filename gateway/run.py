@@ -5840,17 +5840,23 @@ async def _start_gateway_shutdown_tail(
 
 def _log_startup_model_preflight() -> None:
     """fork: log the resolved model/provider at startup so Zeabur/container logs surface a
-    misconfiguration without waiting for a first message. Never raises; never logs the key."""
+    misconfiguration without waiting for a first message. Never raises; never logs the key.
+
+    Resolved under the launch profile's own scope, as a launch-profile turn is: under multiplex an
+    unscoped credential read fails closed, which logged a false "Provider resolution FAILED"
+    (UnscopedSecretError on OPENAI_BASE_URL) on every boot while real turns resolved fine."""
     try:
-        model = _resolve_gateway_model()
-        try:
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-            rt = resolve_runtime_provider(requested=os.getenv("HERMES_INFERENCE_PROVIDER"))
-            logger.info("[startup] Model: %s | Provider: %s | API key present: %s",
-                        model, rt.get("provider", "unknown"), bool(rt.get("api_key")))
-        except Exception as exc:
-            logger.warning("[startup] Model: %s | Provider resolution FAILED: %s "
-                           "(gateway will still start — error will surface on first message)", model, exc)
+        from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
+        with launch_profile_scope_if_multiplexed():
+            model = _resolve_gateway_model()
+            try:
+                from hermes_cli.runtime_provider import resolve_runtime_provider
+                rt = resolve_runtime_provider(requested=os.getenv("HERMES_INFERENCE_PROVIDER"))
+                logger.info("[startup] Model: %s | Provider: %s | API key present: %s",
+                            model, rt.get("provider", "unknown"), bool(rt.get("api_key")))
+            except Exception as exc:
+                logger.warning("[startup] Model: %s | Provider resolution FAILED: %s "
+                               "(gateway will still start — error will surface on first message)", model, exc)
     except Exception as exc:
         logger.debug("[startup] Pre-flight model/provider check failed: %s", exc)
 
