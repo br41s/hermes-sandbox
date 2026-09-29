@@ -394,20 +394,31 @@ pair**, so a leak from a rental profile exposes rental traces only.
 | | |
 |---|---|
 | Service vars | `HERMES_RENTAL_LANGFUSE_PUBLIC_KEY`, `HERMES_RENTAL_LANGFUSE_SECRET_KEY`, set in the Zeabur service env (done 2026-09-29) |
-| Written as | `HERMES_LANGFUSE_PUBLIC_KEY` / `HERMES_LANGFUSE_SECRET_KEY` in each rental's `.env`: the names the plugin reads, `HERMES_`-prefixed |
+| Written as | `HERMES_LANGFUSE_PUBLIC_KEY` / `HERMES_LANGFUSE_SECRET_KEY` in each rental's `.env`: the names the plugin reads, `HERMES_`-prefixed. **Also pin the unprefixed `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` to empty.** The plugin falls back to those names when the prefixed ones are empty (`langfuse/__init__.py:255`), and the fork scope would resolve them from the service env if they exist there. The unprefixed base URL is not pinned. |
 | Base URL | keeps its unprefixed name (`CLAUDE.md`, Langfuse section). Same host, different project, and not a secret, so it goes into `INJECT` for every profile. Satellites need it written somewhere, because the scope does not see `os.environ`, and the plugin's fallback is `https://cloud.langfuse.com`. Note that `CLAUDE.md`'s curl example uses `$HERMES_LANGFUSE_BASE_URL`; the 0e probe (names only) settles which name the service env actually carries. |
 | Which profiles | rentals only: `is_rented_tenant` (`boot_reconcile.py:214`), i.e. `BL_SITE_URL` in the profile `.env`, which only `provision_bl_client.py` writes. **Not `INJECT`**, which reaches every profile. |
 | Model | the auditor-token step (§1b of `sync_envs`, run by `docker/cont-init.d/03-biglobster-config`): resolve with `_resolve`, write with `_pin_vars` |
 | Rotation | overwrite on **every boot**, never `setdefault`. A key rotated in Zeabur reaches every rental on the next boot, which closes the "rotated secrets do not reach profile `.env` files" trap (`CLAUDE.md`) for these keys. |
-| Unset | fail closed, like the auditor: strip both lines from every rental `.env` and log a names-only `WARNING`. Never leave BigLobster's keys in their place. |
+| Unset | fail closed: **pin both key names (prefixed and unprefixed) to empty values**, and log a names-only `WARNING`. Stripping them, as the auditor step does, would fail **open** here. A rental's scope is `{**os.environ, **profile .env}`, so a missing line resolves BigLobster's key from the service env. An empty line does not: `KEY=` parses to `""` (`agent/secret_scope.py:325-328`), a `""` from the profile `.env` overrides the service env in that merge, and `get_secret` returns it, because only `None` falls through (`:214-216`). **An empty value disables tracing:** the plugin builds no client without both keys (`langfuse/__init__.py:256`). Keep the empty pin at least until that rental moves to its own store. After the move the scope no longer contains `os.environ`, so a missing line would be safe too, but the empty pin stays harmless and is the simpler rule. |
 | BigLobster's keys | in `INJECT` **and** `TENANT_EXCLUDE`, so the shared loop never writes them into a rental. The pin then replaces any stale line under the same names. |
 | Logs | name and profile only. No boot line prints a value. |
 
 **Tests** (`tests/test_biglobster_github_token_propagation.py`). Both use sentinel
 values and assert on booleans, so a failure's output shows no value either:
-1. **No rental `.env` ever holds BigLobster's Langfuse keys.** Checked after
-   `sync_envs` with both key pairs set, with the rental pair unset, and starting
-   from a rental `.env` that already holds BigLobster's keys.
+1. **A rental never resolves BigLobster's Langfuse keys.** The test asserts on the
+   **resolved scope**, not on the `.env` file.
+   - **Setup:** the process env holds BigLobster sentinel keys under both the
+     prefixed and the unprefixed names. The test runs `sync_envs`, then enters
+     the rental's profile-run scope (`_job_profile_context`).
+   - **Assertion:** `get_secret` for all four key names never returns a
+     BigLobster sentinel.
+   - **Cases:** (a) both key pairs set, where the prefixed names resolve to the
+     rental sentinels; (b) the rental pair unset, where all four resolve to empty
+     and the plugin's `_build_client` returns `None`; (c) a rental `.env` that
+     already holds BigLobster's keys before the boot.
+   - **Also under the satellite scope:** the same three cases run under
+     `build_profile_secret_scope(rental home)`, so the test keeps guarding after
+     the move.
 2. **A changed service value replaces the old one in the rental `.env`.** Two
    boots with different rental values end with exactly one line per key, holding
    the new value.
@@ -651,6 +662,7 @@ rotated files included.** A grep of the default log alone passes trivially.
 | | `incidents.sweep` dry run | lists jobs from every store |
 | | after 0g, the kickoff ping of a default-store Telegram job | ping arrives; no `kickoff ping raised` in any log |
 | | after 0c, a rental run | its trace appears in the **rental** Langfuse project (queried with the rental keys) and not in BigLobster's |
+| | after 0c, the rental `.env` key names (a count, never values: `grep -c 'LANGFUSE_[A-Z]*_KEY=' /opt/data/profiles/<rental>/.env`) | 4 lines per rental: two set, two empty, or all four empty when the rental vars are unset |
 | | after 0c, boot log | a names-only line per rental saying the rental Langfuse keys were pinned, and no values |
 | 1, per job | `hermes -p <p> cron list` | same id and `next_run_at` as before the move |
 | | `hermes cron list --all` | no longer shows it |
