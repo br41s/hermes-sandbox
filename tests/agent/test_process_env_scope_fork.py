@@ -232,3 +232,16 @@ def test_the_upstream_view_never_switches_the_fallback_off_for_anyone_else(homes
     pes._upstream_scope(launch)
     assert seen == {"flag": "1", "enabled": False}
     assert pes.enabled() is True
+
+
+def test_the_module_entry_point_suppresses_the_real_module(homes, monkeypatch):
+    """`python -m ... --check` runs as __main__, a second copy of the module. The fallback-only list
+    came back empty in production because only that copy's switch was set; run it as the operator does."""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PROBE_ONLY_KEY": "x"}
+    result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.process_env_scope", "--check"],
+                            env=env, cwd="/", capture_output=True, text=True, timeout=120)
+    assert "  PROBE_ONLY_KEY\n" in result.stdout, result.stdout + result.stderr

@@ -177,6 +177,11 @@ def check() -> int:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
-        sys.exit(check())
+        # Run the IMPORTED module's check, never this ``__main__`` copy: the scope builder
+        # consults ``hermes_cli.fork_ext.process_env_scope._SUPPRESSED``, so suppressing a
+        # second copy's ContextVar left the fallback on in the "upstream" build and the
+        # fallback-only list came back empty in production.
+        from hermes_cli.fork_ext import process_env_scope as _module
+        sys.exit(_module.check())
     print("usage: python -m hermes_cli.fork_ext.process_env_scope --check", file=sys.stderr)
     sys.exit(2)
