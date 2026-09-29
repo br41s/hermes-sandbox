@@ -1,5 +1,13 @@
 # Upstream merge → NousResearch/hermes-agent `v2026.7.20`
 
+> **Status (2026-09-29): shipped** — PR #144 merged 2026-07-30 (d8ed1e7b62); superseded
+> by the v2026.8.31/v2026.9.24 merges (#339/#344). Kept for the regression record and the
+> failing-filenames baseline `scripts/gate.sh` points at. The status line below is the
+> pre-merge snapshot. The 9.24 merge (51be1bfdc0) dropped two of the fixes below: dynamic
+> SKILLS_DIR (upstream covers it) and the dashboard verified-session cache (for
+> strictness). **Phase 6 (make private) not
+> done** — the repo is still public; tracked in `tasks/todo.md`. Moved from `tasks/`.
+
 **Status:** merge done on `chore/upstream-merge-v2026.7.20` (PR #144, DRAFT). All 44
 conflicts resolved, image builds, CLI works. Gate: **44,028 passed / 121 failed across 31
 files — every one classified, none a live regression.** 9 real regressions were found and

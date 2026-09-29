@@ -1,5 +1,14 @@
 # Unified Infographic Engineer
 
+> **Status as of 2026-09-29: phase 1 shipped, blocker open.** PR #312 (2026-09-22)
+> shipped the prompt, the validator and the `CLAUDE.md` section (so that unchecked item is
+> done); #313 and #319–#327 built the phase 2 poster pipeline; br41s/bl-site-package#85 and
+> br41s/biglobster#564 are merged. Still open: the timeout budget
+> (`OPENROUTER_REQUEST_TIMEOUT = 600` × `api_max_retries: 3` vs the 1200s watchdog),
+> the mimo A/B + model pin, `check_design_tokens` passing all-hex figures, and the
+> orphan-upload-on-409 decision. `templates.json` is superseded by per-graphic layout
+> archetypes (#324).
+
 One agent, one prompt, one canvas contract, deterministic verification before
 anything is written. Replaces two prompts that had drifted into different
 formats, different failure protocols and different quality.

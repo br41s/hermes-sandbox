@@ -1,5 +1,12 @@
 # Staying in sync with upstream (NousResearch/hermes-agent)
 
+> **Status (2026-09-29): living runbook.** Tooling shipped in PR #147 (2026-07-31),
+> hardened in #151, #329, #331, #335; last followed for the v2026.8.31 and v2026.9.24
+> merges (PRs #339/#344, 2026-09-27). The counts below (81 in-place edits, the hot-file
+> list) are a 2026-07-31 snapshot that predates #331/#335. **Step 7 was skipped on both
+> September merges**: `UPSTREAM_VERSION` still reads `v2026.7.20`. Moved from `tasks/`;
+> `scripts/upstream_drift.py` prints this path.
+
 Written after the `v2026.7.20` merge, which cost 44 conflicted files, 9 real
 regressions and two days. Everything here exists to stop that repeating.
 

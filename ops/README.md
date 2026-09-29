@@ -12,4 +12,10 @@ this fork. They live here, not in `docs/`, on purpose:
   `docs/`.
 
 Keep new fork-only docs here (or in `tasks/` for plans), never in `docs/` or
-`website/`.
+`website/`. When a `tasks/` plan ships and still has lasting value, move it here
+with a status header saying where the work landed:
+
+- `design/` — design records for shipped subsystems
+- `incidents/` — root-cause write-ups
+- `security/` — security incidents and procedures
+- `upstream-merge/` — the upstream-sync runbook and per-merge records

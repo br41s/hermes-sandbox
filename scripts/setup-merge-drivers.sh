@@ -10,7 +10,7 @@
 #
 # `true` as the driver command means "succeed without touching the file", i.e.
 # keep OUR version. That is correct only for GENERATED files, which are then
-# regenerated — see .gitattributes and tasks/upstream-merge-hygiene.md.
+# regenerated — see .gitattributes and ops/upstream-merge/upstream-merge-hygiene.md.
 
 set -euo pipefail
 

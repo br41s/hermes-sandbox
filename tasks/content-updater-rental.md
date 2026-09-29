@@ -1,5 +1,12 @@
 # Content Updater — rental variant
 
+> **Status as of 2026-09-29: phase 3 open.** The "nothing pushed" line below is out of
+> date: phase 2/2b merged in PRs #293 and #294 (2026-09-19), and `CLAUDE.md` and
+> `AGENT_RENTAL_SETUP.md` record the outcome. Open: phase 3 (provision the job on
+> `bl-shoroban`, first-run review) — nothing in the repo shows it done; confirm with
+> `hermes cron list` in the pod. Its "propose-only first runs" wording predates 2b's
+> switch to publishing directly.
+
 Status: **phases 1, 2 and 4 built and committed on branches 2026-09-19. Nothing pushed, nothing deployed, phase 3 blocked on both.** Continues `tasks/content-updater.md`,
 which built and dry-ran the BigLobster variant and closed with:
 

@@ -1,5 +1,11 @@
 # Auditor runaway reviews — root cause
 
+> **Status as of 2026-09-29: mitigated, root cause still open.** Shipped around it:
+> PR #228 (tiering unblocked, review queue capped) and PR #237 (`runaway_incidents` in
+> `incidents/sweep.py` pages when a run burns its whole iteration budget). None of the
+> three ranked fixes below landed: `auditor/auditor.prompt` has no per-run checklist file
+> and no narration instruction.
+
 **Status:** root cause identified 2026-09-13 from Langfuse trace
 `d4101c0a8725d8e92cc3b5d4003ac8a8` (auditor reviewing br41s/biglobster#507).
 Not yet fixed.

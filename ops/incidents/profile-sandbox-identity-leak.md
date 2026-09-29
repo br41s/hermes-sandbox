@@ -1,5 +1,13 @@
 # Profile identity leak between sequential cron runs (2026-09-12)
 
+> **Status (2026-09-29): fixed** — PR #232 (ef9f80b267, 2026-09-12); docs caveat in
+> PR #235 (`website/docs/user-guide/configuration.md`). The tripwire `ProfileIdentityError`
+> now lives in `cron/fork_ext/profile_scope.py` (re-exported by `cron/scheduler.py`), the
+> snapshot pin in `tools/environments/base.py` (`_SNAPSHOT_PINNED_VARS`). The fork's
+> per-profile sandbox keying in `tools/terminal_tool.py` was dropped in the v2026.9.24
+> merge (51be1bfdc0) because upstream now covers it. Moved from
+> `tasks/todo-profile-sandbox-identity-leak.md`.
+
 ## Root cause
 
 Cron jobs of different profiles shared ONE terminal sandbox.
@@ -83,3 +91,5 @@ The directory itself is inert but should be removed by hand — nothing reads it
 - [ ] `website/docs/user-guide/configuration.md` + the `hermes-agent-dev` skill
       still document the pre-fix "one container shared across sessions"
       collapse. Needs the profile-boundary caveat.
+      *(2026-09-29: `configuration.md` done in PR #235. The `hermes-agent-dev` skill is
+      not in this repo, so it cannot be checked from here.)*
