@@ -148,14 +148,24 @@ def _request_url(method: str, url: str, json_body: dict | None = None) -> dict:
     return resp.json()
 
 
+# mcp 2.0 removed `mcp.server.fastmcp`; `mcp.server.MCPServer` keeps the same
+# `@server.tool()` / `run()` surface. The upstream v2026.9.24 merge moved the
+# pin from 1.28.1 to 2.0.0, and the old import made this process exit before
+# the handshake: Hermes logged "Connection closed", the gsc toolset resolved
+# to zero tools, and cron preflight blocked every job that names it (the
+# BigLobster Content Updater, 2026-09-30). The 1.x name stays as a fallback so
+# a pin rollback cannot break it the other way.
 try:
-    from mcp.server.fastmcp import FastMCP
-except ImportError as exc:  # pragma: no cover - surfaced at launch, not import-time in prod
-    raise SystemExit(
-        "The 'mcp' package is required. Install with: pip install 'hermes-agent[mcp]'"
-    ) from exc
+    from mcp.server import MCPServer
+except ImportError:
+    try:
+        from mcp.server.fastmcp import FastMCP as MCPServer
+    except ImportError as exc:  # pragma: no cover - surfaced at launch, not import-time in prod
+        raise SystemExit(
+            "The 'mcp' package is required. Install with: pip install 'hermes-agent[mcp]'"
+        ) from exc
 
-mcp = FastMCP("gsc")
+mcp = MCPServer("gsc")
 
 
 @mcp.tool()
