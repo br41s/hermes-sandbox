@@ -167,26 +167,29 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   only after `agent.log` shows `Cold boot: dropping Telegram updates` followed
   by `Gateway running`, or a silent General reads as a broken deploy.
 
-  That gap could be 4 minutes until `S6_SERVICES_GRACETIME` / `S6_KILL_GRACETIME`
-  in the Dockerfile. With s6-overlay's 3s default, the old gateway was often
-  SIGKILLed mid-shutdown (5 of 13 restarts, 27–29 Sep), so the new one saw an
-  unclean exit and ran
-  `PRAGMA quick_check` on the 2.2 GB `state.db` (`gateway/lifecycle_ledger.py`)
-  before connecting Telegram. If `Previous gateway life … exited UNCLEANLY`
-  shows up after a routine deploy again, the shutdown is outrunning that grace.
-  The incident watcher (`incidents/sweep.py`, `unclean_exit_incidents`) raises
-  each one in the incidents thread, with the `state.db` integrity verdict.
-  **A Zeabur `service restart` (or the panel's Restart) still kills uncleanly; a
-  `deploy.sh` rollout does not.** Verified 2026-09-29: a restart at 12:23 UTC logged
-  `exited UNCLEANLY` and cut off every in-flight or queued cron run ("interrupted by
-  restart"), and the deploy at 12:39 exited cleanly. Restart through `deploy.sh`.
-  **The gateway's own drain must fit inside that grace too.** Shutdown waits for
-  in-flight chat turns and cron runs (`agent.restart_drain_timeout`,
-  `agent.cron_drain_timeout`); both are pinned to 10s in `boot_reconcile.py`
-  `OVERRIDES`, and a test keeps them under `S6_SERVICES_GRACETIME`. The seed asked
-  for 180s, so on 2026-09-29 a deploy made while an auditor run was stuck waited in
-  the drain and was killed at +25s; the 12:39 one was clean only because nothing
-  was running.
+  That gap is up to 4 minutes whenever the old gateway is SIGKILLed mid-shutdown:
+  the new one sees an unclean exit and runs `PRAGMA quick_check` on the 2.2 GB
+  `state.db` (`gateway/lifecycle_ledger.py`) before connecting Telegram. The
+  incident watcher (`incidents/sweep.py`, `unclean_exit_incidents`) raises each one
+  in the incidents thread, with the `state.db` integrity verdict.
+
+  **The gateway's only stop grace is `S6_KILL_GRACETIME` (Dockerfile, 20s).** Its
+  slot is a dynamic `/run/service/gateway-default`, so s6-rc never stops it and
+  `S6_SERVICES_GRACETIME` (legacy `/etc/services.d` only; the image ships none)
+  never applied. It gets SIGTERM at the very end of shutdown from
+  `s6-linux-init-shutdownd` — logged **twice**, a few ms apart, which is the tell —
+  and SIGKILL `S6_KILL_GRACETIME` later. Everything must fit in it: the drain
+  (`agent.restart_drain_timeout` / `agent.cron_drain_timeout`, both pinned to 10s in
+  `boot_reconcile.py` `OVERRIDES`), the 1s post-interrupt grace, then adapter and
+  SessionDB teardown (≤3.5s seen). `tests/hermes_cli/test_s6_shutdown_grace_fork.py`
+  holds the sum under it, and it under Kubernetes' 30s.
+  **What decides clean vs unclean is in-flight work, not how you stop it.** A
+  shutdown with nothing running logs `drain took 0.00s` and finishes in <4s either
+  way. Until the grace was raised from 5s, every rollout or `service restart` made
+  while a cron run was in flight died mid-drain, its last line
+  `notify_active_sessions done` (2026-09-29 12:19, 13:30, 14:28; 2026-09-30 17:39,
+  which already had the 10s pins). Still restart through `deploy.sh`, which moves the
+  tag; a `service restart` does not pull.
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only
