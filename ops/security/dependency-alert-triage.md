@@ -155,6 +155,14 @@ the hoisted `node_modules/brace-expansion`, which now lives nested under
 `minimatch`. Additions: nested 1.x/2.x copies plus their `balanced-match` and
 `concat-map`.
 
+### Second batch, same day (10 highs, raised at 17:35 UTC by the scan of the merge commit)
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `urllib3` | **`uv.lock`, ships** (core, under `requests` on every web/tool path) | 2.7.0 → 2.8.0 | **Real exposure, patched.** GHSA-vxq7-64xx-v4gw: `read_chunked()` buffers an unbounded chunk-size line, so any hostile server an agent fetches from can exhaust memory. GHSA-8988: HTTPS proxy TLS config is ignored. The declared floor in `pyproject.toml` was raised, not just the lock. 2.8.0 is 15 days old. |
+| `axios` | root lock, dev via `wait-on`, **absent from the image** | 1.18.1 → 1.20.0 | Patched anyway (7 advisories), inside `wait-on`'s `^1.16.0` range. |
+| `@grpc/grpc-js` | photon sidecar, baked into the image | 1.14.4, **left open** | **Not reachable, not suppressed.** GHSA-m9gg only affects gRPC *servers* created with `requireClientCertificate: false`. The sidecar is a gRPC client, and its only server is `http.createServer`. The fix, 1.14.5, clears the 14-day release-age gate at 2026-10-01 19:47 UTC. Patch it then, rather than suppress it or waive the gate. |
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
