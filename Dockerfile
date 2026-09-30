@@ -505,9 +505,15 @@ ENV HERMES_FORK_SCOPE_PROCESS_ENV=1
 # (5 of 13 restarts, 27-29 Sep). The next boot then saw an unclean exit and ran
 # PRAGMA quick_check on the 2.2 GB state.db before connecting Telegram: 4m12s of
 # silence on 2026-09-29, all messages dropped.
-# 20s + 5s stays inside Kubernetes' default 30s termination grace.
-ENV S6_SERVICES_GRACETIME=20000
-ENV S6_KILL_GRACETIME=5000
+# S6_KILL_GRACETIME is the gateway's whole budget. Its slot is a dynamic
+# /run/service entry, so s6-rc never stops it and S6_SERVICES_GRACETIME (which
+# only waits on /etc/services.d, and the image ships none) never applied. The
+# gateway gets its SIGTERM at the very end of shutdown, from
+# s6-linux-init-shutdownd, and its SIGKILL S6_KILL_GRACETIME later. At 5s every
+# deploy made while a cron run was in flight was killed mid-drain (2026-09-29
+# and 2026-09-30). 20s covers the 10s drain plus teardown and stays inside
+# Kubernetes' default 30s termination grace.
+ENV S6_KILL_GRACETIME=20000
 
 # Xfce, dbus and the display-allocation lock need one; containers have no logind
 # to create /run/user/<uid>. The default fallback ($HOME/.cache) is the /opt/data

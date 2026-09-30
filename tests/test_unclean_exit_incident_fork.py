@@ -49,7 +49,7 @@ def test_new_record_is_one_incident(tmp_path):
     assert "FAILED" not in inc.title
     assert "state.db integrity: ok" in inc.detail
     assert "suspected OOM: no" in inc.detail
-    assert "S6_SERVICES_GRACETIME" in inc.detail  # points at the likely cause
+    assert "S6_KILL_GRACETIME" in inc.detail  # points at the likely cause
     assert "hermes doctor" not in inc.detail
 
 

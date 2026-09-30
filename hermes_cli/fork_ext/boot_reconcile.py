@@ -114,11 +114,11 @@ OVERRIDES = {
     # explicit false meaning standalone.
     ("gateway", "multiplex_profiles"): True,
     # Shutdown drain budgets must fit inside s6's stop grace (Dockerfile:
-    # S6_SERVICES_GRACETIME=20s), or a deploy made while a chat turn or cron run is in
-    # flight is SIGKILLed mid-drain: unclean exit, state.db quick_check on the next boot.
-    # The seed config asked for 180s and upstream's cron default is 30s; on 2026-09-29
-    # the 13:30 deploy hung in drain behind a stuck auditor run and was killed at +25s.
-    # Interrupted turns are marked resume_pending before the drain, so they resume.
+    # S6_KILL_GRACETIME=20s, the only s6 timer the gateway's dynamic slot gets), or a
+    # deploy made while a chat turn or cron run is in flight is SIGKILLed mid-drain:
+    # unclean exit, state.db quick_check on the next boot. The seed config asked for
+    # 180s and upstream's cron default is 30s. Interrupted turns are marked
+    # resume_pending before the drain, so they resume.
     ("agent", "restart_drain_timeout"): 10,
     ("agent", "cron_drain_timeout"): 10,
 }

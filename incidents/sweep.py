@@ -705,9 +705,9 @@ def unclean_exit_incidents(path: Optional[Path] = None, *,
                        "killer is the likelier cause than a shutdown race.")
         else:
             detail += ("\nLikely cause: a shutdown that outran the stop grace (s6's "
-                       "S6_SERVICES_GRACETIME/S6_KILL_GRACETIME in the Dockerfile, or "
-                       "Zeabur's pod termination grace), so the gateway was SIGKILLed "
-                       "mid-shutdown. If this lines up with a deploy, the grace is too short.")
+                       "S6_KILL_GRACETIME in the Dockerfile, or Zeabur's pod termination "
+                       "grace), so the gateway was SIGKILLed mid-shutdown. If this lines up "
+                       "with a deploy, the grace is too short.")
         detail += ("\nTelegram was not listening until the integrity check finished; "
                    "messages sent in that gap were dropped (CLAUDE.md → Deployment).")
 
