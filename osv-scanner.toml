@@ -113,6 +113,25 @@ reason = "Electron itself, devDependency of apps/desktop. Not in the production 
 id = "CVE-2026-70606"
 ignoreUntil = 2026-12-31
 reason = "Electron itself, devDependency of apps/desktop. Not in the production image."
+# 2026-09-30 batch: four more Electron renderer-sandbox advisories. The fixes
+# start at 41.10.6, a major bump of the desktop app (40.x), so they go with the
+# block above rather than into a dependency-triage PR.
+[[IgnoredVulns]]
+id = "CVE-2026-102673"
+ignoreUntil = 2026-12-31
+reason = "Electron itself (GHSA-hq2x-r82h-9wj4), devDependency of apps/desktop. Not in the production image; fix needs a 40.x -> 41.x major."
+[[IgnoredVulns]]
+id = "CVE-2026-102674"
+ignoreUntil = 2026-12-31
+reason = "Electron itself (GHSA-gr2m-v5gq-v685) — see CVE-2026-102673."
+[[IgnoredVulns]]
+id = "CVE-2026-102675"
+ignoreUntil = 2026-12-31
+reason = "Electron itself (GHSA-j84w-jfhq-vhvj) — see CVE-2026-102673."
+[[IgnoredVulns]]
+id = "CVE-2026-102676"
+ignoreUntil = 2026-12-31
+reason = "Electron itself (GHSA-9qh4-3jw8-366w) — see CVE-2026-102673."
 [[IgnoredVulns]]
 id = "CVE-2026-19693"
 ignoreUntil = 2026-12-31

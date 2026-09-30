@@ -131,6 +131,30 @@ policy:
 Left open, not suppressed (medium/low, below the watcher's bar): `qs` in the docs
 site; `vitest`, `colord`, `joi`, `sanitize-html` in the root lock.
 
+## 2026-09-30 — incident-watcher batch (7 packages, 21 alerts, 1 critical)
+
+All 21 alerts appeared at 03:17 UTC in one scan, and every advisory but one was
+published on 2026-09-29. So this is one day's advisory drop, not a scanner change.
+Every fix used here is at least 14 days old, so none needed a release-age exception.
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `PyJWT` | **`uv.lock` — ships** | 2.13.0 → 2.14.0 | **Real exposure, patched.** Six advisories, including the critical (GHSA-ffc3-869f-jxw9, a PEM-whitespace bypass of the HS/asymmetric confusion guard). The package is on the dashboard OAuth gate (`plugins/dashboard_auth/_shared.py`) and the Chronos cron-fire verifier. Both pin `algorithms` and take keys from JWKS, so the confusion class probably cannot be reached. GHSA-9v7f (PyJWKClient follows redirects) is not a confusion issue, though, and the patch costs nothing. 2.14.0 rather than 2.15.1, which is 2 days old. Upstream is still on 2.13.0. |
+| `undici` | root lock: **`ui-tui` ships** (direct dependency, its `WebSocket` is the gateway client); also the photon sidecar, baked into the image | 6.28.0 → 6.28.1, 7.29.0 → 7.29.1 | **Patched.** GHSA-rfgv is a DoS through an unrequested WebSocket subprotocol, and it sits on the TUI's own connection. The peer is our own gateway, so the risk is low, but the fix is a patch release. Exact `overrides` in the root and sidecar `package.json`, plus `ui-tui`'s own pin. |
+| `brace-expansion` | root lock (glob/ESLint/electron chains) + website | 1.x → 1.1.21, 2.x → 2.1.7, 5.0.9 → 5.0.12 | **Patched**, with per-major `overrides`. The relock also **fixed a broken lock**: `glob@7` → `minimatch@3.1.5` (declares `^1.1.7`) had been resolving to the hoisted 5.0.9, which is outside its range. That is the `expand is not a function` shape from 2026-09-18, and it came back in the v2026.9.24 upstream merge. Every minimatch major now resolves inside its own line, checked by loading each one. |
+| `joi` | root lock (`wait-on`, dev) | 18.2.3 → 18.2.9 | `npm update`, patch only. |
+| `webpack-dev-middleware` | website: never ships | 7.4.5 → 7.4.6 | Patched. The GHSA-wr3j advisory dates from 2024. On 2026-09-29 it was merged with GHSA-g84c, which extends the affected range to `<7.4.6`, and that is why an old CVE id showed up as new. |
+| `electron` | root lock, apps/desktop | 40.10.2 (fix is ≥41.10.6) | **Accepted until 2026-12-31**, alongside the existing Electron block in `osv-scanner.toml`. The fix needs a major bump of the desktop app, and the package is absent from the image. |
+
+Also removed: the `min-release-age-exclude[]=brace-expansion` line in both
+`.npmrc` files. Its "remove when > 2 wks old" condition was met in August. Left
+in place, it lets any new brace-expansion release through on day zero.
+
+Resolved-tree check, done per path: no major crossings. One path was removed:
+the hoisted `node_modules/brace-expansion`, which now lives nested under
+`minimatch`. Additions: nested 1.x/2.x copies plus their `balanced-match` and
+`concat-map`.
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
