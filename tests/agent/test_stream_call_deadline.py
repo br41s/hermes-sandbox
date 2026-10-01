@@ -19,7 +19,7 @@ Neither streaming guard can see a provider that keeps trickling real chunks:
 ``request_timeout_seconds``. Cron turns stream (#90202), so they never got it.
 
 The server below reproduces the drip on a real socket through the real OpenAI client
-and httpx: one valid chunk every 0.1s, far inside both the read timeout and a 1s stale
+and httpx: one valid chunk every 0.1s, far inside both the read timeout and the stale
 budget, for up to 30 seconds.
 """
 
@@ -98,9 +98,11 @@ def deadline(monkeypatch):
     """Set the configured ``request_timeout_seconds``; the mechanism is the same at 600s."""
     def _set(seconds):
         monkeypatch.setattr(helpers, "get_provider_request_timeout", lambda *_a, **_k: seconds)
-    # A 1s stale budget: the drip must be caught by the deadline even though the stale
-    # detector is armed and far tighter than the deadline.
-    monkeypatch.setenv("HERMES_STREAM_STALE_TIMEOUT", "1.0")
+    # The stale detector stays armed, and every drip gap (0.1s) is far inside its budget,
+    # so only the deadline can stop the drip. The budget also bounds time-to-first-byte,
+    # which reached 1.26s on a loaded CI runner (8 slices in parallel): at 1.0s the
+    # detector re-opened the stream before the deadline could fire.
+    monkeypatch.setenv("HERMES_STREAM_STALE_TIMEOUT", "2.5")
     return _set
 
 
@@ -130,10 +132,10 @@ def test_a_dripping_stream_is_aborted_at_the_call_deadline(deadline, platform):
     assert verdict.retryable and not verdict.should_compress
 
 
-@pytest.mark.parametrize("configured", [3.0, None], ids=["inside-deadline", "no-deadline-configured"])
+@pytest.mark.parametrize("configured", [6.0, None], ids=["inside-deadline", "no-deadline-configured"])
 def test_a_slow_stream_that_finishes_is_untouched(deadline, configured):
     deadline(configured)
-    wire = _DripWire(chunks=15)  # 1.5s: slower than the stale budget in total, never between chunks
+    wire = _DripWire(chunks=30)  # 3s: slower than the stale budget in total, never between chunks
     try:
         agent = _agent(wire.base_url, "cron")
         response = helpers.interruptible_streaming_api_call(agent, dict(_KW))
@@ -142,7 +144,7 @@ def test_a_slow_stream_that_finishes_is_untouched(deadline, configured):
     finally:
         wire.close()
 
-    assert response.choices[0].message.content == "x" * 15
+    assert response.choices[0].message.content == "x" * 30
     assert response.choices[0].finish_reason == "stop"
-    assert second.choices[0].message.content == "x" * 15
+    assert second.choices[0].message.content == "x" * 30
     assert wire.completions == 2
