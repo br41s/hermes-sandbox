@@ -525,6 +525,11 @@ starts.
    `use_cron_store(profile_dir)` with no `profile=` (the webhook provisioning path
    follows). Code PR. Tests: `tests/scripts/test_provision_bl_agents.py`,
    `tests/scripts/test_rental_agent_toolsets.py`.
+   **Done ahead of the cohorts (2026-10-01):** `provision()` creates the jobs under
+   `use_cron_store(profile_dir)` with no `profile`, applies the boot's per-rental
+   `.env` sync at once (the onboarding job fires in 5 minutes, before any boot; a
+   parity test holds it equal to `sync_envs`), and refuses a `--deliver` other than
+   `local`. The webhook path calls the same `provision()`.
 
 **Rollback:** `hermes cron move <id> --to-default --apply` for that cohort. **Not
 the multiplex lever** (fact 1). For the auditor, also restore the old webhook URLs.
