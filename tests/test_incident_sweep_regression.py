@@ -226,3 +226,116 @@ class TestCheckoutDrift:
         out = sweep(jobs=[_ok_job()], langfuse=[], judge_liveness=[], checkout_drift=cd,
                    state_path=tmp_path / "s.json")
         assert "biglobster-seo" in out
+
+
+class TestProfileStores:
+    """Stage 3 step 0d: a job in a profile's own store is watched too.
+
+    The sweep used to read the default store only, so a job moved into its
+    profile's store would fail, stall or drift without a word in thread 1904.
+    Default-store ids must stay exactly as they were: ``incidents/state.json``
+    holds them as ``seen``, and changing them would re-alert every open one.
+    """
+
+    @staticmethod
+    def _satellite(job):
+        from incidents.sweep import _STORE_PROFILE_KEY
+        return {**job, _STORE_PROFILE_KEY: "grow-shop"}
+
+    def test_default_store_ids_are_unchanged(self):
+        job = _failed_job(jid="j1", name="finview-cron")
+        (inc,) = cron_failure_incidents([job])
+        assert inc.id == f"cron:j1:{job['last_run_at']}"
+        assert inc.title == "Cron job 'finview-cron' failed (agent error)"
+        assert inc.handoff == "cron job id j1"
+        stale = _recurring_job(jid="r1", minutes=10, last_run_ago_hours=5)
+        (s_inc,) = cron_stale_incidents([stale])
+        assert s_inc.id == f"cron-stale:r1:{stale['last_run_at']}"
+
+    def test_profile_store_ids_carry_the_profile(self, tmp_path):
+        job = self._satellite(_failed_job(jid="j1", name="shop-sweeper"))
+        (inc,) = cron_failure_incidents([job])
+        assert inc.id == f"cron:grow-shop/j1:{job['last_run_at']}"
+        assert "(profile grow-shop)" in inc.title
+        assert "grow-shop" in inc.handoff
+
+        stale = self._satellite(_recurring_job(jid="r1", minutes=10, last_run_ago_hours=5))
+        (s_inc,) = cron_stale_incidents([stale])
+        assert s_inc.id.startswith("cron-stale:grow-shop/r1:")
+
+        drift = self._satellite({"id": "p1", "name": "writer", "prompt": "live",
+                                 "prompt_source": "p.prompt"})
+        (tmp_path / "p.prompt").write_text("repo", encoding="utf-8")
+        (d_inc,) = prompt_drift_incidents([drift], repo_root=tmp_path)
+        assert d_inc.id.startswith("prompt-drift:grow-shop/p1:")
+
+    def test_remediation_never_resolves_a_profile_store_job(self):
+        """``remediation`` reads ``cron job id <jid>`` off the handoff and acts on
+        the DEFAULT store. It must not resolve a job that lives elsewhere."""
+        from remediation.registry import _cron_job_id
+
+        (sat,) = cron_failure_incidents([self._satellite(_failed_job(jid="j1"))])
+        (dflt,) = cron_failure_incidents([_failed_job(jid="j1")])
+        assert _cron_job_id(sat) is None
+        assert _cron_job_id(dflt) == "j1"
+
+    def test_same_id_in_two_stores_gives_two_incidents(self):
+        default = _failed_job(jid="j1")
+        satellite = self._satellite(default)  # same id, same run time
+        ids = {i.id for i in cron_failure_incidents([default, satellite])}
+        assert len(ids) == 2
+
+    def test_interrupted_run_points_at_the_profile_cli(self):
+        job = self._satellite({
+            "id": "j9", "name": "x", "last_status": "interrupted",
+            "last_error": "container restart",
+            "last_interrupted_at": now_fn().isoformat()})
+        (inc,) = cron_failure_incidents([job])
+        assert "hermes -p grow-shop cron runs j9" in inc.detail
+
+    def test_load_served_store_jobs_reads_every_served_store(self, monkeypatch, tmp_path):
+        import cron.jobs as cron_jobs
+        from hermes_cli.profiles import get_profile_dir
+        from incidents.sweep import _STORE_PROFILE_KEY, load_served_store_jobs
+
+        default_job = cron_jobs.create_job(prompt="d", schedule="every 1h", name="default-job")
+        shop = get_profile_dir("grow-shop")
+        (shop / "cron").mkdir(parents=True, exist_ok=True)
+        with cron_jobs.use_cron_store(shop):
+            shop_job = cron_jobs.create_job(prompt="s", schedule="every 1h", name="shop-job")
+        # A served profile with no store is skipped, and never gets one created.
+        empty = get_profile_dir("auditor")
+        empty.mkdir(parents=True, exist_ok=True)
+
+        import hermes_cli.profiles as profiles
+        monkeypatch.setattr(profiles, "profiles_to_serve", lambda multiplex: [
+            ("default", cron_jobs.get_hermes_home()), ("grow-shop", shop), ("auditor", empty)])
+
+        jobs = {j["id"]: j for j in load_served_store_jobs()}
+        assert _STORE_PROFILE_KEY not in jobs[default_job["id"]]
+        assert jobs[shop_job["id"]][_STORE_PROFILE_KEY] == "grow-shop"
+        assert not (empty / "cron").exists()
+
+    def test_sweep_reports_a_failure_in_a_profile_store(self, monkeypatch, tmp_path):
+        import incidents.sweep as sweep_mod
+
+        job = self._satellite(_failed_job(jid="j1", name="shop-sweeper"))
+        monkeypatch.setattr(sweep_mod, "load_served_store_jobs", lambda: [job])
+        out = sweep(state_path=tmp_path / "state.json", langfuse=[], blocked=[],
+                    checkout_drift=[], deploy_drift=[], judge_liveness=[],
+                    dependency_alerts=[], unclean_exits=[])
+        assert "shop-sweeper' (profile grow-shop) failed" in out
+
+    def test_remediation_reconcile_sees_default_store_jobs_only(self, monkeypatch, tmp_path):
+        import incidents.sweep as sweep_mod
+
+        default = _ok_job(jid="j1")
+        satellite = self._satellite(_failed_job(jid="j1"))
+        monkeypatch.setattr(sweep_mod, "load_served_store_jobs", lambda: [default, satellite])
+        seen = []
+        monkeypatch.setattr(sweep_mod, "_reconcile_text",
+                            lambda jobs, **_kw: seen.append(jobs) or "")
+        sweep(state_path=tmp_path / "state.json", langfuse=[], blocked=[],
+              checkout_drift=[], deploy_drift=[], judge_liveness=[],
+              dependency_alerts=[], unclean_exits=[], dry_run=True)
+        assert seen == [[default]]
