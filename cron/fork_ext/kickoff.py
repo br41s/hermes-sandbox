@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from contextlib import contextmanager
 from typing import List
 
 logger = logging.getLogger("cron.scheduler")
@@ -46,8 +47,8 @@ def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list
                     config, adapters=None, loop=None) -> List[str]:
     """Send a short text to each resolved target; returns error strings."""
     from cron import scheduler as sched
-    from gateway.config import Platform, PlatformConfig
-    from gateway.delivery import resolve_delivery_transport
+    from cron.scheduler_delivery import _resolve_target_transport
+    from gateway.config import Platform
     from tools.send_message_tool import _send_to_platform
 
     errors: List[str] = []
@@ -61,20 +62,20 @@ def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list
             errors.append(f"unknown platform '{platform_name}'")
             continue
 
-        transport = None
+        # The result delivery's own per-target resolver. A target-less
+        # ``resolve_delivery_transport`` misses on a satellite's
+        # ``SharedRouteAdapters``, which authorizes the primary adapter only for
+        # an exact routed target (stage 3 step 0g, plan fact 12).
         try:
-            transport = resolve_delivery_transport(platform, config, adapters)
+            resolved, resolve_err = _resolve_target_transport(
+                job, platform, platform_name, target, adapters, config)
         except Exception:
             logger.debug("kickoff: transport resolution failed for %s", platform_name, exc_info=True)
-        if transport is not None:
-            pconfig, runtime_adapter = transport.config, transport.adapter
-            if pconfig is None and transport.is_relay:
-                pconfig = PlatformConfig(enabled=True)
-        else:
-            pconfig, runtime_adapter = config.platforms.get(platform), None
-            if not pconfig or not pconfig.enabled:
-                errors.append(f"platform '{platform_name}' not configured/enabled")
-                continue
+            resolved, resolve_err = None, f"platform '{platform_name}' transport resolution failed"
+        if resolved is None:
+            errors.append(resolve_err)
+            continue
+        _transport, pconfig, runtime_adapter, target_adapters = resolved
 
         if runtime_adapter is not None and loop is not None and getattr(loop, "is_running", lambda: False)():
             try:
@@ -85,7 +86,7 @@ def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list
                 if thread_id:
                     route_metadata["thread_id"] = str(thread_id)
                 future = safe_schedule_threadsafe(
-                    DeliveryRouter(config, adapters)._deliver_to_platform(
+                    DeliveryRouter(config, target_adapters)._deliver_to_platform(
                         DeliveryTarget(
                             platform=platform,
                             chat_id=str(chat_id),
@@ -137,31 +138,64 @@ def send_kickoff_ping(job: dict, adapters=None, loop=None) -> None:
             if not enabled:
                 return
 
-        targets = sched._resolve_delivery_targets(job)
-        if not targets:
-            return
-
-        task_name = job.get("name", job.get("id", "job"))
-        schedule = (job.get("schedule_display") or "").strip()
-        text = f"🔄 Started: {task_name}"
-        if schedule:
-            text += f" ({schedule})"
-
-        from gateway.config import load_gateway_config
-        try:
-            config = load_gateway_config()
-        except Exception as e:
-            logger.warning(
-                "Job '%s': kickoff ping skipped, gateway config load failed: %s",
-                job.get("id", "?"), e,
-            )
-            return
-
-        errors = sched._send_to_targets(job, targets, text, [], config, adapters=adapters, loop=loop)
-        if errors:
-            logger.warning(
-                "Job '%s': kickoff ping had delivery errors: %s",
-                job.get("id", "?"), "; ".join(errors),
-            )
+        with _run_scope():
+            _send_kickoff(job, adapters, loop)
     except Exception as e:
         logger.warning("Job '%s': kickoff ping failed (non-fatal): %s", job.get("id", "?"), e)
+
+
+@contextmanager
+def _run_scope():
+    """The secret scope the run itself installs, for the length of the ping.
+
+    The ping is sent before ``run_one_job`` installs the firing home's scope, and
+    under multiplex ``get_secret`` with no scope raises. A job without the fork
+    ``profile`` field reads its home target (``TELEGRAM_HOME_CHANNEL`` and thread)
+    that way, so its ping failed: every job in a profile's own store, and any
+    default-store job with a bare ``deliver: telegram`` (plan fact 12). A scope a
+    caller already installed (a routed webhook) is left alone.
+    """
+    from agent.secret_scope import (
+        build_profile_secret_scope, current_secret_scope, reset_secret_scope, set_secret_scope)
+    from cron import scheduler as sched
+
+    if current_secret_scope() is not None:
+        yield
+        return
+    home = sched._get_hermes_home()
+    token = set_secret_scope(build_profile_secret_scope(home), profile_home=str(home))
+    try:
+        yield
+    finally:
+        reset_secret_scope(token)
+
+
+def _send_kickoff(job: dict, adapters, loop) -> None:
+    from cron import scheduler as sched
+
+    targets = sched._resolve_delivery_targets(job)
+    if not targets:
+        return
+
+    task_name = job.get("name", job.get("id", "job"))
+    schedule = (job.get("schedule_display") or "").strip()
+    text = f"🔄 Started: {task_name}"
+    if schedule:
+        text += f" ({schedule})"
+
+    from gateway.config import load_gateway_config
+    try:
+        config = load_gateway_config()
+    except Exception as e:
+        logger.warning(
+            "Job '%s': kickoff ping skipped, gateway config load failed: %s",
+            job.get("id", "?"), e,
+        )
+        return
+
+    errors = sched._send_to_targets(job, targets, text, [], config, adapters=adapters, loop=loop)
+    if errors:
+        logger.warning(
+            "Job '%s': kickoff ping had delivery errors: %s",
+            job.get("id", "?"), "; ".join(errors),
+        )

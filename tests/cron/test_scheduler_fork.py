@@ -686,3 +686,126 @@ class TestJobSubprocessIdentityTripwire:
                 pass
         assert dict(os.environ) == before
         assert get_hermes_home_override() is None
+
+
+class TestKickoffPingFromAProfileStore:
+    """Stage 3 step 0g (plan fact 12): a job in a profile's own store kept its
+    result delivery but lost its "🔄 Started" ping, for two reasons: the ping ran
+    before the run's secret scope (``get_secret`` raises under multiplex), and it
+    resolved its transport target-less, which ``SharedRouteAdapters`` refuses."""
+
+    @staticmethod
+    def _satellite(tmp_path, monkeypatch, routes):
+        import yaml
+
+        root = tmp_path / "root"
+        home = root / "profiles" / "fitness"
+        home.mkdir(parents=True)
+        (root / "config.yaml").write_text(yaml.safe_dump(
+            {"gateway": {"multiplex_profiles": True, "profile_routes": routes}}), encoding="utf-8")
+        monkeypatch.setattr("hermes_constants.get_default_hermes_root", lambda: root)
+        return home
+
+    @staticmethod
+    def _send(job, adapters):
+        import asyncio
+        from concurrent.futures import Future
+
+        loop = MagicMock()
+        loop.is_running.return_value = True
+
+        def fake_run_coro(coro, _loop):
+            future = Future()
+            future.set_result(asyncio.run(coro))
+            return future
+
+        standalone = []
+
+        async def fake_standalone(platform, pconfig, chat_id, text, **kwargs):
+            standalone.append(chat_id)
+            return {"success": False, "error": "DISCORD_BOT_TOKEN is not set"}
+
+        from gateway.config import Platform, PlatformConfig
+        config = MagicMock()
+        config.platforms = {Platform.DISCORD: PlatformConfig(enabled=True)}
+        config.get_home_channel = lambda p: None
+        with patch("gateway.config.load_gateway_config", return_value=config), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"progress_pings": True}}), \
+             patch("tools.send_message_tool._send_to_platform", fake_standalone), \
+             patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro):
+            _send_kickoff_ping(job, adapters=adapters, loop=loop)
+        return standalone
+
+    @staticmethod
+    def _primary():
+        adapter = MagicMock()
+        adapter.sent = []
+
+        async def send(chat_id, content, metadata=None):
+            adapter.sent.append((chat_id, content))
+            return {"success": True, "message_id": "m1"}
+
+        adapter.send = send
+        return adapter
+
+    def test_a_routed_target_pings_through_the_primary_adapter(self, tmp_path, monkeypatch):
+        from cron.scheduler_preflight import SharedRouteAdapters, _primary_profile_routes_for_current_home
+        from gateway.config import Platform
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        home = self._satellite(tmp_path, monkeypatch, [
+            {"platform": "discord", "chat_id": "C1", "profile": "fitness"},
+            {"platform": "discord", "chat_id": "C9", "profile": "other"}])
+        primary = self._primary()
+        token = set_hermes_home_override(str(home))
+        try:
+            shared = SharedRouteAdapters({Platform.DISCORD: primary},
+                                         _primary_profile_routes_for_current_home())
+            standalone = self._send({"id": "j1", "name": "brief", "deliver": "discord:C1"}, shared)
+            assert [chat for chat, _ in primary.sent] == ["C1"] and standalone == []
+            assert "🔄 Started: brief" in primary.sent[0][1]
+
+            # Another profile's chat: the primary bot is never used for it.
+            primary.sent.clear()
+            standalone = self._send({"id": "j2", "name": "brief", "deliver": "discord:C9"}, shared)
+            assert primary.sent == [] and standalone == ["C9"]
+        finally:
+            reset_hermes_home_override(token)
+
+    def test_a_bare_deliver_resolves_its_home_target_under_multiplex(self, tmp_path, monkeypatch):
+        from agent import secret_scope
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        home = self._satellite(tmp_path, monkeypatch, [])
+        (home / ".env").write_text(
+            "TELEGRAM_HOME_CHANNEL=-100777\nTELEGRAM_HOME_CHANNEL_THREAD_ID=3\n", encoding="utf-8")
+        captured = []
+        token = set_hermes_home_override(str(home))
+        secret_scope.set_multiplex_active(True)
+        try:
+            assert secret_scope.current_secret_scope() is None  # the ticker thread has none
+            with patch("cron.scheduler._send_to_targets",
+                       side_effect=lambda job, targets, *a, **k: captured.extend(targets) or []), \
+                 patch("gateway.config.load_gateway_config", return_value=MagicMock()), \
+                 patch("cron.scheduler.load_config", return_value={"cron": {"progress_pings": True}}):
+                _send_kickoff_ping({"id": "j3", "name": "weekly", "deliver": "telegram"})
+            assert secret_scope.current_secret_scope() is None  # and still has none after
+        finally:
+            secret_scope.set_multiplex_active(False)
+            reset_hermes_home_override(token)
+        assert [(t["platform"], str(t["chat_id"]), str(t.get("thread_id"))) for t in captured] == [
+            ("telegram", "-100777", "3")]
+
+    def test_a_scope_the_caller_installed_is_kept(self, tmp_path, monkeypatch):
+        from agent import secret_scope
+
+        seen = []
+        token = secret_scope.set_secret_scope({"TELEGRAM_HOME_CHANNEL": "-1"})
+        try:
+            with patch("cron.scheduler._resolve_delivery_targets",
+                       side_effect=lambda job: seen.append(secret_scope.current_secret_scope()) or []), \
+                 patch("cron.scheduler.load_config", return_value={"cron": {"progress_pings": True}}):
+                _send_kickoff_ping({"id": "j4", "name": "n", "deliver": "telegram"})
+        finally:
+            secret_scope.reset_secret_scope(token)
+        assert seen == [{"TELEGRAM_HOME_CHANNEL": "-1"}]
