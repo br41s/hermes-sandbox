@@ -242,7 +242,8 @@ def _print_move_report(home: Path) -> None:
         print(f"  {name}")
     for prof, (lost, policy) in losses.items():
         extra = sorted(lost - common)
-        print(f"  [{prof}] also lost: {len(extra)}{' ' + ' '.join(extra) if extra else ''}")
+        if extra:
+            print(f"  [{prof}] also lost: {len(extra)} {' '.join(extra)}")
         if policy:
             print(f"  [{prof}] rental, lost by policy (TENANT_EXCLUDE): {' '.join(sorted(policy))}")
 

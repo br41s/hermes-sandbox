@@ -249,7 +249,7 @@ def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
         reset_hermes_home_override(token)
 
 
-def test_in_profile_store_fails_closed(monkeypatch):
+def test_in_profile_store_fails_closed(monkeypatch, caplog):
     import hermes_constants
 
     from cron.fork_ext.dispatch import is_sequential
@@ -258,7 +258,9 @@ def test_in_profile_store_fails_closed(monkeypatch):
         raise OSError("home unreadable")
 
     monkeypatch.setattr(hermes_constants, "get_hermes_home", _boom)
-    assert is_sequential({}) is True
+    with caplog.at_level("WARNING", logger="cron.scheduler"):
+        assert is_sequential({}) is True
+    assert "could not resolve the active or launch home (OSError)" in caplog.text
 
 
 def test_tick_never_overlaps_profile_or_workdir_jobs(lane, monkeypatch, tmp_path):

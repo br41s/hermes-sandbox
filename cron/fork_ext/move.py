@@ -276,7 +276,10 @@ def _move_one(jid: str, plan: _Plan, now: datetime, out: Callable[[str], None]) 
                 job.update(enabled=False, state="paused", paused_at=now.isoformat(),
                            paused_reason=f"moving to {plan.target.name}")
     _rewrite(plan.source.home, pause)
-    paused = next(j for j in _load(plan.source.home) if j.get("id") == jid)
+    paused = next((j for j in _load(plan.source.home) if j.get("id") == jid), None)
+    if paused is None:
+        raise MoveRefused(f"{jid}: left the {plan.source.name} store while it was being "
+                          f"paused; re-run the command to see where it is")
 
     # 3. Write the target record, unless an earlier run already did.
     record = _target_record(paused, plan)
@@ -370,7 +373,11 @@ def move(job_ids: Sequence[str], *, to_profile: Optional[str] = None,
         out("dry run: nothing changed. Re-run with --apply to move.")
         return 0
     for jid in plan.jobs:
-        _move_one(jid, plan, now, out)
+        try:
+            _move_one(jid, plan, now, out)
+        except MoveRefused as exc:
+            out(f"  refused: {exc}")
+            return 1
     flag = "" if target.name == "default" else f"-p {target.name} "
     out(f"done. Per-job commands now need the target store: hermes {flag}cron list")
     return 0
