@@ -280,3 +280,125 @@ def test_profile_loop_marks_rentals_by_their_env_marker(tmp_path) -> None:
 
     assert web("client-without-prefix").get("search_backend") == "ddgs"
     assert "search_backend" not in web("biglobster")
+
+
+# --- stage 3 step 0c: Langfuse split, cron tuning, auditor judge knobs --------
+# ops/multiplex-stage3-plan.md, section 3 ("Rental Langfuse"). Sentinels only, and
+# every assertion compares booleans or sentinels, so a failure prints no real value.
+
+BL_PK, BL_SK = "pk-lf-BIGLOBSTER", "sk-lf-BIGLOBSTER"
+RENTAL_PK, RENTAL_SK = "pk-lf-RENTAL", "sk-lf-RENTAL"
+BL_VALUES = {BL_PK, BL_SK}
+
+
+def test_inject_never_carries_a_forbidden_key() -> None:
+    """INJECT reaches every profile's .env, so these must never be in it."""
+    for name in br.INJECT:
+        assert name != "TELEGRAM_BOT_TOKEN", "a satellite holding the bot token is a duplicate credential"
+        assert not (name.startswith("TELEGRAM_") and "ALLOWED" in name), name
+        assert name != "SHORTS_STUDIO_GITHUB_TOKEN", name
+        assert not name.startswith(("YOUTUBE_", "META_")), name
+        assert not name.startswith("HERMES_RENTAL_LANGFUSE_"), name
+        assert not name.startswith(br.CRON_TUNING_PREFIX), "cron tuning syncs by prefix, not by list"
+
+
+def test_biglobster_langfuse_keys_sync_to_our_profiles_but_never_to_rentals() -> None:
+    for key in ("HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY"):
+        assert key in br.INJECT, f"{key} must reach BigLobster's own profiles"
+        assert key in br.TENANT_EXCLUDE, f"{key} is BigLobster's project and must never reach a rental"
+
+
+def _boot_home(tmp_path: Path, rental_env: str = "BL_SITE_URL=https://client.example\n") -> Path:
+    return _home_with(tmp_path, {"rental": rental_env, "biglobster": "A=1\n"})
+
+
+def _service_env(*, rental: bool) -> dict:
+    env = {"HERMES_LANGFUSE_PUBLIC_KEY": BL_PK, "HERMES_LANGFUSE_SECRET_KEY": BL_SK,
+           "LANGFUSE_PUBLIC_KEY": BL_PK, "LANGFUSE_SECRET_KEY": BL_SK,
+           "HERMES_LANGFUSE_BASE_URL": "https://lf.example"}
+    if rental:
+        env.update(HERMES_RENTAL_LANGFUSE_PUBLIC_KEY=RENTAL_PK, HERMES_RENTAL_LANGFUSE_SECRET_KEY=RENTAL_SK)
+    return env
+
+
+def _resolved_in_rental_run(home: Path, service_env: dict, monkeypatch) -> dict:
+    """What get_secret returns inside the rental's cron profile-run scope (fork store)."""
+    from agent.secret_scope import get_secret
+    from cron.fork_ext.profile_scope import _job_profile_context
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    for name, value in service_env.items():  # the scope carries the process env
+        monkeypatch.setenv(name, value)
+    with _job_profile_context("job-0c", "rental"):
+        return {name: get_secret(name) for name in br.LANGFUSE_KEY_NAMES}
+
+
+def _resolved_in_satellite_scope(home: Path) -> dict:
+    """The same names under the rental's own store scope (.env only), after its move."""
+    from agent.secret_scope import build_profile_secret_scope
+
+    scope = build_profile_secret_scope(home / "profiles" / "rental")
+    return {name: scope.get(name) for name in br.LANGFUSE_KEY_NAMES}
+
+
+@pytest.mark.parametrize("case", ["both_set", "rental_unset", "already_contaminated"])
+def test_a_rental_never_resolves_biglobsters_langfuse_keys(tmp_path, monkeypatch, case) -> None:
+    rental_env = "BL_SITE_URL=https://client.example\n"
+    if case == "already_contaminated":  # a .env written by a boot before 0c
+        rental_env += f"HERMES_LANGFUSE_PUBLIC_KEY={BL_PK}\nHERMES_LANGFUSE_SECRET_KEY={BL_SK}\n"
+    home = _boot_home(tmp_path, rental_env)
+    service_env = _service_env(rental=(case != "rental_unset"))
+    br.sync_envs(home, service_env)
+
+    for resolved in (_resolved_in_rental_run(home, service_env, monkeypatch),
+                     _resolved_in_satellite_scope(home)):
+        assert not (set(resolved.values()) & BL_VALUES), f"{case}: a BigLobster key reached the rental"
+        assert resolved["LANGFUSE_PUBLIC_KEY"] == "" and resolved["LANGFUSE_SECRET_KEY"] == ""
+        if case == "rental_unset":
+            assert resolved["HERMES_LANGFUSE_PUBLIC_KEY"] == "" and resolved["HERMES_LANGFUSE_SECRET_KEY"] == ""
+        else:
+            assert resolved["HERMES_LANGFUSE_PUBLIC_KEY"] == RENTAL_PK
+            assert resolved["HERMES_LANGFUSE_SECRET_KEY"] == RENTAL_SK
+
+
+def test_a_rotated_rental_key_replaces_the_old_one(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, _service_env(rental=True))
+    rotated = {**_service_env(rental=True), "HERMES_RENTAL_LANGFUSE_SECRET_KEY": "sk-lf-ROTATED"}
+    br.sync_envs(home, rotated)
+
+    text = (home / "profiles" / "rental" / ".env").read_text(encoding="utf-8")
+    secret_lines = re.findall(r"^HERMES_LANGFUSE_SECRET_KEY=.*$", text, re.MULTILINE)
+    assert secret_lines == ["HERMES_LANGFUSE_SECRET_KEY=sk-lf-ROTATED"]
+    assert len(re.findall(r"^HERMES_LANGFUSE_PUBLIC_KEY=", text, re.MULTILINE)) == 1
+
+
+def test_our_own_profiles_get_biglobsters_langfuse_and_base_url(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, _service_env(rental=True))
+    text = (home / "profiles" / "biglobster" / ".env").read_text(encoding="utf-8")
+    assert f"HERMES_LANGFUSE_PUBLIC_KEY={BL_PK}" in text
+    assert "HERMES_LANGFUSE_BASE_URL=https://lf.example" in text
+    assert "RENTAL" not in text
+    # The base URL is not a secret: rentals need it too, or they trace to the cloud default.
+    assert "HERMES_LANGFUSE_BASE_URL=https://lf.example" in (
+        home / "profiles" / "rental" / ".env").read_text(encoding="utf-8")
+
+
+def test_cron_tuning_in_the_service_env_reaches_every_profile(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, {"HERMES_CRON_TIMEOUT": "900", "HERMES_CRON_MAX_RUNTIME": "1500", "OTHER": "x"})
+    for name in ("rental", "biglobster"):
+        text = (home / "profiles" / name / ".env").read_text(encoding="utf-8")
+        assert "HERMES_CRON_TIMEOUT=900" in text and "HERMES_CRON_MAX_RUNTIME=1500" in text
+        assert "OTHER=" not in text
+
+
+def test_auditor_judge_knobs_are_stamped_into_the_auditor_env(tmp_path) -> None:
+    home = _home_with(tmp_path, {"auditor": "A=1\n", "biglobster": "A=1\n"})
+    br.sync_envs(home, {"HERMES_AUDITOR_JUDGE_MAX_TOKENS": "4000",
+                        "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS": "300"})
+    auditor = (home / "profiles" / "auditor" / ".env").read_text(encoding="utf-8")
+    assert "HERMES_AUDITOR_JUDGE_MAX_TOKENS=4000" in auditor
+    assert "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS=300" in auditor
+    assert "HERMES_AUDITOR_JUDGE" not in (home / "profiles" / "biglobster" / ".env").read_text(encoding="utf-8")

@@ -317,6 +317,13 @@ goes out unauthenticated, and Langfuse answers **401 with a body that still pars
 *the agent did nothing* or *tracing is broken*, when it means *you did not authenticate*.
 Always print the HTTP status, never just the row count.
 
+**Rentals trace into a separate Langfuse project.** Their `.env` holds the pair from
+`HERMES_RENTAL_LANGFUSE_PUBLIC_KEY`/`_SECRET_KEY` under the normal names, pinned on
+every boot (`boot_reconcile.py` `rental_langfuse_pin`); BigLobster's own keys are in
+`TENANT_EXCLUDE`. A rental run's trace is therefore only findable with the rental
+keys: querying BigLobster's project for a rental session id returns an honest
+empty result. With the rental pair unset, rentals get empty keys and do not trace.
+
 **Query `/api/public/v2/observations` — never `/traces`.** v4 has no trace object: a
 trace is just the rows sharing a `traceId`, and `GET /traces`, `GET /traces/{id}` and
 `GET /observations` are removed on 2026-11-16. There is no v2 single-trace getter and
