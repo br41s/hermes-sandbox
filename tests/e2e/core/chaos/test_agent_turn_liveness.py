@@ -176,9 +176,16 @@ SCENARIOS: list[Scenario] = [
     Scenario("provider_hang_then_recover",
              lambda c: Hang() if c.n == 0 else Text(f"recovered {c.nonce}"),
              expect="answer", answer="recovered {nonce}", call_bound=3),
+    # request_timeout_seconds is also the whole call's deadline, so it must outlast the trickle.
     Scenario("provider_slow_trickle_is_not_stale",
              lambda c: Text(_trickle_text(c.nonce), chunk_chars=2, delay_per_chunk=TRICKLE_DELAY_S),
+             cfg={"request_timeout": LONG_TIMEOUT_S},
              expect="answer", answer="{trickle}", exact_calls=1),
+    # ...but a trickle that never ends is bounded by it, with no stream re-open: each chunk
+    # beats the stale and per-read timeouts (auditor-review, 2026-09-30).
+    Scenario("provider_endless_trickle_hits_call_deadline",
+             lambda c: Text("x" * 200_000, chunk_chars=2, delay_per_chunk=TRICKLE_DELAY_S),
+             call_bound=API_MAX_RETRIES),
     # malformed model output
     # (undecodable arguments are treated as a cut-off reply: surfaced, never executed)
     Scenario("tool_args_truncated_json",
