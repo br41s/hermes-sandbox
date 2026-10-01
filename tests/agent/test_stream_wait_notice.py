@@ -20,7 +20,8 @@ def test_resumed_chunks_clear_wait_without_erasing_local_load(monkeypatch, local
     call.api_kwargs = {"model": "test-model"}
     call.last_chunk_time = {"t": now[0]}
     call._stream_stale_timeout = 180.0
-    loading = "Loading local model weights"
+    call._call_deadline = None  # no request_timeout_seconds configured
+    loading ="Loading local model weights"
     monkeypatch.setattr(h, "_managed_local_load_notice",
                         lambda *args: loading if now[0] >= 1060.6 else None)
     monkeypatch.setattr(h.time, "time", lambda: now[0])

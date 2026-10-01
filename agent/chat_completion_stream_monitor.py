@@ -84,6 +84,9 @@ class StreamingWaitMonitor:
                 self._mon.wait_notice_started_ts = None  # Reconnect status has its own owner.
                 self._mon.wait_notice.reset()
                 self._kill_stale_stream(_stale_elapsed)
+            # fork: overall call deadline; chunks that keep arriving never trip the stale check.
+            if self._call_deadline and time.time() - self._call_started > self._call_deadline:
+                self._kill_at_deadline(time.time() - self._call_started)
             if self.agent._interrupt_requested:
                 self._abort_for_interrupt(_stale_elapsed)
                 return

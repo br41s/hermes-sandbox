@@ -130,6 +130,18 @@ ceiling the run dumps every thread's stack to the log, is interrupted and fails,
 and the lane moves on. A job that legitimately needs longer is a job to split, not
 a reason to raise the ceiling for everyone.
 
+**Each model call has its own, tighter deadline: `request_timeout_seconds`** (600s
+for OpenRouter on every profile, pinned in `boot_reconcile.py`). It bounds the whole
+call, streaming or not (`_StreamingCall._kill_at_deadline`, `_InlineRequest._on_deadline`),
+because OpenRouter can trickle real chunks forever: on 2026-09-30 three
+`auditor-review` runs each sat in one stream until the 1800s ceiling, the last chunk
+arriving 1s before it. Neither the per-read httpx timeout nor the stale detector,
+which measures the gap *between* chunks, can see that. Past the deadline the call
+fails as a retryable timeout and the turn loop retries or falls back. Of 45,016
+logged calls, the 8 that finished after 600s all ran under 15 tok/s. Do not raise
+it to rescue a slow call: a retry usually lands on a healthy upstream. Worst case is
+still 3 retries × 600s, which equals the run ceiling.
+
 **A profile job's `.env` never reaches `os.environ`.** `_job_profile_context`
 (`cron/fork_ext/profile_scope.py`) installs it as the run's secret scope, a
 ContextVar, so read a profile key with `agent.secret_scope.get_secret` or

@@ -2781,6 +2781,11 @@ class _StreamingCall(StreamingWaitMonitor):
         # Shared by the socket read timeout (``_stream_timeouts``) and the stale
         # detector (``_resolve_stale_timeout``); None until resolved.
         self._stream_stale_timeout = None
+        # fork: overall wall-clock deadline for the whole call, stream retries included; the
+        # streaming twin of ``_InlineRequest._on_deadline`` (#317). None = unbounded.
+        self._call_started = time.time()
+        self._call_deadline = get_provider_request_timeout(agent.provider, agent.model)
+        self._deadline_error = None  # set once by ``_kill_at_deadline``; also the flag
         self.stream_attempt_lock = threading.Lock()
         self.stream_attempt_state = {"current": 0, "cancelled": set(), "discarded_chunks": 0, "discarded_bytes": 0}
         self.managed_stream_holder = {"stream": None}
@@ -3510,6 +3515,12 @@ class _StreamingCall(StreamingWaitMonitor):
                 self._quiet(self.agent._reset_stream_delivery_tracking)
                 self.deltas_were_sent["yes"] = False
                 self.first_delta_fired["done"] = False
+        if self._deadline_error is not None:
+            # fork: aborted at the call deadline. A fresh stream on the same route would get
+            # the whole budget again; the turn loop's retry/fallback takes over instead.
+            logger.debug("Stream attempt ended by the call deadline (%s); not retrying the stream.", type(e).__name__)
+            self.result["error"] = self._deadline_error
+            return False
         if self.deltas_were_sent["yes"]:
             # Died AFTER tokens were delivered: normally no retry (would duplicate
             # text). Exception: a tool call in flight — aborting discards it, so
@@ -3669,6 +3680,35 @@ class _StreamingCall(StreamingWaitMonitor):
         self.last_chunk_time["t"] = time.time()
         self.agent._emit_diagnostic_wait(f"⚠ no output from provider for {int(elapsed)}s — reconnecting...")
         self.agent._touch_activity(f"stale stream detected after {int(elapsed)}s, reconnecting")
+
+    def _kill_at_deadline(self, elapsed: float) -> None:
+        """fork: the call outlived ``request_timeout_seconds`` while chunks kept arriving.
+
+        Neither existing guard can see this. The httpx read timeout is per operation and
+        the stale detector measures the gap between chunks, and a provider that trickles
+        real chunks resets both. 2026-09-30: three ``auditor-review`` runs sat in one
+        OpenRouter stream until the 1800s cron ceiling, the last chunk landing 1s before
+        it, with no stale kill logged. The monitor calls this on every poll past the
+        deadline, not once, so a stream retry that raced the first abort into ``create()``
+        is cancelled too. ``_handle_stream_error`` then hands ``_deadline_error`` to the
+        turn loop instead of re-opening the stream: its retry and fallback own recovery.
+        """
+        if self._deadline_error is None:
+            model = self.api_kwargs.get("model", "unknown")
+            # "deadline exceeded" classifies as a timeout (retry). The ReadError the abort
+            # raises could read as a disconnect, which on a large session means compression.
+            self._deadline_error = TimeoutError(
+                f"Streaming API call deadline exceeded after {elapsed:.0f}s "
+                f"(request_timeout_seconds={self._call_deadline:.0f}, model={model}): "
+                "the provider kept trickling chunks, so no read or stale timeout fired.")
+            logger.warning("%s — aborting the stream.", self._deadline_error)
+            self.agent._touch_activity(f"stream call deadline exceeded after {int(elapsed)}s, aborting")
+        # Same abort as the stale kill; shutdown-only, see ``_shutdown_stale_attempt_socket``.
+        _killed_response = self._attempt_stream_response
+        with contextlib.suppress(Exception):
+            self._cancel_current_stream_attempt("call_deadline_kill")
+            self.clients.close_once("call_deadline_kill")
+        self._shutdown_stale_attempt_socket(_killed_response)
 
     def _abort_for_interrupt(self, stale_elapsed: float) -> None:
         """/stop seen by the monitor: mark cancelled, abort the request-local
