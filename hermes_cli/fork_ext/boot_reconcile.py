@@ -151,6 +151,8 @@ CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"
 AUDITOR_ORCHESTRATOR_DEFAULT = "deepseek/deepseek-v4-flash-0731"
 FALLBACK_MODEL_DEFAULT = "deepseek/deepseek-v4-flash"
 OPENROUTER_REQUEST_TIMEOUT = 600
+# Tighter for the auditor: every trickled call costs it the whole value (see reconcile_cfg).
+AUDITOR_OPENROUTER_REQUEST_TIMEOUT = 420
 GSC_SERVER = {
     "command": "/opt/hermes/.venv/bin/python",
     "args": ["/opt/hermes/optional-mcps/gsc/server.py"],
@@ -673,9 +675,18 @@ def reconcile_cfg(
     # profile, because a profile job reads ITS config.yaml, not main's.
     # First set by hand on 2026-09-21; reconciled here so a newly
     # provisioned profile gets it too.
+    # Since #376 it is also each streaming call's overall deadline, and
+    # OpenRouter trickles the auditor's calls often (the first run after
+    # that deploy did). The auditor gets 420s: its healthy calls are capped
+    # at max_tokens 16000, so even at 40 tok/s they finish inside it, and
+    # 8 of its 10 calls ever logged at 420-600s ran under 13 tok/s.
+    # Three trickled attempts then end at ~21 min with a real API timeout
+    # instead of the 30-min run ceiling.
+    want_timeout = (AUDITOR_OPENROUTER_REQUEST_TIMEOUT if label == "auditor"
+                    else OPENROUTER_REQUEST_TIMEOUT)
     orc = _section(_section(cfg, "providers"), "openrouter")
-    if orc.get("request_timeout_seconds") != OPENROUTER_REQUEST_TIMEOUT:
-        orc["request_timeout_seconds"] = OPENROUTER_REQUEST_TIMEOUT
+    if orc.get("request_timeout_seconds") != want_timeout:
+        orc["request_timeout_seconds"] = want_timeout
         changed = True
     # Enable the Langfuse observability plugin when its keys are present.
     # The recorder is OPT-IN via plugins.enabled — the env keys alone do
