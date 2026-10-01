@@ -114,11 +114,23 @@ def cron_run(args) -> int:
     return exit_hard_if_threads_abandoned(cron_cli._job_action("run", args.job_id, "Triggered"))
 
 
+def cron_move(args) -> int:
+    """``hermes cron move``: see ``cron/fork_ext/move.py`` (stage 3 step 0f)."""
+    from cron.fork_ext.move import move
+
+    return move(args.job_ids, to_profile=getattr(args, "to_profile", None),
+                from_profile=getattr(args, "from_profile", None),
+                to_default=bool(getattr(args, "to_default", False)),
+                apply=bool(getattr(args, "apply", False)),
+                webhook_route_disabled=bool(getattr(args, "webhook_route_disabled", False)))
+
+
 # Consulted before upstream's own dispatch, so "run" here overrides upstream's.
 SUBCOMMANDS = {
     "sync-prompt": cron_sync_prompt,
     "sync_prompt": cron_sync_prompt,
     "run": cron_run,
+    "move": cron_move,
 }
 
 
