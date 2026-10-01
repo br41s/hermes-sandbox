@@ -297,3 +297,23 @@ def test_the_cli_dispatches_move(stores, capsys):
     from cron.fork_ext.cli import cron_move
 
     assert _CRON_SUBCOMMANDS["move"] is cron_move
+
+
+def test_a_job_that_vanishes_mid_move_is_refused_not_a_traceback(stores, monkeypatch, capsys):
+    default, shop = stores
+    jid = _make(default, profile="grow-shop", next_run_at=_future(60))
+    real_load = mv._load
+    calls = {"n": 0}
+
+    def load(home):
+        jobs = real_load(home)
+        if home == default:
+            calls["n"] += 1
+            if calls["n"] > 1:  # after _check's read: someone deleted it mid-move
+                return [j for j in jobs if j["id"] != jid]
+        return jobs
+
+    monkeypatch.setattr(mv, "_load", load)
+    assert mv.move([jid], to_profile="grow-shop", apply=True) == 1
+    assert "left the default store while it was being paused" in capsys.readouterr().out
+    assert _get(shop, jid) is None

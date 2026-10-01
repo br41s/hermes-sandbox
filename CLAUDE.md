@@ -171,6 +171,14 @@ One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spa
 geo-block. Static egress IP `43.157.39.241`. Panel at
 [blhermes.zeabur.app](https://blhermes.zeabur.app), GitHub-OAuth only.
 
+**Deploy as rarely as the work allows (owner's rule, 2026-10-01).** Every deploy
+restarts the gateway: Telegram drops what arrives during the cold boot, an in-flight
+cron run can be cut, and the owner has to run `deploy.sh` and verify. So batch:
+group related changes into one PR with one commit per change, or open several PRs,
+merge them all, and hand over **one** deploy for the lot. Merging is not deploying;
+do not give a deploy command per PR. Deploy on its own only for a production fix
+that cannot wait.
+
 Gotchas, each of which cost a session. Detail in workspace `memories/decisions/hermes.md`:
 
 - **GitHub Actions builds; `scripts/deploy.sh` deploys.** `.github/workflows/

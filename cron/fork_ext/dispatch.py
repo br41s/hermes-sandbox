@@ -72,7 +72,11 @@ def in_profile_store() -> bool:
         from hermes_constants import get_hermes_home, get_routing_process_hermes_home
 
         return get_hermes_home().resolve() != get_routing_process_hermes_home().resolve()
-    except Exception:
+    except Exception as exc:
+        # Visible on purpose: a home that keeps failing to resolve serializes every
+        # plain job onto the lane, which otherwise reads as a slow scheduler.
+        logger.warning("in_profile_store: could not resolve the active or launch home "
+                       "(%s); running the job on the sequential lane", type(exc).__name__)
         return True
 
 
