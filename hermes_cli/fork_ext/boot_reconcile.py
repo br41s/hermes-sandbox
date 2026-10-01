@@ -54,7 +54,22 @@ INJECT = [
     # (TENANT_EXCLUDE), exactly like OPENROUTER_API_KEY — being in this list is
     # only half the contract, and the half that keeps our rotation working.
     "PEXELS_API_KEY",
+    # Langfuse, BigLobster's own project (stage 3 step 0c). A satellite store's
+    # scope is its .env only, so without these a moved job traces nowhere, with
+    # no error. The two keys are ALSO in TENANT_EXCLUDE: rentals trace into a
+    # separate project, pinned in sync_envs from HERMES_RENTAL_LANGFUSE_*.
+    # The base URL and labels are not secrets and reach every profile; the plugin
+    # reads the HERMES_-prefixed name first, then the bare one, so both sync.
+    "HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY",
+    "HERMES_LANGFUSE_BASE_URL", "LANGFUSE_BASE_URL",
+    "HERMES_LANGFUSE_ENV", "HERMES_LANGFUSE_RELEASE", "HERMES_LANGFUSE_SAMPLE_RATE",
 ]
+
+# Run-time cron tuning (HERMES_CRON_TIMEOUT, HERMES_CRON_MAX_RUNTIME, ...) is read
+# from the run's scope (cron/env_settings.py), so a value set only in the Zeabur
+# env is lost to a satellite store. Every HERMES_CRON_* in the service env syncs
+# like an INJECT key. Tuning only, never a secret.
+CRON_TUNING_PREFIX = "HERMES_CRON_"
 
 # Never let the auditor profile's .env receive the shared token via the generic
 # path — §1b is its ONLY source for these two keys.
@@ -83,7 +98,18 @@ AUDITOR_EXCLUDE = ("GITHUB_TOKEN", "GH_TOKEN")
 # (§2 forces web.search_backend: ddgs), never billed to BigLobster's Exa account.
 # gap-hunter and product-articles (both daily SKUs) call web_search, so this was a
 # live, recurring leak, not a theoretical one (issue #174).
-TENANT_EXCLUDE = ("OPENROUTER_API_KEY", "PEXELS_API_KEY", "EXA_API_KEY", "HUGGINGFACE_API_KEY")
+TENANT_EXCLUDE = ("OPENROUTER_API_KEY", "PEXELS_API_KEY", "EXA_API_KEY", "HUGGINGFACE_API_KEY",
+                  "HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY")
+
+# Rentals trace into their OWN Langfuse project (decided 2026-09-29,
+# ops/multiplex-stage3-plan.md "Rental Langfuse"): a key in a client profile's reach
+# can be read by that client's agent, and a Langfuse key pair reads every trace in
+# its project. Pinned on every boot so a rotation in Zeabur reaches every rental.
+RENTAL_LANGFUSE_SOURCE = ("HERMES_RENTAL_LANGFUSE_PUBLIC_KEY", "HERMES_RENTAL_LANGFUSE_SECRET_KEY")
+# Every name the plugin resolves a key from (plugins/observability/langfuse
+# _build_client: HERMES_LANGFUSE_* first, then LANGFUSE_*).
+LANGFUSE_KEY_NAMES = ("HERMES_LANGFUSE_PUBLIC_KEY", "HERMES_LANGFUSE_SECRET_KEY",
+                      "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
 SHARED_RESEARCH_KEYS = ("EXA_API_KEY", "HUGGINGFACE_API_KEY")
 
 # 2. Re-assert runtime-critical config keys (idempotent). docker/config.yaml
@@ -170,7 +196,8 @@ GSC_SERVER = {
 def sync_env_file(env_path: Path, environ: Mapping[str, str], exclude=()) -> None:
     """Write every set ``INJECT`` var from ``environ`` into ``env_path``, one line each."""
     content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    for var in INJECT:
+    cron_tuning = sorted(k for k in environ if k.startswith(CRON_TUNING_PREFIX))
+    for var in [*INJECT, *cron_tuning]:
         if var in exclude:
             continue
         val = environ.get(var, "")
@@ -255,6 +282,21 @@ def has_own_fal_key(env_path: Path) -> bool:
                           flags=re.MULTILINE))
 
 
+def rental_langfuse_pin(public_key: str, secret_key: str) -> dict:
+    """The four Langfuse key lines every rental .env gets, on every boot.
+
+    The rental pair under the names the plugin reads first, and the bare
+    LANGFUSE_* names pinned EMPTY. Unset (either half missing) pins all four empty.
+    Empty, never absent: a fork profile job's scope is ``{**os.environ, **.env}``,
+    so a missing line resolves BigLobster's key from the service env, while
+    ``KEY=`` overrides it with "" and the plugin then builds no client.
+    """
+    if public_key and secret_key:
+        return {"HERMES_LANGFUSE_PUBLIC_KEY": public_key, "HERMES_LANGFUSE_SECRET_KEY": secret_key,
+                "LANGFUSE_PUBLIC_KEY": "", "LANGFUSE_SECRET_KEY": ""}
+    return {name: "" for name in LANGFUSE_KEY_NAMES}
+
+
 def real_profiles(home: Path):
     """Profile dirs, sorted. SOUL.md is the "real profile" marker (same as the s6 reconciler)."""
     root = home / "profiles"
@@ -292,6 +334,15 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
     # availability rather than failing closed like the GitHub token above.
     auditor_openrouter_key = _resolve(home, environ, "HERMES_AUDITOR_OPENROUTER_API_KEY")
 
+    # 1e. Rental Langfuse pin, resolved once. Both or neither: half a key pair
+    #     traces nowhere, so it is treated as unset.
+    rental_pk, rental_sk = (_resolve(home, environ, v) for v in RENTAL_LANGFUSE_SOURCE)
+    rental_langfuse = rental_langfuse_pin(rental_pk, rental_sk)
+    if not (rental_pk and rental_sk):
+        print("[03-biglobster] WARNING: HERMES_RENTAL_LANGFUSE_PUBLIC_KEY/SECRET_KEY not "
+              "both set — rentals get empty Langfuse keys (tracing off, never "
+              "BigLobster's project)")
+
     # Per-profile .env files — keeps tenant gateways on current keys after a rotation.
     for prof in real_profiles(home):
         prof_env = prof / ".env"
@@ -315,6 +366,8 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
             if stripped != content:
                 prof_env.write_text(stripped, encoding="utf-8")
                 print(f"[03-biglobster] Stripped stale shared research keys from {prof_env}")
+            _pin_vars(prof_env, rental_langfuse)
+            print(f"[03-biglobster] Pinned rental Langfuse keys in {prof_env}")
         print(f"[03-biglobster] Synced env vars into {prof_env}{why}")
 
     auditor = home / "profiles" / "auditor"
@@ -345,7 +398,9 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
     #     auditor/llm.py falls back to its documented cheap defaults. Auditor-only —
     #     deliberately NOT in the shared INJECT list (other profiles don't review).
     knobs = {}
-    for var in ("HERMES_AUDITOR_SYSTEM_MODEL", "HERMES_AUDITOR_CONTENT_MODEL"):
+    for var in ("HERMES_AUDITOR_SYSTEM_MODEL", "HERMES_AUDITOR_CONTENT_MODEL",
+                "HERMES_AUDITOR_JUDGE_MAX_TOKENS", "HERMES_AUDITOR_JUDGE_REASONING_EFFORT",
+                "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS"):
         val = environ.get(var, "").strip()
         if val:
             knobs[var] = val
