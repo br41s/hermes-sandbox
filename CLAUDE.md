@@ -101,7 +101,8 @@ Consequences to hold in mind:
 
 ### One long agent run starves every other agent
 
-`cron/scheduler.py` dispatches every job that sets `profile` or `workdir` on a
+`cron/scheduler.py` dispatches every job that sets `profile` or `workdir`, and every
+job run from a profile's own `profiles/<name>/cron/jobs.json` (`in_profile_store`), on a
 **single-thread sequential pool** (`cron/fork_ext/dispatch.py`). Nothing it once
 protected is shared any more: a workdir binds to the run's task id rather than
 `os.environ["TERMINAL_CWD"]`, and a profile's `.env` is a per-run scope. The lane is

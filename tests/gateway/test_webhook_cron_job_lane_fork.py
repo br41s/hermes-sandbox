@@ -62,3 +62,44 @@ async def test_cron_job_route_runs_profile_and_workdir_jobs_on_the_lane(lane, fi
     assert job_ref == "review-sweeper"
     assert "event 1" in extra_prompt
     assert thread.startswith("cron-seq") is on_lane, thread
+
+
+@pytest.mark.asyncio
+async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_the_lane(lane):
+    """Stage 3 step 0a. A ``/p/<profile>/`` route resolves its job under the
+    profile's home override alone, with no ``use_cron_store``: the store comes from
+    the home fallback in ``cron.jobs._current_cron_store``. A job in that store has
+    no ``profile`` field, and it must still run on the lane.
+
+    If the module constants were re-pointed (``CRON_DIR`` and friends), that
+    fallback is skipped and the lookup lands in the DEFAULT store, quietly. This
+    is the test that notices."""
+    import cron.jobs as jobs
+    from hermes_cli.profiles import get_profile_dir
+
+    satellite = get_profile_dir("grow-shop")
+    (satellite / "cron").mkdir(parents=True, exist_ok=True)
+    with jobs.use_cron_store(satellite):
+        created = jobs.create_job(prompt="sweep", schedule="every 1h", name="shop-sweeper")
+    assert "profile" not in created or not created.get("profile")
+    assert jobs.resolve_job_ref("shop-sweeper") is None, "the job leaked into the default store"
+
+    fired = []
+
+    def _fake_execute(job_ref, extra_prompt=None):
+        fired.append((jobs._current_cron_store().jobs_file, jobs.resolve_job_ref(job_ref),
+                      threading.current_thread().name))
+        return {"claimed": True, "success": True, "error": None}
+
+    adapter = _adapter("shop-sweeper")
+    with patch("tools.cronjob_tools.execute_job_for_event", side_effect=_fake_execute):
+        resp = adapter._handle_cron_trigger("event 1", adapter._routes["hook"], "hook", "push", "d-1",
+                                            profile="grow-shop")
+        assert resp.status == 202
+        await asyncio.gather(*list(adapter._background_tasks), return_exceptions=True)
+
+    assert len(fired) == 1
+    jobs_file, resolved, thread = fired[0]
+    assert jobs_file == (satellite / "cron" / "jobs.json").resolve()
+    assert resolved is not None and resolved["id"] == created["id"]
+    assert thread.startswith("cron-seq"), thread
