@@ -213,13 +213,17 @@ class TestExecuteJobForEvent:
         assert "not found" in result["error"]
 
     def test_ambiguous_ref_returns_error(self):
-        from cron.jobs import AmbiguousJobReference
         from tools import cronjob_tools
 
+        # Raise the class cronjob_tools itself catches. Several cron fixtures
+        # importlib.reload(cron.jobs), which mints a NEW AmbiguousJobReference
+        # while cronjob_tools keeps the one it imported, so ``from cron.jobs import``
+        # here would raise a class its ``except`` no longer matches. Production
+        # never reloads; this failed only when such a fixture ran first.
         with patch.object(
             cronjob_tools,
             "resolve_job_ref",
-            side_effect=AmbiguousJobReference(
+            side_effect=cronjob_tools.AmbiguousJobReference(
                 "x", [{"id": "job-a"}, {"id": "job-b"}]
             ),
         ):
