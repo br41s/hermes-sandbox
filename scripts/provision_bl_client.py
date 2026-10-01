@@ -84,6 +84,7 @@ confirmed by hand): remove its cron jobs, then `hermes profile delete <slug>`.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -528,6 +529,37 @@ def _write_env(
     return env_path
 
 
+@contextlib.contextmanager
+def _profile_store(profile_dir: Path):
+    """Create jobs in ``profile_dir``'s own cron store, under its home."""
+    from cron.jobs import use_cron_store
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(str(profile_dir))
+    try:
+        with use_cron_store(profile_dir):
+            yield
+    finally:
+        reset_hermes_home_override(token)
+
+
+def _sync_rental_env_now(env_path: Path, environ) -> None:
+    """Apply the boot's per-rental ``.env`` sync to a new rental right away.
+
+    The same two calls ``boot_reconcile.sync_envs`` makes for every rented
+    tenant on each boot: the shared ``INJECT`` keys (minus ``TENANT_EXCLUDE``,
+    so the client's own OpenRouter/Pexels keys stay and BigLobster's research
+    and Langfuse keys never arrive) plus the cron tuning, then the rental
+    Langfuse pin. A test holds the result equal to what the next boot writes.
+    """
+    from hermes_cli.fork_ext import boot_reconcile as br
+
+    home = env_path.parent.parent.parent
+    br.sync_env_file(env_path, environ, exclude=br.TENANT_EXCLUDE)
+    public_key, secret_key = (br._resolve(home, environ, v) for v in br.RENTAL_LANGFUSE_SOURCE)
+    br._pin_vars(env_path, br.rental_langfuse_pin(public_key, secret_key))
+
+
 def pick_stagger_schedule(slug: str, agent_key: str) -> str:
     """Pick a daily off-peak cron expression for this client+agent's job.
 
@@ -565,6 +597,16 @@ def provision(
     questionnaire: dict | None = None,
     pexels_key: str | None = None,
 ) -> dict:
+    if (deliver or "local").strip() != "local":
+        # The jobs live in the rental's own store, where delivery goes through a
+        # profile route or nowhere: a rental has neither routing.env nor a route,
+        # so any Telegram target would fail closed on every run, silently for the
+        # buyer. The old shape fell back to General, which leaked one client's
+        # output into BigLobster's chat. Refuse before anything is created.
+        raise ValueError(
+            f"--deliver {deliver!r}: a rental's jobs deliver 'local' only. Their "
+            "profile has no Telegram route, so any other target fails on every run."
+        )
     canon = normalize_profile_name(slug)
     validate_profile_name(canon)
     if profile_exists(canon):
@@ -660,24 +702,32 @@ def provision(
         pexels_key=pexels_key,
     )
 
+    # The jobs go in the rental's OWN cron store, with no fork ``profile`` field
+    # (stage 3 step 1.5, ops/multiplex-stage3-plan.md): the old shape, a
+    # ``profile=`` job in BigLobster's store, is what step 1 migrates away from,
+    # and every rental created that way only grew the backlog. A job there runs
+    # on the profile's .env alone, so that file gets the boot's per-rental sync
+    # now: the onboarding job fires in minutes, well before the next boot.
+    _sync_rental_env_now(env_path, os.environ)
+
     created_jobs = []
-    for agent_key in agents:
-        source, display_name, schedule_kind, toolsets = AGENT_SOURCES[agent_key]
-        schedule = (
-            ONBOARDING_CONTENT_DELAY
-            if schedule_kind == "once"
-            else pick_stagger_schedule(canon, agent_key)
-        )
-        job = create_job(
-            prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8"),
-            schedule=schedule,
-            name=f"{display_name} — {client_name}",
-            deliver=deliver,
-            profile=canon,
-            prompt_source=source,
-            enabled_toolsets=list(toolsets) if toolsets else None,
-        )
-        created_jobs.append({"job_id": job["id"], "name": job["name"], "schedule": schedule, "source": source})
+    with _profile_store(profile_dir):
+        for agent_key in agents:
+            source, display_name, schedule_kind, toolsets = AGENT_SOURCES[agent_key]
+            schedule = (
+                ONBOARDING_CONTENT_DELAY
+                if schedule_kind == "once"
+                else pick_stagger_schedule(canon, agent_key)
+            )
+            job = create_job(
+                prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8"),
+                schedule=schedule,
+                name=f"{display_name} — {client_name}",
+                deliver=deliver,
+                prompt_source=source,
+                enabled_toolsets=list(toolsets) if toolsets else None,
+            )
+            created_jobs.append({"job_id": job["id"], "name": job["name"], "schedule": schedule, "source": source})
 
     return {
         "profile": canon,
@@ -701,7 +751,8 @@ def main() -> int:
     parser.add_argument("--panel-password", required=True)
     parser.add_argument("--openrouter-key", required=True)
     parser.add_argument("--agents", required=True, help="Comma-separated: gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance,site-setup,shorts")
-    parser.add_argument("--deliver", default="local", help="Cron job delivery target (default: local)")
+    parser.add_argument("--deliver", default="local",
+                        help="Cron job delivery target. Only 'local': a rental has no Telegram route")
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,

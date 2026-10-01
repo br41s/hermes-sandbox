@@ -595,11 +595,12 @@ default. What the script does, in order:
 4. Writes that profile's `SOUL.md`, matching the terse style of `docker/profiles/grow-shop/SOUL.md` — scope, working boundaries, nothing more.
 5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved and `web.search_backend: ddgs` (always — see "Web research is bundled, not BYOK" above; this is what stops the client's web_search calls landing on BigLobster's own Exa account) — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
 6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `FAL_KEY` if `--fal-key` was given and `OLD_SITE_URL` if `--old-site-url` was.
-7. Creates one cron job per ordered agent, with `profile=<slug>` and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead.
+6b. Applies the boot's per-rental `.env` sync to it straight away: the shared `INJECT` keys minus `TENANT_EXCLUDE` (so the client's own keys stay and BigLobster's research and Langfuse keys never arrive), the `HERMES_CRON_*` tuning, and the rental Langfuse pin. The jobs below read that `.env` alone, and the first one fires in 5 minutes, long before the next boot would sync it.
+7. Creates one cron job per ordered agent **in the profile's own cron store** (`profiles/<slug>/cron/jobs.json`), with no `profile` field, and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead. Every per-job command for them needs `hermes -p <slug> cron …`. `--deliver` must stay `local`: a rental has no Telegram route, so from its own store any other target would fail on every run, and the script refuses it. Rentals provisioned before 2026-10-01 are `profile=<slug>` jobs in BigLobster's store until `hermes cron move` (stage 3, `ops/multiplex-stage3-plan.md`) carries them over.
 
 Confirm back to the CEO: profile slug, job IDs created (the script prints them as JSON), and which agents are now active for this client.
 
-If the script isn't available and a step needs doing by hand, the underlying primitives are `hermes profile create`, setting the base model with `hermes -p <slug> config set model.default deepseek/deepseek-v4-flash` + `config set model.provider openrouter` (**don't skip this — a profile with no `config.yaml` has no model and every cron run 400s**), writing `.env`/`SOUL.md` directly under the profile dir, and `cronjob(action="create", ..., prompt_source=...)`. Always set `prompt_source` (not just `prompt`) so the job stays covered by the prompt-drift detector (`incidents/sweep.py`).
+If the script isn't available and a step needs doing by hand, the underlying primitives are `hermes profile create`, setting the base model with `hermes -p <slug> config set model.default deepseek/deepseek-v4-flash` + `config set model.provider openrouter` (**don't skip this — a profile with no `config.yaml` has no model and every cron run 400s**), writing `.env`/`SOUL.md` directly under the profile dir, and `hermes -p <slug> cron create ...` (the profile's own store; never `--profile <slug>`, which puts the job in BigLobster's store). Always set `prompt_source` (not just `prompt`) so the job stays covered by the prompt-drift detector (`incidents/sweep.py`).
 
 ## Catalogue sync — a job the client's own site cannot run
 
@@ -617,8 +618,7 @@ prices every 12 h and stock every 10 minutes. The shop quoted a frozen snapshot 
 So the schedule lives here instead:
 
 ```bash
-hermes cron create \
-  --profile bl-<client> \
+hermes -p bl-<client> cron create \
   --no-agent \
   --script scripts/bl_site_liderpapel_sync.py \
   --schedule "0 8 * * *" \

@@ -244,3 +244,86 @@ def test_write_config_pins_ddgs_as_the_web_search_backend(tmp_path):
     assert cfg["web"]["search_backend"] == "ddgs"
     # Never Exa — that's the leak this pin exists to prevent.
     assert cfg["web"].get("backend") != "exa"
+
+
+# --- Stage 3 step 1.5: a new rental's jobs live in its own cron store ---------
+
+_SERVICE_ENV = {
+    "HERMES_MAX_ITERATIONS": "90",                       # INJECT: must arrive
+    "HERMES_CRON_MAX_RUNTIME": "1800",                   # cron tuning: must arrive
+    "EXA_API_KEY": "exa-BIGLOBSTER",                     # TENANT_EXCLUDE: never
+    "OPENROUTER_API_KEY": "or-BIGLOBSTER",               # TENANT_EXCLUDE: client keeps its own
+    "HERMES_LANGFUSE_PUBLIC_KEY": "pk-lf-BIGLOBSTER",    # TENANT_EXCLUDE: never
+    "HERMES_LANGFUSE_SECRET_KEY": "sk-lf-BIGLOBSTER",
+    "HERMES_RENTAL_LANGFUSE_PUBLIC_KEY": "pk-lf-RENTAL",
+    "HERMES_RENTAL_LANGFUSE_SECRET_KEY": "sk-lf-RENTAL",
+}
+
+
+def _provision_rental(tmp_path, monkeypatch, slug="bl-acme"):
+    import scripts.provision_bl_client as mod
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    for name, value in _SERVICE_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(mod, "_read_panel_image_model", lambda _url: None)
+    return provision(
+        slug=slug, client_name="Acme", site_url="https://acme.example", panel_password="pw",
+        openrouter_key="sk-or-client", agents=["maintenance"], skip_key_check=True,
+    )
+
+
+def _env(path):
+    from hermes_cli.fork_ext.boot_reconcile import _parse_env_lines
+    return _parse_env_lines(path.read_text(encoding="utf-8"))
+
+
+def test_a_new_rental_gets_its_jobs_in_its_own_store(tmp_path, monkeypatch):
+    import cron.jobs as cron_jobs
+
+    result = _provision_rental(tmp_path, monkeypatch)
+    profile_dir = Path(result["profile_dir"])
+    with cron_jobs.use_cron_store(profile_dir):
+        jobs = {j["id"]: j for j in cron_jobs.load_jobs()}
+    (created,) = result["jobs"]
+    assert created["job_id"] in jobs
+    assert not jobs[created["job_id"]].get("profile"), "the old fork shape"
+    assert jobs[created["job_id"]]["prompt_source"] == AGENT_SOURCES["maintenance"][0]
+    # Nothing in BigLobster's own store.
+    assert not (tmp_path / "cron" / "jobs.json").exists() or not cron_jobs.load_jobs()
+
+
+def test_a_new_rental_env_is_synced_like_a_boot_would(tmp_path, monkeypatch):
+    result = _provision_rental(tmp_path, monkeypatch)
+    env = _env(Path(result["env_path"]))
+    assert env["HERMES_MAX_ITERATIONS"] == "90"
+    assert env["HERMES_CRON_MAX_RUNTIME"] == "1800"
+    assert env["OPENROUTER_API_KEY"] == "sk-or-client"
+    assert "EXA_API_KEY" not in env
+    assert env["HERMES_LANGFUSE_PUBLIC_KEY"] == "pk-lf-RENTAL"
+    assert env["HERMES_LANGFUSE_SECRET_KEY"] == "sk-lf-RENTAL"
+    assert env["LANGFUSE_PUBLIC_KEY"] == "" and env["LANGFUSE_SECRET_KEY"] == ""
+    assert "BIGLOBSTER" not in Path(result["env_path"]).read_text(encoding="utf-8")
+
+
+def test_the_next_boot_changes_nothing_in_a_new_rental_env(tmp_path, monkeypatch):
+    """Parity: provisioning and boot_reconcile.sync_envs must write the same file."""
+    import os
+
+    from hermes_cli.fork_ext import boot_reconcile as br
+
+    result = _provision_rental(tmp_path, monkeypatch)
+    env_path = Path(result["env_path"])
+    before = _env(env_path)
+    br.sync_envs(tmp_path, dict(os.environ))
+    assert _env(env_path) == before
+
+
+def test_a_rental_with_a_telegram_target_is_refused_before_anything_exists(tmp_path, monkeypatch):
+    """From its own store a rental delivers through a profile route or nowhere."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    with pytest.raises(ValueError, match="deliver 'local' only"):
+        provision(slug="bl-acme", client_name="Acme", site_url="https://acme.example",
+                  panel_password="pw", openrouter_key="sk-or-client", agents=["maintenance"],
+                  deliver="telegram", skip_key_check=True)
+    assert not (tmp_path / "profiles" / "bl-acme").exists()
