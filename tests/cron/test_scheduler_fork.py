@@ -578,6 +578,91 @@ class TestJobSubprocessIdentityTripwire:
         with _job_profile_context("fv-job", "finview") as resolved:
             assert resolved == "finview"
 
+    # Stage 3 step 0b: a job run from a profile's OWN cron store has no
+    # ``profile`` field, so ``_job_profile_context`` never sees it. The
+    # tripwire must still fire, through the same ``guarded_run_job`` path.
+
+    @staticmethod
+    def _satellite_run(home, job, impl):
+        from cron.fork_ext.run_guard import guarded_run_job
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        token = set_hermes_home_override(str(home))
+        try:
+            return guarded_run_job(job, impl)
+        finally:
+            reset_hermes_home_override(token)
+
+    def test_satellite_store_job_under_a_sibling_home_fails_closed(self, tmp_path, monkeypatch):
+        from cron.fork_ext.profile_scope import ProfileIdentityError
+
+        own = self._profiles(tmp_path, monkeypatch, "finview")
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home",
+            lambda env=None: str(own.parent / "auditor" / "home"),
+        )
+
+        def impl(job):
+            pytest.fail("a satellite job must not run under another identity")
+
+        with pytest.raises(ProfileIdentityError, match="another profile"):
+            self._satellite_run(own, {"id": "fv-sat"}, impl)
+
+    def test_satellite_store_job_under_its_own_home_runs_as_a_profile_run(
+        self, tmp_path, monkeypatch
+    ):
+        from hermes_cli.fork_ext import profile_env
+
+        own = self._profiles(tmp_path, monkeypatch, "finview")
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home", lambda env=None: str(own / "home")
+        )
+
+        def impl(job):
+            return profile_env._IN_PROFILE_RUN.get(), "", "", None
+
+        assert self._satellite_run(own, {"id": "fv-sat"}, impl) == (True, "", "", None)
+
+    def test_satellite_store_job_from_an_unprovisioned_profile_fails_closed(
+        self, tmp_path, monkeypatch
+    ):
+        from cron.fork_ext.profile_scope import ProfileIdentityError
+
+        root = tmp_path / "profiles"
+        (root / "earthsaver").mkdir(parents=True)
+        (root / "finview" / "home").mkdir(parents=True)
+
+        with pytest.raises(ProfileIdentityError, match="never fully"):
+            self._satellite_run(root / "earthsaver", {"id": "es-sat"},
+                                lambda job: pytest.fail("must not run"))
+
+    def test_launch_store_plain_job_skips_the_tripwire(self, monkeypatch):
+        from cron.fork_ext import profile_scope
+        from cron.fork_ext.run_guard import guarded_run_job
+        from hermes_cli.fork_ext import profile_env
+
+        monkeypatch.setattr(
+            profile_scope, "_assert_own_subprocess_identity",
+            lambda *a: pytest.fail("the launch store's plain jobs carry no profile identity"))
+
+        def impl(job):
+            return profile_env._IN_PROFILE_RUN.get(), "", "", None
+
+        assert guarded_run_job({"id": "plain"}, impl) == (False, "", "", None)
+
+    def test_a_profile_job_is_checked_once_not_twice(self, tmp_path, monkeypatch):
+        from cron.fork_ext import profile_scope
+        from cron.fork_ext.run_guard import guarded_run_job
+
+        self._profiles(tmp_path, monkeypatch, "finview")
+        calls = []
+        monkeypatch.setattr(profile_scope, "_assert_own_subprocess_identity",
+                            lambda *a: calls.append(a[0]))
+
+        assert guarded_run_job({"id": "fv-job", "profile": "finview"},
+                               lambda job: (True, "", "", None))[0] is True
+        assert calls == ["fv-job"]
+
     def test_environment_is_restored_even_when_the_tripwire_fires(
         self, tmp_path, monkeypatch
     ):

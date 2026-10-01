@@ -8,7 +8,8 @@ upstream's file. ``cron.scheduler.run_job`` is a one-line call into
 - ``_job_run_lock`` — non-blocking per-``job_id`` flock, so two triggers of the
   same job (tick + webhook burst) never both run it;
 - ``guarded_run_job`` — takes that lock, then runs the job under its profile
-  (``_job_profile_context``, fail closed).
+  (``_job_profile_context``, fail closed), or, for a job from a profile's own
+  store, under ``_satellite_store_context``.
 
 ``_get_hermes_home`` and ``_job_profile_context`` are looked up on
 ``cron.scheduler`` at call time, so patches of those attributes still apply.
@@ -17,6 +18,8 @@ upstream's file. ``cron.scheduler.run_job`` is a one-line call into
 import logging
 from contextlib import contextmanager
 from typing import Callable
+
+from cron.fork_ext.profile_scope import _satellite_store_context
 
 try:
     import fcntl
@@ -103,5 +106,6 @@ def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
                 "trigger (silent, the in-flight run handles it)", job_id,
             )
             return True, "", "", None
-        with sched._job_profile_context(job_id, job.get("profile")):
+        with sched._job_profile_context(job_id, job.get("profile")), \
+                _satellite_store_context(job_id, job.get("profile")):
             return impl(job, **kwargs)

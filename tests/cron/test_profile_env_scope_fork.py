@@ -195,3 +195,57 @@ def test_keyed_fal_clients_are_bounded_and_not_keyed_by_the_raw_key(monkeypatch)
 
     assert len(profile_env._fal_clients) == profile_env._FAL_CLIENTS_MAX
     assert not any(k.startswith("fal-key-") for k in profile_env._fal_clients)
+
+
+def test_a_satellite_store_run_overlays_its_env_onto_children_without_the_process_env(rental_profile):
+    """Stage 3 step 0b. A job run from a profile's own store carries no
+    ``profile`` field. The run path installs the profile's ``.env`` as the
+    scope (``scheduler.py``, from ``_get_hermes_home()``); the satellite
+    context must mark the run so children get that ``.env``, and must not
+    merge ``os.environ`` into it the way ``_job_profile_context`` does."""
+    from agent.secret_scope import (
+        build_profile_secret_scope,
+        current_secret_scope,
+        reset_secret_scope,
+        set_secret_scope,
+    )
+    from cron.fork_ext.profile_scope import _satellite_store_context
+    from hermes_cli.fork_ext.profile_env import child_env_overlay
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    _root, profile_home = rental_profile
+    home_token = set_hermes_home_override(profile_home)
+    scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
+    try:
+        assert child_env_overlay() == {}
+        with _satellite_store_context("sat-job", None) as name:
+            assert name == "rental"
+            assert child_env_overlay()["BL_SITE_URL"] == "https://client.example"
+            scope = current_secret_scope()
+            assert scope["BL_SITE_URL"] == "https://client.example"
+            # TENANT_EXCLUDE holds: the process env's keys are not in the scope.
+            assert "EXA_API_KEY" not in scope
+        assert child_env_overlay() == {}
+    finally:
+        reset_secret_scope(scope_token)
+        reset_hermes_home_override(home_token)
+
+
+def test_the_satellite_context_is_inert_outside_a_profile_store(rental_profile):
+    """The launch store's plain jobs, and fork ``profile`` jobs (which
+    ``_job_profile_context`` already covers), pass straight through."""
+    from cron.fork_ext.profile_scope import _satellite_store_context
+    from hermes_cli.fork_ext.profile_env import child_env_overlay
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    _root, profile_home = rental_profile
+    with _satellite_store_context("plain-job", None) as name:
+        assert name is None
+        assert child_env_overlay() == {}
+
+    home_token = set_hermes_home_override(profile_home)
+    try:
+        with _satellite_store_context("fork-job", "rental") as name:
+            assert name is None
+    finally:
+        reset_hermes_home_override(home_token)

@@ -8,6 +8,8 @@ inside upstream's file:
 - ``_assert_own_subprocess_identity`` / ``_iter_sibling_profiles`` — refuse a
   run whose subprocess ``HOME`` (its git/gh identity) belongs to another
   profile (``ProfileIdentityError``);
+- ``_satellite_store_context`` — the same tripwire, and ``profile_run()``,
+  for a job run from a profile's own cron store (no ``profile`` field);
 - ``_read_profile_env_value`` — read one key off a profile's ``.env`` for
   delivery routing, without touching ``os.environ``.
 
@@ -277,6 +279,43 @@ def _job_profile_context(job_id: str, profile: Optional[str]):
         for k, v in env_snapshot.items():
             if os.environ.get(k) != v:
                 os.environ[k] = v
+
+
+@contextmanager
+def _satellite_store_context(job_id: str, profile: Optional[str]):
+    """Give a job run from a profile's OWN cron store the fork guarantees a
+    ``profile`` job gets from ``_job_profile_context`` (stage 3 step 0b,
+    ``ops/multiplex-stage3-plan.md``).
+
+    The multiplex ticker and a routed webhook already run such a job under
+    the profile's home override and its ``.env`` secret scope. Two things
+    were missing: the identity tripwire (``_assert_own_subprocess_identity``,
+    the 2026-09-12 PR-as-``hermes-auditor`` class) and ``profile_run()``,
+    without which ``child_env_overlay`` hands the run's children nothing from
+    the profile's ``.env``.
+
+    Unlike ``_job_profile_context`` it does not merge ``os.environ`` into the
+    scope: a satellite job sees its profile's ``.env`` only, which is the
+    ``TENANT_EXCLUDE`` policy (plan fact 11). A job carrying ``profile``, or
+    one run from the launch store, passes straight through.
+    """
+    from cron.fork_ext.dispatch import in_profile_store
+
+    if str(profile or "").strip() or not in_profile_store():
+        yield None
+        return
+
+    from hermes_cli.fork_ext.profile_env import profile_run
+    from hermes_constants import get_hermes_home
+
+    profile_home = get_hermes_home().resolve()
+    _assert_own_subprocess_identity(job_id, profile_home.name, profile_home)
+    logger.info(
+        "Job '%s': running from profile '%s' own cron store (%s)",
+        job_id, profile_home.name, profile_home,
+    )
+    with profile_run():
+        yield profile_home.name
 
 
 def _read_profile_env_value(profile: Optional[str], key: str) -> str:
