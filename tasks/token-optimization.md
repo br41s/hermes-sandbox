@@ -8,6 +8,14 @@
 > main profile — deferred "until deepseek main", which is now true — and levers 2b/2c/2d
 > and 3, never started. Upstream context compression now exists, contrary to the
 > "no runtime context compaction" note.
+>
+> **2026-10-01: the DeepSeek pin is retired; it never worked.** The OpenRouter account
+> refuses providers that train on paid prompts, and DeepSeek's own API does, so routing
+> drops it ("Paid model training violation (account settings)"). DeepSeek served 0 of
+> 3,993 logged calls, and the dead pin led the auditor to OpenInference's fp4 endpoint,
+> which trickles for 10-50 min. Both the orchestrator (`boot_reconcile.py`) and the judge
+> (`auditor/llm.py`) now send `ignore: ["open-inference"]` instead. The pinning guidance
+> below does not apply on this account; don't pin `main` to DeepSeek either.
 
 **Goal:** cut token consumption A LOT so a paid model is affordable as the main
 model, without losing quality or data.
