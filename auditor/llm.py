@@ -60,6 +60,8 @@ from typing import List, Optional, Tuple
 # snapshots for it, re-pin to the dated one: an undated alias with siblings
 # has previously resolved to the oldest (priciest) snapshot, not the newest.
 SYSTEM_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
+# OpenRouter providers a deepseek/* review never routes to (see _build_request).
+IGNORED_PROVIDERS = ("open-inference",)
 # Was `openrouter/owl-alpha` until 2026-09-20, by which point that model no
 # longer existed on OpenRouter (confirmed absent from the live /models list,
 # 447 entries). A dead id is the one thing a default here must never be: the
@@ -493,16 +495,14 @@ def _build_request(
     # prefix stays cache-warm across reviews. Best-effort on OpenRouter's side.
     if session_id:
         payload["session_id"] = session_id[:256]
-    # DeepSeek's context cache is backend-local. Without pinning, OpenRouter
-    # load-balances deepseek/* across upstream backends with cold caches and
-    # re-bills the full prefix (measured ~44% miss / 56% hit on the orchestrator
-    # before this). Prefer the DeepSeek upstream so the cache is reused; keep
-    # fallbacks ON so a DeepSeek outage degrades to another provider rather than
-    # breaking the review gate. Only deepseek/* benefits — a model served from a
-    # single OpenRouter-native backend has no cache to keep warm and needs no
-    # pinning.
+    # Never route a deepseek/* review to OpenInference: its fp4 endpoint
+    # trickles responses for 10-50 min. This replaced `order: ["deepseek"]`,
+    # which never took effect (the OpenRouter account refuses providers that
+    # train on paid prompts, so routing drops DeepSeek's own API) and instead
+    # put these requests in a fallback pool led by OpenInference. Mirrors
+    # AUDITOR_IGNORED_PROVIDERS in hermes_cli/fork_ext/boot_reconcile.py.
     if model.startswith("deepseek/"):
-        payload["provider"] = {"order": ["deepseek"]}
+        payload["provider"] = {"ignore": list(IGNORED_PROVIDERS)}
     body = json.dumps(payload).encode("utf-8")
     return urllib.request.Request(
         _OPENROUTER_URL,

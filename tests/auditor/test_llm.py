@@ -77,14 +77,15 @@ def test_session_id_truncated_to_256():
     assert len(_body(req)["session_id"]) == 256
 
 
-def test_deepseek_is_provider_pinned_with_fallbacks_on():
-    # DeepSeek cache is backend-local → pin to the deepseek upstream, but keep
-    # fallbacks ON so an outage doesn't break the review gate.
+def test_deepseek_ignores_openinference_and_is_not_pinned():
+    # `order: ["deepseek"]` never took effect (the account refuses providers that
+    # train on paid prompts) and led routing to OpenInference, whose fp4 endpoint
+    # trickles for 10-50 min. Ignore it instead; every other provider stays open.
     req = llm._build_request("deepseek/deepseek-v4-flash", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-system")
     prov = _body(req)["provider"]
-    assert prov == {"order": ["deepseek"]}
-    assert "allow_fallbacks" not in prov  # fallbacks stay default-on
+    assert prov == {"ignore": ["open-inference"]}
+    assert "order" not in prov and "allow_fallbacks" not in prov
 
 
 def test_non_deepseek_is_not_pinned():

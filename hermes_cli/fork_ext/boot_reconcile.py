@@ -153,6 +153,9 @@ FALLBACK_MODEL_DEFAULT = "deepseek/deepseek-v4-flash"
 OPENROUTER_REQUEST_TIMEOUT = 600
 # Tighter for the auditor: every trickled call costs it the whole value (see reconcile_cfg).
 AUDITOR_OPENROUTER_REQUEST_TIMEOUT = 420
+# OpenRouter providers the auditor never routes to (see reconcile_cfg). auditor/llm.py mirrors it;
+# tests/test_auditor_provider_pinning.py keeps the two equal.
+AUDITOR_IGNORED_PROVIDERS = ["open-inference"]
 GSC_SERVER = {
     "command": "/opt/hermes/.venv/bin/python",
     "args": ["/opt/hermes/optional-mcps/gsc/server.py"],
@@ -636,7 +639,7 @@ def reconcile_cfg(
     # the same value on 4 profiles (main, biglobster, finview, grow-shop,
     # socialagenda), silently disabling fallback account-wide. Reconciled
     # here like model.default so this can't drift again. Auditor is
-    # exempt — its fallback path is the DeepSeek pin below, not this key.
+    # exempt — OpenRouter's own provider fallback serves it, not this key.
     if label != "auditor":
         fb_model = environ.get("HERMES_FALLBACK_MODEL", FALLBACK_MODEL_DEFAULT).strip()
         if fb_model:
@@ -648,20 +651,25 @@ def reconcile_cfg(
                 fbv["provider"] = "openrouter"
                 cfg["fallback_model"] = fbv
                 changed = True
-    # AUDITOR: pin OpenRouter provider routing to DeepSeek's own endpoint.
-    # The orchestrator cached erratically (56% hit) DESPITE stable
-    # session_id — OpenRouter session-stickiness is best-effort, so the
-    # deepseek-v4-flash orchestrator needs explicit provider pinning for
-    # a warm prompt cache (input tokens are 99% of its cost; see
-    # tasks/token-optimization.md). Safe: allow_fallbacks stays on (a
-    # DeepSeek outage degrades instead of breaking), and the "deepseek"
-    # slug is a no-op for non-deepseek models. Auditor profile ONLY —
-    # pinning the main profile is deliberately deferred until the
-    # deepseek-v4-pro migration (CEO decision, token-optimization.md).
+    # AUDITOR: route like the rest of the fleet, minus OpenInference.
+    # The old `order: ["deepseek"]` pin (2026-07-02, for a warm DeepSeek
+    # prompt cache) never took effect: the OpenRouter account refuses
+    # providers that train on paid prompts, and DeepSeek's own API does, so
+    # routing drops it ("Paid model training violation (account settings)",
+    # probed 2026-10-01). DeepSeek served 0 of 3,993 logged calls. Worse, the
+    # dead pin put the auditor in a different fallback pool led by
+    # OpenInference's fp4 endpoint, which trickles responses for 10-50 min.
+    # All 7 OpenInference calls in the fleet were the auditor's, and the
+    # unpinned profiles (~3,400 calls, mostly Together/AtlasCloud/Parasail)
+    # had no slow calls. So: drop the pin (only the exact value we wrote,
+    # never a hand-set order) and ignore OpenInference outright.
     if label == "auditor":
         pr = _section(cfg, "provider_routing")
-        if pr.get("order") != ["deepseek"]:
-            pr["order"] = ["deepseek"]
+        if pr.get("order") == ["deepseek"]:
+            del pr["order"]
+            changed = True
+        if pr.get("ignore") != AUDITOR_IGNORED_PROVIDERS:
+            pr["ignore"] = list(AUDITOR_IGNORED_PROVIDERS)
             changed = True
     # Bound every OpenRouter request to 600s. Without a per-provider
     # request_timeout_seconds the httpx timeout falls back to
