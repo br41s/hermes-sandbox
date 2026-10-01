@@ -245,3 +245,93 @@ def test_the_module_entry_point_suppresses_the_real_module(homes, monkeypatch):
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.process_env_scope", "--check"],
                             env=env, cwd="/", capture_output=True, text=True, timeout=120)
     assert "  PROBE_ONLY_KEY\n" in result.stdout, result.stdout + result.stderr
+
+
+# ── stage 3 step 0e: what a move into a profile's own store would change ─────
+
+
+def _write_default_jobs(launch, jobs):
+    (launch / "cron").mkdir(exist_ok=True)
+    (launch / "cron" / "jobs.json").write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+
+
+def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes, capsys):
+    launch, secondary = homes
+    (secondary / ".env").write_text("TELEGRAM_CRON_THREAD_ID=3\n", encoding="utf-8")
+    rental = launch / "profiles" / "bl-acme"
+    rental.mkdir()
+    _write_default_jobs(launch, [
+        {"id": "a1", "name": "own", "profile": "grow-shop", "deliver": "telegram"},
+        {"id": "a2", "name": "general", "profile": "grow-shop", "deliver": "telegram:-1001:"},
+        {"id": "a3", "name": "elsewhere", "profile": "grow-shop", "deliver": "telegram:-1001:61",
+         "failure_deliver": "telegram:-1001:3", "workdir": "/srv/x"},
+        {"id": "a4", "name": "quiet", "profile": "grow-shop", "deliver": "local"},
+        {"id": "a5", "name": "rental-bare", "profile": "bl-acme", "deliver": "telegram"},
+        {"id": "a6", "name": "no-profile", "deliver": "telegram"},
+    ])
+    pes.check()
+    out = capsys.readouterr().out
+    assert "default-store profile jobs (what a move would carry): 5" in out
+    assert "grow-shop a1 enabled deliver=own topic failure=- workdir=no own" in out
+    assert "grow-shop a2 enabled deliver=General failure=- workdir=no general" in out
+    assert "grow-shop a3 enabled deliver=other topic failure=own topic workdir=yes elsewhere" in out
+    assert "grow-shop a4 enabled deliver=local" in out
+    assert "bl-acme a5 enabled deliver=General (no routing thread)" in out
+    assert "no-profile" not in out
+    for value in ("-1001", ":61", ":3"):
+        assert value not in out
+
+
+def test_probe_lists_keys_a_move_would_lose_minus_the_deny_set(homes, monkeypatch, capsys):
+    launch, secondary = homes
+    monkeypatch.setenv("SOME_SERVICE_ONLY_KEY", "secret-value")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("YOUTUBE_CLIENT_SECRET", "yt")
+    monkeypatch.setenv("EXA_API_KEY", "exa")
+    rental = launch / "profiles" / "bl-acme"
+    rental.mkdir()
+    (rental / ".env").write_text("BL_SITE_URL=https://acme.example\n", encoding="utf-8")
+    (secondary / ".env").write_text("OPENROUTER_API_KEY=grow\nEXA_API_KEY=exa\n", encoding="utf-8")
+    pes.check()
+    out = capsys.readouterr().out
+    common = out.split("Lost by every profile:")[1].split("[")[0]
+    assert "  SOME_SERVICE_ONLY_KEY\n" in common
+    for denied in ("TELEGRAM_BOT_TOKEN", "YOUTUBE_CLIENT_SECRET", ALLOWED):
+        assert denied not in common
+    # grow-shop's .env carries EXA, the rental's does not, and for a rental it is policy.
+    assert "  EXA_API_KEY\n" not in common
+    assert "[bl-acme] rental, lost by policy (TENANT_EXCLUDE): EXA_API_KEY" in out
+    for value in ("secret-value", "123:abc", "exa", "acme.example"):
+        assert value not in out.replace("EXA_API_KEY", "")
+
+
+def test_probe_reports_the_auditor_child_view(homes, monkeypatch, capsys):
+    launch, _ = homes
+    auditor = launch / "profiles" / "auditor"
+    auditor.mkdir()
+    (auditor / ".env").write_text("HERMES_AUDITOR_SYSTEM_MODEL=model-a\n", encoding="utf-8")
+    # Service env only: the child inherits the process env, so it still resolves.
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_MAX_TOKENS", "4096")
+    # In the LAUNCH .env too: a routed child drops the launch profile's .env residue
+    # (strip_launch_profile_env), so the auditor's child loses it.
+    (launch / ".env").write_text("OPENROUTER_API_KEY=from-dotenv\n"
+                                 "HERMES_AUDITOR_JUDGE_REASONING_EFFORT=high\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_AUDITOR_JUDGE_REASONING_EFFORT", "high")
+    monkeypatch.delenv("HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS", raising=False)
+    pes.check()
+    out = capsys.readouterr().out
+    view = out.split("auditor child env")[1]
+    assert "HERMES_AUDITOR_SYSTEM_MODEL: resolves" in view
+    assert "HERMES_AUDITOR_JUDGE_MAX_TOKENS: resolves" in view
+    assert "HERMES_AUDITOR_JUDGE_REASONING_EFFORT: MISSING (set in the process env, not reaching the child)" in view
+    assert "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS: unset (default applies)" in view
+    assert "model-a" not in out and "4096" not in out
+
+
+def test_a_failed_move_report_never_costs_the_verdict(homes, monkeypatch, capsys):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_GROUP_ALLOWED_CHATS", "-1004224848555")
+    monkeypatch.setattr(pes, "_print_move_report", lambda home: 1 / 0)
+    assert pes.check() == 0
+    out = capsys.readouterr().out
+    assert "move report failed: ZeroDivisionError" in out and "VERDICT: OK" in out
