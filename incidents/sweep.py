@@ -6,7 +6,9 @@ stdout is delivered to the incidents Telegram thread.
 
 Signals:
   * Failed cron jobs — the scheduler records ``last_error`` / ``last_delivery_error``
-    (+ ``last_run_at``) on each job record.
+    (+ ``last_run_at``) on each job record. Every store the gateway ticks is read
+    (``load_served_store_jobs``); a job from a profile's own store is reported as
+    ``<profile>/<id>``.
   * Silently stalled cron jobs — enabled recurring jobs whose own schedule says a
     run should have completed by now (+ grace) but ``last_run_at`` never advanced.
     Catches aborts that record no error (approval stalls, killed agents).
@@ -138,6 +140,78 @@ def _within(iso: Optional[str], hours: int, now: datetime) -> bool:
     return ts is not None and (now - ts) <= timedelta(hours=hours)
 
 
+# Jobs read from a profile's OWN cron store carry this key (set by
+# ``load_served_store_jobs``) so their incident ids, titles and handoffs name the
+# profile. Default-store jobs never carry it, which keeps their ids byte-for-byte
+# what ``incidents/state.json`` already holds as ``seen``.
+_STORE_PROFILE_KEY = "_incident_store_profile"
+
+
+def _job_ref(job: dict) -> str:
+    """The job's id for incident ids: bare in the default store, ``<profile>/<id>``
+    in a profile's own store. Two stores can each hold a job of the same name."""
+    jid = str(job.get("id") or job.get("name") or "unknown")
+    profile = job.get(_STORE_PROFILE_KEY)
+    return f"{profile}/{jid}" if profile else jid
+
+
+def _job_label(job: dict) -> str:
+    jid = str(job.get("id") or job.get("name") or "unknown")
+    name = job.get("name") or jid
+    profile = job.get(_STORE_PROFILE_KEY)
+    return f"{name}' (profile {profile})" if profile else f"{name}'"
+
+
+def _runs_cmd(job: dict) -> str:
+    jid = str(job.get("id") or job.get("name") or "unknown")
+    profile = job.get(_STORE_PROFILE_KEY)
+    return f"hermes -p {profile} cron runs {jid}" if profile else f"hermes cron runs {jid}"
+
+
+def _handoff_ref(job: dict) -> str:
+    """``cron job id <jid>`` for the default store, unchanged. A profile-store job's
+    handoff deliberately does NOT start that way: ``remediation`` parses that prefix
+    and acts on the DEFAULT store (``trigger_job``/``get_job``), so it must refuse
+    these ("could not resolve job id") rather than act on the wrong store."""
+    jid = str(job.get("id") or job.get("name") or "unknown")
+    profile = job.get(_STORE_PROFILE_KEY)
+    return f"profile {profile} cron job id {jid}" if profile else f"cron job id {jid}"
+
+
+def load_served_store_jobs() -> List[dict]:
+    """Every job the gateway ticks: the default store, plus each served profile's
+    own ``cron/jobs.json`` (stage 3 step 0d, ``ops/multiplex-stage3-plan.md``).
+
+    Before this the sweep read the default store only, so a job moved into its
+    profile's store would stop reporting failures, silent stalls and prompt drift
+    to the incidents thread. Profiles come from ``profiles_to_serve(multiplex=True)``,
+    the set the gateway serves; a profile with no ``jobs.json`` is skipped rather
+    than read, because ``load_jobs`` creates the store's directories. A store that
+    cannot be read is skipped too, like the default store above.
+    """
+    from cron.jobs import load_jobs, use_cron_store
+
+    try:
+        jobs = list(load_jobs())
+    except Exception:
+        jobs = []
+    try:
+        from hermes_cli.profiles import profiles_to_serve
+        served = profiles_to_serve(multiplex=True)
+    except Exception:
+        return jobs
+    for name, home in served:
+        if name == "default" or not (Path(home) / "cron" / "jobs.json").is_file():
+            continue
+        try:
+            with use_cron_store(home):
+                store = load_jobs()
+        except Exception:
+            continue
+        jobs.extend({**job, _STORE_PROFILE_KEY: name} for job in store if isinstance(job, dict))
+    return jobs
+
+
 def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
                            window_hours: int = CRON_FAILURE_WINDOW_HOURS) -> List[Incident]:
     """Flag jobs whose most recent run recorded an error within the window.
@@ -167,7 +241,7 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
         when = job.get("last_interrupted_at") if interrupted else job.get("last_run_at")
         if not _within(when, window_hours, now):
             continue
-        jid = str(job.get("id") or job.get("name") or "unknown")
+        ref = _job_ref(job)
         if interrupted:
             err_kind = "interrupted by restart"
         else:
@@ -178,14 +252,14 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
             detail += (
                 f"\nlast completed run: {job.get('last_run_at') or 'never'}\n"
                 "this run was NOT retried — side effects may be partial; "
-                f"inspect with `hermes cron runs {jid}` before re-running it"
+                f"inspect with `{_runs_cmd(job)}` before re-running it"
             )
         out.append(Incident(
-            id=f"cron:{jid}:{when}",
+            id=f"cron:{ref}:{when}",
             kind="cron",
-            title=f"Cron job '{job.get('name') or jid}' failed ({err_kind})",
+            title=f"Cron job '{_job_label(job)} failed ({err_kind})",
             detail=detail,
-            handoff=f"cron job id {jid}",
+            handoff=_handoff_ref(job),
             error=err_text,
         ))
     return out
@@ -234,19 +308,18 @@ def cron_stale_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
         overdue = now - expected_next
         if overdue <= timedelta(hours=grace_hours):
             continue
-        jid = str(job.get("id") or job.get("name") or "unknown")
         last_run = job.get("last_run_at")
         out.append(Incident(
-            id=f"cron-stale:{jid}:{base}",
+            id=f"cron-stale:{_job_ref(job)}:{base}",
             kind="cron",
-            title=f"Cron job '{job.get('name') or jid}' silently stalled",
+            title=f"Cron job '{_job_label(job)} silently stalled",
             detail=(
                 f"expected a completed run by: {expected_next.isoformat()}\n"
                 f"last completed run: {last_run or 'never'}\n"
                 "no error was recorded — the run likely aborted before "
                 "finishing (approval stall, killed agent, or scheduler wedge)"
             ),
-            handoff=f"cron job id {jid} (silent stall — check scheduler logs, not last_error)",
+            handoff=f"{_handoff_ref(job)} (silent stall — check scheduler logs, not last_error)",
         ))
     return out
 
@@ -276,18 +349,17 @@ def prompt_drift_incidents(jobs: List[dict], *,
         source = job.get("prompt_source")
         if not source or not isinstance(source, str):
             continue
-        jid = str(job.get("id") or job.get("name") or "unknown")
-        name = job.get("name") or jid
+        ref = _job_ref(job)
         path = root / source
         try:
             repo_text = path.read_text(encoding="utf-8")
         except OSError:
             out.append(Incident(
-                id=f"prompt-drift:{jid}:missing:{source}",
+                id=f"prompt-drift:{ref}:missing:{source}",
                 kind="cron",
-                title=f"Cron job '{name}' prompt source missing",
+                title=f"Cron job '{_job_label(job)} prompt source missing",
                 detail=f"prompt_source: {source}\nfile not found under {root}",
-                handoff=f"cron job id {jid} — fix its prompt_source path or restore the file",
+                handoff=f"{_handoff_ref(job)} — fix its prompt_source path or restore the file",
             ))
             continue
         live_text = job.get("prompt") or ""
@@ -296,16 +368,16 @@ def prompt_drift_incidents(jobs: List[dict], *,
         repo_hash = hashlib.sha256(repo_text.strip().encode()).hexdigest()[:12]
         live_hash = hashlib.sha256(live_text.strip().encode()).hexdigest()[:12]
         out.append(Incident(
-            id=f"prompt-drift:{jid}:{repo_hash}:{live_hash}",
+            id=f"prompt-drift:{ref}:{repo_hash}:{live_hash}",
             kind="cron",
-            title=f"Cron job '{name}' prompt drifted from repo source",
+            title=f"Cron job '{_job_label(job)} prompt drifted from repo source",
             detail=(
                 f"prompt_source: {source}\n"
                 f"repo sha256: {repo_hash}  live sha256: {live_hash}\n"
                 "repo .prompt and live jobs.json prompt no longer match — "
                 "update BOTH sides (they are independent by design)"
             ),
-            handoff=f"cron job id {jid} — diff {source} against the live job prompt",
+            handoff=f"{_handoff_ref(job)} — diff {source} against the live job prompt",
         ))
     return out
 
@@ -1318,8 +1390,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
 
     if jobs is None:
         try:
-            from cron.jobs import load_jobs
-            jobs = load_jobs()
+            jobs = load_served_store_jobs()
         except Exception:
             jobs = []
     lf = langfuse if langfuse is not None else langfuse_error_incidents(now=now)
@@ -1381,8 +1452,11 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     # Remediation reconcile: verify prior gated fixes against current job health
     # and surface promotion recommendations. Escalations/recommendations are
     # substantive output and reset the heartbeat clock just like incidents.
+    # Default-store jobs only: remediation resolves and acts on the default store,
+    # and indexes jobs by id, which a job keeps when it moves into a profile's store.
     remediation_text = _reconcile_text(
-        jobs, now=now, dry_run=dry_run, ledger_path=ledger_path, modes_path=modes_path)
+        [j for j in jobs if not (isinstance(j, dict) and j.get(_STORE_PROFILE_KEY))],
+        now=now, dry_run=dry_run, ledger_path=ledger_path, modes_path=modes_path)
 
     substantive = "\n\n".join(t for t in (incident_text, remediation_text) if t)
     output = ""

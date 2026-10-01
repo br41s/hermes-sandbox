@@ -158,6 +158,13 @@ Corollary when triaging: before calling a quiet cron job dead, check whether
 another profile/workdir job is running. `hermes cron runs <job_id>` shows the
 holder.
 
+**A job moved into its profile's own store answers only to `-p`.** `hermes cron
+move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the
+id, schedule phase, executions, output and notepad, and never calls `remove_job`.
+It is a dry run without `--apply`. Afterwards every per-job command needs
+`hermes -p <p> cron …`; a bare `hermes cron runs <id>` answers "not found".
+Rollback is `--from-profile <p> --to-default --apply`.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk
