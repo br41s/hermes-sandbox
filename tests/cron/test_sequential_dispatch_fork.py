@@ -222,6 +222,45 @@ def test_is_sequential_partition():
     assert is_sequential({"profile": "  ", "workdir": ""}) is False
 
 
+def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
+    """Stage 3 step 0a: a job moved into its profile's own store has no
+    ``profile`` field, so the lane must key on the store the job runs from."""
+    from cron.fork_ext.dispatch import in_profile_store, is_sequential
+    from hermes_constants import (
+        get_routing_process_hermes_home, reset_hermes_home_override, set_hermes_home_override,
+    )
+
+    satellite = tmp_path / "profiles" / "grow-shop"
+    satellite.mkdir(parents=True)
+    token = set_hermes_home_override(str(satellite))
+    try:
+        assert in_profile_store() is True
+        assert is_sequential({}) is True
+    finally:
+        reset_hermes_home_override(token)
+
+    # The multiplex ticker scopes the DEFAULT store the same way: that must not
+    # pull the launch profile's plain jobs onto the lane.
+    token = set_hermes_home_override(str(get_routing_process_hermes_home()))
+    try:
+        assert in_profile_store() is False
+        assert is_sequential({}) is False
+    finally:
+        reset_hermes_home_override(token)
+
+
+def test_in_profile_store_fails_closed(monkeypatch):
+    import hermes_constants
+
+    from cron.fork_ext.dispatch import is_sequential
+
+    def _boom():
+        raise OSError("home unreadable")
+
+    monkeypatch.setattr(hermes_constants, "get_hermes_home", _boom)
+    assert is_sequential({}) is True
+
+
 def test_tick_never_overlaps_profile_or_workdir_jobs(lane, monkeypatch, tmp_path):
     sched, _fork, due = lane
     seq_ids = [_uid(f"prof{i}") for i in range(4)] + [_uid(f"wd{i}") for i in range(2)] + [_uid("both")]
@@ -244,6 +283,58 @@ def test_tick_never_overlaps_profile_or_workdir_jobs(lane, monkeypatch, tmp_path
     _assert_serialized(rec, seq_ids)
     # Plain jobs are NOT serialized: all three were inside run_job at once.
     assert not rec.plain_barrier_broken, "plain jobs were serialized — partition over-reached"
+    assert all(rec.runs[j][1].startswith("cron-parallel") for j in plain_ids)
+
+
+def test_tick_of_a_profile_store_puts_its_plain_jobs_on_the_lane(lane, monkeypatch, tmp_path):
+    """The multiplex ticker runs ``tick`` inside ``_profile_cron_scope``: a
+    satellite store's jobs carry no ``profile`` field and must still share the
+    lane with the default store's profile jobs."""
+    from cron.scheduler_provider import _profile_cron_scope
+
+    sched, _fork, due = lane
+    satellite = tmp_path / "profiles" / "grow-shop"
+    (satellite / "cron").mkdir(parents=True)
+    default_ids = [_uid("defp0"), _uid("defp1")]
+    satellite_ids = [_uid("satplain0"), _uid("satplain1"), _uid("satplain2")]
+    rec = _Recorder()
+    monkeypatch.setattr(sched, "run_job", rec.run_job)
+
+    due[:] = [_job(default_ids[0], profile="auditor"), _job(default_ids[1], profile="biglobster")]
+    assert sched.tick(verbose=False, sync=False) == 2
+    assert rec.started_event(default_ids[0]).wait(5)
+
+    due[:] = [_job(j) for j in satellite_ids]
+    with _profile_cron_scope(satellite):
+        assert sched.tick(verbose=False, sync=False) == 3
+
+    rec.wait_for(default_ids + satellite_ids)
+    _assert_serialized(rec, default_ids)
+    lane_thread = rec.runs[default_ids[0]][1]
+    assert {rec.runs[j][1] for j in satellite_ids} == {lane_thread}, (
+        "a satellite store's job left the lane")
+    first_satellite_start = min(rec.runs[j][2] for j in satellite_ids)
+    assert first_satellite_start >= max(rec.runs[j][3] for j in default_ids), (
+        "a satellite store's job started while a profile job held the lane")
+
+
+def test_tick_of_the_default_store_keeps_plain_jobs_parallel(lane, monkeypatch):
+    """The ticker scopes the launch profile's own store too; its plain jobs stay
+    on upstream's parallel pool."""
+    from cron.scheduler_provider import _profile_cron_scope
+    from hermes_constants import get_routing_process_hermes_home
+
+    sched, _fork, due = lane
+    plain_ids = [_uid(f"defplain{i}") for i in range(3)]
+    due[:] = [_job(j) for j in plain_ids]
+    rec = _Recorder(plain_parties=len(plain_ids))
+    monkeypatch.setattr(sched, "run_job", rec.run_job)
+
+    with _profile_cron_scope(get_routing_process_hermes_home()):
+        assert sched.tick(verbose=False, sync=True) == 3
+
+    rec.wait_for(plain_ids)
+    assert not rec.plain_barrier_broken, "the default store's plain jobs were serialized"
     assert all(rec.runs[j][1].startswith("cron-parallel") for j in plain_ids)
 
 

@@ -46,11 +46,34 @@ _sequential_executor_lock = threading.Lock()
 
 def is_sequential(job: dict) -> bool:
     """True for a job the fork runs on the single-thread lane: any job with a
-    ``profile`` or a ``workdir``. Neither mutates process-global state any more
-    (see the module docstring); the lane is kept by policy, and widening it is
-    a separate decision. Jobs with neither field go to upstream's parallel pool.
+    ``profile`` or a ``workdir``, and any job running from a profile's OWN cron
+    store. None of these mutates process-global state any more (see the module
+    docstring); the lane is kept by policy, and widening it is a separate decision
+    (stage 3 step 5). Everything else goes to upstream's parallel pool.
+
+    The store rule is stage 3 step 0a (``ops/multiplex-stage3-plan.md``): a job
+    moved from the default store into its profile's store loses its ``profile``
+    field, so without it a move would quietly let the job run in parallel.
     """
-    return bool((job.get("workdir") or "").strip() or (job.get("profile") or "").strip())
+    if (job.get("workdir") or "").strip() or (job.get("profile") or "").strip():
+        return True
+    return in_profile_store()
+
+
+def in_profile_store() -> bool:
+    """True while this context runs under a profile home other than the launch one.
+
+    The multiplex ticker (``_profile_cron_scope``) and a routed webhook both install
+    the profile's home override before they resolve or run a job, so the active home
+    names the store the job came from. Fails closed: if either home cannot be
+    resolved, the job goes on the lane.
+    """
+    try:
+        from hermes_constants import get_hermes_home, get_routing_process_hermes_home
+
+        return get_hermes_home().resolve() != get_routing_process_hermes_home().resolve()
+    except Exception:
+        return True
 
 
 def get_sequential_executor() -> concurrent.futures.ThreadPoolExecutor:
