@@ -165,6 +165,13 @@ It is a dry run without `--apply`. Afterwards every per-job command needs
 `hermes -p <p> cron …`; a bare `hermes cron runs <id>` answers "not found".
 Rollback is `--from-profile <p> --to-default --apply`.
 
+**Its log lines move too.** Under multiplex a run in a profile's home logs to
+`/opt/data/profiles/<p>/logs/agent.log` (`hermes_logging.py` `_ProfileRoutingFileHandler`),
+not `/opt/data/logs/agent.log`, so grepping the main log for a moved job's session id finds
+nothing and reads like a run that never happened. Grep both, rotations included. A kickoff
+ping that reached the adapter but failed logs `kickoff ping had delivery errors`; only an
+exception logs `kickoff ping failed`, so count both.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk

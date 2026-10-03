@@ -75,7 +75,7 @@ def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list
         if resolved is None:
             errors.append(resolve_err)
             continue
-        _transport, pconfig, runtime_adapter, target_adapters = resolved
+        transport, pconfig, runtime_adapter, target_adapters = resolved
 
         if runtime_adapter is not None and loop is not None and getattr(loop, "is_running", lambda: False)():
             try:
@@ -95,6 +95,12 @@ def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list
                         ),
                         text,
                         route_metadata,
+                        # The transport authorized above, as the result delivery passes it:
+                        # re-resolving from a satellite's config, whose own block for a
+                        # platform it holds no credential for is ``enabled: false``, refuses
+                        # the shared adapter and the ping falls to a token-less standalone
+                        # send (2026-10-03 canary).
+                        transport=transport,
                     ),
                     loop,
                 )
