@@ -707,7 +707,7 @@ class TestKickoffPingFromAProfileStore:
         return home
 
     @staticmethod
-    def _send(job, adapters):
+    def _send(job, adapters, *, satellite_platforms=None):
         import asyncio
         from concurrent.futures import Future
 
@@ -727,7 +727,8 @@ class TestKickoffPingFromAProfileStore:
 
         from gateway.config import Platform, PlatformConfig
         config = MagicMock()
-        config.platforms = {Platform.DISCORD: PlatformConfig(enabled=True)}
+        config.platforms = ({Platform.DISCORD: PlatformConfig(enabled=True)}
+                            if satellite_platforms is None else satellite_platforms)
         config.get_home_channel = lambda p: None
         with patch("gateway.config.load_gateway_config", return_value=config), \
              patch("cron.scheduler.load_config", return_value={"cron": {"progress_pings": True}}), \
@@ -771,6 +772,30 @@ class TestKickoffPingFromAProfileStore:
             assert primary.sent == [] and standalone == ["C9"]
         finally:
             reset_hermes_home_override(token)
+
+    def test_a_satellite_whose_own_platform_block_is_disabled_still_pings(self, tmp_path, monkeypatch):
+        """Production's shape: the satellite's own block for a platform it holds no
+        credential for reads ``enabled: false``. Re-resolving the transport from that
+        config refuses the shared adapter, so
+        the ping must reuse the transport the shared route already authorized — or it
+        falls back to a standalone send with no token (2026-10-03 canary, be8a4add42b0)."""
+        from cron.scheduler_preflight import SharedRouteAdapters, _primary_profile_routes_for_current_home
+        from gateway.config import Platform, PlatformConfig
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        home = self._satellite(tmp_path, monkeypatch, [
+            {"platform": "discord", "chat_id": "C1", "profile": "fitness"}])
+        primary = self._primary()
+        token = set_hermes_home_override(str(home))
+        try:
+            shared = SharedRouteAdapters({Platform.DISCORD: primary},
+                                         _primary_profile_routes_for_current_home())
+            standalone = self._send({"id": "j1", "name": "brief", "deliver": "discord:C1"}, shared,
+                                    satellite_platforms={Platform.DISCORD: PlatformConfig(enabled=False)})
+        finally:
+            reset_hermes_home_override(token)
+        assert standalone == [], "fell back to a token-less standalone send"
+        assert [chat for chat, _ in primary.sent] == ["C1"]
 
     def test_a_bare_deliver_resolves_its_home_target_under_multiplex(self, tmp_path, monkeypatch):
         from agent import secret_scope
