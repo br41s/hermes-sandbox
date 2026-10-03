@@ -402,3 +402,56 @@ def test_auditor_judge_knobs_are_stamped_into_the_auditor_env(tmp_path) -> None:
     assert "HERMES_AUDITOR_JUDGE_MAX_TOKENS=4000" in auditor
     assert "HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS=300" in auditor
     assert "HERMES_AUDITOR_JUDGE" not in (home / "profiles" / "biglobster" / ".env").read_text(encoding="utf-8")
+
+
+# --- Rental pass-through keys: survive the move into the rental's own store ---
+
+PASSTHROUGH = {"BL_SITE_AUTOMATION_KEY": "automation-SENTINEL", "TYPESAFE_API_KEY": "ts-SENTINEL"}
+
+
+def test_rentals_get_the_pass_through_keys_in_their_own_env(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, {**_service_env(rental=True), **PASSTHROUGH})
+    # The satellite scope is .env only: what a rental job resolves after its move.
+    resolved = _satellite_scope_of(home, "rental")
+    assert {name: resolved.get(name) for name in PASSTHROUGH} == PASSTHROUGH
+
+
+def test_our_own_profiles_never_get_the_pass_through_keys_pinned(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, {**_service_env(rental=True), **PASSTHROUGH})
+    text = (home / "profiles" / "biglobster" / ".env").read_text(encoding="utf-8")
+    assert not any(name in text for name in PASSTHROUGH)
+
+
+def test_a_rotated_pass_through_key_replaces_the_old_one(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, {**_service_env(rental=True), **PASSTHROUGH})
+    br.sync_envs(home, {**_service_env(rental=True), **PASSTHROUGH,
+                        "BL_SITE_AUTOMATION_KEY": "automation-ROTATED"})
+    text = (home / "profiles" / "rental" / ".env").read_text(encoding="utf-8")
+    assert re.findall(r"^BL_SITE_AUTOMATION_KEY=.*$", text, re.MULTILINE) == [
+        "BL_SITE_AUTOMATION_KEY=automation-ROTATED"]
+    assert len(re.findall(r"^TYPESAFE_API_KEY=", text, re.MULTILINE)) == 1
+
+
+def test_an_unset_pass_through_key_is_stripped_not_left_stale(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    br.sync_envs(home, {**_service_env(rental=True), **PASSTHROUGH})
+    br.sync_envs(home, {**_service_env(rental=True), "BL_SITE_AUTOMATION_KEY": "automation-SENTINEL"})
+    text = (home / "profiles" / "rental" / ".env").read_text(encoding="utf-8")
+    assert "TYPESAFE_API_KEY" not in text
+    assert "BL_SITE_AUTOMATION_KEY=automation-SENTINEL" in text
+
+
+def test_a_pass_through_key_set_only_in_the_main_env_file_still_arrives(tmp_path) -> None:
+    home = _boot_home(tmp_path)
+    (home / ".env").write_text("BL_SITE_AUTOMATION_KEY=automation-FROM-FILE\n", encoding="utf-8")
+    br.sync_envs(home, _service_env(rental=True))
+    assert _satellite_scope_of(home, "rental").get("BL_SITE_AUTOMATION_KEY") == "automation-FROM-FILE"
+
+
+def _satellite_scope_of(home: Path, profile: str) -> dict:
+    from agent.secret_scope import build_profile_secret_scope
+
+    return dict(build_profile_secret_scope(home / "profiles" / profile))
