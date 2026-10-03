@@ -796,6 +796,36 @@ def test_check_is_skipped_without_a_key(monkeypatch):
     assert out["generic"] == []
 
 
+def test_the_key_comes_from_the_runs_profile_scope_not_the_process_env(monkeypatch):
+    """A rental run bills its own scope's key, never the default profile's."""
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+
+    captured = _fake_typesafe(monkeypatch, noul=0.1)  # os.environ: "sk-test"
+    token = set_secret_scope({"TYPESAFE_API_KEY": "sk-rental"})
+    try:
+        out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})
+    finally:
+        reset_secret_scope(token)
+    assert out["status"] == "ok"
+    assert [c["headers"]["Authorization"] for c in captured] == ["Bearer sk-rental"]
+
+
+def test_an_empty_scope_skips_the_check_even_with_a_process_key(monkeypatch):
+    """Under multiplex (production) the scope is authoritative: a rental whose .env
+    lacks the key skips the check instead of billing BigLobster's."""
+    from agent import secret_scope
+    from agent.secret_scope import reset_secret_scope, set_secret_scope
+
+    monkeypatch.setattr(secret_scope, "_MULTIPLEX_ACTIVE", True)
+    captured = _fake_typesafe(monkeypatch, noul=0.93)
+    token = set_secret_scope({})
+    try:
+        out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})
+    finally:
+        reset_secret_scope(token)
+    assert out["status"] == "skipped" and captured == []
+
+
 def test_decisive_boilerplate_is_reported(monkeypatch):
     _fake_typesafe(monkeypatch, noul=0.93)
     out = health._check_boilerplate_descriptions({"/a": "A"}, {"/a": LONG_A})

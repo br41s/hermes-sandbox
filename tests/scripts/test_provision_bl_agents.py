@@ -257,6 +257,8 @@ _SERVICE_ENV = {
     "HERMES_LANGFUSE_SECRET_KEY": "sk-lf-BIGLOBSTER",
     "HERMES_RENTAL_LANGFUSE_PUBLIC_KEY": "pk-lf-RENTAL",
     "HERMES_RENTAL_LANGFUSE_SECRET_KEY": "sk-lf-RENTAL",
+    "BL_SITE_AUTOMATION_KEY": "automation-SHARED",       # RENTAL_PASSTHROUGH: must arrive
+    "TYPESAFE_API_KEY": "ts-SHARED",
 }
 
 
@@ -303,6 +305,8 @@ def test_a_new_rental_env_is_synced_like_a_boot_would(tmp_path, monkeypatch):
     assert env["HERMES_LANGFUSE_PUBLIC_KEY"] == "pk-lf-RENTAL"
     assert env["HERMES_LANGFUSE_SECRET_KEY"] == "sk-lf-RENTAL"
     assert env["LANGFUSE_PUBLIC_KEY"] == "" and env["LANGFUSE_SECRET_KEY"] == ""
+    assert env["BL_SITE_AUTOMATION_KEY"] == "automation-SHARED"
+    assert env["TYPESAFE_API_KEY"] == "ts-SHARED"
     assert "BIGLOBSTER" not in Path(result["env_path"]).read_text(encoding="utf-8")
 
 

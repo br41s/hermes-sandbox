@@ -540,7 +540,12 @@ def _check_boilerplate_descriptions(titles: dict[str, str], descriptions: dict[s
     and found nothing" — if it could also mean "never ran", the check would be
     another green that proves nothing.
     """
-    api_key = os.environ.get("TYPESAFE_API_KEY")
+    # Through the run's profile scope, never os.environ: a bare os.environ read in
+    # a profile job gets the DEFAULT profile's value (CLAUDE.md). Rentals get the
+    # key from boot_reconcile.RENTAL_PASSTHROUGH.
+    from hermes_cli.config import get_env_value
+
+    api_key = (get_env_value("TYPESAFE_API_KEY") or "").strip()
     if not api_key:
         return {"status": "skipped", "reason": "TYPESAFE_API_KEY is not set",
                 "checked": 0, "generic": []}

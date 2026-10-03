@@ -550,7 +550,8 @@ def _sync_rental_env_now(env_path: Path, environ) -> None:
     tenant on each boot: the shared ``INJECT`` keys (minus ``TENANT_EXCLUDE``,
     so the client's own OpenRouter/Pexels keys stay and BigLobster's research
     and Langfuse keys never arrive) plus the cron tuning, then the rental
-    Langfuse pin. A test holds the result equal to what the next boot writes.
+    Langfuse pin and the rental pass-through keys. A test holds the result
+    equal to what the next boot writes.
     """
     from hermes_cli.fork_ext import boot_reconcile as br
 
@@ -558,6 +559,7 @@ def _sync_rental_env_now(env_path: Path, environ) -> None:
     br.sync_env_file(env_path, environ, exclude=br.TENANT_EXCLUDE)
     public_key, secret_key = (br._resolve(home, environ, v) for v in br.RENTAL_LANGFUSE_SOURCE)
     br._pin_vars(env_path, br.rental_langfuse_pin(public_key, secret_key))
+    br.pin_rental_passthrough(env_path, home, environ)
 
 
 def pick_stagger_schedule(slug: str, agent_key: str) -> str:

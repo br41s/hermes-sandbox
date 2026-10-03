@@ -297,6 +297,31 @@ def rental_langfuse_pin(public_key: str, secret_key: str) -> dict:
     return {name: "" for name in LANGFUSE_KEY_NAMES}
 
 
+# Service-env keys BigLobster provides to every rental, pinned into its .env by
+# name on every boot (and at provisioning), so a rotation in Zeabur reaches every
+# rental. A rental reads them today only because a fork profile job's scope merges
+# os.environ; a job in the rental's OWN store reads its .env alone (stage 3,
+# cohort 3), so without this they vanish on the move:
+#   BL_SITE_AUTOMATION_KEY  bl_site_* send it to log in past the site's Turnstile;
+#                           without it a Turnstile-protected site refuses every write.
+#   TYPESAFE_API_KEY        bl_site_health's boilerplate-description check, billed
+#                           to BigLobster. Drop it from this tuple to make rentals
+#                           skip that check instead.
+# Not INJECT: only rentals use the bl_site tools. Unset in the service env means the
+# line is stripped, never left stale.
+RENTAL_PASSTHROUGH = ("BL_SITE_AUTOMATION_KEY", "TYPESAFE_API_KEY")
+
+
+def pin_rental_passthrough(env_path: Path, home: Path, environ: Mapping[str, str]) -> None:
+    """Write ``RENTAL_PASSTHROUGH``'s set keys into a rental .env; strip the unset ones."""
+    values = {var: _resolve(home, environ, var) for var in RENTAL_PASSTHROUGH}
+    _pin_vars(env_path, {var: val for var, val in values.items() if val})
+    unset = [var for var, val in values.items() if not val]
+    if unset and env_path.exists():
+        env_path.write_text(_strip_vars(env_path.read_text(encoding="utf-8"), unset),
+                            encoding="utf-8")
+
+
 def real_profiles(home: Path):
     """Profile dirs, sorted. SOUL.md is the "real profile" marker (same as the s6 reconciler)."""
     root = home / "profiles"
@@ -368,6 +393,9 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
                 print(f"[03-biglobster] Stripped stale shared research keys from {prof_env}")
             _pin_vars(prof_env, rental_langfuse)
             print(f"[03-biglobster] Pinned rental Langfuse keys in {prof_env}")
+            pin_rental_passthrough(prof_env, home, environ)
+            print(f"[03-biglobster] Pinned rental pass-through keys "
+                  f"({', '.join(RENTAL_PASSTHROUGH)}) in {prof_env}")
         print(f"[03-biglobster] Synced env vars into {prof_env}{why}")
 
     auditor = home / "profiles" / "auditor"
