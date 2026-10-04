@@ -19,6 +19,7 @@
 #
 # USAGE
 #   scripts/deploy.sh [--status] [--dry-run] [--verify-file PATH] [--yes] [--build]
+#                     [--force-in-flight]
 #
 # THE BUILD NORMALLY IS NOT THIS SCRIPT'S JOB. `.github/workflows/
 # ghcr-publish.yml` builds every push to main and publishes BOTH `:latest` and
@@ -50,6 +51,10 @@
 #   --yes           skip the confirmation prompt
 #   --build         build via Cloud Build first instead of using the image
 #                   GitHub Actions already published. Needs the token above.
+#   --force-in-flight
+#                   deploy even while a cron run is in flight. Without it the
+#                   script lists the runs a rollout would cut and asks (or,
+#                   with --yes, refuses).
 #
 set -euo pipefail
 
@@ -60,6 +65,7 @@ DRY_RUN=0
 ASSUME_YES=0
 STATUS_ONLY=0
 DO_BUILD=0
+FORCE_IN_FLIGHT=0
 VERIFY_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,6 +73,7 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --build) DO_BUILD=1; shift ;;
+    --force-in-flight) FORCE_IN_FLIGHT=1; shift ;;
     --verify-file) VERIFY_FILE="${2:-}"; [ -n "$VERIFY_FILE" ] || { echo "--verify-file needs a path" >&2; exit 2; }; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -347,6 +354,55 @@ if [ "$DO_BUILD" -eq 0 ]; then
       exit 1
     fi
   fi
+fi
+
+# ── Do not cut a cron run in flight ──────────────────────────────────────────
+# Moving the tag restarts the gateway, and a run it interrupts fails ("Gateway
+# shutdown (post-interrupt) killed the job's tool subprocess"): on 2026-10-04 a
+# rental's 14:12 Product Sheet run was lost that way, because "the last run
+# finished" is not "nothing is running". Ask the pod which executions are
+# claimed or running, in the default store and every profile store (a moved
+# job's executions live in its profile's own executions.db). Read-only, as the
+# hermes user. An unreadable answer warns and continues: the check must never
+# become the reason a production fix cannot ship.
+IN_FLIGHT_PY='
+import glob, sqlite3, sys
+root = sys.argv[1] if len(sys.argv) > 1 else "/opt/data"
+dbs = glob.glob(root + "/cron/executions.db") + glob.glob(root + "/profiles/*/cron/executions.db")
+for db in dbs:
+    con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+    for job_id, status, claimed in con.execute(
+            "select job_id, status, claimed_at from executions where status in (?, ?)",
+            ("claimed", "running")):
+        print(job_id, status, claimed, db)
+print("__in_flight_check_ok__")
+'
+echo "→ Checking for cron runs in flight"
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "  [dry-run] zeabur service exec --id $SERVICE_ID -i=false -- ... with-contenv s6-setuidgid hermes python -c \"\$IN_FLIGHT_PY\""
+elif IN_FLIGHT="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
+    /usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv \
+    s6-setuidgid hermes /opt/hermes/.venv/bin/python -c "$IN_FLIGHT_PY" 2>/dev/null | tr -d '\r')" \
+    && printf '%s\n' "$IN_FLIGHT" | grep -q '^__in_flight_check_ok__$'; then
+  # The marker is the proof the probe ran to the end: an exec that swallowed a
+  # crash would otherwise print nothing, which reads exactly like "nothing running".
+  IN_FLIGHT="$(printf '%s\n' "$IN_FLIGHT" | grep -v '^__in_flight_check_ok__$' | sed '/^[[:space:]]*$/d' || true)"
+  if [ -z "$IN_FLIGHT" ]; then
+    echo "  ✓ nothing running"
+  else
+    echo "  ⚠ a rollout now would cut these runs (job, status, claimed at, store):" >&2
+    printf '%s\n' "$IN_FLIGHT" | sed 's/^/      /' >&2
+    if [ "$FORCE_IN_FLIGHT" -eq 1 ]; then
+      echo "  --force-in-flight: deploying anyway" >&2
+    elif [ "$ASSUME_YES" -eq 1 ]; then
+      echo "  Refusing with --yes. Wait for them to finish, or pass --force-in-flight." >&2
+      exit 1
+    else
+      confirm "  Cut them and deploy anyway? [y/N] "
+    fi
+  fi
+else
+  echo "  ⚠ could not ask the pod which runs are in flight — continuing" >&2
 fi
 
 if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
