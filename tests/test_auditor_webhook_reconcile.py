@@ -161,3 +161,108 @@ def test_schedule_reconcile_logic_on_sample_jobs() -> None:
     assert needs_downgrade({"schedule": {"kind": "cron", "expr": "0 * * * *"}}) is True
     assert needs_downgrade({"schedule": {}}) is True
     assert needs_downgrade({}) is True
+
+
+# --- Stage 3: the review job may live in the auditor's own store ------------
+
+def _run_reconcile(webhook_block: str, home: Path) -> str:
+    """Execute §6e's real Python heredoc against a scratch HERMES_HOME."""
+    import os
+    import subprocess
+    import sys
+
+    after = webhook_block.split("<<'PYEOF'", 1)[1]  # `... <<'PYEOF' || echo ...` then the body
+    code = after.split("\n", 1)[1].rsplit("\nPYEOF\n", 1)[0]
+    env = {**os.environ, "HERMES_HOME": str(home), "WEBHOOK_SECRET": "s3cr3t",
+           "PYTHONPATH": str(REPO_ROOT)}
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                         timeout=120, cwd=str(REPO_ROOT))
+    assert out.returncode == 0, out.stderr
+    return out.stdout
+
+
+def _seed(home: Path, default_jobs, auditor_jobs, route_target=None) -> dict:
+    """Create jobs in the default and auditor stores; return name -> id."""
+    import os
+    import subprocess
+    import sys
+
+    script = f"""
+import json
+from pathlib import Path
+from cron.jobs import create_job, update_job, use_cron_store
+ids = {{}}
+for name, sched, profile in {default_jobs!r}:
+    job = create_job(prompt="p", schedule=sched, name=name)
+    if profile:
+        update_job(job["id"], {{"profile": profile}})
+    ids[name] = job["id"]
+with use_cron_store(Path({str(home / "profiles" / "auditor")!r})):
+    for name, sched in {auditor_jobs!r}:
+        ids[name] = create_job(prompt="p", schedule=sched, name=name)["id"]
+print(json.dumps(ids))
+"""
+    auditor = home / "profiles" / "auditor"
+    auditor.mkdir(parents=True, exist_ok=True)
+    (auditor / "SOUL.md").write_text("auditor", encoding="utf-8")
+    (auditor / "config.yaml").write_text("{}\n", encoding="utf-8")
+    env = {**os.environ, "HERMES_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}
+    out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True,
+                         timeout=120, cwd=str(REPO_ROOT))
+    assert out.returncode == 0, out.stderr
+    import json
+    ids = json.loads(out.stdout.strip().splitlines()[-1])
+    import yaml
+    cfg = {"platforms": {"webhook": {"enabled": True, "extra": {"port": 8644, "routes": {}}}}}
+    if route_target:
+        cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
+            "secret": "s3cr3t", "events": ["pull_request"],
+            "trigger_cron_job_id": ids[route_target]}
+    (home / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return ids
+
+
+def _route(home: Path) -> dict:
+    import yaml
+    cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+    return cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"]
+
+
+def test_a_default_store_review_job_keeps_the_unprefixed_route(tmp_path, webhook_block) -> None:
+    ids = _seed(tmp_path, [("auditor-review", "every 6 hours", "auditor")], [])
+    _run_reconcile(webhook_block, tmp_path)
+    route = _route(tmp_path)
+    assert route["trigger_cron_job_id"] == ids["auditor-review"]
+    assert "profile" not in route  # still served at /webhooks/auditor-pr-trigger
+
+
+def test_a_moved_review_job_binds_the_route_to_the_auditor_profile(tmp_path, webhook_block) -> None:
+    """After `hermes cron move`: no default-store job, the review job and merge-on-green
+    side by side in the auditor store, neither with a profile field. The route keeps the
+    id it targeted and gains profile: auditor, so /p/auditor/webhooks/... accepts it."""
+    ids = _seed(tmp_path, [], [("merge-on-green", "40 * * * *"), ("auditor-review", "every 6 hours")])
+    import yaml
+    cfg = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
+        "secret": "s3cr3t", "events": ["pull_request"], "trigger_cron_job_id": ids["auditor-review"]}
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+    out = _run_reconcile(webhook_block, tmp_path)
+    route = _route(tmp_path)
+    assert route["trigger_cron_job_id"] == ids["auditor-review"], "must not pick merge-on-green"
+    assert route["profile"] == "auditor"
+    assert route["secret"] == "s3cr3t" and route["events"] == ["pull_request"]
+    assert "no cron job with profile=auditor" not in out
+
+    # Second boot: idempotent.
+    assert "already current" in _run_reconcile(webhook_block, tmp_path)
+
+
+def test_half_way_the_route_still_follows_its_job(tmp_path, webhook_block) -> None:
+    """merge-on-green moved first, the review job still in the default store."""
+    ids = _seed(tmp_path, [("auditor-review", "every 6 hours", "auditor")],
+                [("merge-on-green", "40 * * * *")], route_target="auditor-review")
+    _run_reconcile(webhook_block, tmp_path)
+    route = _route(tmp_path)
+    assert route["trigger_cron_job_id"] == ids["auditor-review"]
+    assert "profile" not in route

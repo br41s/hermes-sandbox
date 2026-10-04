@@ -862,27 +862,59 @@ fi
 if [ -n "$WEBHOOK_SECRET" ]; then
     PYTHONPATH="$INSTALL_DIR" HERMES_HOME="$HERMES_HOME" WEBHOOK_SECRET="$WEBHOOK_SECRET" \
         as_hermes "$PY" - <<'PYEOF' || echo "[03-biglobster] Warning: auditor webhook reconcile failed (non-fatal)"
+import contextlib
 import os
 import yaml
 from pathlib import Path
-from cron.jobs import list_jobs, update_job
+from cron.jobs import list_jobs, update_job, use_cron_store
 
 home = Path(os.environ.get("HERMES_HOME", "/opt/data"))
 secret = os.environ["WEBHOOK_SECRET"]
+auditor_home = home / "profiles" / "auditor"
+
+# Stage 3 (ops/multiplex-stage3-plan.md): the review job may live in the
+# DEFAULT store (fork shape, profile == "auditor") or in the auditor's OWN
+# store, where `hermes cron move` dropped the profile field and merge-on-green
+# sits beside it. Follow the id the route already targets first, in either
+# store, so a moved job is never confused with its neighbour; fall back to the
+# first default-store auditor job for a fresh install.
+def _jobs(store):
+    ctx = use_cron_store(store) if store is not None else contextlib.nullcontext()
+    with ctx:
+        return list_jobs(include_disabled=True)
+
+current_id = None
+_cfg_path = home / "config.yaml"
+if _cfg_path.exists():
+    _routes = ((((yaml.safe_load(_cfg_path.read_text()) or {}).get("platforms") or {})
+                .get("webhook") or {}).get("extra") or {}).get("routes") or {}
+    current_id = (_routes.get("auditor-pr-trigger") or {}).get("trigger_cron_job_id")
+
+auditor_job, auditor_store = None, None
+stores = [None] + ([auditor_home] if (auditor_home / "cron" / "jobs.json").is_file() else [])
+if current_id:
+    for store in stores:
+        auditor_job = next((j for j in _jobs(store) if j.get("id") == current_id), None)
+        if auditor_job:
+            auditor_store = store
+            break
+if auditor_job is None:
+    auditor_job = next((job for job in _jobs(None) if job.get("profile") == "auditor"), None)
 
 # Downgrade the auditor's own poll to a 6h safety net (was every 10 min).
 auditor_job_id = None
-for job in list_jobs(include_disabled=True):
-    if job.get("profile") == "auditor":
-        auditor_job_id = job["id"]
-        # parse_schedule("every 6 hours") normalizes to {"kind": "interval",
-        # "minutes": 360, "display": "every 360m"} — compare on minutes, not
-        # the display string, so this stays idempotent across boots.
-        sched = job.get("schedule") or {}
-        if sched.get("kind") != "interval" or sched.get("minutes") != 360:
+if auditor_job is not None:
+    job = auditor_job
+    auditor_job_id = job["id"]
+    # parse_schedule("every 6 hours") normalizes to {"kind": "interval",
+    # "minutes": 360, "display": "every 360m"} — compare on minutes, not
+    # the display string, so this stays idempotent across boots.
+    sched = job.get("schedule") or {}
+    if sched.get("kind") != "interval" or sched.get("minutes") != 360:
+        ctx = use_cron_store(auditor_store) if auditor_store is not None else contextlib.nullcontext()
+        with ctx:
             update_job(job["id"], {"schedule": "every 6 hours"})
-            print(f"[03-biglobster] Auditor job {job['id']}: schedule -> every 6 hours")
-        break
+        print(f"[03-biglobster] Auditor job {job['id']}: schedule -> every 6 hours")
 
 if auditor_job_id is None:
     print("[03-biglobster] Warning: no cron job with profile=auditor found — webhook route not wired")
@@ -922,6 +954,13 @@ else:
             "events": ["pull_request"],
             "trigger_cron_job_id": auditor_job_id,
         }
+        # A job in the auditor's own store is reachable only through
+        # /p/auditor/webhooks/auditor-pr-trigger: the adapter then accepts the
+        # route only if it names that profile (webhook.py _route_allows_profile)
+        # and looks the id up in that profile's store. GitHub's hook URLs must
+        # carry the /p/auditor/ prefix from then on.
+        if auditor_store is not None:
+            route["profile"] = "auditor"
         if routes.get("auditor-pr-trigger") != route:
             routes["auditor-pr-trigger"] = route
             changed = True
