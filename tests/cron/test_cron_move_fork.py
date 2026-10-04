@@ -251,6 +251,17 @@ def test_refuses_a_cron_job_whose_target_store_keeps_another_timezone(stores, ca
     assert _get(shop, jid) is not None
 
 
+def test_an_unreadable_store_config_refuses_blind(stores, capsys):
+    default, shop = stores
+    _set_timezone(default, "Asia/Bangkok")
+    (shop / "config.yaml").write_text("timezone: [unclosed\n", encoding="utf-8")
+    with mv._in_home(default):
+        jid = cron_jobs.create_job(prompt="sweep", schedule="0 6 * * *", name="daily")["id"]
+    _edit(default, jid, profile="grow-shop", next_run_at=_future(600))
+    assert "cannot read the stores' timezone" in _refused(capsys, [jid], to_profile="grow-shop", apply=True)
+    assert _get(shop, jid) is None
+
+
 def test_an_interval_job_moves_across_timezones(stores):
     default, shop = stores
     _set_timezone(default, "Asia/Bangkok")
