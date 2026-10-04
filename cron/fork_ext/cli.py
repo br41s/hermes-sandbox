@@ -31,7 +31,6 @@ from hermes_cli.colors import Colors, color
 # Absent attrs read as None, which the cronjob tool treats as "not given", so
 # `create` (which has no --prompt-source / --progress-ping) passes them harmlessly.
 JOB_ARG_FIELDS = (
-    ("profile", "profile"),
     ("progress_ping", "progress_ping"),
     ("prompt_source", "prompt_source"),
 )
@@ -52,9 +51,14 @@ def list_rows(job: Dict[str, Any]) -> List[Tuple[str, str]]:
     An interrupted run gets its own "Last run" rows here, and upstream's is skipped
     (see :func:`replaces_last_run`).
     """
+    from cron.fork_ext.profile_scope import legacy_profile
+
     rows: List[Tuple[str, str]] = []
-    if job.get("profile"):
-        rows.append(("Profile", job["profile"]))
+    profile = legacy_profile(job)
+    if profile:  # retired field (stage 3 step 2): the scheduler refuses this record
+        rows.append((color("⚠ Profile", Colors.RED),
+                     f"{profile} — retired field, this job will not run; "
+                     f"hermes cron move {job.get('id', '?')} --to-profile {profile} --apply"))
     if not replaces_last_run(job):
         return rows
     # last_run_at still points at the last run that actually COMPLETED,
@@ -82,8 +86,6 @@ def print_kickoff_ping(job: Dict[str, Any]) -> None:
 
 def print_job_details(job: Dict[str, Any]) -> None:
     """The fork's detail lines for ``cron create`` / ``cron edit``; printed after Workdir."""
-    if job.get("profile"):
-        print(f"  Profile: {job['profile']}")
     if job.get("prompt_source"):
         print(f"  Prompt source: {job['prompt_source']}")
 
@@ -119,8 +121,6 @@ def cron_move(args) -> int:
     from cron.fork_ext.move import move
 
     return move(args.job_ids, to_profile=getattr(args, "to_profile", None),
-                from_profile=getattr(args, "from_profile", None),
-                to_default=bool(getattr(args, "to_default", False)),
                 apply=bool(getattr(args, "apply", False)),
                 webhook_route_disabled=bool(getattr(args, "webhook_route_disabled", False)))
 

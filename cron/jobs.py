@@ -1595,30 +1595,6 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
     return str(resolved)
 
 
-def _normalize_profile(profile: Optional[str]) -> Optional[str]:
-    """Normalize and validate an optional cron job profile name (fork).
-
-    Empty / None disables per-job profile selection. Otherwise the profile name
-    is canonicalized with the same rules as ``hermes -p`` and must refer to an
-    existing profile at create/update time. ``default`` is the built-in root
-    profile and is always valid.
-    """
-    if profile is None:
-        return None
-    raw = str(profile).strip()
-    if not raw:
-        return None
-
-    from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-
-    normalized = normalize_profile_name(raw)
-    # resolve_profile_env validates the canonical name and checks that named
-    # profiles exist. Store only the stable profile id, not the filesystem path,
-    # so profile directories can move with the Hermes root.
-    resolve_profile_env(normalized)
-    return normalized
-
-
 def _main_model_pin() -> Tuple[Optional[str], Optional[str]]:
     """``(provider, model)`` the main agent runs on right now (``model.default`` + the provider it
     resolves to), for ``pinned=True`` jobs: the lock is a plain per-job pin, so the scheduler needs
@@ -1707,13 +1683,10 @@ _CREATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
     "no_agent": bool,
     "context_from": _normalize_context_from,
     "failure_deliver": _normalize_failure_deliver,
-    "profile": _normalize_profile,  # fork
     "prompt_source": _normalize_job_optional_text,  # fork
 }
 _UPDATE_FIELD_NORMALIZERS: Dict[str, Callable[[Any], Any]] = {
     "workdir": lambda v: None if v in {None, "", False} else _normalize_workdir(v),
-    # fork: empty string / None / False clear the field (restore the scheduler's default profile).
-    "profile": lambda v: None if v in {None, "", False} else _normalize_profile(v),
     "monitor_script": _normalize_job_optional_text,
     "monitor_url": _normalize_job_optional_text,
     "reasoning_effort": _normalize_reasoning_effort,
@@ -1778,7 +1751,6 @@ def create_job(
     context_from: Optional[Union[str, List[str]]] = None,
     enabled_toolsets: Optional[List[str]] = None,
     workdir: Optional[str] = None,
-    profile: Optional[str] = None,
     no_agent: bool = False,
     prompt_source: Optional[str] = None,
     attach_to_session: Optional[bool] = None,
@@ -1799,9 +1771,7 @@ def create_job(
     source run FIRST each tick; unchanged output suppresses the agent run (mutually exclusive,
     incompatible with ``no_agent``). reasoning_effort: per-job pin; capability NOT validated.
 
-    Fork fields — profile: optional Hermes profile name; the job runs with that profile's
-    HERMES_HOME (config, credentials, scripts, skills, memory). ``default`` selects the root
-    profile; empty / None keeps the scheduler's behaviour. prompt_source: optional repo-relative
+    Fork field — prompt_source: optional repo-relative
     path the prompt was loaded from (e.g. ``gap-hunter/bl-site-package-gap-hunter.prompt``), for
     the prompt-drift detector and ``cronjob(action="sync_prompt")``; never read back here."""
     if not isinstance(paused, bool):
@@ -1885,7 +1855,6 @@ def create_job(
         "origin": origin,  # Tracks where job was created for "origin" delivery
         "enabled_toolsets": f["enabled_toolsets"],
         "workdir": f["workdir"],
-        "profile": f["profile"],  # fork
         "prompt_source": f["prompt_source"],  # fork
     }
     # Optional keys are persisted only when explicitly set: an absent key falls back to global

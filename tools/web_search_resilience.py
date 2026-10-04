@@ -566,9 +566,9 @@ def build_unavailable_response(trail: Sequence[ProviderAttempt]) -> Dict[str, An
 # But that denial only strips the key from the tenant's ``.env`` FILE
 # (docker/cont-init.d/03-biglobster-config), while ``exa.is_available()``
 # resolves through ``hermes_cli.config.get_env_value``, which reads
-# ``os.environ`` FIRST — and the cron scheduler's profile context
-# (``cron/scheduler.py:_job_profile_context``) only adds and restores env
-# keys, never deletes one the parent process already had. So on a tenant run
+# ``os.environ`` FIRST — and the cron scheduler's profile context of the time
+# (``_job_profile_context``, retired in stage 3 step 2) only added and restored env
+# keys, never deleted one the parent process already had. So on a tenant run
 # ``exa.is_available()`` returns True and an availability walk resolves
 # ``ddgs -> exa``: every ddgs blip silently bills BigLobster. Verified by
 # reproduction, not by reading alone.

@@ -196,13 +196,16 @@ def test_a_paused_job_stays_paused_after_the_move(stores):
     assert not cron_jobs.is_job_runnable(moved) and moved["paused_reason"] == "owner said so"
 
 
-def test_moving_back_restores_the_profile_field(stores):
+def test_the_moved_record_drops_the_retired_profile_field(stores):
+    """Since stage 3 step 2 a move goes one way: the target record carries no
+    ``profile`` (the scheduler would refuse it), and there is no ``--to-default``."""
+    import inspect
+
     default, shop = stores
     jid = _make(default, profile="grow-shop", next_run_at=_future(60))
     assert mv.move([jid], to_profile="grow-shop", apply=True) == 0
-    assert mv.move([jid], from_profile="grow-shop", to_default=True, apply=True) == 0
-    assert _get(shop, jid) is None
-    assert _get(default, jid)["profile"] == "grow-shop" and _runnable(default, jid)
+    assert "profile" not in _get(shop, jid) and _runnable(shop, jid)
+    assert not {"to_default", "from_profile"} & set(inspect.signature(mv.move).parameters)
 
 
 def test_an_already_moved_job_is_a_no_op(stores, capsys):
@@ -326,9 +329,8 @@ def test_refuses_a_job_that_belongs_to_another_profile(stores, capsys):
 
 @pytest.mark.parametrize("kwargs, message", [
     ({"to_profile": "nope"}, "does not exist"),
-    ({"to_default": True}, "needs --from-profile"),
-    ({}, "exactly one of"),
-    ({"to_profile": "grow-shop", "to_default": True}, "exactly one of"),
+    ({}, "pass --to-profile"),
+    ({"to_profile": "default"}, "same store"),
 ])
 def test_refuses_bad_arguments(stores, capsys, kwargs, message):
     assert message in _refused(capsys, ["x"], **kwargs)

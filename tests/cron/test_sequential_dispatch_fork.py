@@ -1,12 +1,15 @@
 """MERGE GATE: no two profile/workdir cron jobs ever run at the same time.
 
-This is the fork's identity invariant, and the gate for merging upstream
-v2026.8.31+. A cron job that sets ``profile`` or ``workdir`` mutates
+This was the fork's identity invariant, and the gate for merging upstream
+v2026.8.31+. A cron job that set ``profile`` or ``workdir`` used to mutate
 process-global state for its whole run — the profile's ``.env`` (its
-``GITHUB_TOKEN``/``GH_TOKEN``) is loaded into ``os.environ``, the context-local
-``HERMES_HOME`` override is installed, ``TERMINAL_CWD`` is set — so two of them
-overlapping leaks one profile's identity into the other's ``gh``/``git``
-subprocesses (the 2026-09-12 FinView PR #245 opened as ``hermes-auditor``).
+``GITHUB_TOKEN``/``GH_TOKEN``) was loaded into ``os.environ``, ``TERMINAL_CWD``
+was set — so two of them overlapping leaked one profile's identity into the
+other's ``gh``/``git`` subprocesses (the 2026-09-12 FinView PR #245 opened as
+``hermes-auditor``). Neither mutates anything now, and the per-job ``profile``
+field is gone (stage 3 step 2): the lane holds ``workdir`` jobs and every job
+run from a profile's own store, by policy (CLAUDE.md, "One long agent run
+starves every other agent").
 
 Upstream v2026.8.31 (91cf5448d8) deleted its sequential ``cron-seq`` pool and
 dispatches every due job in parallel (``parallel_jobs = due_jobs``), because
@@ -82,7 +85,7 @@ class _Recorder:
 
     @staticmethod
     def mutates_env(job: dict) -> bool:
-        return bool(str(job.get("profile") or "").strip() or str(job.get("workdir") or "").strip())
+        return bool(str(job.get("workdir") or "").strip())
 
     def started_event(self, job_id: str) -> threading.Event:
         with self._lock:
@@ -214,12 +217,13 @@ def _assert_serialized(rec: _Recorder, seq_ids) -> None:
 def test_is_sequential_partition():
     from cron.fork_ext.dispatch import is_sequential
 
-    assert is_sequential({"profile": "auditor"}) is True
     assert is_sequential({"workdir": "/srv/proj"}) is True
-    assert is_sequential({"profile": "grow-shop", "workdir": "/srv/proj"}) is True
     assert is_sequential({}) is False
-    assert is_sequential({"profile": None, "workdir": None}) is False
-    assert is_sequential({"profile": "  ", "workdir": ""}) is False
+    assert is_sequential({"workdir": None}) is False
+    assert is_sequential({"workdir": "  "}) is False
+    # Stage 3 step 2: the retired field no longer counts — a record carrying it
+    # is refused in run_job before it could run anywhere.
+    assert is_sequential({"profile": "auditor"}) is False
 
 
 def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
@@ -268,10 +272,10 @@ def test_tick_never_overlaps_profile_or_workdir_jobs(lane, monkeypatch, tmp_path
     seq_ids = [_uid(f"prof{i}") for i in range(4)] + [_uid(f"wd{i}") for i in range(2)] + [_uid("both")]
     plain_ids = [_uid(f"plain{i}") for i in range(3)]
     for jid in seq_ids[:4]:
-        due.append(_job(jid, profile="auditor"))
+        due.append(_job(jid, workdir="/srv/auditor"))
     for jid in seq_ids[4:6]:
         due.append(_job(jid, workdir=str(tmp_path)))
-    due.append(_job(seq_ids[6], profile="grow-shop", workdir=str(tmp_path)))
+    due.append(_job(seq_ids[6], workdir=str(tmp_path)))
     for jid in plain_ids:
         due.append(_job(jid))
 
@@ -302,7 +306,7 @@ def test_tick_of_a_profile_store_puts_its_plain_jobs_on_the_lane(lane, monkeypat
     rec = _Recorder()
     monkeypatch.setattr(sched, "run_job", rec.run_job)
 
-    due[:] = [_job(default_ids[0], profile="auditor"), _job(default_ids[1], profile="biglobster")]
+    due[:] = [_job(default_ids[0], workdir="/srv/auditor"), _job(default_ids[1], workdir="/srv/biglobster")]
     assert sched.tick(verbose=False, sync=False) == 2
     assert rec.started_event(default_ids[0]).wait(5)
 
@@ -350,14 +354,14 @@ def test_lane_serializes_across_ticks(lane, monkeypatch, tmp_path):
     monkeypatch.setattr(sched, "run_job", rec.run_job)
 
     due[:] = [
-        _job(first[0], profile="auditor"),
-        _job(first[1], profile="biglobster"),
+        _job(first[0], workdir="/srv/auditor"),
+        _job(first[1], workdir="/srv/biglobster"),
         _job(first[2], workdir=str(tmp_path)),
     ]
     assert sched.tick(verbose=False, sync=False) == 3
     assert rec.started_event(first[0]).wait(5)
 
-    due[:] = [_job(second[0], profile="grow-shop"), _job(second[1], profile="auditor")]
+    due[:] = [_job(second[0], workdir="/srv/grow-shop"), _job(second[1], workdir="/srv/auditor")]
     assert sched.tick(verbose=False, sync=False) == 2
 
     rec.wait_for(first + second)
@@ -376,8 +380,8 @@ def test_webhook_dispatch_shares_the_tick_lane(lane, monkeypatch, tmp_path):
     monkeypatch.setattr(sched, "run_job", rec.run_job)
 
     due[:] = [
-        _job(tick_ids[0], profile="auditor"),
-        _job(tick_ids[1], profile="biglobster"),
+        _job(tick_ids[0], workdir="/srv/auditor"),
+        _job(tick_ids[1], workdir="/srv/biglobster"),
         _job(tick_ids[2], workdir=str(tmp_path)),
     ]
     assert sched.tick(verbose=False, sync=False) == 3
@@ -391,7 +395,7 @@ def test_webhook_dispatch_shares_the_tick_lane(lane, monkeypatch, tmp_path):
         results[job["id"]] = sched.dispatch_job_async(job)
 
     firers = [
-        threading.Thread(target=_fire, args=(_job(hook_seq[0], profile="finview"),)),
+        threading.Thread(target=_fire, args=(_job(hook_seq[0], workdir="/srv/finview"),)),
         threading.Thread(target=_fire, args=(_job(hook_seq[1], workdir=str(tmp_path)),)),
         threading.Thread(target=_fire, args=(_job(hook_plain),)),
     ]
@@ -419,7 +423,7 @@ def test_webhook_cron_job_event_shares_the_tick_lane(lane, monkeypatch, tmp_path
     hook_seq = [_uid("evtp"), _uid("evtwd")]
     hook_plain = _uid("evtplain")
     events = {
-        hook_seq[0]: _job(hook_seq[0], profile="finview"),
+        hook_seq[0]: _job(hook_seq[0], workdir="/srv/finview"),
         hook_seq[1]: _job(hook_seq[1], workdir=str(tmp_path)),
         hook_plain: _job(hook_plain),
     }
@@ -427,7 +431,7 @@ def test_webhook_cron_job_event_shares_the_tick_lane(lane, monkeypatch, tmp_path
     rec = _Recorder()
     monkeypatch.setattr(sched, "run_job", rec.run_job)
 
-    due[:] = [_job(tick_ids[0], profile="auditor"), _job(tick_ids[1], profile="biglobster")]
+    due[:] = [_job(tick_ids[0], workdir="/srv/auditor"), _job(tick_ids[1], workdir="/srv/biglobster")]
     assert sched.tick(verbose=False, sync=False) == 2
     assert rec.started_event(tick_ids[0]).wait(5)
 
@@ -467,7 +471,7 @@ def test_webhook_cron_job_on_the_lane_keeps_the_routed_profile_scope(lane, monke
 
     _sched, fork, _due = lane
     scope = contextvars.ContextVar("routed_profile", default="default")
-    monkeypatch.setattr(cron.jobs, "resolve_job_ref", lambda ref: _job(ref, profile="grow-shop"))
+    monkeypatch.setattr(cron.jobs, "resolve_job_ref", lambda ref: _job(ref, workdir="/srv/grow-shop"))
 
     async def _fire():
         scope.set("grow-shop")

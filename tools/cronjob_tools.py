@@ -65,12 +65,10 @@ from tools.cronjob_job_args import (
 from tools.registry import registry, tool_error
 
 
-# ---- fork: per-job profile / kickoff ping / prompt_source (see cron/fork_ext/) ----
+# ---- fork: kickoff ping / prompt_source (see cron/fork_ext/) ----
 def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     """Upstream's ``_format_job`` plus the fork's job fields."""
     result = _upstream_format_job(job)
-    if job.get("profile"):
-        result["profile"] = job["profile"]
     if job.get("progress_ping") is not None:
         result["progress_ping"] = job["progress_ping"]
     if job.get("prompt_source"):
@@ -78,76 +76,8 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _profile_routing_gap_warning(profile: Optional[str], deliver: Optional[str]) -> Optional[str]:
-    """Warn (non-blocking) when a profile-scoped job's bare platform ``deliver``
-    (e.g. ``"telegram"``) has no per-profile routing override.
-
-    The scheduler resolves such a job's chat/thread from the profile's own
-    routing env first (see ``_read_profile_env_value``), falling back to the
-    scheduler's global home channel/thread. If the profile has no routing env
-    at all, that fallback is silent — the job just quietly lands on whatever
-    thread the global default happens to be, which is exactly how the
-    BigLobster/FinView/Infographic jobs ended up on the main Hermes thread
-    instead of their own project thread (2026-07-08). ``origin``/``local``/
-    explicit ``platform:chat:thread`` targets are unaffected and skipped.
-    """
-    profile = (profile or "").strip()
-    if not profile or profile.lower() == "default":
-        return None
-    normalized = (deliver or "local").strip() or "local"
-    if normalized in {"local", "origin"}:
-        return None
-
-    from cron.scheduler import _read_profile_env_value
-    from cron.scheduler_delivery import (
-        _expand_routing_tokens,
-        _normalize_deliver_value,
-        _resolve_home_env_var,
-    )
-
-    parts: List[str] = []
-    for raw in _normalize_deliver_value(normalized).split(","):
-        raw = raw.strip()
-        if not raw:
-            continue
-        parts.extend(_expand_routing_tokens(raw))
-
-    bare_platforms = [p for p in parts if p not in {"local", "origin"} and ":" not in p]
-    if not bare_platforms:
-        return None
-
-    unrouted = []
-    for platform_name in bare_platforms:
-        env_var = _resolve_home_env_var(platform_name)
-        if env_var and not _read_profile_env_value(profile, env_var):
-            unrouted.append(platform_name)
-
-    if not unrouted:
-        return None
-    return (
-        f"Profile '{profile}' has no routing override for {', '.join(unrouted)} — "
-        f"this job will deliver to the scheduler's global home channel/thread, not "
-        f"a profile-specific one. Add docker/profiles/{profile}/routing.env (see "
-        "docker/profiles/biglobster/routing.env for the pattern) or use an explicit "
-        "deliver target like 'telegram:<chat_id>:<thread_id>'."
-    )
-
-
-def _with_routing_warning(result: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, Any]:
-    """Append the profile routing-gap warning to upstream's warning, never replace it."""
-    routing_warning = _profile_routing_gap_warning(job.get("profile"), job.get("deliver"))
-    if routing_warning:
-        result["warning"] = (
-            f"{result['warning']} {routing_warning}" if result.get("warning") else routing_warning
-        )
-    return result
-
-
 def _update_fork_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[str, Any]) -> Optional[str]:
-    """profile / progress_ping / prompt_source (fork)."""
-    if a["profile"] is not None:
-        # Empty string clears the field; otherwise update_job() validates / normalizes.
-        updates["profile"] = _normalize_optional_job_value(a["profile"]) or None
+    """progress_ping / prompt_source (fork)."""
     if a["progress_ping"] is not None:
         # Per-job kickoff-ping override: False = silent on start (monitor crons), True = always
         # ping; absent leaves the global cron.progress_pings default in charge.
@@ -707,7 +637,6 @@ def _action_create(a: Dict[str, Any]) -> str:
             base_url=_normalize_optional_job_value(a["base_url"], strip_trailing_slash=True),
             script=_normalize_optional_job_value(script), context_from=context_from,
             enabled_toolsets=a["enabled_toolsets"] or None, workdir=_normalize_optional_job_value(a["workdir"]),
-            profile=_normalize_optional_job_value(a["profile"]),  # fork
             prompt_source=_normalize_optional_job_value(a["prompt_source"]),  # fork
             no_agent=_no_agent, attach_to_session=a["attach_to_session"],
             monitor_script=_normalize_optional_job_value(a["monitor_script"]),
@@ -732,7 +661,7 @@ def _action_create(a: Dict[str, Any]) -> str:
         "deliver": job.get("deliver", "local"), "next_run_at": job["next_run_at"], "job": _format_job(job),
         "message": _create_message, **_gateway_liveness_notice(),
     }
-    return _dumps(_with_routing_warning(_with_guidance(_result, job, deliver), job))  # fork: routing warning
+    return _dumps(_with_guidance(_result, job, deliver))
 
 
 def _action_list(a: Dict[str, Any]) -> str:
@@ -963,8 +892,8 @@ def _action_update(job: Dict[str, Any], a: Dict[str, Any]) -> str:
     updated = update_job(job["id"], updates)
     _notify_provider_jobs_changed_safe()
     # An update can switch modes or delivery — echo the same guidance as create.
-    return _dumps(_with_routing_warning(_with_guidance(  # fork: routing warning
-        {"success": True, "job": _format_job(updated)}, updated, _normalize_deliver_param(a["deliver"])), updated))
+    return _dumps(_with_guidance(
+        {"success": True, "job": _format_job(updated)}, updated, _normalize_deliver_param(a["deliver"])))
 
 
 _JOBLESS_ACTIONS = {"create": _action_create, "list": _action_list}
@@ -1017,7 +946,6 @@ def cronjob(
     continuity: Optional[bool] = None,
     enabled_toolsets: Optional[List[str]] = None,
     workdir: Optional[str] = None,
-    profile: Optional[str] = None,
     no_agent: Optional[bool] = None,
     progress_ping: Optional[bool] = None,
     prompt_source: Optional[str] = None,
@@ -1155,10 +1083,6 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
                 "type": "string",
                 "description": "Optional absolute existing path to run the job from: injects that directory's AGENTS.md/context files and anchors terminal/file tools there. On update, '' clears."
             },
-            "profile": {
-                "type": "string",
-                "description": "Optional Hermes profile name to run the job under. When set, the scheduler resolves that profile, applies a context-local Hermes home override, loads that profile's config/.env for the run, and bridges HERMES_HOME into subprocesses. Any temporary process-environment changes from profile .env loading are restored after the job exits. Use 'default' for the root Hermes profile. Named profiles must already exist. When unset (default), preserves the scheduler's existing profile. On update, pass an empty string to clear. Jobs with profile run sequentially (not parallel) to keep profile-scoped runtime state isolated."
-            },
             "attach_to_session": {
                 "type": "boolean",
                 "description": "True = the job's delivery is CONTINUABLE — the user can reply and the agent has the brief in context (threads on thread-capable platforms, mirrored into the DM elsewhere). Use for conversational recurring jobs (briefings); leave unset for fire-and-forget alerts. Scope: the job's own conversation only — the origin chat, the home-channel fallback when deliver='origin' captured no origin (script-created jobs), a user-written bare platform target (deliver='slack' — that platform's home channel), or the job's single explicit platform:chat target (this flag is the only way to attach an explicit target). Broadcast targets are never attached; no effect when deliver='local'."
@@ -1192,7 +1116,6 @@ _HANDLER_FORWARDED_ARGS = (
     "job_id", "prompt", "schedule", "name", "repeat", "deliver", "failure_deliver", "skill", "skills", "reason",
     "script", "context_from", "continuity", "enabled_toolsets", "workdir", "no_agent", "attach_to_session",
     "paused_reason", "pinned",
-    "profile",  # fork
 )
 
 

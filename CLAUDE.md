@@ -145,9 +145,9 @@ it to rescue a slow call: a retry usually lands on a healthy upstream. Proven
 and its retry answered in 3s. At 600s, 3 trickled retries equal the run ceiling; the
 auditor's 420s ends them at ~21 min with a real API timeout instead.
 
-**A profile job's `.env` never reaches `os.environ`.** `_job_profile_context`
-(`cron/fork_ext/profile_scope.py`) installs it as the run's secret scope, a
-ContextVar, so read a profile key with `agent.secret_scope.get_secret` or
+**A profile job's `.env` never reaches `os.environ`.** The multiplex ticker and a
+routed webhook install it as the run's secret scope, a ContextVar
+(`cron/fork_ext/profile_scope.py` `_satellite_store_context` adds `profile_run()`), so read a profile key with `agent.secret_scope.get_secret` or
 `hermes_cli.config.get_env_value` — a bare `os.getenv` in code a profile job runs
 gets the DEFAULT profile's value (a rental billing BigLobster's key, or worse,
 the wrong client's site). Child processes get the scope through
@@ -163,7 +163,10 @@ move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the
 id, schedule phase, executions, output and notepad, and never calls `remove_job`.
 It is a dry run without `--apply`. Afterwards every per-job command needs
 `hermes -p <p> cron …`; a bare `hermes cron runs <id>` answers "not found".
-Rollback is `--from-profile <p> --to-default --apply`.
+Since stage 3 step 2 it only goes one way: the fork's per-job `profile` field is gone,
+and a default-store record still carrying it is refused at run time
+(`LegacyProfileJobError`, naming the `move` command). Rolling step 2 back is a revert
+and a redeploy.
 
 **Its log lines move too.** Under multiplex a run in a profile's home logs to
 `/opt/data/profiles/<p>/logs/agent.log` (`hermes_logging.py` `_ProfileRoutingFileHandler`),

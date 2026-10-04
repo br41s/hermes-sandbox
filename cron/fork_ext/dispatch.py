@@ -1,6 +1,6 @@
 """The fork's sequential cron lane (fork-owned).
 
-Every cron job that sets ``profile`` or ``workdir`` runs on ONE single-thread
+Every cron job that sets ``workdir``, or runs from a profile's own store, runs on ONE single-thread
 executor, one at a time, across ticks and across entry points (the tick and
 the webhook triggers: ``trigger_cron_job_id`` and upstream's ``cron_job``).
 
@@ -46,16 +46,15 @@ _sequential_executor_lock = threading.Lock()
 
 def is_sequential(job: dict) -> bool:
     """True for a job the fork runs on the single-thread lane: any job with a
-    ``profile`` or a ``workdir``, and any job running from a profile's OWN cron
-    store. None of these mutates process-global state any more (see the module
+    ``workdir``, and any job running from a profile's OWN cron store. None of these mutates process-global state any more (see the module
     docstring); the lane is kept by policy, and widening it is a separate decision
     (stage 3 step 5). Everything else goes to upstream's parallel pool.
 
-    The store rule is stage 3 step 0a (``ops/multiplex-stage3-plan.md``): a job
-    moved from the default store into its profile's store loses its ``profile``
-    field, so without it a move would quietly let the job run in parallel.
+    The store rule is stage 3 step 0a (``ops/multiplex-stage3-plan.md``); the
+    retired ``profile`` field no longer counts (step 2), since a record that still
+    carries it is refused before it runs.
     """
-    if (job.get("workdir") or "").strip() or (job.get("profile") or "").strip():
+    if (job.get("workdir") or "").strip():
         return True
     return in_profile_store()
 

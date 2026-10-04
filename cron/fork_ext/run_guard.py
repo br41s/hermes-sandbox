@@ -7,19 +7,19 @@ upstream's file. ``cron.scheduler.run_job`` is a one-line call into
 
 - ``_job_run_lock`` — non-blocking per-``job_id`` flock, so two triggers of the
   same job (tick + webhook burst) never both run it;
-- ``guarded_run_job`` — takes that lock, then runs the job under its profile
-  (``_job_profile_context``, fail closed), or, for a job from a profile's own
-  store, under ``_satellite_store_context``.
+- ``guarded_run_job`` — takes that lock, refuses a record that still carries the
+  retired fork ``profile`` field, then runs a job from a profile's own store
+  under ``_satellite_store_context``.
 
-``_get_hermes_home`` and ``_job_profile_context`` are looked up on
-``cron.scheduler`` at call time, so patches of those attributes still apply.
+``_get_hermes_home`` is looked up on ``cron.scheduler`` at call time, so patches
+of that attribute still apply.
 """
 
 import logging
 from contextlib import contextmanager
 from typing import Callable
 
-from cron.fork_ext.profile_scope import _satellite_store_context
+from cron.fork_ext.profile_scope import _refuse_legacy_profile_record, _satellite_store_context
 
 try:
     import fcntl
@@ -45,10 +45,8 @@ def _job_run_lock(job_id: str):
     since the mark happens mid-review) and both post a review — the duplicate
     reviews seen on FinView #206. A plain file flock is enough: same-host,
     same-user processes, auto-released on close or process death (no stale
-    lock). Keyed under the DEFAULT hermes home and acquired BEFORE the per-job
-    profile context, so two concurrent triggers can't both mutate the global
-    HERMES_HOME/os.environ profile state (that mutation is not concurrency-safe;
-    see _job_profile_context). Degrades to a no-op (runs anyway) where POSIX
+    lock). Keyed under the DEFAULT hermes home and acquired before the run's
+    profile context. Degrades to a no-op (runs anyway) where POSIX
     flock is unavailable (Windows/dev) or the lock dir can't be created."""
     import cron.scheduler as sched
 
@@ -80,8 +78,8 @@ def _job_run_lock(job_id: str):
 
 
 def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
-    """Run ``impl(job, **kwargs)`` under the per-job lock and the job's
-    profile.
+    """Run ``impl(job, **kwargs)`` under the per-job lock and, for a job from a
+    profile's own store, that profile's identity context.
 
     Serialized per job_id: if another run of this same job is already in
     flight (a concurrent webhook trigger or the periodic tick), this returns a
@@ -89,8 +87,9 @@ def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
     launching a second concurrent run that would re-review the same PRs. See
     ``_job_run_lock`` for the full rationale (duplicate auditor reviews).
 
-    The profile context wraps the whole run (fail-closed via
-    ProfileResolutionError). Every keyword is forwarded to the impl untouched —
+    A record still carrying the retired ``profile`` field raises
+    ``LegacyProfileJobError`` (stage 3 step 2) instead of running under the
+    default identity. Every keyword is forwarded to the impl untouched —
     today that is ``defer_agent_teardown`` (upstream's delivery-ordering fix,
     #58720); from v2026.8.31 ``run_one_job`` also passes ``extra_prompt``,
     ``execution_id`` and ``cancel_event``, and a wrapper that named its
@@ -106,6 +105,6 @@ def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
                 "trigger (silent, the in-flight run handles it)", job_id,
             )
             return True, "", "", None
-        with sched._job_profile_context(job_id, job.get("profile")), \
-                _satellite_store_context(job_id, job.get("profile")):
+        _refuse_legacy_profile_record(job)
+        with _satellite_store_context(job_id):
             return impl(job, **kwargs)

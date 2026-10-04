@@ -1,30 +1,23 @@
-"""Per-job Hermes profile scope for cron runs (fork-owned).
+"""Profile identity for cron runs (fork-owned).
 
-Moved verbatim out of ``cron/scheduler.py`` so the fork's code does not sit
-inside upstream's file:
+Every profile-owned job lives in its profile's own cron store (stage 3,
+``ops/multiplex-stage3-plan.md``); the multiplex ticker and a routed webhook run
+it under that profile's home override and ``.env`` secret scope. This module adds
+what they do not:
 
-- ``_job_profile_context`` — runs one job under its configured profile, fail
-  closed (``ProfileResolutionError``) when the profile cannot be resolved;
-- ``_assert_own_subprocess_identity`` / ``_iter_sibling_profiles`` — refuse a
-  run whose subprocess ``HOME`` (its git/gh identity) belongs to another
-  profile (``ProfileIdentityError``);
-- ``_satellite_store_context`` — the same tripwire, and ``profile_run()``,
-  for a job run from a profile's own cron store (no ``profile`` field);
-- ``_read_profile_env_value`` — read one key off a profile's ``.env`` for
-  delivery routing, without touching ``os.environ``.
-
-``cron.scheduler`` re-imports the names its call sites and callers use
-(``run_job``, the home-target lookups, ``tools/cronjob_tools.py``), so they
-resolve the same objects as before and patches of those ``cron.scheduler``
-attributes still apply. ``_job_profile_context`` calls
-``_assert_own_subprocess_identity`` in THIS module, so patch that one here.
+- ``_satellite_store_context`` — the identity tripwire and ``profile_run()`` for a
+  job run from a profile's own store;
+- ``_assert_own_subprocess_identity`` / ``_iter_sibling_profiles`` — refuse a run
+  whose subprocess ``HOME`` (its git/gh identity) belongs to another profile
+  (``ProfileIdentityError``);
+- ``_refuse_legacy_profile_record`` — the one guard left from the old fork
+  ``profile`` field (``LegacyProfileJobError``): a record that still carries it is
+  refused, never run under the default identity.
 """
 
 import logging
-import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
 # Same logger as before the move, so agent.log lines keep their
 # ``cron.scheduler`` name and tests patching ``cron.scheduler.logger`` still
@@ -35,8 +28,7 @@ logger = logging.getLogger("cron.scheduler")
 class ProfileIdentityError(RuntimeError):
     """Raised when a profile job's runtime identity would not be its own.
 
-    Sibling of :class:`ProfileResolutionError`, and fail-closed for the same
-    reason: in the terminal lane ``$HOME`` IS the git/gh identity —
+    Fail-closed because in the terminal lane ``$HOME`` IS the git/gh identity —
     ``GITHUB_TOKEN``/``GH_TOKEN`` are stripped from every spawned subprocess,
     so ``~/.gitconfig``, ``~/.git-credentials`` and ``~/.config/gh/hosts.yml``
     are the only credentials a command can reach. A job whose subprocess
@@ -58,18 +50,43 @@ class ProfileIdentityError(RuntimeError):
     """
 
 
-class ProfileResolutionError(RuntimeError):
-    """Raised when a job's configured profile can't be resolved.
+class LegacyProfileJobError(RuntimeError):
+    """Raised for a job record that still carries the old fork ``profile`` field.
 
-    A job that opts into a profile is relying on that profile's isolated
-    identity (its own GITHUB_TOKEN/HERMES_HOME) — e.g. the auditor's dedicated
-    ``hermes-auditor`` bot account, kept separate from the CEO's own account on
-    purpose. Silently continuing under the scheduler's default profile would
-    run the job as the WRONG identity instead of not running it at all, so
-    this is raised rather than swallowed — the caller should skip the run
-    (job stays due, retried on the job's normal schedule) instead of executing
-    under an unintended identity.
+    Stage 3 step 2 removed the code that ran such a record under its profile
+    (``_job_profile_context``). Running it now would run it under the
+    scheduler's DEFAULT identity — the 2026-09-12 PR-as-``hermes-auditor`` class,
+    and the reason the old path failed closed. So it is refused: the run fails
+    with an error naming the fix, ``hermes cron move <id> --to-profile <p>``,
+    which puts the job in its profile's own store and drops the field.
     """
+
+
+def legacy_profile(job: dict) -> str:
+    """The retired ``profile`` value a record still carries, or ``""`` when it has none.
+
+    ``default`` counts as none: the old path ran it under the root home, exactly
+    like a plain job of the default store, so refusing it would break a job that
+    runs the same as before. (``cron edit`` no longer has ``--profile`` to clear it.)
+    Reads the raw record: ``jobs.py`` no longer normalises the field.
+    """
+    profile = str(job.get("profile") or "").strip()
+    return "" if profile.lower() == "default" else profile
+
+
+def _refuse_legacy_profile_record(job: dict) -> None:
+    """Raise :class:`LegacyProfileJobError` if *job* still carries a named ``profile``."""
+    profile = legacy_profile(job)
+    if profile:
+        logger.error(
+            "Job '%s': record still carries profile %r — refusing to run it under "
+            "the default identity; move it with `hermes cron move %s --to-profile %s`",
+            job.get("id"), profile, job.get("id"), profile,
+        )
+        raise LegacyProfileJobError(
+            f"job {job.get('id')!r} still carries the retired profile field {profile!r}; "
+            f"run `hermes cron move {job.get('id')} --to-profile {profile} --apply`"
+        )
 
 
 def _iter_sibling_profiles(profile_home: Path):
@@ -169,139 +186,21 @@ def _assert_own_subprocess_identity(
 
 
 @contextmanager
-def _job_profile_context(job_id: str, profile: Optional[str]):
-    """Temporarily run a job under a specific Hermes profile.
+def _satellite_store_context(job_id: str):
+    """Give a job run from a profile's OWN cron store the identity guarantees
+    (stage 3 step 0b, ``ops/multiplex-stage3-plan.md``).
 
-    Cron jobs are stored and scheduled by the profile running the scheduler, but
-    an individual job can opt into a different runtime profile. While active,
-    the scheduler's test/override hook and a context-local Hermes home override
-    both point at the resolved profile directory so _get_hermes_home(),
-    .env/config loading, script resolution, AIAgent construction, and downstream
-    get_hermes_home() callers agree on the same home.
-
-    The profile's ``.env`` is installed as this run's secret scope
-    (``agent.secret_scope.set_secret_scope``, a ContextVar) and is never
-    written into ``os.environ``: ``get_secret``/``get_env_value`` readers see
-    the profile's values, terminal and script children get them through
-    ``child_env_overlay``, and a job running concurrently on another thread
-    keeps seeing only the process environment. That is what lets upstream
-    v2026.8.31 drop ``_terminal_cwd_lock`` without a plain job reading a
-    profile job's keys. The snapshot/restore of ``os.environ`` below stays as
-    a backstop for any code that still writes there.
-
-    Raises ``ProfileResolutionError`` (rather than falling back to the
-    scheduler's default profile) if the configured profile can't be resolved —
-    see that class's docstring for why fail-open is unsafe here.
-    """
-    raw_profile = str(profile or "").strip()
-    if not raw_profile:
-        yield None
-        return
-
-    # NOTE: deliberately does NOT assign the module-global ``_hermes_home``.
-    # That global is a process-wide test monkeypatch hook, so setting it here
-    # leaked this job's profile into every OTHER job running concurrently —
-    # `_get_hermes_home()` prefers it over `get_hermes_home()`. Upstream's
-    # dispatch rewrite made that latent bug live: sequential (profile) jobs
-    # moved off the tick thread onto the `cron-seq` pool, so they now run
-    # genuinely concurrently with the `cron-parallel` pool instead of blocking
-    # it. A profile-less job then resolved its scripts/ dir under whichever
-    # profile happened to be mid-run (observed 2026-07-31: incident-watcher
-    # failing hourly with "Script not found:
-    # /opt/data/profiles/{biglobster,auditor}/scripts/incident_sweep.sh").
-    # `set_hermes_home_override` below is a ContextVar — per-thread, and first
-    # in `get_hermes_home()`'s resolution order — so it already scopes this
-    # correctly without the global.
-    env_snapshot = os.environ.copy()
-
-    from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-
-    normalized_profile = normalize_profile_name(raw_profile)
-    try:
-        profile_home = Path(resolve_profile_env(normalized_profile)).resolve()
-    except (FileNotFoundError, ValueError) as exc:
-        logger.error(
-            "Job '%s': configured profile %r could not be resolved (%s) — "
-            "skipping this run rather than executing under the scheduler's "
-            "default identity",
-            job_id, raw_profile, exc,
-        )
-        raise ProfileResolutionError(
-            f"profile {raw_profile!r} could not be resolved: {exc}"
-        ) from exc
-
-    from hermes_cli.fork_ext.profile_env import profile_run
-    from agent.secret_scope import (
-        build_profile_secret_scope,
-        reset_secret_scope,
-        set_secret_scope,
-    )
-
-    override_token = None
-    scope_token = None
-    try:
-        override_token = set_hermes_home_override(profile_home)
-        # Replaces the scheduler's scope for the length of the run: that one
-        # is built from the scheduler's own home before this context is
-        # entered, so without this a profile job read the DEFAULT profile's
-        # .env through every get_secret() call.
-        #
-        # The scope is the process environment with the profile's .env over
-        # it — exactly what the job used to see once load_hermes_dotenv had
-        # merged the .env into os.environ. get_secret() treats a scope as
-        # authoritative, so a key the profile .env deliberately leaves out
-        # (a rental's EXA/HF keys) must still resolve to the process value,
-        # as it did before; and os.environ now only ever holds the process's
-        # own values, so carrying it over cannot hand one profile another's.
-        scope_token = set_secret_scope(
-            {**os.environ, **build_profile_secret_scope(profile_home)}
-        )
-        _assert_own_subprocess_identity(job_id, normalized_profile, profile_home)
-        logger.info(
-            "Job '%s': using Hermes profile '%s' (%s)",
-            job_id,
-            normalized_profile,
-            profile_home,
-        )
-        with profile_run():
-            yield normalized_profile
-    finally:
-        if scope_token is not None:
-            reset_secret_scope(scope_token)
-        if override_token is not None:
-            reset_hermes_home_override(override_token)
-        # Delta-based restore: remove added keys, restore changed keys.
-        # Avoids a brief window where other threads see an empty env.
-        added = set(os.environ.keys()) - set(env_snapshot.keys())
-        for k in added:
-            os.environ.pop(k, None)
-        for k, v in env_snapshot.items():
-            if os.environ.get(k) != v:
-                os.environ[k] = v
-
-
-@contextmanager
-def _satellite_store_context(job_id: str, profile: Optional[str]):
-    """Give a job run from a profile's OWN cron store the fork guarantees a
-    ``profile`` job gets from ``_job_profile_context`` (stage 3 step 0b,
-    ``ops/multiplex-stage3-plan.md``).
-
-    The multiplex ticker and a routed webhook already run such a job under
-    the profile's home override and its ``.env`` secret scope. Two things
-    were missing: the identity tripwire (``_assert_own_subprocess_identity``,
-    the 2026-09-12 PR-as-``hermes-auditor`` class) and ``profile_run()``,
-    without which ``child_env_overlay`` hands the run's children nothing from
-    the profile's ``.env``.
-
-    Unlike ``_job_profile_context`` it does not merge ``os.environ`` into the
-    scope: a satellite job sees its profile's ``.env`` only, which is the
-    ``TENANT_EXCLUDE`` policy (plan fact 11). A job carrying ``profile``, or
-    one run from the launch store, passes straight through.
+    The multiplex ticker and a routed webhook already run such a job under the
+    profile's home override and its ``.env`` secret scope. This adds the identity
+    tripwire (``_assert_own_subprocess_identity``, the 2026-09-12
+    PR-as-``hermes-auditor`` class) and ``profile_run()``, without which
+    ``child_env_overlay`` hands the run's children nothing from the profile's
+    ``.env``. The scope is the profile's ``.env`` only, never ``os.environ`` (plan
+    fact 11). A job run from the launch store passes straight through.
     """
     from cron.fork_ext.dispatch import in_profile_store
 
-    if str(profile or "").strip() or not in_profile_store():
+    if not in_profile_store():
         yield None
         return
 
@@ -316,36 +215,3 @@ def _satellite_store_context(job_id: str, profile: Optional[str]):
     )
     with profile_run():
         yield profile_home.name
-
-
-def _read_profile_env_value(profile: Optional[str], key: str) -> str:
-    """Read a single value from a profile's ``.env`` file, without touching
-    ``os.environ``.
-
-    Delivery resolution (``_deliver_result``) runs *after* ``run_job()``'s
-    ``_job_profile_context`` has already restored the process environment
-    (see that context manager's docstring) — so by the time a job's output
-    is delivered, ``os.getenv()`` only ever sees the scheduler's own default
-    environment, never the job's profile overrides. A profile-scoped job's
-    routing.env-seeded chat/thread IDs (docker/profiles/<name>/routing.env,
-    synced into profiles/<name>/.env on boot) must be read directly off
-    disk instead. Returns "" on any resolution failure — callers already
-    treat an empty string as "not configured" and fall back to the global
-    env var.
-    """
-    raw_profile = str(profile or "").strip()
-    if not raw_profile:
-        return ""
-    try:
-        from hermes_cli.profiles import normalize_profile_name, resolve_profile_env
-        profile_home = Path(resolve_profile_env(normalize_profile_name(raw_profile)))
-    except (FileNotFoundError, ValueError):
-        return ""
-    env_path = profile_home / ".env"
-    if not env_path.is_file():
-        return ""
-    try:
-        from dotenv import dotenv_values
-        return (dotenv_values(str(env_path)).get(key) or "").strip()
-    except Exception:
-        return ""
