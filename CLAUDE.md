@@ -181,6 +181,12 @@ Until 2026-10-04 the gateway cached each profile's zone for its whole life, so a
 `config set timezone` only took effect at the next restart; `hermes_time` now keys that cache
 on the file's stat.
 
+**The auditor's GitHub webhooks point at `/p/auditor/webhooks/auditor-pr-trigger`**
+(since 2026-10-04, stage 3 cohort 4). `auditor-review` lives in the auditor's own store, so
+the bare `/webhooks/auditor-pr-trigger` no longer finds it; boot §6e of `03-biglobster-config`
+keeps the route's `profile: auditor` in step. A new audited repo needs its hook on the `/p/auditor/`
+URL, or its PRs wait for the 6-hourly poll.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk
@@ -235,7 +241,10 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   while a cron run was in flight died mid-drain, its last line
   `notify_active_sessions done` (2026-09-29 12:19, 13:30, 14:28; 2026-09-30 17:39,
   which already had the 10s pins). Still restart through `deploy.sh`, which moves the
-  tag; a `service restart` does not pull.
+  tag; a `service restart` does not pull. `deploy.sh` now asks the pod for claimed/running
+  executions in every store before it moves the tag, and refuses under `--yes` unless
+  `--force-in-flight` (2026-10-04: a deploy cut a rental's run that started after a check
+  that only looked at the *previous* run).
 
   `--build` restores the old behaviour and builds via Cloud Build first. Keep
   it for when Actions is unavailable or its GHCR push breaks — it is the only

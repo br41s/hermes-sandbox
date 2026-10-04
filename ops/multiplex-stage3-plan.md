@@ -556,6 +556,30 @@ starts.
 - **Prerequisite for cohort 3, deployed (2026-10-03, #387):** rentals get
   `BL_SITE_AUTOMATION_KEY` and `TYPESAFE_API_KEY` pinned into their `.env`
   (`RENTAL_PASSTHROUGH`), and `bl_site_health` reads its key through the scope.
+- **Cohort 3, done (2026-10-04).** The six `bl-shoroban` jobs (all `deliver:
+  local`) moved after `hermes -p bl-shoroban config set timezone Asia/Bangkok`.
+  **Found: the gateway cached each profile's zone for its life**, so that edit
+  did not reach it; two runs re-anchored to UTC (13:45, 14:12 Bangkok) before
+  #390 (`hermes_time` keys the cache on the config file's stat) shipped with #389.
+  The deploy also cut the 14:12 Product Sheet run; `scripts/deploy.sh` now lists
+  claimed/running executions in every store before moving the tag and refuses
+  under `--yes` unless `--force-in-flight`.
+- **Cohort 4 (auditor), done (2026-10-04).** `merge-on-green` (`44c8e8977cd6`)
+  moved like any job. `auditor-review` (`c19bb95c0a62`) needed #391 first: boot
+  §6e of `03-biglobster-config` rewrote `auditor-pr-trigger` from the first
+  default-store `profile: auditor` job, so it now follows the id the route
+  targets into either store and adds `profile: auditor` when the job is in the
+  auditor's. Order used, with the route's guard honoured: (1) every audited
+  repo's hook URL switched to `/p/auditor/webhooks/auditor-pr-trigger` (rejected
+  until the deploy, so the route was effectively off), (2) move with
+  `--webhook-route-disabled`, (3) deploy, (4) a redelivered PR event logged
+  `direct-cron-trigger queued` and GitHub recorded 200. The 6-hourly poll
+  covered the ~10 minutes in between. Correction to fact 7's reading in an
+  earlier draft of this step: `/p/{profile}/webhooks/{route}` is handled by the
+  DEFAULT webhook adapter (registered before the `/p/{profile}/{tail}`
+  catch-all), so the route stays in the default `config.yaml` with `profile`.
+- **All cohorts are moved.** Step 2 (drop the fork `profile` field) is next, no
+  sooner than 7 days after the last move: 2026-10-11.
 
 **Rollback:** `hermes cron move <id> --to-default --apply` for that cohort. **Not
 the multiplex lever** (fact 1). For the auditor, also restore the old webhook URLs.
