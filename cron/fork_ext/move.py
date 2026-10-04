@@ -160,6 +160,20 @@ def _webhook_refs(homes: Sequence[Path]) -> List[tuple]:
     return found
 
 
+def _store_timezone(home: Path) -> str:
+    """The zone a store's cron expressions are read in: its own ``config.yaml`` ``timezone``.
+
+    Under multiplex ``hermes_time`` ignores ``HERMES_TIMEZONE`` and reads the firing
+    profile's effective config, so this reads it the same way (managed overlay included);
+    ``""`` means server-local (UTC in the pod). ``fail_closed`` raises on broken YAML
+    instead of serving a last-good copy — the caller refuses rather than guess.
+    """
+    from hermes_cli.config_effective import load_user_config_effective
+
+    value = load_user_config_effective(home / "config.yaml", fail_closed=True).get("timezone")
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _in_flight(job: dict, home: Path, now: datetime) -> Optional[str]:
     from cron import executions
     from cron.constants import FIRE_CLAIM_TTL_SECONDS
@@ -230,6 +244,29 @@ def _check(plan: _Plan, now: datetime, webhook_route_disabled: bool) -> None:
         for ref in _refs(other):
             if ref in moving:
                 plan.refusals.append(f"{ref}: job {oid} reads its context_from; move them together")
+
+    # A cron expression is local wall-clock time in the store that fires it, and the
+    # scheduler re-anchors a moved job's next run to the new zone's wall clock. Moving
+    # between stores in different zones silently shifts every run by the offset: FinView's
+    # 06:00 Bangkok job became 06:00 UTC on 2026-10-04. Interval and one-shot schedules
+    # are absolute and unaffected.
+    cron_jobs = [jid for jid in plan.jobs
+                 if (plan.jobs[jid].get("schedule") or {}).get("kind") == "cron"]
+    if cron_jobs:
+        try:
+            zones = (_store_timezone(plan.source.home), _store_timezone(plan.target.home))
+        except Exception as exc:
+            plan.refusals.append(f"cannot read the stores' timezone ({type(exc).__name__}); refusing blind")
+            zones = None
+        if zones is not None and zones[0] != zones[1]:
+            want = zones[0]
+            fix = (f"hermes{'' if plan.target.name == 'default' else ' -p ' + plan.target.name} "
+                   + (f"config set timezone {want}" if want else "config unset timezone"))
+            for jid in cron_jobs:
+                plan.refusals.append(
+                    f"{jid}: its cron schedule is read in {zones[0] or 'server-local time'} in the "
+                    f"{plan.source.name} store but {zones[1] or 'server-local time'} in the "
+                    f"{plan.target.name} store, so every run would shift; first run `{fix}`")
 
     names = {jid: {jid, str(plan.jobs[jid].get("name") or "").lower()} - {""} for jid in plan.jobs}
     try:
