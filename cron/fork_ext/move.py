@@ -164,15 +164,13 @@ def _store_timezone(home: Path) -> str:
     """The zone a store's cron expressions are read in: its own ``config.yaml`` ``timezone``.
 
     Under multiplex ``hermes_time`` ignores ``HERMES_TIMEZONE`` and reads the firing
-    profile's config, so this is what the gateway uses; ``""`` means server-local (UTC in
-    the pod). Raises if the file is unreadable — the caller refuses rather than guess.
+    profile's effective config, so this reads it the same way (managed overlay included);
+    ``""`` means server-local (UTC in the pod). ``fail_closed`` raises on broken YAML
+    instead of serving a last-good copy — the caller refuses rather than guess.
     """
-    import yaml
+    from hermes_cli.config_effective import load_user_config_effective
 
-    path = home / "config.yaml"
-    if not path.is_file():
-        return ""
-    value = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("timezone")
+    value = load_user_config_effective(home / "config.yaml", fail_closed=True).get("timezone")
     return value.strip() if isinstance(value, str) else ""
 
 
