@@ -228,6 +228,37 @@ def test_refuses_a_job_whose_next_run_is_too_close(stores, capsys):
     assert cron_jobs.is_job_runnable(_get(default, jid))
 
 
+def _set_timezone(home, zone):
+    (home / "config.yaml").write_text(f"timezone: {zone}\n" if zone else "{}\n", encoding="utf-8")
+
+
+def test_refuses_a_cron_job_whose_target_store_keeps_another_timezone(stores, capsys):
+    """2026-10-04: FinView's ``0 6 * * *`` moved from a Bangkok store to an unset (UTC)
+    one and the scheduler re-anchored it to 06:00 UTC, seven hours late."""
+    default, shop = stores
+    _set_timezone(default, "Asia/Bangkok")
+    _set_timezone(shop, "")
+    with mv._in_home(default):
+        jid = cron_jobs.create_job(prompt="sweep", schedule="0 6 * * *", name="daily")["id"]
+    _edit(default, jid, profile="grow-shop", next_run_at=_future(600))
+    out = _refused(capsys, [jid], to_profile="grow-shop", apply=True)
+    assert "Asia/Bangkok" in out and "server-local time" in out
+    assert "hermes -p grow-shop config set timezone Asia/Bangkok" in out
+    assert cron_jobs.is_job_runnable(_get(default, jid)) and _get(shop, jid) is None
+
+    _set_timezone(shop, "Asia/Bangkok")  # the fix the refusal names
+    assert mv.move([jid], to_profile="grow-shop", apply=True) == 0
+    assert _get(shop, jid) is not None
+
+
+def test_an_interval_job_moves_across_timezones(stores):
+    default, shop = stores
+    _set_timezone(default, "Asia/Bangkok")
+    _set_timezone(shop, "Europe/Madrid")
+    jid = _make(default, profile="grow-shop", next_run_at=_future(60))  # every 1h: absolute
+    assert mv.move([jid], to_profile="grow-shop", apply=True) == 0
+
+
 def test_refuses_a_job_with_a_live_fire_claim(stores, capsys):
     default, _ = stores
     jid = _make(default, profile="grow-shop", next_run_at=_future(60),
