@@ -322,15 +322,25 @@ def _service_env(*, rental: bool) -> dict:
 
 
 def _resolved_in_rental_run(home: Path, service_env: dict, monkeypatch) -> dict:
-    """What get_secret returns inside the rental's cron profile-run scope (fork store)."""
-    from agent.secret_scope import get_secret
-    from cron.fork_ext.profile_scope import _job_profile_context
+    """What get_secret returns inside a cron run from the rental's own store, with
+    BigLobster's keys in the process env (the service env every run inherits)."""
+    from agent.secret_scope import (
+        build_profile_secret_scope, get_secret, reset_secret_scope, set_secret_scope)
+    from cron.fork_ext.profile_scope import _satellite_store_context
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
     monkeypatch.setenv("HERMES_HOME", str(home))
-    for name, value in service_env.items():  # the scope carries the process env
+    for name, value in service_env.items():
         monkeypatch.setenv(name, value)
-    with _job_profile_context("job-0c", "rental"):
-        return {name: get_secret(name) for name in br.LANGFUSE_KEY_NAMES}
+    rental = home / "profiles" / "rental"
+    home_token = set_hermes_home_override(rental)
+    scope_token = set_secret_scope(build_profile_secret_scope(rental), profile_home=str(rental))
+    try:
+        with _satellite_store_context("job-0c"):
+            return {name: get_secret(name) for name in br.LANGFUSE_KEY_NAMES}
+    finally:
+        reset_secret_scope(scope_token)
+        reset_hermes_home_override(home_token)
 
 
 def _resolved_in_satellite_scope(home: Path) -> dict:

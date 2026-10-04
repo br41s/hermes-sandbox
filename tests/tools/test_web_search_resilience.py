@@ -594,8 +594,9 @@ class TestResolveSearchFallbacks:
         account. But that denial only strips the key from the tenant's ``.env``
         FILE, while ``exa.is_available()`` resolves via
         ``hermes_cli.config.get_env_value`` which reads ``os.environ`` FIRST —
-        and ``cron/scheduler.py:_job_profile_context`` only adds and restores
-        env keys, never deletes one the parent already had.
+        and the cron profile context of the time (``_job_profile_context``,
+        retired in stage 3 step 2) only added and restored env keys, never
+        deleted one the parent already had.
 
         So this test sets EXA_API_KEY **on purpose**. An earlier version of this
         test deleted it, which made the guard look green while the real tenant
