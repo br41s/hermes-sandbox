@@ -531,6 +531,32 @@ starts.
    parity test holds it equal to `sync_envs`), and refuses a `--deliver` other than
    `local`. The webhook path calls the same `provision()`.
 
+**Progress.**
+
+- **Canary, done (2026-10-02).** `be8a4add42b0` (Off-Site GEO Scout) moved to
+  biglobster. Its first run (10-03 03:00 +07:00) delivered its result but not its
+  "🔄 Started" ping: the ping re-resolved the transport from the satellite's own
+  config, whose platform block reads `enabled: false`, and fell back to a token-less
+  standalone send. Fixed in #388 (pass the authorized `transport=`); the 10-04 run
+  logged no ping error.
+- **Cohort 2, done (2026-10-03).** `ce583d11dedd`, `20ec3607f2c6`, `e197e33b0f00`
+  (`deliver: origin`, falls back to the profile's home channel) and `4a0ebe8779ca`
+  (bare `telegram`) to biglobster; `3988cc0c189f` to finview. Before each `--apply`:
+  the dry run, a route check that every explicit Telegram target has an enabled
+  route to the profile, and, for `origin`/bare targets, resolving them under the
+  profile's scope with the `profile` field dropped. A moved job logs to
+  `profiles/<p>/logs/agent.log`, not the main log.
+- **Found by cohort 2: a store's cron expressions run in that profile's own
+  timezone.** Under multiplex `hermes_time` reads each profile's `config.yaml`
+  `timezone` and ignores `HERMES_TIMEZONE`; finview had none, so `0 6 * * *` became
+  06:00 UTC, and the scheduler's wall-clock re-anchor made that silent. `move` now
+  refuses a cron job between stores whose zones differ and names the
+  `config set timezone` that fixes it. **Before cohort 3, check each rental's
+  `timezone`**: their schedules were authored in the default store's zone.
+- **Prerequisite for cohort 3, deployed (2026-10-03, #387):** rentals get
+  `BL_SITE_AUTOMATION_KEY` and `TYPESAFE_API_KEY` pinned into their `.env`
+  (`RENTAL_PASSTHROUGH`), and `bl_site_health` reads its key through the scope.
+
 **Rollback:** `hermes cron move <id> --to-default --apply` for that cohort. **Not
 the multiplex lever** (fact 1). For the auditor, also restore the old webhook URLs.
 

@@ -172,6 +172,12 @@ nothing and reads like a run that never happened. Grep both, rotations included.
 ping that reached the adapter but failed logs `kickoff ping had delivery errors`; only an
 exception logs `kickoff ping failed`, so count both.
 
+**So does its clock.** Under multiplex a store's cron expressions run in that profile's own
+`config.yaml` `timezone` (`hermes_time._env_timezone` ignores `HERMES_TIMEZONE`), unset means
+UTC, and the scheduler silently re-anchors a moved job to the new wall clock. FinView's 06:00
+Bangkok job ran at 13:00 on 2026-10-04 for that reason. `move` refuses a cron job across
+stores whose zones differ; set the target's `timezone` first, never pass the refusal.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk
