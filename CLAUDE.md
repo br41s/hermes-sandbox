@@ -177,6 +177,9 @@ exception logs `kickoff ping failed`, so count both.
 UTC, and the scheduler silently re-anchors a moved job to the new wall clock. FinView's 06:00
 Bangkok job ran at 13:00 on 2026-10-04 for that reason. `move` refuses a cron job across
 stores whose zones differ; set the target's `timezone` first, never pass the refusal.
+Until 2026-10-04 the gateway cached each profile's zone for its whole life, so a
+`config set timezone` only took effect at the next restart; `hermes_time` now keys that cache
+on the file's stat.
 
 ## Deployment — Zeabur, Frankfurt
 

@@ -77,7 +77,20 @@ def _env_timezone() -> str:
 
 def _timezone_cache_identity() -> Tuple[str, str]:
     tz_env = _env_timezone()
-    return ("environment", tz_env) if tz_env else ("config", str(get_config_path()))
+    if tz_env:
+        return ("environment", tz_env)
+    # Fork: key on the file's stat too, so an edit made by another process (``hermes -p <p>
+    # config set timezone …`` while the gateway runs) takes effect on the next read instead of
+    # at the next restart. Without it, the multiplexed gateway kept a profile on the zone it
+    # first resolved — UTC for an unset one — and re-anchored that profile's cron runs to it
+    # (2026-10-04: a rental's 12:45 Bangkok run became 13:45 after its timezone was set).
+    path = get_config_path()
+    try:
+        st = os.stat(path)
+        stamp = f"{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        stamp = "absent"
+    return ("config", f"{path}\0{stamp}")
 
 
 def _resolve_timezone_name() -> str:
@@ -123,6 +136,11 @@ def _timezone_entry() -> Tuple[str, Optional[ZoneInfo]]:
         except Exception as exc:
             logger.warning("Invalid timezone '%s': %s. Falling back to server local time.", name, exc)
     with _cache_lock:
+        if cache_identity[0] == "config":  # drop superseded stamps of the same file
+            prefix = cache_identity[1].split("\0", 1)[0] + "\0"
+            for key in [k for k in _tz_cache if k[0] == "config" and k[1].startswith(prefix)]:
+                if key != cache_identity:
+                    del _tz_cache[key]
         return _tz_cache.setdefault(cache_identity, (name, tz))
 
 
