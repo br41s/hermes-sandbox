@@ -1,14 +1,20 @@
 """A cron profile job's .env is scoped to its run, never written to os.environ.
 
-Upstream v2026.8.31 removes ``_terminal_cwd_lock``, which today is what keeps
-a plain job from running while a profile job's keys sit in ``os.environ``.
-These tests pin the replacement guarantee: the profile's ``.env`` is the run's
-secret scope, the readers that pick a client's site/keys see it, the child
-processes it spawns inherit it, and nothing on another thread ever does.
+Upstream v2026.8.31 removes ``_terminal_cwd_lock``, which once kept a plain job
+from running while a profile job's keys sat in ``os.environ``. These tests pin
+the replacement guarantee: the profile's ``.env`` is the run's secret scope, the
+readers that pick a client's site/keys see it, the child processes it spawns
+inherit it, and nothing on another thread ever does.
+
+Since stage 3 step 2 every profile job runs from its profile's own store: the
+multiplex ticker or a routed webhook installs the home override and the scope,
+and ``_satellite_store_context`` adds the identity check and ``profile_run()``.
+``_satellite_run`` below stands in for that whole path.
 """
 
 import os
 import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -33,10 +39,27 @@ def rental_profile(tmp_path, monkeypatch):
     return root, profile_home
 
 
+@contextmanager
 def _profile_context():
-    from cron.fork_ext.profile_scope import _job_profile_context
+    """A run from the rental's own store, as the multiplex ticker sets it up."""
+    from agent.secret_scope import (
+        build_profile_secret_scope,
+        reset_secret_scope,
+        set_secret_scope,
+    )
+    from cron.fork_ext.profile_scope import _satellite_store_context
+    from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 
-    return _job_profile_context("job-1", "rental")
+    profile_home = get_hermes_home() / "profiles" / "rental"
+    home_token = set_hermes_home_override(profile_home)
+    scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
+    try:
+        with _satellite_store_context("job-1") as name:
+            assert name == "rental"
+            yield
+    finally:
+        reset_secret_scope(scope_token)
+        reset_hermes_home_override(home_token)
 
 
 def test_profile_keys_reach_scoped_readers_but_not_os_environ(rental_profile):
@@ -51,37 +74,10 @@ def test_profile_keys_reach_scoped_readers_but_not_os_environ(rental_profile):
         assert get_env_value("OPENROUTER_API_KEY") == "or-client-key"
         assert get_secret("FAL_KEY") == "fal-client-key"
         assert get_secret("OPENROUTER_API_KEY") == "or-client-key"
-        # A key the profile .env leaves out (a rental's EXA key) still
-        # resolves to the process value, as it did when the .env was merged
-        # into os.environ.
-        assert get_secret("EXA_API_KEY") == "exa-process-key"
-        assert get_env_value("EXA_API_KEY") == "exa-process-key"
         assert "BL_SITE_URL" not in os.environ
         assert "FAL_KEY" not in os.environ
         assert os.environ["OPENROUTER_API_KEY"] == "or-process-key"
     assert dict(os.environ) == before
-
-
-def test_profile_scope_replaces_the_schedulers_default_scope(rental_profile):
-    """run_one_job installs the scheduler's own .env as the scope BEFORE the
-    profile context is entered; the profile's scope must win inside the run
-    and the default one must come back after it."""
-    from agent.secret_scope import (
-        build_profile_secret_scope,
-        get_secret,
-        reset_secret_scope,
-        set_secret_scope,
-    )
-
-    root, _profile_home = rental_profile
-    token = set_secret_scope(build_profile_secret_scope(root))
-    try:
-        assert get_secret("BL_SITE_URL") == "https://default.example"
-        with _profile_context():
-            assert get_secret("BL_SITE_URL") == "https://client.example"
-        assert get_secret("BL_SITE_URL") == "https://default.example"
-    finally:
-        reset_secret_scope(token)
 
 
 def test_a_concurrent_job_on_another_thread_never_sees_profile_keys(rental_profile):
@@ -154,8 +150,8 @@ def test_fal_submits_with_the_profiles_own_key(rental_profile, monkeypatch):
 
 def test_a_home_override_outside_a_cron_profile_run_adds_nothing_to_children(rental_profile):
     """The dashboard, kanban, memory OAuth and gateway paths set home
-    overrides (and may bind a scope) too; only _job_profile_context's run
-    may overlay a profile's keys onto a child."""
+    overrides (and may bind a scope) too; only a cron run from a profile's own
+    store (``_satellite_store_context``) may overlay a profile's keys onto a child."""
     from agent.secret_scope import (
         build_profile_secret_scope,
         reset_secret_scope,
@@ -198,11 +194,10 @@ def test_keyed_fal_clients_are_bounded_and_not_keyed_by_the_raw_key(monkeypatch)
 
 
 def test_a_satellite_store_run_overlays_its_env_onto_children_without_the_process_env(rental_profile):
-    """Stage 3 step 0b. A job run from a profile's own store carries no
-    ``profile`` field. The run path installs the profile's ``.env`` as the
+    """Stage 3 step 0b. The run path installs the profile's ``.env`` as the
     scope (``scheduler.py``, from ``_get_hermes_home()``); the satellite
     context must mark the run so children get that ``.env``, and must not
-    merge ``os.environ`` into it the way ``_job_profile_context`` does."""
+    merge ``os.environ`` into it."""
     from agent.secret_scope import (
         build_profile_secret_scope,
         current_secret_scope,
@@ -218,7 +213,7 @@ def test_a_satellite_store_run_overlays_its_env_onto_children_without_the_proces
     scope_token = set_secret_scope(build_profile_secret_scope(profile_home))
     try:
         assert child_env_overlay() == {}
-        with _satellite_store_context("sat-job", None) as name:
+        with _satellite_store_context("sat-job") as name:
             assert name == "rental"
             assert child_env_overlay()["BL_SITE_URL"] == "https://client.example"
             scope = current_secret_scope()
@@ -232,20 +227,10 @@ def test_a_satellite_store_run_overlays_its_env_onto_children_without_the_proces
 
 
 def test_the_satellite_context_is_inert_outside_a_profile_store(rental_profile):
-    """The launch store's plain jobs, and fork ``profile`` jobs (which
-    ``_job_profile_context`` already covers), pass straight through."""
+    """The launch store's plain jobs pass straight through."""
     from cron.fork_ext.profile_scope import _satellite_store_context
     from hermes_cli.fork_ext.profile_env import child_env_overlay
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-    _root, profile_home = rental_profile
-    with _satellite_store_context("plain-job", None) as name:
+    with _satellite_store_context("plain-job") as name:
         assert name is None
         assert child_env_overlay() == {}
-
-    home_token = set_hermes_home_override(profile_home)
-    try:
-        with _satellite_store_context("fork-job", "rental") as name:
-            assert name is None
-    finally:
-        reset_hermes_home_override(home_token)

@@ -8,7 +8,7 @@ keys it used to inherit — ``BL_SITE_URL`` for the infographic prompt's
 
 ``child_env_overlay()`` returns what the run's scope changes relative to
 ``os.environ``, and ``{}`` outside a cron profile run. The gate is an explicit
-flag that only ``_job_profile_context`` sets (``profile_run()``), not "a home
+flag that only ``_satellite_store_context`` sets (``profile_run()``), not "a home
 override is active": the dashboard, kanban, memory OAuth and gateway paths set
 home overrides too, and their children must keep building exactly the
 environment they did before. The caller still applies its usual stripping on

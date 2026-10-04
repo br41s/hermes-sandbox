@@ -7,13 +7,13 @@ import pytest
 from cron.scheduler import _resolve_delivery_target, _send_kickoff_ping, run_job
 
 
-class TestProfileAwareDeliveryTarget:
-    """A profile-scoped job's routing.env-seeded chat/thread must win over
-    the scheduler's global home-channel env, even though delivery resolution
-    runs *after* run_job()'s per-job profile env context has already been
-    torn down (see _job_profile_context / _read_profile_env_value). Regression
-    for the BigLobster/FinView/Infographic jobs silently landing on the main
-    Hermes thread instead of their own project thread (2026-07-08)."""
+class TestHomeDeliveryTarget:
+    """A launch-store job's bare platform ``deliver`` lands on the global home
+    channel/thread. The fork's per-job ``profile`` routing (2026-07-08, the
+    BigLobster/FinView/Infographic jobs on the main Hermes thread) went with the
+    field in stage 3 step 2: a job in a profile's own store reads that profile's
+    routing env through its secret scope
+    (``test_multiplex_default_delivery_fork.py``)."""
 
     @pytest.fixture
     def profile_root(self, tmp_path, monkeypatch):
@@ -25,49 +25,8 @@ class TestProfileAwareDeliveryTarget:
     def _write_profile_env(self, root, profile, content):
         (root / "profiles" / profile / ".env").write_text(content, encoding="utf-8")
 
-    def test_profile_thread_wins_over_global_home_thread(self, monkeypatch, profile_root):
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")  # global/default thread
-        self._write_profile_env(
-            profile_root,
-            "biglobster",
-            "TELEGRAM_HOME_CHANNEL=-1004224848555\nTELEGRAM_CRON_THREAD_ID=2\n",
-        )
-
-        job = {"deliver": "telegram", "profile": "biglobster", "origin": None}
-        assert _resolve_delivery_target(job) == {
-            "platform": "telegram",
-            "chat_id": "-1004224848555",
-            "thread_id": "2",
-            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
-        }
-
-    def test_profile_without_routing_env_falls_back_to_global(self, monkeypatch, profile_root):
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
-        # biglobster profile dir exists but has no .env — must not error, must
-        # fall back to the global home channel exactly like a profile-less job.
-        job = {"deliver": "telegram", "profile": "biglobster", "origin": None}
-        assert _resolve_delivery_target(job) == {
-            "platform": "telegram",
-            "chat_id": "-1004224848555",
-            "thread_id": "1",
-            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
-        }
-
-    def test_unknown_profile_falls_back_to_global_without_raising(self, monkeypatch, profile_root):
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
-        monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
-        job = {"deliver": "telegram", "profile": "does-not-exist", "origin": None}
-        assert _resolve_delivery_target(job) == {
-            "platform": "telegram",
-            "chat_id": "-1004224848555",
-            "thread_id": "1",
-            "_resolved_from": "home",  # upstream v2026.9.24 tags home-channel targets
-        }
-
     def test_profile_scoped_job_without_profile_field_uses_global(self, monkeypatch, profile_root):
-        """Sanity check: jobs with no `profile` key are completely unaffected."""
+        """A profile's routing env never reaches a launch-store job."""
         monkeypatch.setenv("TELEGRAM_HOME_CHANNEL", "-1004224848555")
         monkeypatch.setenv("TELEGRAM_HOME_CHANNEL_THREAD_ID", "1")
         self._write_profile_env(
@@ -260,63 +219,48 @@ class TestKickoffPing:
         assert names.index("ping") < names.index("run")
 
 
-class TestJobProfileContextFailsClosed:
-    """A job with an unresolvable profile must not silently run under the
-    scheduler's default identity — see ProfileResolutionError's docstring
-    for the incident this prevents (auditor briefly acting as the CEO's own
-    GitHub account instead of its dedicated hermes-auditor bot)."""
+class TestLegacyProfileRecordRefused:
+    """Stage 3 step 2 retired the fork's per-job ``profile`` field. A record that
+    still carries it must never run under the scheduler's default identity (the
+    auditor once acted as the CEO's own GitHub account that way): it is refused
+    with an error naming ``hermes cron move``, and the caller marks the run
+    failed, which alerts."""
 
-    def test_valid_profile_yields_normalized_name(self, tmp_path, monkeypatch):
-        from cron.fork_ext.profile_scope import _job_profile_context
+    def test_a_record_carrying_profile_is_refused_before_it_runs(self, tmp_path, monkeypatch):
+        import cron.scheduler as sched
+        from cron.fork_ext.run_guard import guarded_run_job
+        from cron.scheduler import LegacyProfileJobError
 
-        profile_dir = tmp_path / "profiles" / "auditor"
-        profile_dir.mkdir(parents=True)
-        monkeypatch.setattr(
-            "hermes_cli.profiles.resolve_profile_env",
-            lambda name: str(profile_dir),
-        )
-        monkeypatch.setattr(
-            "hermes_cli.profiles.normalize_profile_name", lambda name: name
-        )
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
 
-        with _job_profile_context("job-1", "auditor") as resolved:
-            assert resolved == "auditor"
+        with pytest.raises(LegacyProfileJobError) as exc:
+            guarded_run_job({"id": "auditor-job", "profile": "auditor"},
+                            lambda job: pytest.fail("a legacy profile record must not run"))
+        assert "hermes cron move auditor-job --to-profile auditor --apply" in str(exc.value)
 
-    def test_no_profile_yields_none(self):
-        from cron.fork_ext.profile_scope import _job_profile_context
+    def test_run_job_propagates_the_refusal(self, tmp_path, monkeypatch):
+        # run_job() must not swallow the error into a "ran under the default
+        # profile" outcome — tick()'s _process_job marks the run failed.
+        import cron.scheduler as sched
+        from cron.scheduler import LegacyProfileJobError
 
-        with _job_profile_context("job-1", None) as resolved:
-            assert resolved is None
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+        monkeypatch.setattr(sched, "_run_job_impl",
+                            lambda job, **kw: pytest.fail("a legacy profile record must not run"))
 
-    def test_unresolvable_profile_raises_instead_of_falling_back(self, monkeypatch):
-        from cron.fork_ext.profile_scope import _job_profile_context, ProfileResolutionError
-
-        def _boom(name):
-            raise FileNotFoundError(f"Profile '{name}' does not exist.")
-
-        monkeypatch.setattr("hermes_cli.profiles.resolve_profile_env", _boom)
-        monkeypatch.setattr(
-            "hermes_cli.profiles.normalize_profile_name", lambda name: name
-        )
-
-        with pytest.raises(ProfileResolutionError):
-            with _job_profile_context("auditor-job", "auditor"):
-                pytest.fail("job body must not execute when profile resolution fails")
-
-    def test_run_job_propagates_profile_resolution_error(self, monkeypatch):
-        # run_job() must not swallow the error into a "ran under default
-        # profile" outcome — it should surface so the caller (tick()'s
-        # _process_job) marks the run as failed and retries later, rather
-        # than delivering a review/action taken under the wrong identity.
-        from cron.scheduler import ProfileResolutionError
-
-        def _boom(job_id, profile):
-            raise ProfileResolutionError("profile 'auditor' could not be resolved")
-
-        monkeypatch.setattr("cron.scheduler._job_profile_context", _boom)
-
-        with pytest.raises(ProfileResolutionError):
+        with pytest.raises(LegacyProfileJobError):
             run_job({"id": "auditor-job", "profile": "auditor"})
+
+    @pytest.mark.parametrize("profile", [None, "", "   ", "default", "Default"])
+    def test_an_empty_or_default_profile_value_is_no_profile(self, tmp_path, monkeypatch, profile):
+        """``default`` ran under the root home before step 2, as a plain job does."""
+        import cron.scheduler as sched
+        from cron.fork_ext.run_guard import guarded_run_job
+
+        monkeypatch.setattr(sched, "_get_hermes_home", lambda: tmp_path)
+
+        assert guarded_run_job({"id": "plain", "profile": profile},
+                               lambda job: (True, "ran", "", None)) == (True, "ran", "", None)
 
 
 class TestJobRunLock:
@@ -395,7 +339,7 @@ class TestDispatchJobAsync:
             fut.set_result(True)
             return fut
 
-    def test_profile_job_queues_on_sequential_pool(self, monkeypatch):
+    def test_workdir_job_queues_on_sequential_pool(self, monkeypatch):
         import cron.scheduler as sched
         from cron.fork_ext import dispatch as fork_dispatch
 
@@ -405,7 +349,7 @@ class TestDispatchJobAsync:
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j1")
 
-        res = sched.dispatch_job_async({"id": "j1", "profile": "auditor"})
+        res = sched.dispatch_job_async({"id": "j1", "workdir": "/repo"})
 
         assert res["queued"] is True
         assert calls == {"run": 1, "seq": 1, "par": 0}       # ran, via SEQUENTIAL pool
@@ -420,7 +364,7 @@ class TestDispatchJobAsync:
         # (job id, home), so a bare id no longer registers anything.
         assert sched.try_register_running_job("j2")
         try:
-            res = sched.dispatch_job_async({"id": "j2", "profile": "auditor"})
+            res = sched.dispatch_job_async({"id": "j2", "workdir": "/repo"})
             assert res["queued"] is False and res["reason"] == "already running"
             assert calls["run"] == 0
         finally:
@@ -436,7 +380,7 @@ class TestDispatchJobAsync:
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
         sched._running_job_ids.discard("j3")
 
-        res = sched.dispatch_job_async({"id": "j3"})  # no profile, no workdir
+        res = sched.dispatch_job_async({"id": "j3"})  # launch store, no workdir
 
         assert res["queued"] is True
         assert calls == {"seq": 0, "par": 1}                 # parallel pool
@@ -475,112 +419,9 @@ class TestJobSubprocessIdentityTripwire:
         )
         return root / active
 
-    def test_sibling_profile_home_fails_closed(self, tmp_path, monkeypatch):
-        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
-
-        root = self._profiles(tmp_path, monkeypatch, "finview").parent
-        # Exactly the production shape: the previous (auditor) run's HOME
-        # survived into this one.
-        monkeypatch.setattr(
-            "hermes_constants.get_subprocess_home",
-            lambda env=None: str(root / "auditor" / "home"),
-        )
-
-        with pytest.raises(ProfileIdentityError) as exc:
-            with _job_profile_context("finview-job", "finview"):
-                pytest.fail("the job body must not run under another identity")
-        assert "another profile" in str(exc.value)
-
-    def test_own_profile_home_is_accepted(self, tmp_path, monkeypatch):
-        from cron.fork_ext.profile_scope import _job_profile_context
-
-        own = self._profiles(tmp_path, monkeypatch, "finview")
-        monkeypatch.setattr(
-            "hermes_constants.get_subprocess_home",
-            lambda env=None: str(own / "home"),
-        )
-
-        with _job_profile_context("finview-job", "finview") as resolved:
-            assert resolved == "finview"
-
-    def test_host_install_real_home_is_accepted(self, tmp_path, monkeypatch):
-        """The ``auto`` home policy keeps the real OS-user home on non-container
-        installs. That is not another profile's identity, so it must not fail —
-        demanding a profile home here would break every host deployment."""
-        from cron.fork_ext.profile_scope import _job_profile_context
-
-        self._profiles(tmp_path, monkeypatch, "finview")
-        real_home = tmp_path / "home" / "brais"
-        real_home.mkdir(parents=True)
-        monkeypatch.setattr(
-            "hermes_constants.get_subprocess_home", lambda env=None: str(real_home)
-        )
-
-        with _job_profile_context("finview-job", "finview") as resolved:
-            assert resolved == "finview"
-
-    def test_no_subprocess_home_override_is_accepted(self, tmp_path, monkeypatch):
-        from cron.fork_ext.profile_scope import _job_profile_context
-
-        self._profiles(tmp_path, monkeypatch, "finview")
-        monkeypatch.setattr(
-            "hermes_constants.get_subprocess_home", lambda env=None: None
-        )
-
-        with _job_profile_context("finview-job", "finview") as resolved:
-            assert resolved == "finview"
-
-    def test_unprovisioned_profile_fails_closed_when_siblings_pin_identity(
-        self, tmp_path, monkeypatch
-    ):
-        """``earthsaver`` exists in production as a bare directory — no
-        ``SOUL.md``, no ``.env``, no ``home/`` — because ``resolve_profile_env``
-        accepts any directory under ``profiles/`` as a profile. Its sibling
-        profiles all have a ``home/``, so this install pins identity per
-        profile and a job under ``earthsaver`` would silently run as the owner
-        account."""
-        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
-
-        root = tmp_path / "profiles"
-        (root / "earthsaver").mkdir(parents=True)
-        (root / "finview" / "home").mkdir(parents=True)
-        monkeypatch.setattr(
-            "hermes_cli.profiles.resolve_profile_env", lambda name: str(root / name)
-        )
-        monkeypatch.setattr(
-            "hermes_cli.profiles.normalize_profile_name", lambda name: name
-        )
-
-        with pytest.raises(ProfileIdentityError) as exc:
-            with _job_profile_context("es-job", "earthsaver"):
-                pytest.fail("an unprovisioned profile must not run")
-        assert "never fully" in str(exc.value)
-
-    def test_host_install_without_any_profile_homes_still_runs(
-        self, tmp_path, monkeypatch
-    ):
-        """The same check must stay silent on a laptop: with the ``auto`` home
-        policy no profile has a ``home/`` and the real OS-user home is the
-        correct answer. Calibrating off the siblings is what allows one check
-        to be strict in production and quiet here."""
-        from cron.fork_ext.profile_scope import _job_profile_context
-
-        root = tmp_path / "profiles"
-        (root / "finview").mkdir(parents=True)
-        (root / "biglobster").mkdir(parents=True)
-        monkeypatch.setattr(
-            "hermes_cli.profiles.resolve_profile_env", lambda name: str(root / name)
-        )
-        monkeypatch.setattr(
-            "hermes_cli.profiles.normalize_profile_name", lambda name: name
-        )
-
-        with _job_profile_context("fv-job", "finview") as resolved:
-            assert resolved == "finview"
-
-    # Stage 3 step 0b: a job run from a profile's OWN cron store has no
-    # ``profile`` field, so ``_job_profile_context`` never sees it. The
-    # tripwire must still fire, through the same ``guarded_run_job`` path.
+    # Since stage 3 step 2 every profile job runs from its profile's OWN cron
+    # store (step 0b), so the tripwire fires through ``guarded_run_job``'s
+    # satellite path.
 
     @staticmethod
     def _satellite_run(home, job, impl):
@@ -650,42 +491,77 @@ class TestJobSubprocessIdentityTripwire:
 
         assert guarded_run_job({"id": "plain"}, impl) == (False, "", "", None)
 
+    def test_host_install_real_home_is_accepted(self, tmp_path, monkeypatch):
+        """The ``auto`` home policy keeps the real OS-user home on non-container
+        installs. That is not another profile's identity, so it must not fail —
+        demanding a profile home here would break every host deployment."""
+        own = self._profiles(tmp_path, monkeypatch, "finview")
+        real_home = tmp_path / "home" / "brais"
+        real_home.mkdir(parents=True)
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home", lambda env=None: str(real_home)
+        )
+
+        assert self._satellite_run(own, {"id": "fv-sat"},
+                                   lambda job: (True, "", "", None))[0] is True
+
+    def test_no_subprocess_home_override_is_accepted(self, tmp_path, monkeypatch):
+        own = self._profiles(tmp_path, monkeypatch, "finview")
+        monkeypatch.setattr(
+            "hermes_constants.get_subprocess_home", lambda env=None: None
+        )
+
+        assert self._satellite_run(own, {"id": "fv-sat"},
+                                   lambda job: (True, "", "", None))[0] is True
+
+    def test_host_install_without_any_profile_homes_still_runs(
+        self, tmp_path, monkeypatch
+    ):
+        """The same check must stay silent on a laptop: with the ``auto`` home
+        policy no profile has a ``home/`` and the real OS-user home is the
+        correct answer. Calibrating off the siblings is what allows one check
+        to be strict in production and quiet here."""
+        root = tmp_path / "profiles"
+        (root / "finview").mkdir(parents=True)
+        (root / "biglobster").mkdir(parents=True)
+
+        assert self._satellite_run(root / "finview", {"id": "fv-sat"},
+                                   lambda job: (True, "", "", None))[0] is True
+
     def test_a_profile_job_is_checked_once_not_twice(self, tmp_path, monkeypatch):
         from cron.fork_ext import profile_scope
-        from cron.fork_ext.run_guard import guarded_run_job
 
-        self._profiles(tmp_path, monkeypatch, "finview")
+        own = self._profiles(tmp_path, monkeypatch, "finview")
         calls = []
         monkeypatch.setattr(profile_scope, "_assert_own_subprocess_identity",
                             lambda *a: calls.append(a[0]))
 
-        assert guarded_run_job({"id": "fv-job", "profile": "finview"},
-                               lambda job: (True, "", "", None))[0] is True
+        assert self._satellite_run(own, {"id": "fv-job"},
+                                   lambda job: (True, "", "", None))[0] is True
         assert calls == ["fv-job"]
 
     def test_environment_is_restored_even_when_the_tripwire_fires(
         self, tmp_path, monkeypatch
     ):
-        """The tripwire raises from inside the context manager's ``try``, so
-        the env snapshot/restore and the Hermes-home override reset must still
-        run — otherwise the guard against leaking identity would itself leak."""
+        """The tripwire raises before ``profile_run()`` is entered, so neither
+        ``os.environ`` nor the profile-run flag may be left changed — otherwise
+        the guard against leaking identity would itself leak."""
         import os
 
-        from hermes_constants import get_hermes_home_override
-        from cron.fork_ext.profile_scope import _job_profile_context, ProfileIdentityError
+        from cron.fork_ext.profile_scope import ProfileIdentityError
+        from hermes_cli.fork_ext import profile_env
 
-        root = self._profiles(tmp_path, monkeypatch, "finview").parent
+        own = self._profiles(tmp_path, monkeypatch, "finview")
         monkeypatch.setattr(
             "hermes_constants.get_subprocess_home",
-            lambda env=None: str(root / "auditor" / "home"),
+            lambda env=None: str(own.parent / "auditor" / "home"),
         )
 
         before = dict(os.environ)
         with pytest.raises(ProfileIdentityError):
-            with _job_profile_context("finview-job", "finview"):
-                pass
+            self._satellite_run(own, {"id": "fv-sat"}, lambda job: (True, "", "", None))
         assert dict(os.environ) == before
-        assert get_hermes_home_override() is None
+        assert not profile_env._IN_PROFILE_RUN.get()
 
 
 class TestKickoffPingFromAProfileStore:

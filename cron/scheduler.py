@@ -1309,12 +1309,10 @@ from cron.fork_ext.max_runtime import (  # noqa: E402
 )
 
 
-# Per-job profile scope (fork): see cron/fork_ext/profile_scope.py.
+# Profile identity (fork): see cron/fork_ext/profile_scope.py.
 from cron.fork_ext.profile_scope import (  # noqa: E402
+    LegacyProfileJobError,  # noqa: F401 - re-exported for callers and tests
     ProfileIdentityError,  # noqa: F401 - re-exported for callers and tests
-    ProfileResolutionError,  # noqa: F401 - re-exported for callers and tests
-    _job_profile_context,  # noqa: F401 - run_guard reaches it here
-    _read_profile_env_value,  # noqa: F401 - scheduler_delivery's home-target lookups reach it here
 )
 
 
@@ -2325,6 +2323,15 @@ def _prepare_job_prompt(
     return None, prompt
 
 
+def _store_profile_name() -> Optional[str]:
+    """The profile whose own cron store this run comes from, or None for the launch store (fork).
+
+    Names the run's isolated checkout dir; stage 3 step 2 retired the job's ``profile`` field."""
+    from cron.fork_ext.dispatch import in_profile_store
+
+    return get_hermes_home().name if in_profile_store() else None
+
+
 _CRON_DELIVERY_VARS = (
     "HERMES_CRON_AUTO_DELIVER_PLATFORM",
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID",
@@ -2354,7 +2361,7 @@ class _CronRunScope:
         self.isolated_checkout: Optional[str] = None
         if self.workdir:
             self.workdir, self.isolated_checkout = _provision_isolated_checkout(
-                job_id, job.get("profile"), self.workdir)
+                job_id, _store_profile_name(), self.workdir)
         self._ctx_tokens = set_session_vars(
             platform="",
             chat_id="",
@@ -2417,9 +2424,12 @@ def _reload_dotenv_and_publish_delivery_target(job: dict) -> None:
     from gateway.session_context import _VAR_MAP
 
     reset_secret_source_cache(_get_hermes_home())
-    # A profile job's .env is its secret scope, never os.environ (fork): see
-    # cron/fork_ext/profile_scope.py (_job_profile_context).
-    if not str(job.get("profile") or "").strip():
+    # A run from a profile's own store reads its .env through the run's secret scope, never
+    # os.environ (fork). Upstream skips this load only while multiplex is on, and the gateway
+    # ticks profile stores with it off too (rollback).
+    from cron.fork_ext.dispatch import in_profile_store
+
+    if not in_profile_store():
         load_hermes_dotenv(hermes_home=_get_hermes_home())
 
     delivery_target = _resolve_delivery_target(job)
@@ -4267,8 +4277,8 @@ from cron.scheduler_preflight import (  # noqa: E402
     BLOCKED_CONFIG_MARKER, BLOCKED_CONFIG_SILENT_MARKER, _cron_preflight_enabled,
     _empty_requested_mcp_toolsets, _is_transient_provider_resolve_error, _preflight_job_config,
 )
-# Fork: cron/fork_ext/kickoff.py reaches _confirm_adapter_delivery here; the home-target lookups
-# carry the fork's per-job ``profile`` routing and fork tests call them through this module.
+# Fork: cron/fork_ext/kickoff.py reaches _confirm_adapter_delivery here; fork tests call the
+# home-target lookups through this module.
 from cron.scheduler_delivery import (  # noqa: E402,F401
     _confirm_adapter_delivery, _get_home_target_chat_id, _get_home_target_thread_id,
 )

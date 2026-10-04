@@ -1,4 +1,4 @@
-"""Fork: upstream's webhook ``cron_job`` route runs a profile/workdir job on the
+"""Fork: upstream's webhook ``cron_job`` route runs a workdir or profile-store job on the
 sequential lane (``cron/fork_ext/dispatch.py::run_event_job``), not on a worker
 thread of its own. Upstream's own route tests are in test_webhook_cron_trigger.py.
 """
@@ -41,11 +41,12 @@ def lane():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fields, on_lane", [
-    ({"profile": "grow-shop"}, True),
     ({"workdir": "/srv/site"}, True),
     ({}, False),
+    # Stage 3 step 2: the retired field no longer counts (run_job refuses the record).
+    ({"profile": "grow-shop"}, False),
 ])
-async def test_cron_job_route_runs_profile_and_workdir_jobs_on_the_lane(lane, fields, on_lane):
+async def test_cron_job_route_runs_workdir_jobs_on_the_lane(lane, fields, on_lane):
     fired = []
 
     def _fake_execute(job_ref, extra_prompt=None):

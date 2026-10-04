@@ -548,7 +548,7 @@ echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
 # cron/scheduler.py). Execs from the install dir so `merge_on_green`,
 # `remediation` and `auditor` import. Empty stdout = silent delivery.
 # Register the job ONCE (after deploy, in the container shell):
-#   hermes cron create "*/15 * * * *" --profile auditor --no-agent \
+#   hermes -p auditor cron create "*/15 * * * *" --no-agent \
 #     --script merge_on_green.sh --deliver "telegram:<chat_id>:1904" --name merge-on-green
 if [ -d "$HERMES_HOME/profiles/auditor" ]; then
     as_hermes mkdir -p "$HERMES_HOME/profiles/auditor/scripts"

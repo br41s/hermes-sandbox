@@ -68,7 +68,7 @@ class _LiveTelegram:
         self.sent = []
 
     async def send(self, chat_id, content, metadata=None):
-        self.sent.append({"chat_id": chat_id, "metadata": metadata or {},
+        self.sent.append({"chat_id": chat_id, "content": content, "metadata": metadata or {},
                           "scope_home": ss.current_secret_scope_home()})
         return {"success": True, "message_id": "m1"}
 
@@ -143,23 +143,16 @@ def test_without_the_flag_it_is_the_incident(launch_home, monkeypatch):
     assert adapter.sent == [] and standalone == []
 
 
-def test_a_fork_profile_job_delivers_under_the_launch_scope(launch_home):
-    """A default-store job with ``profile: biglobster`` runs under that profile's scope
-    (``_job_profile_context``, ``{**os.environ, **profile .env}``), but delivers after
-    that context has closed, under the launch scope ``_run_one_job_body`` installed."""
-    seen = {}
-
-    def during_run():
-        seen["home"] = ss.current_secret_scope_home()
-        seen["key"] = ss.get_secret("OPENROUTER_API_KEY")
-
+def test_a_legacy_profile_record_fails_instead_of_running_under_the_launch_scope(launch_home):
+    """Stage 3 step 2: a default-store record still carrying ``profile`` is refused in
+    ``run_job``, under the real ``run_one_job`` path, and the run is marked failed. It
+    never runs under the launch identity, and its report never goes out."""
+    ran = []
     adapter = _LiveTelegram()
     marks, standalone = _fire_under_multiplex(
-        launch_home, _job(profile="biglobster"), adapter, during_run=during_run)
+        launch_home, _job(profile="biglobster"), adapter, during_run=lambda: ran.append(1))
 
-    # The run really was the profile's: its own key, from a scope with no stamped home.
-    assert seen == {"home": None, "key": "biglobster-key"}
-    assert marks == [{"job_id": "a1b2c3d4e5f6", "success": True, "delivery_error": None}]
-    assert [s["chat_id"] for s in adapter.sent] == [CHAT]
-    assert adapter.sent[0]["scope_home"] == str(launch_home)
+    assert ran == []
+    assert len(marks) == 1 and marks[0]["success"] is False
+    assert not any("the report" in s["content"] for s in adapter.sent)
     assert standalone == []

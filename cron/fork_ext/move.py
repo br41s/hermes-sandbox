@@ -1,5 +1,10 @@
-"""``hermes cron move``: move a job between the default store and a profile's own
+"""``hermes cron move``: move a job from the default store into its profile's own
 store without changing what it is (fork-owned, stage 3 step 0f).
+
+Since stage 3 step 2 it only goes one way. Every profile-owned job lives in its
+profile's store, and a record still carrying the retired ``profile`` field is
+refused by the scheduler with an error naming this command; ``--to-default``
+went with the field, since a job moved back would carry nothing to run it by.
 
 ``ops/multiplex-stage3-plan.md`` section 2.2 is the spec. ``remove`` + ``create`` is
 wrong three ways: ``create_job`` mints a new id (breaking ``cron runs``, Langfuse
@@ -20,7 +25,7 @@ the fire fence and the fork's run lock are all per home), so:
    in ``fork_move``. From here the source cannot be ticked.
 3. **Write the target** under the target store's jobs lock: a deep copy with the
    same id, ``next_run_at``, ``last_*``, ``repeat`` and the pre-move pause state.
-   It drops ``profile`` (moving to a profile) or regains it (moving back).
+   It drops ``profile``.
 4. **Copy per-home state**, never move it, since the source copy is the rollback:
    execution rows (``completed_occurrence`` proves a slot is done from the
    current home's ``executions.db``; without them catch-up can re-fire it), the
@@ -295,8 +300,6 @@ def _target_record(job: dict, plan: _Plan) -> dict:
             record[name] = value
     for name in _DROP_ON_TARGET:
         record.pop(name, None)
-    if plan.target.name == "default":
-        record["profile"] = plan.source.name  # back to the fork shape it came from
     return record
 
 
@@ -367,8 +370,7 @@ def _side(name: str) -> _Side:
     return _Side(canon, home)
 
 
-def move(job_ids: Sequence[str], *, to_profile: Optional[str] = None,
-         from_profile: Optional[str] = None, to_default: bool = False, apply: bool = False,
+def move(job_ids: Sequence[str], *, to_profile: Optional[str] = None, apply: bool = False,
          webhook_route_disabled: bool = False, now: Optional[datetime] = None,
          out: Callable[[str], None] = print) -> int:
     """Plan (and with ``apply``, perform) a move. Returns 0 on success, 1 if refused."""
@@ -376,16 +378,9 @@ def move(job_ids: Sequence[str], *, to_profile: Optional[str] = None,
 
     now = now or _hermes_now()
     try:
-        if to_default == bool(to_profile):
-            raise MoveRefused("pass exactly one of --to-profile <p> or --to-default")
-        if to_default:
-            if not from_profile:
-                raise MoveRefused("--to-default needs --from-profile <p>: the store it leaves")
-            source, target = _side(from_profile), _side("default")
-        else:
-            if from_profile:
-                raise MoveRefused("--from-profile only goes with --to-default")
-            source, target = _side("default"), _side(to_profile)
+        if not to_profile:
+            raise MoveRefused("pass --to-profile <p>")
+        source, target = _side("default"), _side(to_profile)
         if source.name == target.name:
             raise MoveRefused("source and target are the same store")
     except MoveRefused as exc:

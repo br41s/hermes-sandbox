@@ -268,6 +268,7 @@ def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes,
         {"id": "a4", "name": "quiet", "profile": "grow-shop", "deliver": "local"},
         {"id": "a5", "name": "rental-bare", "profile": "bl-acme", "deliver": "telegram"},
         {"id": "a6", "name": "no-profile", "deliver": "telegram"},
+        {"id": "a7", "name": "explicit-default", "profile": "default", "deliver": "telegram"},
     ])
     pes.check()
     out = capsys.readouterr().out
@@ -278,6 +279,7 @@ def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes,
     assert "grow-shop a4 enabled deliver=local" in out
     assert "bl-acme a5 enabled deliver=General (no routing thread)" in out
     assert "no-profile" not in out
+    assert "explicit-default" not in out  # runs as a plain job; nothing to move
     for value in ("-1001", ":61", ":3"):
         assert value not in out
 

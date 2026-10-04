@@ -202,7 +202,11 @@ def _deliver_class(target: str, profile_thread: str) -> str:
 
 def _default_store_profile_jobs(home: Path) -> list:
     """``(profile, id, name, enabled, deliver class, failure class, workdir)`` for
-    every fork ``profile`` job in the default store: the jobs a move would carry."""
+    every fork ``profile`` job in the default store: the jobs a move would carry.
+
+    ``profile: default`` is left out: it runs like a plain job of this store, so the
+    scheduler does not refuse it (``cron.fork_ext.profile_scope.legacy_profile``) and
+    there is nowhere to move it."""
     import json
 
     path = home / "cron" / "jobs.json"
@@ -216,6 +220,8 @@ def _default_store_profile_jobs(home: Path) -> list:
         if not isinstance(job, dict) or not str(job.get("profile") or "").strip():
             continue
         prof = str(job["profile"]).strip()
+        if prof.lower() == "default":
+            continue
         scope = _upstream_scope(home / "profiles" / prof)
         thread = (scope.get("TELEGRAM_CRON_THREAD_ID")
                   or scope.get("TELEGRAM_HOME_CHANNEL_THREAD_ID") or "")

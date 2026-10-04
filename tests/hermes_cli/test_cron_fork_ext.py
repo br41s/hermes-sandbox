@@ -30,12 +30,14 @@ def _parser():
 
 def test_fork_flags_parse_through_upstream_parser():
     p = _parser()
-    ns = p.parse_args(["cron", "create", "30m", "--profile", "grow-shop"])
-    assert ns.profile == "grow-shop"
+    # Stage 3 step 2 retired the per-job ``--profile``: `hermes -p <p> cron create` instead.
+    for argv in (["cron", "create", "30m", "--profile", "grow-shop"],
+                 ["cron", "edit", "j", "--profile", "grow-shop"]):
+        with pytest.raises(SystemExit):
+            p.parse_args(argv)
 
-    ns = p.parse_args(["cron", "edit", "j", "--profile", "", "--prompt-source", "a/b.prompt",
-                       "--no-progress-ping"])
-    assert (ns.profile, ns.prompt_source, ns.progress_ping) == ("", "a/b.prompt", False)
+    ns = p.parse_args(["cron", "edit", "j", "--prompt-source", "a/b.prompt", "--no-progress-ping"])
+    assert (ns.prompt_source, ns.progress_ping) == ("a/b.prompt", False)
     assert p.parse_args(["cron", "edit", "j", "--progress-ping"]).progress_ping is True
     assert p.parse_args(["cron", "edit", "j"]).progress_ping is None
     with pytest.raises(SystemExit):
@@ -107,40 +109,40 @@ def test_edit_passes_fork_fields_and_prints_them_in_order(monkeypatch, capsys):
         seen.update(kwargs)
         return {"success": True, "job": {
             "job_id": "j", "name": "n", "schedule": "s", "no_agent": True,
-            "progress_ping": False, "workdir": "/w", "profile": "p", "prompt_source": "a.prompt",
+            "progress_ping": False, "workdir": "/w", "prompt_source": "a.prompt",
         }}
 
     monkeypatch.setattr(cron_cli, "_cron_api", fake_api)
-    args = SimpleNamespace(job_id="j", profile="p", progress_ping=False, prompt_source="a.prompt")
+    args = SimpleNamespace(job_id="j", progress_ping=False, prompt_source="a.prompt")
     assert cron_cli.cron_edit(args) == 0
-    assert (seen["profile"], seen["progress_ping"], seen["prompt_source"]) == ("p", False, "a.prompt")
+    assert "profile" not in seen
+    assert (seen["progress_ping"], seen["prompt_source"]) == (False, "a.prompt")
     out = capsys.readouterr().out.splitlines()
     tail = out[out.index("  Mode: no-agent (script stdout delivered directly)"):]
     assert tail == [
         "  Mode: no-agent (script stdout delivered directly)",
         "  Kickoff ping: off (silent on start)",
         "  Workdir: /w",
-        "  Profile: p",
         "  Prompt source: a.prompt",
     ]
 
 
-def test_create_passes_profile_and_prints_it_after_workdir(monkeypatch, capsys):
+def test_create_passes_no_profile(monkeypatch, capsys):
     seen = {}
 
     def fake_api(**kwargs):
         seen.update(kwargs)
         return {"success": True, "job_id": "j", "name": "n", "schedule": "s",
-                "next_run_at": "t", "job": {"workdir": "/w", "profile": "p"}}
+                "next_run_at": "t", "job": {"workdir": "/w"}}
 
     monkeypatch.setattr(cron_cli, "_cron_api", fake_api)
     monkeypatch.setattr(cron_cli, "_warn_if_gateway_not_running", lambda: None)
-    args = SimpleNamespace(schedule="30m", prompt="x", profile="p")
+    args = SimpleNamespace(schedule="30m", prompt="x")
     assert cron_cli.cron_create(args) == 0
-    assert seen["profile"] == "p"
+    assert "profile" not in seen
     assert seen["progress_ping"] is None and seen["prompt_source"] is None
     out = capsys.readouterr().out
-    assert out.index("  Workdir: /w") < out.index("  Profile: p") < out.index("  Next run: t")
+    assert out.index("  Workdir: /w") < out.index("  Next run: t")
 
 
 # -------------------------------------------------------------------- list
@@ -153,12 +155,19 @@ def _list_output(monkeypatch, capsys, job):
     return capsys.readouterr().out
 
 
-def test_list_shows_profile_and_normal_last_run(monkeypatch, capsys):
+def test_list_flags_a_legacy_profile_record_with_its_fix(monkeypatch, capsys):
     out = _list_output(monkeypatch, capsys, {
         "id": "j", "profile": "p", "workdir": "/w", "last_status": "ok", "last_run_at": "T1",
     })
-    assert out.index("Workdir:   /w") < out.index("Profile:   p") < out.index("Last run:  T1")
+    assert out.index("Workdir:   /w") < out.index("this job will not run") < out.index("Last run:  T1")
+    assert "hermes cron move j --to-profile p --apply" in out
     assert "Interrupted" not in out
+
+
+@pytest.mark.parametrize("extra", [{}, {"profile": "default"}])
+def test_list_shows_no_profile_row_for_a_plain_job(monkeypatch, capsys, extra):
+    out = _list_output(monkeypatch, capsys, {"id": "j", "last_status": "ok", "last_run_at": "T1", **extra})
+    assert "Profile" not in out and "Last run:  T1" in out
 
 
 def test_list_interrupted_run_prints_both_clocks_once(monkeypatch, capsys):

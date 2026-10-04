@@ -45,7 +45,7 @@ def _create_app(adapter: WebhookAdapter) -> web.Application:
 
 from contextlib import contextmanager
 
-_DUMMY_JOB = {"id": "job_abc123", "profile": "auditor"}
+_DUMMY_JOB = {"id": "job_abc123"}
 
 
 @contextmanager

@@ -462,12 +462,8 @@ def _home_env_lookup(env_var: str, suffix: str = "", *, strip: bool = False) -> 
     return value
 
 
-def _env_home_target_chat_id(platform_name: str, profile: Optional[str] = None) -> str:
+def _env_home_target_chat_id(platform_name: str) -> str:
     """Home chat id from the env mirror only (no config).
-
-    Fork: a job's own ``profile`` routing env wins first — read off its .env on disk
-    (``cron.fork_ext.profile_scope._read_profile_env_value``), because delivery runs after the
-    job's profile scope has been reset.
 
     Reads through ``get_secret`` (not raw ``os.getenv``) so a profile-scoped secret scope wins in a
     multiplex gateway. ``DISCORD_HOME_CHANNEL`` lives in each profile's ``.env``; in a multiplex process the
@@ -477,24 +473,20 @@ def _env_home_target_chat_id(platform_name: str, profile: Optional[str] = None) 
     leak).
     """
     env_var = _resolve_home_env_var(platform_name)
-    if env_var and profile:  # fork: see docstring
-        profile_value = _sched._read_profile_env_value(profile, env_var)
-        if profile_value:
-            return profile_value
     return _home_env_lookup(env_var) if env_var else ""
 
 
-def _get_home_target_chat_id(platform_name: str, profile: Optional[str] = None) -> str:
-    """Home target chat id: the job's own ``profile`` routing env (fork) → env var (first, so
-    operator overrides win) → legacy env var → config.yaml ``home_channel``."""
-    value = _env_home_target_chat_id(platform_name, profile)
+def _get_home_target_chat_id(platform_name: str) -> str:
+    """Home target chat id: env var (first, so operator overrides win) → legacy env var →
+    config.yaml ``home_channel``."""
+    value = _env_home_target_chat_id(platform_name)
     if value:
         return value
     home = _get_config_home_channel(platform_name)
     return str(home.chat_id) if home is not None and home.chat_id else ""
 
 
-def _get_home_target_thread_id(platform_name: str, profile: Optional[str] = None) -> Optional[str]:
+def _get_home_target_thread_id(platform_name: str) -> Optional[str]:
     """Optional thread/topic id for a platform home target. Telegram: ``TELEGRAM_CRON_THREAD_ID``
     overrides ``TELEGRAM_HOME_CHANNEL_THREAD_ID`` — in topic mode a root-DM delivery lands in the
     system-only lobby where the user cannot reply.
@@ -503,20 +495,7 @@ def _get_home_target_thread_id(platform_name: str, profile: Optional[str] = None
     system-only lobby where the user cannot reply — the gateway returns the lobby reminder and drops
     ``reply_to_message_id`` (#24409). Pointing cron at a dedicated topic via this env var lets replies work
     as expected without changing the lobby invariant.
-
-    Fork: checks the job's own ``profile`` routing env first (if given), then falls back to the
-    scheduler's global env — see ``_env_home_target_chat_id``.
     """
-    if profile:
-        if platform_name.lower() == "telegram":
-            profile_cron_thread = _sched._read_profile_env_value(profile, "TELEGRAM_CRON_THREAD_ID")
-            if profile_cron_thread:
-                return profile_cron_thread
-        _profile_env_var = _resolve_home_env_var(platform_name)
-        if _profile_env_var:
-            profile_thread = _sched._read_profile_env_value(profile, f"{_profile_env_var}_THREAD_ID")
-            if profile_thread:
-                return profile_thread
     if platform_name.lower() == "telegram":
         cron_thread = _home_env_lookup("TELEGRAM_CRON_THREAD_ID", strip=True)
         if cron_thread:
@@ -527,7 +506,7 @@ def _get_home_target_thread_id(platform_name: str, profile: Optional[str] = None
         return value
     # config.yaml fallback only when the chat id also came from config (an env-provided chat id
     # keeps its env-provided thread semantics).
-    if not _env_home_target_chat_id(platform_name, profile):
+    if not _env_home_target_chat_id(platform_name):
         home = _get_config_home_channel(platform_name)
         if home is not None and home.thread_id:
             return str(home.thread_id)
@@ -615,14 +594,12 @@ def _origin_delivery_thread(origin: dict):
     return origin.get("thread_id")
 
 
-def _home_target(
-    platform_name: str, chat_id: str, resolved_from: Optional[str] = None, profile: Optional[str] = None,
-) -> dict:
+def _home_target(platform_name: str, chat_id: str, resolved_from: Optional[str] = None) -> dict:
     """Target dict for a platform's configured home channel (+ optional mirror provenance)."""
     target = {
         "platform": platform_name,
         "chat_id": chat_id,
-        "thread_id": _get_home_target_thread_id(platform_name, profile)}
+        "thread_id": _get_home_target_thread_id(platform_name)}
     if resolved_from:
         target["_resolved_from"] = resolved_from
     return target
@@ -638,7 +615,6 @@ def _resolve_single_delivery_target(
     provenance (fan-out is never continuable), while a user-written bare platform token is a
     deliberate home-channel address and gets the ``home`` tag."""
     origin = _resolve_origin(job)
-    profile = job.get("profile")  # fork: the job's own profile routing env picks its home target
     if deliver_value == "local":
         return None
     # Must precede the generic platform:chat_id split so the profile name isn't parsed as chat_id.
@@ -656,13 +632,13 @@ def _resolve_single_delivery_target(
             }
         # No origin (API/script job): fall back to a home channel instead of silently dropping.
         for platform_name in _iter_home_target_platforms():
-            chat_id = _get_home_target_chat_id(platform_name, profile)
+            chat_id = _get_home_target_chat_id(platform_name)
             if chat_id:
                 logger.info(
                     "Job '%s' has deliver=origin but no origin; falling back to %s home channel",
                     job.get("name", job.get("id", "?")), platform_name)
                 # Stands in for the primary conversation (NOT a broadcast): mirror-eligible.
-                return _home_target(platform_name, chat_id, "origin_fallback", profile)
+                return _home_target(platform_name, chat_id, "origin_fallback")
         return None
 
     if ":" in deliver_value:
@@ -696,9 +672,9 @@ def _resolve_single_delivery_target(
     platform_name = deliver_value
     home_provenance = None if from_broadcast else "home"
     if origin and origin.get("platform") == platform_name:
-        chat_id = _get_home_target_chat_id(platform_name, profile)
+        chat_id = _get_home_target_chat_id(platform_name)
         if chat_id:
-            return _home_target(platform_name, chat_id, home_provenance, profile)
+            return _home_target(platform_name, chat_id, home_provenance)
         # No home configured: falls back to the origin chat. No tag needed — the
         # origin-match check in _target_mirror_eligible already covers this target.
         return {
@@ -708,8 +684,8 @@ def _resolve_single_delivery_target(
         }
     if not _is_known_delivery_platform(platform_name):
         return None
-    chat_id = _get_home_target_chat_id(platform_name, profile)
-    return _home_target(platform_name, chat_id, home_provenance, profile) if chat_id else None
+    chat_id = _get_home_target_chat_id(platform_name)
+    return _home_target(platform_name, chat_id, home_provenance) if chat_id else None
 
 
 def _get_bot_chat_delivery_timeout() -> int:

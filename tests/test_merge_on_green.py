@@ -544,5 +544,6 @@ def test_boot_seeds_the_wrapper_into_the_auditor_profile(boot_text):
 
 
 def test_documented_registration_runs_under_the_auditor_profile(boot_text):
-    assert "--profile auditor --no-agent" in boot_text
+    # The job lives in the auditor's own store (stage 3); `cron create --profile` is retired.
+    assert 'hermes -p auditor cron create "*/15 * * * *" --no-agent' in boot_text
     assert "--script merge_on_green.sh" in boot_text

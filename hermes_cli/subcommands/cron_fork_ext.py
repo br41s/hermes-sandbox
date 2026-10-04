@@ -14,16 +14,11 @@ from __future__ import annotations
 
 
 def extend_parser(cron_subparsers, *, create, edit) -> None:
-    """Add the fork's flags to ``create``/``edit`` and the ``sync-prompt`` and ``move`` sub-commands."""
-    create.add_argument(
-        "--profile",
-        help="Hermes profile name to run the job under. Use 'default' for the root profile. Named profiles must already exist. Omit to preserve the scheduler's existing profile.",
-    )
+    """Add the fork's flags to ``edit`` and the ``sync-prompt`` and ``move`` sub-commands.
 
-    edit.add_argument(
-        "--profile",
-        help="Hermes profile name to run the job under. Use 'default' for the root profile. Pass empty string to clear.",
-    )
+    ``create`` takes none: a job for a profile is created in that profile's own store
+    (``hermes -p <profile> cron create ...``); the per-job ``--profile`` flag was
+    retired in stage 3 step 2."""
     edit.add_argument(
         "--prompt-source",
         help=(
@@ -66,14 +61,12 @@ def extend_parser(cron_subparsers, *, create, edit) -> None:
 
     move = cron_subparsers.add_parser(
         "move",
-        help="Move jobs between the default store and a profile's own store (dry run unless --apply)",
+        help="Move jobs from the default store into a profile's own store (dry run unless --apply)",
     )
     move.add_argument("job_ids", nargs="+", metavar="job_id",
                       help="Job id(s); every context_from edge must move in the same call")
-    move.add_argument("--to-profile", help="Move from the default store into this profile's own store")
-    move.add_argument("--to-default", action="store_true",
-                      help="Move back into the default store (needs --from-profile)")
-    move.add_argument("--from-profile", help="The profile store a --to-default move leaves")
+    move.add_argument("--to-profile", required=True,
+                      help="Move from the default store into this profile's own store")
     move.add_argument("--apply", action="store_true", help="Perform the move; without it, only report")
     move.add_argument(
         "--webhook-route-disabled", action="store_true",

@@ -612,6 +612,19 @@ Remove all of these:
 naming `hermes cron move`. It is never run. Silently running it under the default
 identity is exactly the `ProfileResolutionError` bug class.
 
+**Done (PR open, merge held until the precondition holds):** the guard is
+`profile_scope._refuse_legacy_profile_record` (`LegacyProfileJobError`), called in
+`run_guard.guarded_run_job` before anything runs; the run fails and alerts with the
+`move` command. `profile: default` is not refused: the old path ran it under the root
+home exactly like a plain job, and `cron edit` no longer has `--profile` to clear it.
+The 0e probe leaves it out of its count for the same reason. `cron list` shows such a record as a red `⚠ Profile` row with the
+same fix. `move` takes `--to-profile` only. One addition the list above missed:
+`_reload_dotenv_and_publish_delivery_target` skipped `load_hermes_dotenv` for a
+`profile` job, and now skips it for any run from a profile's own store. Upstream
+skips it only while multiplex is on, and the gateway ticks the profile stores with
+it off too, so without this a rollback would copy a profile's `.env` into
+`os.environ`.
+
 Tests to update: `tests/cron/test_profile_env_scope_fork.py`,
 `tests/cron/test_scheduler_fork.py`, `tests/cron/test_sequential_dispatch_fork.py`,
 `tests/tools/test_cronjob_tools_fork.py`,

@@ -1,15 +1,35 @@
-"""Tests for per-job profile support in cron jobs.
+"""Cron jobs for a profile live in that profile's own store (stage 3).
 
-Covers data-layer validation/storage, cronjob tool plumbing, scheduler runtime
-HERMES_HOME scoping, and tick() serialization for profile jobs.
+The fork's per-job ``profile`` field was retired in step 2: the data layer and
+the cronjob tool no longer take it, and a job runs under a profile because the
+multiplex ticker (or a routed webhook) runs it from that profile's store, with
+the profile's home override installed. These cover the field's absence and the
+run path under that override: HERMES_HOME scoping, the ``.env`` secret scope and
+the scripts dir.
 """
 
 from __future__ import annotations
 
-import json
 import os
+from contextlib import contextmanager
 
 import pytest
+
+
+@contextmanager
+def _from_profile_store(profile_home):
+    """The home override the multiplex ticker installs around a profile's tick, plus
+    the secret scope ``run_one_job`` installs from that home before ``run_job``."""
+    from agent.secret_scope import build_profile_secret_scope, reset_secret_scope, set_secret_scope
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(profile_home)
+    scope = set_secret_scope(build_profile_secret_scope(profile_home), profile_home=str(profile_home))
+    try:
+        yield
+    finally:
+        reset_secret_scope(scope)
+        reset_hermes_home_override(token)
 
 
 @pytest.fixture()
@@ -31,133 +51,23 @@ def isolated_cron_profile_home(tmp_path, monkeypatch):
     return root, profile_home
 
 
-class TestNormalizeProfile:
-    def test_none_and_empty_return_none(self, isolated_cron_profile_home):
-        from cron.jobs import _normalize_profile
-
-        assert _normalize_profile(None) is None
-        assert _normalize_profile("") is None
-        assert _normalize_profile("   ") is None
-
-    def test_default_profile_is_valid_and_normalized(self, isolated_cron_profile_home):
-        from cron.jobs import _normalize_profile
-
-        assert _normalize_profile("Default") == "default"
-
-    def test_named_profile_must_exist_and_is_normalized(self, isolated_cron_profile_home):
-        from cron.jobs import _normalize_profile
-
-        assert _normalize_profile("Support") == "support"
-
-    def test_invalid_profile_name_is_rejected(self, isolated_cron_profile_home):
-        from cron.jobs import _normalize_profile
-
-        with pytest.raises(ValueError):
-            _normalize_profile("invalid!")
-
-    def test_missing_named_profile_is_rejected(self, isolated_cron_profile_home):
-        from cron.jobs import _normalize_profile
-
-        with pytest.raises(FileNotFoundError):
-            _normalize_profile("missing")
-
-
-class TestCreateAndUpdateJobProfile:
-    def test_create_stores_profile_id(self, isolated_cron_profile_home):
+class TestProfileFieldRetired:
+    def test_create_job_takes_no_profile(self, isolated_cron_profile_home):
         from cron.jobs import create_job, get_job
 
-        job = create_job(prompt="hello", schedule="every 1h", profile="Support")
-        stored = get_job(job["id"])
+        with pytest.raises(TypeError):
+            create_job(prompt="hi", schedule="every 1h", profile="support")
+        job = create_job(prompt="hi", schedule="every 1h")
+        assert "profile" not in job and "profile" not in get_job(job["id"])
 
-        assert stored is not None
-        assert stored["profile"] == "support"
+    def test_cronjob_tool_neither_advertises_nor_forwards_profile(self, isolated_cron_profile_home):
+        import inspect
 
-    def test_create_without_profile_preserves_old_behaviour(self, isolated_cron_profile_home):
-        from cron.jobs import create_job, get_job
+        from tools.cronjob_tools import _HANDLER_FORWARDED_ARGS, CRONJOB_SCHEMA, cronjob
 
-        job = create_job(prompt="hello", schedule="every 1h")
-        stored = get_job(job["id"])
-
-        assert stored is not None
-        assert stored.get("profile") is None
-
-    def test_create_accepts_explicit_default(self, isolated_cron_profile_home):
-        from cron.jobs import create_job, get_job
-
-        job = create_job(prompt="hello", schedule="every 1h", profile="default")
-        stored = get_job(job["id"])
-
-        assert stored is not None
-        assert stored["profile"] == "default"
-
-    def test_update_sets_and_clears_profile(self, isolated_cron_profile_home):
-        from cron.jobs import create_job, get_job, update_job
-
-        job = create_job(prompt="x", schedule="every 1h")
-        update_job(job["id"], {"profile": "Support"})
-        stored = get_job(job["id"])
-        assert stored is not None
-        assert stored["profile"] == "support"
-
-        update_job(job["id"], {"profile": ""})
-        stored = get_job(job["id"])
-        assert stored is not None
-        assert stored["profile"] is None
-
-    def test_update_rejects_missing_profile(self, isolated_cron_profile_home):
-        from cron.jobs import create_job, update_job
-
-        job = create_job(prompt="x", schedule="every 1h")
-        with pytest.raises(FileNotFoundError):
-            update_job(job["id"], {"profile": "missing"})
-
-
-class TestCronjobToolProfile:
-    def test_create_and_list_with_profile(self, isolated_cron_profile_home):
-        from tools.cronjob_tools import cronjob
-
-        created = json.loads(
-            cronjob(
-                action="create",
-                prompt="hi",
-                schedule="every 1h",
-                profile="Support",
-            )
-        )
-        assert created["success"] is True
-        assert created["job"]["profile"] == "support"
-
-        listing = json.loads(cronjob(action="list"))
-        assert listing["jobs"][0]["profile"] == "support"
-
-    def test_update_clears_profile_with_empty_string(self, isolated_cron_profile_home):
-        from tools.cronjob_tools import cronjob
-
-        created = json.loads(
-            cronjob(
-                action="create",
-                prompt="hi",
-                schedule="every 1h",
-                profile="Support",
-            )
-        )
-        updated = json.loads(
-            cronjob(action="update", job_id=created["job_id"], profile="")
-        )
-
-        assert updated["success"] is True
-        assert "profile" not in updated["job"]
-
-    def test_schema_advertises_profile(self):
-        from tools.cronjob_tools import CRONJOB_SCHEMA
-
-        assert "profile" in CRONJOB_SCHEMA["parameters"]["properties"]
-        desc = CRONJOB_SCHEMA["parameters"]["properties"]["profile"]["description"]
-        desc_lower = desc.lower()
-        assert "hermes profile" in desc_lower
-        assert "context-local" in desc_lower
-        assert "subprocess" in desc_lower
-        assert "temporarily sets hermes_home" not in desc_lower
+        assert "profile" not in CRONJOB_SCHEMA["parameters"]["properties"]
+        assert "profile" not in _HANDLER_FORWARDED_ARGS
+        assert "profile" not in inspect.signature(cronjob).parameters
 
 
 class TestRunJobProfileContext:
@@ -237,7 +147,7 @@ class TestRunJobProfileContext:
 
         from hermes_cli import env_loader
 
-        def fake_load_dotenv_with_fallback(path, *, override):
+        def fake_load_dotenv_with_fallback(path, *, override, **_kw):
             observed.setdefault("dotenv_paths", []).append(str(path))
 
         monkeypatch.setattr(env_loader, "_load_dotenv_with_fallback", fake_load_dotenv_with_fallback)
@@ -255,11 +165,11 @@ class TestRunJobProfileContext:
         job = {
             "id": "abc",
             "name": "profile-job",
-            "profile": "support",
             "schedule_display": "manual",
         }
 
-        success, _output, response, error = sched.run_job(job)
+        with _from_profile_store(profile_home):
+            success, _output, response, error = sched.run_job(job)
 
         assert success is True, f"run_job failed: error={error!r} response={response!r}"
         # The profile's .env is the run's secret scope, never loaded into
@@ -298,11 +208,11 @@ class TestRunJobProfileContext:
         job = {
             "id": "env-profile",
             "name": "profile-env-job",
-            "profile": "support",
             "schedule_display": "manual",
         }
 
-        success, _output, _response, error = sched.run_job(job)
+        with _from_profile_store(profile_home):
+            success, _output, _response, error = sched.run_job(job)
 
         assert success is True, error
         assert "dotenv_paths" not in observed
@@ -339,12 +249,12 @@ class TestRunJobProfileContext:
         job = {
             "id": "script1",
             "name": "profile-script",
-            "profile": "support",
             "script": "print_home.py",
             "no_agent": True,
         }
 
-        success, _doc, response, error = sched.run_job(job)
+        with _from_profile_store(profile_home):
+            success, _doc, response, error = sched.run_job(job)
 
         assert success is True, error
         assert response.strip() == str(profile_home.resolve())
@@ -363,7 +273,6 @@ class TestRunJobProfileContext:
         job = {
             "id": "noprof",
             "name": "no-profile-job",
-            "profile": None,
             "schedule_display": "manual",
         }
 
@@ -373,42 +282,9 @@ class TestRunJobProfileContext:
         assert observed["hermes_home_during_init"] == str(root)
         assert os.environ["HERMES_HOME"] == str(root)
 
-    def test_run_job_raises_on_missing_runtime_profile_instead_of_falling_back(
-        self, isolated_cron_profile_home, monkeypatch
-    ):
-        # A job that opts into a profile relies on that profile's isolated
-        # identity (e.g. the auditor's dedicated hermes-auditor GitHub bot,
-        # kept separate from the CEO's own account). Silently continuing
-        # under the scheduler's default profile would run the job as the
-        # WRONG identity, so this must raise instead of fall back — the
-        # caller (tick()'s _process_job) marks the run as failed and retries
-        # on the job's normal schedule rather than acting under an
-        # unintended identity.
-        import cron.scheduler as sched
-
-        root, _profile_home = isolated_cron_profile_home
-        observed: dict = {}
-        self._install_agent_stubs(monkeypatch, observed)
-
-        job = {
-            "id": "missing-profile",
-            "name": "missing-profile-job",
-            "profile": "missing",
-            "schedule_display": "manual",
-        }
-
-        with pytest.raises(sched.ProfileResolutionError):
-            sched.run_job(job)
-
-        # The job body must never have executed under the wrong identity.
-        assert observed == {}
-        # HERMES_HOME must be restored to the scheduler default, untouched.
-        assert os.environ["HERMES_HOME"] == str(root)
-
-
 class TestTickProfilePartition:
-    def test_profile_and_workdir_combined(self, isolated_cron_profile_home, monkeypatch):
-        """Both profile and workdir set — verify both are applied and restored."""
+    def test_profile_store_and_workdir_combined(self, isolated_cron_profile_home, monkeypatch):
+        """A profile-store job with a workdir — verify both are applied and restored."""
         import cron.scheduler as sched
 
         root, profile_home = isolated_cron_profile_home
@@ -420,12 +296,12 @@ class TestTickProfilePartition:
         job = {
             "id": "combo",
             "name": "combo-job",
-            "profile": "support",
             "workdir": fake_workdir,
             "schedule_display": "manual",
         }
 
-        success, _output, _response, error = sched.run_job(job)
+        with _from_profile_store(profile_home):
+            success, _output, _response, error = sched.run_job(job)
 
         assert success is True, error
         assert observed["hermes_home_during_init"] == str(profile_home.resolve())
@@ -434,12 +310,13 @@ class TestTickProfilePartition:
         assert os.environ["HERMES_HOME"] == str(root)
         assert sched._get_hermes_home() == root
 
-    def test_profile_jobs_run_sequentially(self, isolated_cron_profile_home, monkeypatch):
+    def test_workdir_jobs_run_sequentially(self, isolated_cron_profile_home, monkeypatch):
         import threading
         import cron.scheduler as sched
 
-        profile_job = {"id": "a", "name": "A", "profile": "default"}
-        parallel_job = {"id": "b", "name": "B", "profile": None}
+        root, _profile_home = isolated_cron_profile_home
+        profile_job = {"id": "a", "name": "A", "workdir": str(root)}
+        parallel_job = {"id": "b", "name": "B"}
 
         monkeypatch.setattr(sched, "get_due_jobs", lambda: [profile_job, parallel_job])
         monkeypatch.setattr(sched, "advance_next_runs", lambda *_a, **_kw: None)
@@ -482,57 +359,52 @@ class TestTickProfilePartition:
 
 
 class TestProfileHomeDoesNotLeakAcrossThreads:
-    """A profile job must not change HERMES_HOME for jobs on other threads.
+    """A profile-store run must not change HERMES_HOME for jobs on other threads.
 
-    Regression for the 2026-07-31 production incident: ``_job_profile_context``
-    also assigned the module-global ``cron.scheduler._hermes_home``, which
-    ``_get_hermes_home()`` prefers over ``get_hermes_home()``. The global is
-    process-wide, so while a profile job ran, EVERY concurrent job resolved its
-    home — and therefore its ``scripts/`` dir — under that profile.
-
-    It stayed latent while sequential (profile) jobs ran inline on the tick
-    thread. Upstream's dispatch rewrite moved them onto a ``cron-seq`` pool that
-    runs alongside ``cron-parallel``, making the race real: the hourly
-    incident-watcher (no profile) started failing with
-    ``Script not found: /opt/data/profiles/biglobster/scripts/incident_sweep.sh``
-    — the leaked profile tracking whichever profile job overlapped it.
+    Regression for the 2026-07-31 production incident: the old per-job profile
+    context also assigned the module-global ``cron.scheduler._hermes_home``,
+    which ``_get_hermes_home()`` prefers over ``get_hermes_home()``. The global
+    is process-wide, so while a profile job ran, EVERY concurrent job resolved
+    its home — and therefore its ``scripts/`` dir — under that profile: the
+    hourly incident-watcher failed with
+    ``Script not found: /opt/data/profiles/biglobster/scripts/incident_sweep.sh``.
 
     The fix relies on ``set_hermes_home_override`` being a ContextVar, which is
-    per-thread and takes precedence in ``get_hermes_home()``.
+    per-thread and takes precedence in ``get_hermes_home()``; the multiplex
+    ticker and ``_satellite_store_context`` both stand on it.
     """
 
-    def test_concurrent_profileless_job_keeps_the_default_home(
+    def test_concurrent_launch_store_job_keeps_the_default_home(
         self, isolated_cron_profile_home, monkeypatch
     ):
         import threading
 
         from cron import scheduler
+        from cron.fork_ext.profile_scope import _satellite_store_context
 
         root, profile_home = isolated_cron_profile_home
-        monkeypatch.setattr(
-            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
-        )
+        monkeypatch.setattr(scheduler, "_hermes_home", None)
 
         inside_profile = threading.Event()
         release_profile = threading.Event()
         observed: dict[str, object] = {}
 
         def _profile_job():
-            # Hold the profile context open so the other thread is guaranteed
-            # to observe the process state while it is active.
-            with scheduler._job_profile_context("job-profile", "support"):
+            # Hold the profile run open so the other thread is guaranteed to
+            # observe the process state while it is active.
+            with _from_profile_store(profile_home), _satellite_store_context("job-profile"):
                 inside_profile.set()
                 release_profile.wait(timeout=5)
 
-        def _profileless_job():
+        def _plain_job():
             inside_profile.wait(timeout=5)
-            with scheduler._job_profile_context("job-plain", None):
+            with _satellite_store_context("job-plain"):
                 observed["home"] = scheduler._get_hermes_home()
             release_profile.set()
 
         threads = [
             threading.Thread(target=_profile_job),
-            threading.Thread(target=_profileless_job),
+            threading.Thread(target=_plain_job),
         ]
         for t in threads:
             t.start()
@@ -540,23 +412,22 @@ class TestProfileHomeDoesNotLeakAcrossThreads:
             t.join(timeout=10)
 
         assert observed["home"] == root, (
-            "a profile-less job resolved its Hermes home under the concurrently "
+            "a launch-store job resolved its Hermes home under the concurrently "
             f"running profile: {observed['home']}"
         )
         # The concrete symptom: script lookups land in the wrong profile.
         assert observed["home"] / "scripts" == root / "scripts"
 
-    def test_profile_job_still_scopes_its_own_home(
+    def test_profile_store_run_still_scopes_its_own_home(
         self, isolated_cron_profile_home, monkeypatch
     ):
         """Guard the fix didn't over-reach — scoping must still work in-thread."""
         from cron import scheduler
+        from cron.fork_ext.profile_scope import _satellite_store_context
 
         root, profile_home = isolated_cron_profile_home
-        monkeypatch.setattr(
-            "hermes_cli.profiles.resolve_profile_env", lambda name: str(profile_home)
-        )
+        monkeypatch.setattr(scheduler, "_hermes_home", None)
 
-        with scheduler._job_profile_context("job-profile", "support"):
+        with _from_profile_store(profile_home), _satellite_store_context("job-profile"):
             assert scheduler._get_hermes_home() == profile_home.resolve()
         assert scheduler._get_hermes_home() == root
