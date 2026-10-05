@@ -194,6 +194,21 @@ def test_runs_as_the_boot_hook_invokes_it(home):
     assert result.returncode == 0, result.stderr
     assert "biglobster: reconciled config.yaml keys" in result.stdout
     assert "OPENROUTER_API_KEY=k\n" in _env(prof / ".env")
+    cfg = _cfg(home / "config.yaml")
+    assert cfg["agent"]["max_turns"] == 90
+    # Stage 3 step 4: multiplex is upstream's default; boot no longer pins it either way.
+    assert "multiplex_profiles" not in (cfg.get("gateway") or {})
+
+
+def test_boot_keeps_an_existing_multiplex_flag(home):
+    """Production's config.yaml already carries `multiplex_profiles: true` from the old pin.
+    Boot only ever sets keys, so dropping the pin must leave it, not strip it."""
+    (home / "config.yaml").write_text("gateway:\n  multiplex_profiles: true\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
+           "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
+    result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
 
 

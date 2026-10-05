@@ -66,9 +66,7 @@ def test_the_retired_opt_out_still_warns_a_secondary(topology, monkeypatch):
 
     fired, _ = _run()
 
-    # fork: the opt-out is honoured (hermes_cli/fork_ext/multiplex.py), so nothing
-    # multiplexes and there is no process-level relay URL to warn about.
-    assert fired is False
+    assert fired is True
 
 
 def test_silent_for_default_profile_even_with_multiplex_on(topology, monkeypatch):
@@ -102,7 +100,7 @@ def test_the_env_override_is_retired_too(topology, monkeypatch):
 
     fired, _ = _run()
 
-    assert fired is False  # fork: the env spelling of the opt-out is honoured too
+    assert fired is True
 
 
 def test_silent_for_unrelated_dir_named_profiles(topology, tmp_path, monkeypatch):

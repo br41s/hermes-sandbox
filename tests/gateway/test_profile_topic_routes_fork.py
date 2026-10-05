@@ -3,7 +3,7 @@
 hermes_cli/fork_ext/boot_reconcile.py turns every group_topics topic bound to a profile
 into a gateway.profile_routes entry, and upstream's multiplex path runs the turn in that
 profile. These pin the generation, that upstream's own loader and matcher accept what it
-writes, and the rollback. A bound topic no route matched is dropped
+writes, and that a human's routes survive. A bound topic no route matched is dropped
 (test_telegram_unrouted_bound_topic_fork.py).
 """
 
@@ -105,16 +105,6 @@ def test_human_routes_are_kept_and_ours_replaced():
     assert br.reconcile_profile_routes(cfg, SERVED) is False  # second boot: no rewrite
 
 
-def test_rollback_removes_only_ours():
-    human = {"name": "ops-dm", "platform": "telegram", "user_id": "42", "profile": "finview"}
-    cfg = _cfg(_topic("grow-shop", 3))
-    cfg["gateway"] = {"profile_routes": [human]}
-    br.reconcile_profile_routes(cfg, SERVED)
-
-    assert br.reconcile_profile_routes(cfg, SERVED, enabled=False) is True
-    assert cfg["gateway"]["profile_routes"] == [human]
-
-
 def test_an_unreadable_served_set_leaves_the_routes_alone():
     cfg = _cfg(_topic("grow-shop", 3))
     cfg["gateway"] = {"profile_routes": [{"name": "fork-topic:x:1", "platform": "telegram",
@@ -130,9 +120,3 @@ def test_main_config_gets_routes_and_profiles_do_not():
     br.reconcile_cfg(profile, "grow-shop", {}, served=SERVED)
     assert [r["profile"] for r in main["gateway"]["profile_routes"]] == ["grow-shop"]
     assert "profile_routes" not in profile.get("gateway", {})
-
-
-def test_routes_and_multiplex_move_together():
-    """Routes only take effect under multiplex (see OVERRIDES); a rollback flips both.
-    test_rollback_removes_only_ours covers what the next boot does with the routes."""
-    assert br.ROUTE_BOUND_TOPICS is br.OVERRIDES[("gateway", "multiplex_profiles")] is True

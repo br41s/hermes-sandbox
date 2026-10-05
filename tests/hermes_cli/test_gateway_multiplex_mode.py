@@ -131,20 +131,18 @@ def test_explicit_true_is_never_second_guessed_and_explicit_false_is_retired(fle
     assert cfg.multiplex_profiles is True
     assert mode.explicit_multiplex_flag(root) is True
 
-    # fork: upstream RETIRED the `false` opt-out; the fork honours it
-    # (hermes_cli/fork_ext/multiplex.py) — standalone, from config, with nothing blocking.
+    # RETIRED opt-out: `false` still parses, but it can no longer pin a second gateway onto this
+    # host — with nothing blocking, the process multiplexes and says the key was ignored.
     monkeypatch.setenv("GATEWAY_MULTIPLEX_PROFILES", "false")
     pids.clear()
     cfg = load_gateway_config()
     decision = mode.resolve_multiplex_mode(cfg)
-    assert decision.enabled is False and decision.source == "config"
-    assert cfg.multiplex_profiles is False
+    assert decision.enabled is True and decision.source == "retired-opt-out"
+    assert cfg.multiplex_profiles is True
     assert mode.explicit_multiplex_flag(root) is False
 
-    # With the key unset, a secondary that owns a live gateway still keeps this process
-    # standalone, with the blocker named (never a silent second bind).
-    monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES")
-    (root / "config.yaml").write_text("gateway: {}\n", encoding="utf-8")
+    # ...and it still cannot force a fold that would double-bind: a secondary that owns a live
+    # gateway keeps this process standalone, with the blocker named (never a silent second bind).
     pids["coder"] = 4101
     cfg = load_gateway_config()
     guarded = mode.resolve_multiplex_mode(cfg)

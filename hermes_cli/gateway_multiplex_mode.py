@@ -93,9 +93,6 @@ def default_gateway_multiplexes(default_home: Optional[Path] = None) -> bool:
     if recorded is not None:
         return bool(recorded)
     flag = explicit_multiplex_flag(root)
-    from hermes_cli.fork_ext import multiplex as _fork_multiplex
-    if _fork_multiplex.opted_out(flag):  # fork: explicit false still means standalone
-        return False
     return False if flag is None else True
 
 
@@ -243,10 +240,6 @@ def resolve_multiplex_mode(config) -> MultiplexDecision:
     standalone = standalone_launcher_decision(config)
     if standalone is not None:
         return standalone
-    from hermes_cli.fork_ext import multiplex as _fork_multiplex
-    if _fork_multiplex.opted_out(current):  # fork: explicit false still means standalone
-        config.multiplex_profiles = False
-        return MultiplexDecision(False, "config", _fork_multiplex.REASON)
     if current:
         return MultiplexDecision(True, "config")
     retired_opt_out = current is False

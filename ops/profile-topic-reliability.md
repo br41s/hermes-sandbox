@@ -1,5 +1,12 @@
 # Profile-topic reliability: `exit=-15` kills, slow failover, model choice
 
+> **Historical (superseded 2026-10).** Profile topics no longer use the delegate
+> lane described below. Since multiplex stage 2b they run in-process through
+> `gateway.profile_routes`, and stage 3 step 3 removed the `auto_profile`
+> subprocess fallback (`ops/multiplex-stage3-plan.md`). `run_delegate_in_profile`
+> survives only for the web server's profile-scoped delegation. Kept for the
+> `exit=-15` diagnosis.
+
 Diagnosis + fixes for the profile-routed Telegram forum topics (finview =
 thread 61, grow-shop = thread 3) that were "barely usable": replies taking
 minutes, and intermittent hard failures with

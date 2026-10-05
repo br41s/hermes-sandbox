@@ -130,15 +130,6 @@ OVERRIDES = {
     # model's summary surfaced as a RuntimeError. Raised to 90 (run_agent's own
     # default). Enforced on main + every profile so the budget is uniform.
     ("agent", "max_turns"): 90,
-    # Multiplex adoption, stage 2a: one gateway serves every profile. Rolled back on
-    # 2026-09-28 because every Telegram allow/deny list is read from the profile's
-    # secret scope only (gateway/platforms/_shared.py platform_gate_env) and the
-    # allowlists live only in the Zeabur service env, so every sender was blocked.
-    # Re-enabled once hermes_cli/fork_ext/process_env_scope.py gave the launch
-    # profile's scope its launch env back, verified in production by that module's
-    # --check. Rollback is False again: hermes_cli/fork_ext/multiplex.py keeps an
-    # explicit false meaning standalone.
-    ("gateway", "multiplex_profiles"): True,
     # Shutdown drain budgets must fit inside s6's stop grace (Dockerfile:
     # S6_KILL_GRACETIME=20s, the only s6 timer the gateway's dynamic slot gets), or a
     # deploy made while a chat turn or cron run is in flight is SIGKILLed mid-drain:
@@ -161,16 +152,13 @@ PIN_IF_MISSING = {
     ("agent", "max_turns"): 90,
 }
 
-# Multiplex adoption, stage 2b: every Telegram topic bound to a profile in
-# telegram.extra.group_topics gets a matching gateway.profile_routes entry, so the one
-# gateway runs that topic's turns in-process under the profile (streaming, tool progress,
-# interrupts, /commands). Since stage 3 step 3 there is no per-turn subprocess to fall back
-# to: False removes the generated routes, and every bound topic is then DROPPED with a
-# warning (TelegramAdapter._drop_unrouted_bound_topic), so it is no longer a rollback
-# lever (the constant goes in step 4). Routes a human added are never touched: only names
-# with ROUTE_NAME_PREFIX are ours. Routes only take effect under multiplex, so this and the
-# OVERRIDES pin move together.
-ROUTE_BOUND_TOPICS = True
+# Every Telegram topic bound to a profile in telegram.extra.group_topics gets a matching
+# gateway.profile_routes entry (multiplex stage 2b), so the one gateway runs that topic's
+# turns in-process under the profile. A bound topic no route matches is dropped
+# (TelegramAdapter._drop_unrouted_bound_topic, stage 3 step 3). Routes a human added are
+# never touched: only names with ROUTE_NAME_PREFIX are ours. Multiplex itself is upstream's
+# default since stage 3 step 4: no pin, no fork opt-out (an explicit false is retired and
+# rewritten by upstream's resolve_multiplex_mode).
 ROUTE_NAME_PREFIX = "fork-topic:"
 
 CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"
@@ -564,11 +552,11 @@ def _routes_slot(cfg: dict) -> tuple:
     return _section(cfg, "gateway"), "profile_routes"
 
 
-def reconcile_profile_routes(cfg: dict, served: Optional[set], enabled: bool = True) -> bool:
+def reconcile_profile_routes(cfg: dict, served: Optional[set]) -> bool:
     """Replace our generated routes with the current bound topics; keep every other route.
 
     ``served`` None (the served set could not be read) leaves the routes untouched rather
-    than guessing. ``enabled`` False removes ours: the rollback. Returns True if changed.
+    than guessing. Returns True if changed.
     """
     if served is None:
         return False
@@ -577,7 +565,7 @@ def reconcile_profile_routes(cfg: dict, served: Optional[set], enabled: bool = T
     current = current if isinstance(current, list) else []
     kept = [r for r in current
             if not (isinstance(r, dict) and str(r.get("name", "")).startswith(ROUTE_NAME_PREFIX))]
-    wanted = kept + (topic_routes(cfg, served) if enabled else [])
+    wanted = kept + topic_routes(cfg, served)
     if wanted == current:
         return False
     container[key] = wanted
@@ -828,7 +816,7 @@ def reconcile_cfg(
             changed = True
         # Stage 2b: route every bound topic in-process (after group_topics, so a binding
         # rebuilt above is routed the same boot).
-        if reconcile_profile_routes(cfg, served, enabled=ROUTE_BOUND_TOPICS):
+        if reconcile_profile_routes(cfg, served):
             changed = True
     return changed
 
