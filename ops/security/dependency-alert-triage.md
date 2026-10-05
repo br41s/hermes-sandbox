@@ -163,6 +163,15 @@ the hoisted `node_modules/brace-expansion`, which now lives nested under
 | `axios` | root lock, dev via `wait-on`, **absent from the image** | 1.18.1 → 1.20.0 | Patched anyway (7 advisories), inside `wait-on`'s `^1.16.0` range. |
 | `@grpc/grpc-js` | photon sidecar, baked into the image | 1.14.4, **left open** | **Not reachable, not suppressed.** GHSA-m9gg only affects gRPC *servers* created with `requireClientCertificate: false`. The sidecar is a gRPC client, and its only server is `http.createServer`. The fix, 1.14.5, clears the 14-day release-age gate at 2026-10-01 19:47 UTC. Patch it then, rather than suppress it or waive the gate. |
 
+## 2026-10-05 — residue from the 09-30 batches, plus two new docs-site advisories
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `tornado` | `uv.lock`, transitive (no direct import in our code) | 6.5.8 → 6.5.10 | **Patched**, floor raised to `>=6.5.9` in `[tool.uv] constraint-dependencies`. GHSA-3hv7 (query-string DoS), GHSA-c2m8 (`StaticFileHandler` symlink traversal), GHSA-chx6 (`CurlAsyncHTTPClient` has no size limit). We serve nothing through tornado, but the floor costs nothing. uv resolved 6.5.10 (2026-09-15), which is inside the release-age window. |
+| `@grpc/grpc-js` | photon sidecar | 1.14.4 → 1.14.5 | **Patched**, now that it is past the release-age gate (it was left open on 09-30 for that reason). The advisory is server-side, and the sidecar is only a client. |
+| `braces` | website, never ships | 3.0.3 (no fix exists) | **Accepted until 2026-12-31.** 3.0.3 is the latest release, and OSV lists it as `last_affected` with no fix, so no upgrade can clear it. |
+| `http-cache-semantics` | root lock + website, **absent from the image** | 4.2.0, **left open** | OSV lists no fixed version. 4.3.0 came out on 2026-10-04, so it is inside the 14-day release-age window until 2026-10-18. Re-check then; do not suppress it in the meantime. |
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
