@@ -212,6 +212,20 @@ def test_boot_keeps_an_existing_multiplex_flag(home):
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
 
 
+def test_boot_leaves_an_explicit_false_for_the_gateway_to_rewrite(home):
+    """The old pin also corrected a `false` at boot. Now boot leaves it, and upstream rewrites
+    it at gateway start (resolve_multiplex_mode + persist_resolved_default, pinned in
+    test_gateway_multiplex_s6.py). That deferred rewrite is the only correction left, so
+    boot must not half-handle it."""
+    (home / "config.yaml").write_text("gateway:\n  multiplex_profiles: false\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
+           "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
+    result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is False
+
+
 def test_the_hook_calls_the_module():
     hook = (REPO_ROOT / "docker" / "cont-init.d" / "03-biglobster-config").read_text(encoding="utf-8")
     [call] = [line for line in hook.splitlines() if "-m hermes_cli.fork_ext.boot_reconcile" in line]
