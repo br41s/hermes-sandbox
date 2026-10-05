@@ -51,7 +51,11 @@ jobs:
         with:
           # Scan explicit lockfiles rather than recursing, so we only look at
           # the five sources of truth and skip vendored / test / worktree dirs.
+          # --config: osv-scanner otherwise reads osv-scanner.toml from each
+          # lockfile's own directory, so the root decision log silently did not
+          # apply to website/ or the sidecar (the braces acceptance, 2026-10-05).
           scan-args: |-
+            --config=osv-scanner.toml
             --output=results.json
             --format=json
             --lockfile=uv.lock
