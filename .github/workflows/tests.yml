@@ -148,19 +148,23 @@ jobs:
         with:
           pattern: test-durations-slice-*
           path: durations
-          merge-multiple: true
+          # One directory per slice. Every slice uploads a file with the same
+          # name, so merge-multiple raced 9 writers onto one path: usually the
+          # last writer won and the merge saw 1 slice, and on 2026-10-05 the
+          # writes interleaved into invalid JSON.
 
       - name: Merge into single durations file
         run: |
           python3 -c "
           import json, glob, os
           merged = {}
-          for f in glob.glob('durations/*test_durations.json'):
+          files = glob.glob('durations/*/test_durations.json')
+          for f in files:
             with open(f) as fh:
               merged.update(json.load(fh))
           with open('test_durations.json', 'w') as fh:
             json.dump(merged, fh, indent=2, sort_keys=True)
-          print(f'Merged {len(merged)} file durations')
+          print(f'Merged {len(merged)} file durations from {len(files)} slices')
           "
 
       - name: Save merged duration cache

@@ -169,7 +169,7 @@ the hoisted `node_modules/brace-expansion`, which now lives nested under
 |---|---|---|---|
 | `tornado` | `uv.lock`, transitive (no direct import in our code) | 6.5.8 → 6.5.10 | **Patched**, floor raised to `>=6.5.9` in `[tool.uv] constraint-dependencies`. GHSA-3hv7 (query-string DoS), GHSA-c2m8 (`StaticFileHandler` symlink traversal), GHSA-chx6 (`CurlAsyncHTTPClient` has no size limit). We serve nothing through tornado, but the floor costs nothing. uv resolved 6.5.10 (2026-09-15), which is inside the release-age window. |
 | `@grpc/grpc-js` | photon sidecar | 1.14.4 → 1.14.5 | **Patched**, now that it is past the release-age gate (it was left open on 09-30 for that reason). The advisory is server-side, and the sidecar is only a client. |
-| `braces` | website, never ships | 3.0.3 (no fix exists) | **Accepted until 2026-12-31.** 3.0.3 is the latest release, and OSV lists it as `last_affected` with no fix, so no upgrade can clear it. |
+| `braces` | website, never ships | 3.0.3 (no fix exists) | **Accepted until 2026-12-31**, but it only took effect once the scan passed `--config=osv-scanner.toml` (the `ci:` PR after #397). Without that flag, osv-scanner reads the toml from each lockfile's own directory, so the root file never governed `website/` or the sidecar, and the alert stayed open at `ae7173854`. 3.0.3 is the latest release, and OSV lists it as `last_affected` with no fix, so no upgrade can clear it. |
 | `http-cache-semantics` | root lock + website, **absent from the image** | 4.2.0, **left open** | OSV lists no fixed version. 4.3.0 came out on 2026-10-04, so it is inside the 14-day release-age window until 2026-10-18. Re-check then; do not suppress it in the meantime. |
 
 ## Part 2 — the standing owner

@@ -247,7 +247,10 @@ jobs:
   # the per-OS aggregates.
   report:
     name: Result chart
-    if: always()
+    # always() so a failed leg still gets its chart, but not when the suite never
+    # ran: on the fork pick-releases is skipped by design, every leg skips, and
+    # there are no tags to chart (the step crashed on JSON.parse(''), every run).
+    if: always() && needs.pick-releases.result != 'skipped'
     needs: [leg-player, pick-releases, linux, windows, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
