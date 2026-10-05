@@ -708,7 +708,10 @@ which is why it comes last.
 its two call sites and its test are gone, and `gateway_multiplex_mode.py` matches upstream
 again. The four upstream tests are restored to their `v2026.9.24` form. The `OVERRIDES` pin
 and `ROUTE_BOUND_TOPICS` are gone, and so is `reconcile_profile_routes`' `enabled` parameter
-(the rollback it served no longer exists). Boot only ever sets keys, so production's existing
+(the rollback it served no longer exists). One thing the plan's "upstream rewrites an explicit
+false" missed (auditor, #395): upstream does so only when no blocker holds. So boot still
+rewrites an explicit `false` to `true` (`normalize_retired_multiplex_false`, main config only),
+and leaves an unset key to upstream. Boot only ever sets keys, so production's existing
 `gateway.multiplex_profiles: true` stays; `test_boot_keeps_an_existing_multiplex_flag` pins
 that. An unset key resolves to on as long as the s6 root slot exists
 (`gateway_migrate._host_supports_migration`). `process_env_scope.py` stays. CLAUDE.md now

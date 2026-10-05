@@ -51,8 +51,10 @@ web server is pinned to `default`, and in-process env mutation would race.
 
 **Multiplex is on: one gateway serves every profile, bound topics run in-process.**
 It is upstream's default, not a fork pin (stage 3 step 4): config.yaml carries
-`gateway.multiplex_profiles: true`, upstream treats unset as on, and an explicit `false`
-is retired, warned about and rewritten to `true` at boot. Boot
+`gateway.multiplex_profiles: true` and upstream treats unset as on. An explicit `false` is
+retired: boot rewrites it to `true` (`normalize_retired_multiplex_false`), because upstream
+does so only when nothing blocks multiplex and would otherwise leave the file at `false`
+with a standalone gateway. Boot
 (`hermes_cli/fork_ext/boot_reconcile.py`) still writes one `gateway.profile_routes` entry
 per bound topic. Multiplex shipped once before, on 2026-09-28, and silenced Telegram. Under multiplex every allow/deny list is
 read from the profile's secret scope only (`gateway/platforms/_shared.py`

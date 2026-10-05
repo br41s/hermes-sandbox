@@ -157,8 +157,9 @@ PIN_IF_MISSING = {
 # turns in-process under the profile. A bound topic no route matches is dropped
 # (TelegramAdapter._drop_unrouted_bound_topic, stage 3 step 3). Routes a human added are
 # never touched: only names with ROUTE_NAME_PREFIX are ours. Multiplex itself is upstream's
-# default since stage 3 step 4: no pin, no fork opt-out (an explicit false is retired and
-# rewritten by upstream's resolve_multiplex_mode).
+# default since stage 3 step 4: no pin and no fork opt-out. An explicit false is retired and
+# boot rewrites it (normalize_retired_multiplex_false), since upstream does so only when no
+# blocker holds.
 ROUTE_NAME_PREFIX = "fork-topic:"
 
 CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"
@@ -552,6 +553,23 @@ def _routes_slot(cfg: dict) -> tuple:
     return _section(cfg, "gateway"), "profile_routes"
 
 
+def normalize_retired_multiplex_false(cfg: dict) -> bool:
+    """Rewrite an explicit ``multiplex_profiles: false`` to ``true``; leave every other value.
+
+    Upstream retired ``false``, but rewrites it (``persist_resolved_default``) only when no
+    blocker holds; with one, config.yaml keeps ``false`` and the gateway comes up standalone.
+    The OVERRIDES pin used to close that on every boot. This does the same for ``false`` only:
+    an unset key stays upstream's to decide. Reads both spellings upstream's loader accepts.
+    """
+    changed = False
+    gateway = cfg.get("gateway")
+    for container in (cfg, gateway if isinstance(gateway, dict) else None):
+        if isinstance(container, dict) and container.get("multiplex_profiles") is False:
+            container["multiplex_profiles"] = True
+            changed = True
+    return changed
+
+
 def reconcile_profile_routes(cfg: dict, served: Optional[set]) -> bool:
     """Replace our generated routes with the current bound topics; keep every other route.
 
@@ -813,6 +831,10 @@ def reconcile_cfg(
         # config. Rebuild it from the profiles' routing.env so it survives a
         # volume rebuild (DR) and back-fills missing bindings.
         if reconcile_group_topics(cfg, profiles_src):
+            changed = True
+        # Stage 3 step 4: no multiplex pin, but a retired explicit `false` is still corrected.
+        if normalize_retired_multiplex_false(cfg):
+            print("[03-biglobster] Rewrote retired gateway.multiplex_profiles: false to true")
             changed = True
         # Stage 2b: route every bound topic in-process (after group_topics, so a binding
         # rebuilt above is routed the same boot).
