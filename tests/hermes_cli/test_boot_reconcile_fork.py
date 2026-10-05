@@ -194,7 +194,53 @@ def test_runs_as_the_boot_hook_invokes_it(home):
     assert result.returncode == 0, result.stderr
     assert "biglobster: reconciled config.yaml keys" in result.stdout
     assert "OPENROUTER_API_KEY=k\n" in _env(prof / ".env")
+    cfg = _cfg(home / "config.yaml")
+    assert cfg["agent"]["max_turns"] == 90
+    # Stage 3 step 4: multiplex is upstream's default; boot no longer pins it either way.
+    assert "multiplex_profiles" not in (cfg.get("gateway") or {})
+
+
+def test_boot_keeps_an_existing_multiplex_flag(home):
+    """Production's config.yaml already carries `multiplex_profiles: true` from the old pin.
+    Boot only ever sets keys, so dropping the pin must leave it, not strip it."""
+    (home / "config.yaml").write_text("gateway:\n  multiplex_profiles: true\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
+           "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
+    result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
+
+
+def test_boot_rewrites_a_retired_explicit_false(home):
+    """Upstream rewrites a retired `false` only when no blocker holds
+    (``persist_resolved_default`` on a ``retired-opt-out`` decision). With one, the file would
+    keep `false` and the gateway would come up standalone. The old pin closed that on every
+    boot; boot still does, for `false` only, through the loader's own read of the file."""
+    (home / "config.yaml").write_text("gateway:\n  multiplex_profiles: false\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
+           "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
+    result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert "Rewrote retired gateway.multiplex_profiles" in result.stdout
+    assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
+
+    from hermes_cli import gateway_multiplex_mode as mode
+
+    assert mode.explicit_multiplex_flag(home) is True  # what the gateway's loader now reads
+
+
+@pytest.mark.parametrize("cfg, expected, rewrote", [
+    ({"gateway": {"multiplex_profiles": False}}, {"gateway": {"multiplex_profiles": True}}, True),
+    ({"multiplex_profiles": False}, {"multiplex_profiles": True}, True),  # top-level spelling
+    ({"gateway": {"multiplex_profiles": True}}, {"gateway": {"multiplex_profiles": True}}, False),
+    ({"gateway": {}}, {"gateway": {}}, False),  # unset stays upstream's to decide
+    ({}, {}, False),
+])
+def test_only_an_explicit_false_is_normalized(cfg, expected, rewrote):
+    assert br.normalize_retired_multiplex_false(cfg) is rewrote
+    assert cfg == expected
 
 
 def test_the_hook_calls_the_module():

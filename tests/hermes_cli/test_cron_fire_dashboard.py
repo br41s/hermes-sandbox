@@ -273,11 +273,12 @@ def test_fire_endpoint_multiplex_reads_port_from_default_listener(tmp_path, monk
     url = _web_server_cron._gateway_fire_endpoint("worker_alpha", worker_home)
 
     assert url == "http://127.0.0.1:8650/p/worker_alpha/api/cron/fire"
-    # fork: an explicit opt-out still means standalone (hermes_cli/fork_ext/multiplex.py),
-    # so the secondary's fire URL is its own listener again, as before v2026.9.24.
+    # Forcing the retired opt-out off no longer restores per-profile routing: multiplex-only
+    # means the secondary has no listener of its own, so a fire URL aimed at its port would
+    # reach nothing. The /p/<profile>/ mirror on the default listener is the only live target.
     monkeypatch.setenv("GATEWAY_MULTIPLEX_PROFILES", "0")
     assert _web_server_cron._gateway_fire_endpoint("worker_alpha", worker_home) == (
-        "http://127.0.0.1:8702/api/cron/fire"
+        "http://127.0.0.1:8650/p/worker_alpha/api/cron/fire"
     )
 
 
