@@ -10,9 +10,11 @@ it does. It was pulled on 2026-09-28, when stages 2a/2b blocked every Telegram s
 and released again once ``hermes_cli/fork_ext/process_env_scope.py`` fixed the cause
 (CLAUDE.md, "Multiplex"). Stage 2a (``OVERRIDES`` in ``hermes_cli/fork_ext/boot_reconcile.py``, run by the boot
 hook, pins the flag to ``true``) turned it on; stage 2b (``ROUTE_BOUND_TOPICS`` there) routes
-every profile-bound group topic in-process through ``gateway.profile_routes``, so the
-per-turn ``auto_profile`` subprocess is only the fallback. Rolling back is pinning ``false`` again, which this module
-keeps meaning standalone. Once adoption is finished, drop this module, the two call
+every profile-bound group topic in-process through ``gateway.profile_routes``. Since stage 3
+step 3 there is no per-turn subprocess fallback: with multiplex off, a profile-bound topic is
+dropped with a warning (``TelegramAdapter._drop_unrouted_bound_topic``), never answered by the
+default profile. Rolling back is pinning ``false`` again, which this module keeps meaning
+standalone. Once adoption is finished, drop this module, the two call
 sites in ``gateway_multiplex_mode.py`` and ``test_gateway_multiplex_optout_fork.py``.
 """
 

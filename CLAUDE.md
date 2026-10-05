@@ -66,8 +66,13 @@ falls back to the env it was launched with, frozen when multiplex turns on; `.en
 wins, and no secondary sees it. Never copy `TELEGRAM_BOT_TOKEN` into a profile: a satellite
 holding its own token is a fatal duplicate credential.
 
-**Rollback is both pins back to False, together.** Before turning multiplex on again after
-one, run the read-only probe in the pod. `zeabur service exec` lacks `/command` on its PATH,
+**Rollback is both pins back to False, together, and it silences the client topics.** Since
+stage 3 step 3 there is no per-turn profile subprocess: a topic bound to a profile in
+`group_topics` that no `gateway.profile_routes` entry routes is dropped with a warning
+(`TelegramAdapter._drop_unrouted_bound_topic`), never answered by the default profile. With
+multiplex off no route applies, so every bound topic goes quiet until it is back on; the same
+happens to a topic bound since the last boot, until the next one generates its route.
+Before turning multiplex on again after a rollback, run the read-only probe in the pod. `zeabur service exec` lacks `/command` on its PATH,
 and `with-contenv` needs it:
 `/usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv s6-setuidgid hermes env PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python -m hermes_cli.fork_ext.process_env_scope --check`.
 It must say `VERDICT: OK`. It also lists jobs in `profiles/*/cron/jobs.json`. The gateway

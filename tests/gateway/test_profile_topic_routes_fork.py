@@ -1,10 +1,10 @@
 """Fork: multiplex stage 2b — profile-bound Telegram topics routed in-process.
 
 hermes_cli/fork_ext/boot_reconcile.py turns every group_topics topic bound to a profile
-into a gateway.profile_routes entry; gateway/platforms/base.py then leaves the turn to
-upstream's multiplex path instead of the fork's per-turn subprocess. These pin the
-generation, that upstream's own loader and matcher accept what it writes, the rollback,
-and the handoff between the two paths.
+into a gateway.profile_routes entry, and upstream's multiplex path runs the turn in that
+profile. These pin the generation, that upstream's own loader and matcher accept what it
+writes, and the rollback. A bound topic no route matched is dropped
+(test_telegram_unrouted_bound_topic_fork.py).
 """
 
 from __future__ import annotations
@@ -136,56 +136,3 @@ def test_routes_and_multiplex_move_together():
     """Routes only take effect under multiplex (see OVERRIDES); a rollback flips both.
     test_rollback_removes_only_ours covers what the next boot does with the routes."""
     assert br.ROUTE_BOUND_TOPICS is br.OVERRIDES[("gateway", "multiplex_profiles")] is True
-
-
-# ── base.py handoff ────────────────────────────────────────────────────────────
-
-
-class _StubAdapter(BasePlatformAdapter):
-    async def connect(self, *, is_reconnect: bool = False):
-        pass
-
-    async def disconnect(self):
-        pass
-
-    async def send(self, chat_id, text, **kwargs):
-        return None
-
-    async def get_chat_info(self, chat_id):
-        return {}
-
-
-def _event(routed_profile):
-    source = SessionSource(platform=Platform.TELEGRAM, chat_id=str(CHAT), chat_type="group",
-                           thread_id="3", profile=routed_profile)
-    event = MessageEvent(text="hola", message_type=MessageType.TEXT, source=source)
-    event.auto_profile = "grow-shop"
-    return event, build_session_key(source, profile=routed_profile)
-
-
-async def _run(routed_profile):
-    adapter = _StubAdapter(PlatformConfig(enabled=True, token="t"), Platform.TELEGRAM)
-    adapter._send_with_retry = AsyncMock(return_value=None)
-    in_process = AsyncMock(return_value="in-process")
-    adapter._message_handler = in_process
-    adapter._run_in_auto_profile = AsyncMock(return_value="subprocess")
-    event, key = _event(routed_profile)
-    await adapter._process_message_background(event, key)
-    await asyncio.sleep(0)
-    return in_process, adapter._run_in_auto_profile
-
-
-@pytest.mark.asyncio
-async def test_a_routed_topic_runs_in_process():
-    in_process, subprocess_path = await _run("grow-shop")
-    in_process.assert_awaited_once()
-    subprocess_path.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_an_unrouted_bound_topic_still_uses_the_subprocess():
-    """The rollback path: no route stamped source.profile, so the fork's subprocess answers."""
-    in_process, subprocess_path = await _run(None)
-    subprocess_path.assert_awaited_once()
-    assert subprocess_path.await_args.args[2] == "grow-shop"
-    in_process.assert_not_awaited()

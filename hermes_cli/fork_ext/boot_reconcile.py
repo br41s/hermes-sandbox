@@ -164,11 +164,11 @@ PIN_IF_MISSING = {
 # Multiplex adoption, stage 2b: every Telegram topic bound to a profile in
 # telegram.extra.group_topics gets a matching gateway.profile_routes entry, so the one
 # gateway runs that topic's turns in-process under the profile (streaming, tool progress,
-# interrupts, /commands) instead of the fork's per-turn subprocess
-# (gateway/platforms/base.py, which yields to a route). Rollback is setting this to
-# False: the next boot removes the generated routes and every bound topic falls back
-# to the subprocess. Routes a human added are never touched: only names with
-# ROUTE_NAME_PREFIX are ours. Routes only take effect under multiplex, so this and the
+# interrupts, /commands). Since stage 3 step 3 there is no per-turn subprocess to fall back
+# to: False removes the generated routes, and every bound topic is then DROPPED with a
+# warning (TelegramAdapter._drop_unrouted_bound_topic), so it is no longer a rollback
+# lever (the constant goes in step 4). Routes a human added are never touched: only names
+# with ROUTE_NAME_PREFIX are ours. Routes only take effect under multiplex, so this and the
 # OVERRIDES pin move together.
 ROUTE_BOUND_TOPICS = True
 ROUTE_NAME_PREFIX = "fork-topic:"

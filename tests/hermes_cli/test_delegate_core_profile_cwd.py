@@ -432,17 +432,6 @@ def test_token_from_git_credentials_parses_forms(tmp_path):
     assert delegate_core._token_from_git_credentials(str(p)) is None
 
 
-def test_auto_profile_field_on_message_event():
-    """MessageEvent must carry auto_profile=None by default and accept a profile name."""
-    from gateway.platforms.base import MessageEvent
-
-    ev = MessageEvent(text="hello")
-    assert ev.auto_profile is None
-
-    ev2 = MessageEvent(text="hello", auto_profile="grow-shop")
-    assert ev2.auto_profile == "grow-shop"
-
-
 def test_resume_history_sets_env_var(tmp_path):
     """resume_history=True must inject HERMES_DELEGATE_RESUME=1 into the subprocess env."""
     profile_home = tmp_path / "profiles" / "finview"
