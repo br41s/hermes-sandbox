@@ -75,10 +75,6 @@ class MessageEvent:
     prompt_response: Optional[Dict[str, Any]] = None
     # Auto-loaded skill(s) for topic/channel bindings; a single name or ordered list.
     auto_skill: Optional[str | list[str]] = None
-    # fork: Hermes profile to run this message in. When set, BasePlatformAdapter
-    # dispatches it to that profile's subprocess (HERMES_HOME isolation) instead of
-    # the in-process handler. Populated from a Telegram group_topics entry's `profile`.
-    auto_profile: Optional[str] = None
     # Per-channel ephemeral system prompt; applied at API call time, never persisted to transcript.
     channel_prompt: Optional[str] = None
     # History-backfilled channel context (missed under require_mention); kept out of ``text`` so

@@ -4435,19 +4435,6 @@ class BasePlatformAdapter(ABC):
         elif current_task is not None and self._session_tasks.get(session_key) is current_task:
             self._cleanup_finished_session_task(session_key, interrupt_event)
 
-    async def _run_in_auto_profile(self, event: MessageEvent, session_key: str, profile: str) -> str:
-        """fork: run a profile-bound message (Telegram group_topics ``profile``) in that customer
-        profile's subprocess so HERMES_HOME is fully isolated. ``session_key`` (chat+thread) is the
-        task id, so the profile's own SessionDB rehydrates this topic's transcript every turn."""
-        logger.info("[%s] Routing message to profile %r (session %s)", self.name, profile, session_key)
-        from hermes_cli.delegate_core import run_delegate_in_profile
-        result = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: run_delegate_in_profile(
-                session_key, event.text, profile, no_delegate_prompt=True, resume_history=True))
-        if result.get("error"):
-            logger.error("[%s] Profile task error (profile=%r): %s", self.name, profile, result["error"])
-        return result.get("final_response") or result.get("error") or ""
-
     async def _process_message_background(self, event: MessageEvent, session_key: str) -> None:
         """Background task that actually processes the message."""
         delivery_attempted = delivery_succeeded = False  # feeds the processing-complete hook
@@ -4465,14 +4452,7 @@ class BasePlatformAdapter(ABC):
         try:
             await self._run_processing_hook("on_processing_start", event)
             event._turn_marker_handoff = self.gateway_runner is not None  # it can release the marker
-            # fork: a Telegram topic bound to a group_topics `profile` runs in that profile's subprocess,
-            # unless a gateway.profile_routes entry already routed it (source.profile): then upstream's
-            # in-process multiplex turn owns it (hermes_cli/fork_ext/boot_reconcile.py, stage 2b).
-            _auto_profile = getattr(event, "auto_profile", None)
-            if _auto_profile and not getattr(event.source, "profile", None):
-                response = await self._run_in_auto_profile(event, session_key, _auto_profile)
-            else:
-                response = await self._message_handler(event)
+            response = await self._message_handler(event)
             # A muted diagnostic wake ran for the session; its reply is not presented. The
             # policy read binds the routed profile; delivery itself stays in the launch scope.
             with self._media_delivery_scope(event.source):

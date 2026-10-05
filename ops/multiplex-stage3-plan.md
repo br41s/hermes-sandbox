@@ -668,6 +668,15 @@ Tests: `tests/gateway/test_profile_topic_routes_fork.py`,
 `tests/gateway/test_telegram_topic_profile_routing.py`.
 `tests/hermes_cli/test_delegate_core_profile_cwd.py` stays as it is.
 
+**Done (PR open):** the drop is `TelegramAdapter._drop_unrouted_bound_topic`, called from
+the adapter's own `handle_message` before upstream's, so `base.py` and `event.py` carry no
+fork code for this any more. The binding rides on `event.metadata["fork_topic_profile"]`
+instead of the removed `auto_profile` field. `profile: default` and an unbound topic pass
+through; a topic routed to any profile passes through. `run_delegate_in_profile` keeps
+`no_delegate_prompt`/`resume_history`, since `test_delegate_core_profile_cwd.py` and
+`delegate_runner.py` still exercise them; only that file's `auto_profile` field test went.
+Tests: `tests/gateway/test_telegram_unrouted_bound_topic_fork.py`.
+
 **Rollback:** revert and redeploy.
 
 ### Step 4: drop `fork_ext/multiplex.py` and the opt-out (code)

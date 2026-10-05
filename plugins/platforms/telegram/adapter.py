@@ -473,6 +473,10 @@ class _PollingStallError(RuntimeError):
     """
 
 
+# fork: event.metadata key carrying a forum topic's group_topics ``profile`` binding.
+TOPIC_PROFILE_KEY = "fork_topic_profile"
+
+
 class TelegramAdapter(BasePlatformAdapter):
     """Telegram bot adapter: users/groups, MarkdownV2 replies, forum topics, media."""
 
@@ -2922,7 +2926,29 @@ class TelegramAdapter(BasePlatformAdapter):
 
     async def handle_message(self, event: MessageEvent) -> None:
         self._accept_update()
+        if self._drop_unrouted_bound_topic(event):  # fork
+            return
         await super().handle_message(event)
+
+    def _drop_unrouted_bound_topic(self, event: MessageEvent) -> bool:
+        """fork (stage 3 step 3): True for a message in a topic bound to a profile
+        (``group_topics`` ``profile``) that no ``gateway.profile_routes`` entry routed.
+
+        Boot generates one route per bound topic of a served profile
+        (``hermes_cli/fork_ext/boot_reconcile.py``), so this is a parked profile, a topic
+        bound since the last boot, or multiplex turned off. Answering it would run the
+        DEFAULT profile, with our memory and keys, in a client's topic; the per-turn
+        profile subprocess that used to catch it is gone. Dropped with a warning instead.
+        """
+        bound = str((event.metadata or {}).get(TOPIC_PROFILE_KEY) or "").strip()
+        if not bound or bound.lower() == "default" or getattr(event.source, "profile", None):
+            return False
+        logger.warning(
+            "[Telegram] Dropping message in topic %s of chat %s: the topic is bound to profile %r "
+            "but no gateway.profile_routes entry routed it (profile not served, topic bound since "
+            "the last boot, or multiplex off). It is not answered from the default profile.",
+            event.source.thread_id, event.source.chat_id, bound)
+        return True
 
     def _register_handlers(self, app) -> None:
         """Register every PTB handler on ``app`` (initial connect and the transient-init rebuild)."""
@@ -6972,11 +6998,13 @@ class TelegramAdapter(BasePlatformAdapter):
     def _resolve_topic_binding(self, message: Message, chat_type: str, thread_id_str: Optional[str]) -> tuple:
         """Return ``(chat_topic, topic_skill, topic_profile)`` for a DM topic or bound forum topic (else Nones).
 
-        fork: ``topic_profile`` is a forum topic's ``group_topics`` ``profile`` field."""
+        fork: ``topic_profile`` is a forum topic's ``group_topics`` ``profile`` field; a
+        ``gateway.profile_routes`` entry routes it, and ``_drop_unrouted_bound_topic`` refuses it
+        when none did."""
         chat = message.chat
         chat_topic = None
         topic_skill = None
-        topic_profile = None  # fork: group_topics `profile` → per-customer profile subprocess
+        topic_profile = None  # fork: group_topics `profile`, routed in-process by profile_routes
         if chat_type == "dm" and thread_id_str:
             topic_info = self._get_dm_topic_info(str(chat.id), thread_id_str)
             if topic_info:
@@ -7079,9 +7107,10 @@ class TelegramAdapter(BasePlatformAdapter):
             text=expand_link_entities(message), message_type=msg_type, source=source, raw_message=message,
             message_id=str(message.message_id), platform_update_id=update_id,
             reply_to_message_id=reply_to_id, reply_to_text=reply_to_text, auto_skill=topic_skill,
-            auto_profile=topic_profile,  # fork: see BasePlatformAdapter profile routing
             channel_prompt=group_identity_prompt(self, message, channel_prompt),
-            timestamp=message.date)
+            timestamp=message.date,
+            # fork: the group_topics binding, read only by _drop_unrouted_bound_topic.
+            metadata={TOPIC_PROFILE_KEY: topic_profile} if topic_profile else {})
 
     # -- Message reactions (processing lifecycle) --
 
