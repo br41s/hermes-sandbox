@@ -527,7 +527,8 @@ class WebhookAdapter(BasePlatformAdapter):
                 # default home; to_thread copies contextvars so the scope follows. A cron job is a full agent
                 # run (minutes) — keep it off the gateway event loop.
                 with self._profile_scope(profile):
-                    # fork: a profile/workdir job runs on the sequential lane, not a thread of its own.
+                    # fork: a workdir job runs on the sequential lane and a profile-store job on its
+                    # profile's pool (cron/fork_ext/dispatch.py run_event_job), not a thread of its own.
                     result = await run_event_job(job_ref, execute_job_for_event, job_ref, event_context)
                 if not result.get("success"):
                     logger.warning("[webhook] cron-trigger job=%s route=%s did not complete cleanly: %s", job_ref,

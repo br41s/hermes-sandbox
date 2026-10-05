@@ -66,11 +66,13 @@ async def test_cron_job_route_runs_workdir_jobs_on_the_lane(lane, fields, on_lan
 
 
 @pytest.mark.asyncio
-async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_the_lane(lane):
+async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_its_pool(lane):
     """Stage 3 step 0a. A ``/p/<profile>/`` route resolves its job under the
     profile's home override alone, with no ``use_cron_store``: the store comes from
     the home fallback in ``cron.jobs._current_cron_store``. A job in that store has
-    no ``profile`` field, and it must still run on the lane.
+    no ``profile`` field. Since step 5 it runs on that profile's own parallel pool
+    (sized 1 by boot), so it queues behind the profile's tick jobs; never on a
+    worker thread of its own, which would let it overlap them.
 
     If the module constants were re-pointed (``CRON_DIR`` and friends), that
     fallback is skipped and the lookup lands in the DEFAULT store, quietly. This
@@ -103,4 +105,4 @@ async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_the_
     jobs_file, resolved, thread = fired[0]
     assert jobs_file == (satellite / "cron" / "jobs.json").resolve()
     assert resolved is not None and resolved["id"] == created["id"]
-    assert thread.startswith("cron-seq"), thread
+    assert thread.startswith("cron-parallel"), thread

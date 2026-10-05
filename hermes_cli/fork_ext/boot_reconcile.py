@@ -140,6 +140,17 @@ OVERRIDES = {
     ("agent", "cron_drain_timeout"): 10,
 }
 
+# Forced on every NAMED profile, never on main (stage 3 step 5, ops/multiplex-stage3-plan.md).
+# Upstream sizes one parallel pool per profile home from that home's cron.max_parallel_jobs
+# (unbounded by default). 1 keeps a profile's jobs serial and in submit order, as the fork's
+# single lane did, while profiles now run beside each other, so a 38-minute auditor run no
+# longer holds a client's Gap Hunter. Main is left unbounded: its plain jobs (backups, the
+# incident watcher) never were on the lane, and pinning them would queue the hourly watcher
+# behind the nightly backup.
+PROFILE_OVERRIDES = {
+    ("cron", "max_parallel_jobs"): 1,
+}
+
 # Cost ceilings the upstream merge would otherwise raise; applied only where a
 # config does not set them (see reconcile_config). Values = today's defaults.
 PIN_IF_MISSING = {
@@ -633,6 +644,12 @@ def reconcile_cfg(
         if sec.get(key) != val:
             sec[key] = val
             changed = True
+    if label != "main":
+        for (section, key), val in PROFILE_OVERRIDES.items():
+            sec = _section(cfg, section)
+            if sec.get(key) != val:
+                sec[key] = val
+                changed = True
     # Written only where ABSENT, never forced: pins today's value so the
     # next upstream merge cannot raise it silently, while a profile that
     # chose its own limit keeps it. Upstream v2026.9.x raises the

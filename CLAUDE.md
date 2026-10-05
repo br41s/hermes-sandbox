@@ -107,27 +107,31 @@ Consequences to hold in mind:
   runtime** — it is read by Claude Code only. Adding a `.hermes.md` here would not be:
   it would outrank AGENTS.md and change the agent's own context. Don't, without a reason.
 
-### One long agent run starves every other agent
+### One cron job at a time per profile; profiles run side by side
 
-`cron/scheduler.py` dispatches every job that sets `profile` or `workdir`, and every
-job run from a profile's own `profiles/<name>/cron/jobs.json` (`in_profile_store`), on a
-**single-thread sequential pool** (`cron/fork_ext/dispatch.py`). Nothing it once
-protected is shared any more: a workdir binds to the run's task id rather than
-`os.environ["TERMINAL_CWD"]`, and a profile's `.env` is a per-run scope. The lane is
-now policy only: it keeps profile runs in the order they have always had. One slow job therefore
-blocks all the others, and from outside a queued run is indistinguishable from a
-dead one: the waiting job sits in `claimed` with no log output at all.
+Since stage 3 step 5 (`ops/multiplex-stage3-plan.md`), a job from a profile's own
+`profiles/<name>/cron/jobs.json` runs on upstream's **per-profile** parallel pool, which
+boot sizes to `cron.max_parallel_jobs: 1` on every named profile
+(`hermes_cli/fork_ext/boot_reconcile.py` `PROFILE_OVERRIDES`). A profile's jobs stay
+serial and in submit order; different profiles run at the same time. Main is not pinned:
+its plain jobs (backups, the incident watcher) run unbounded, as they always did. Only a
+job with a `workdir` still goes on the fork's **single-thread lane**
+(`cron/fork_ext/dispatch.py`), shared by every store; that lane goes once the
+widening has been clean for a week.
 
-Seen on 2026-09-12 — a 38-minute auditor run held the thread while the BigLobster
-Gap Hunter (`ce583d11dedd`) sat silent for 20+ minutes, which read on Telegram
-exactly like a crash.
+Before the widening, one lane held every profile job, and a slow run blocked all the
+others. On 2026-09-12 a 38-minute auditor run held it while the BigLobster Gap Hunter
+(`ce583d11dedd`) sat silent for 20+ minutes, which read on Telegram exactly like a crash.
+**Within one profile that can still happen**: a queued run sits in `claimed` with no log
+output, indistinguishable from a dead one.
 
-The defence is **bounding each agent, not widening the pool**. The agent loop
-already hard-stops at `max_iterations=90` (`run_agent.py:434`), so the ceiling is
-~90 tool calls; what matters is that a job's queue fits inside it —
-`auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that. Widening the pool is
-a separate decision, planned as stage 3 step 5 (`ops/multiplex-stage3-plan.md`, one
-job per profile at a time); do not fold it into a bug fix.
+Widening moves the risk rather than removing it. **Spend lands at once**: content jobs
+share one OpenRouter key and weekly limit, and several profiles running together reach it
+sooner (it 402'd the auditor for a day once). **Pod load stacks**: agent loops, `git clone
+--local` checkouts and MCP stdio servers pile up in one container with no liveness probe.
+So **bounding each agent still matters**. The agent loop hard-stops at
+`max_iterations=90` (`run_agent.py:434`), so the ceiling is ~90 tool calls, and a job's queue
+must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
 
 **Every cron agent run also has a wall-clock ceiling: `HERMES_CRON_MAX_RUNTIME`,
 default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
@@ -136,7 +140,7 @@ clock every 30s. On 2026-09-29 an `auditor-review` run hung after its fourth mod
 call and held the lane for 95 minutes, with nothing logged. `merge-on-green` and a
 rental's Product Sheet Writer queued behind it, and the auditor looked down. At the
 ceiling the run dumps every thread's stack to the log, is interrupted and fails,
-and the lane moves on. A job that legitimately needs longer is a job to split, not
+and the profile's pool (or the lane) moves on. A job that legitimately needs longer is a job to split, not
 a reason to raise the ceiling for everyone.
 
 **Each model call has its own, tighter deadline: `request_timeout_seconds`** (600s
@@ -163,8 +167,8 @@ the wrong client's site). Child processes get the scope through
 upstream v2026.8.31 delete `_terminal_cwd_lock` safely.
 
 Corollary when triaging: before calling a quiet cron job dead, check whether
-another profile/workdir job is running. `hermes cron runs <job_id>` shows the
-holder.
+another job of the same profile (or, for a `workdir` job, any `workdir` job) is
+running. `hermes cron runs <job_id>` shows the holder.
 
 **A job moved into its profile's own store answers only to `-p`.** `hermes cron
 move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the

@@ -1,17 +1,19 @@
 """The fork's sequential cron lane (fork-owned).
 
-Every cron job that sets ``workdir``, or runs from a profile's own store, runs on ONE single-thread
-executor, one at a time, across ticks and across entry points (the tick and
-the webhook triggers: ``trigger_cron_job_id`` and upstream's ``cron_job``).
+Every cron job that sets ``workdir`` runs on ONE single-thread executor, one at a
+time, across ticks and across entry points (the tick and the webhook triggers:
+``trigger_cron_job_id`` and upstream's ``cron_job``). Since stage 3 step 5 a job
+from a profile's own store runs on upstream's per-profile pool instead, sized 1 by
+``boot_reconcile.PROFILE_OVERRIDES``; the lane goes once that has been clean a week.
 
 History: a profile run used to load its ``.env`` (its ``GITHUB_TOKEN`` among
 it) into ``os.environ`` and a workdir run wrote ``TERMINAL_CWD``, so two
 overlapping runs leaked one identity into the other. Neither is true any
 more — the profile ``.env`` is the run's secret scope
 (``cron/fork_ext/profile_scope.py``, #338) and v2026.8.31 scopes the workdir
-per task — but the lane stays: it keeps profile runs in the order and pacing
-production has always had, and widening it is a separate decision (CLAUDE.md,
-"One long agent run starves every other agent").
+per task. The lane kept profile runs in the order and pacing production had always
+had until step 5 widened it (CLAUDE.md, "One long agent run starves every other
+agent").
 
 Upstream deleted its own sequential pool and dispatches every due job in
 parallel (``parallel_jobs = due_jobs``); the fork re-anchors one call in
@@ -45,18 +47,16 @@ _sequential_executor_lock = threading.Lock()
 
 
 def is_sequential(job: dict) -> bool:
-    """True for a job the fork runs on the single-thread lane: any job with a
-    ``workdir``, and any job running from a profile's OWN cron store. None of these mutates process-global state any more (see the module
-    docstring); the lane is kept by policy, and widening it is a separate decision
-    (stage 3 step 5). Everything else goes to upstream's parallel pool.
+    """True for a job the fork runs on the single-thread lane: a job with a ``workdir``.
 
-    The store rule is stage 3 step 0a (``ops/multiplex-stage3-plan.md``); the
-    retired ``profile`` field no longer counts (step 2), since a record that still
-    carries it is refused before it runs.
+    Stage 3 step 5 (``ops/multiplex-stage3-plan.md``) widened the lane. A job from a
+    profile's own store now goes to upstream's per-profile parallel pool, which boot
+    sizes to 1 for every named profile (``boot_reconcile.PROFILE_OVERRIDES``): serial
+    within a profile, profiles side by side. Once that has been clean for a week this
+    returns nothing and the lane goes. The retired ``profile`` field does not count
+    (step 2): a record that still carries it is refused before it runs.
     """
-    if (job.get("workdir") or "").strip():
-        return True
-    return in_profile_store()
+    return bool((job.get("workdir") or "").strip())
 
 
 def in_profile_store() -> bool:
@@ -65,17 +65,18 @@ def in_profile_store() -> bool:
     The multiplex ticker (``_profile_cron_scope``) and a routed webhook both install
     the profile's home override before they resolve or run a job, so the active home
     names the store the job came from. Fails closed: if either home cannot be
-    resolved, the job goes on the lane.
+    resolved, the run is treated as a profile-store run (identity tripwire, no
+    process-env ``.env`` load).
     """
     try:
         from hermes_constants import get_hermes_home, get_routing_process_hermes_home
 
         return get_hermes_home().resolve() != get_routing_process_hermes_home().resolve()
     except Exception as exc:
-        # Visible on purpose: a home that keeps failing to resolve serializes every
-        # plain job onto the lane, which otherwise reads as a slow scheduler.
+        # Visible on purpose: a home that keeps failing to resolve puts every run
+        # through the profile-store path, which otherwise reads as odd identity errors.
         logger.warning("in_profile_store: could not resolve the active or launch home "
-                       "(%s); running the job on the sequential lane", type(exc).__name__)
+                       "(%s); treating the run as a profile-store run", type(exc).__name__)
         return True
 
 
@@ -211,8 +212,10 @@ def dispatch_job_async(job: dict) -> dict:
 
 async def run_event_job(job_ref: str, fire: Callable, *args):
     """Await ``fire(*args)`` for upstream's webhook ``cron_job`` route: on the
-    lane when ``job_ref`` names a profile/workdir job, otherwise on a worker
-    thread exactly as upstream does.
+    lane when ``job_ref`` names a workdir job; on the profile's own parallel pool
+    when the route runs in a profile's store (stage 3 step 5: that pool is sized 1,
+    so the event queues behind the profile's tick jobs instead of overlapping them);
+    otherwise on a worker thread exactly as upstream does.
 
     Upstream's ``_handle_cron_trigger`` runs ``execute_job_for_event`` through
     ``asyncio.to_thread``, a fresh worker per event, so a profile/workdir job
@@ -224,7 +227,7 @@ async def run_event_job(job_ref: str, fire: Callable, *args):
     fired" as it would upstream.
 
     Fails closed: a ref that cannot be resolved here (unknown, ambiguous, the
-    store unreadable) goes to the lane too, and ``fire`` reports the error.
+    store unreadable) goes to the lane, and ``fire`` reports the error.
     """
     import asyncio
 
@@ -234,9 +237,14 @@ async def run_event_job(job_ref: str, fire: Callable, *args):
         job = resolve_job_ref(job_ref)
     except Exception:
         job = None
-    if job is not None and not is_sequential(job):
-        return await asyncio.to_thread(fire, *args)
     # to_thread copies the caller's context (the routed profile's scope); a
     # bare executor.submit does not, so carry it explicitly.
     ctx = contextvars.copy_context()
+    if job is not None and not is_sequential(job):
+        if not in_profile_store():
+            return await asyncio.to_thread(fire, *args)
+        import cron.scheduler as sched
+
+        pool = sched._get_parallel_pool(sched._resolve_max_parallel_workers())
+        return await asyncio.wrap_future(pool.submit(ctx.run, fire, *args))
     return await asyncio.wrap_future(get_sequential_executor().submit(ctx.run, fire, *args))

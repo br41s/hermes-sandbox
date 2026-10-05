@@ -1,15 +1,13 @@
-"""MERGE GATE: no two profile/workdir cron jobs ever run at the same time.
+"""MERGE GATE: no two workdir cron jobs ever run at the same time.
 
 This was the fork's identity invariant, and the gate for merging upstream
 v2026.8.31+. A cron job that set ``profile`` or ``workdir`` used to mutate
-process-global state for its whole run — the profile's ``.env`` (its
-``GITHUB_TOKEN``/``GH_TOKEN``) was loaded into ``os.environ``, ``TERMINAL_CWD``
-was set — so two of them overlapping leaked one profile's identity into the
-other's ``gh``/``git`` subprocesses (the 2026-09-12 FinView PR #245 opened as
-``hermes-auditor``). Neither mutates anything now, and the per-job ``profile``
-field is gone (stage 3 step 2): the lane holds ``workdir`` jobs and every job
-run from a profile's own store, by policy (CLAUDE.md, "One long agent run
-starves every other agent").
+process-global state for its whole run, so two of them overlapping leaked one
+profile's identity into the other's ``gh``/``git`` subprocesses (the 2026-09-12
+FinView PR #245 opened as ``hermes-auditor``). Neither mutates anything now.
+Since stage 3 step 5 the lane holds ``workdir`` jobs only. A job from a profile's
+own store runs on that profile's upstream pool, serial because boot pins
+``cron.max_parallel_jobs: 1`` (``test_a_profile_store_runs_serially_on_its_own_pool_not_behind_the_lane``).
 
 Upstream v2026.8.31 (91cf5448d8) deleted its sequential ``cron-seq`` pool and
 dispatches every due job in parallel (``parallel_jobs = due_jobs``), because
@@ -226,9 +224,10 @@ def test_is_sequential_partition():
     assert is_sequential({"profile": "auditor"}) is False
 
 
-def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
-    """Stage 3 step 0a: a job moved into its profile's own store has no
-    ``profile`` field, so the lane must key on the store the job runs from."""
+def test_a_job_from_a_profiles_own_store_leaves_the_lane(tmp_path):
+    """Stage 3 step 5: the lane keys on ``workdir`` only. A job from a profile's own
+    store goes to upstream's per-profile pool (sized 1 by boot), even though
+    ``in_profile_store`` still recognises the store for the identity path."""
     from cron.fork_ext.dispatch import in_profile_store, is_sequential
     from hermes_constants import (
         get_routing_process_hermes_home, reset_hermes_home_override, set_hermes_home_override,
@@ -239,12 +238,11 @@ def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
     token = set_hermes_home_override(str(satellite))
     try:
         assert in_profile_store() is True
-        assert is_sequential({}) is True
+        assert is_sequential({}) is False
+        assert is_sequential({"workdir": "/srv/x"}) is True
     finally:
         reset_hermes_home_override(token)
 
-    # The multiplex ticker scopes the DEFAULT store the same way: that must not
-    # pull the launch profile's plain jobs onto the lane.
     token = set_hermes_home_override(str(get_routing_process_hermes_home()))
     try:
         assert in_profile_store() is False
@@ -256,14 +254,14 @@ def test_a_job_from_a_profiles_own_store_is_sequential(tmp_path):
 def test_in_profile_store_fails_closed(monkeypatch, caplog):
     import hermes_constants
 
-    from cron.fork_ext.dispatch import is_sequential
+    from cron.fork_ext.dispatch import in_profile_store
 
     def _boom():
         raise OSError("home unreadable")
 
     monkeypatch.setattr(hermes_constants, "get_hermes_home", _boom)
     with caplog.at_level("WARNING", logger="cron.scheduler"):
-        assert is_sequential({}) is True
+        assert in_profile_store() is True
     assert "could not resolve the active or launch home (OSError)" in caplog.text
 
 
@@ -292,36 +290,42 @@ def test_tick_never_overlaps_profile_or_workdir_jobs(lane, monkeypatch, tmp_path
     assert all(rec.runs[j][1].startswith("cron-parallel") for j in plain_ids)
 
 
-def test_tick_of_a_profile_store_puts_its_plain_jobs_on_the_lane(lane, monkeypatch, tmp_path):
-    """The multiplex ticker runs ``tick`` inside ``_profile_cron_scope``: a
-    satellite store's jobs carry no ``profile`` field and must still share the
-    lane with the default store's profile jobs."""
+def test_a_profile_store_runs_serially_on_its_own_pool_not_behind_the_lane(lane, monkeypatch, tmp_path):
+    """Stage 3 step 5, the prize: a slow job on the lane (here, the default store's
+    workdir jobs) no longer holds a client's jobs. A profile's jobs run on that
+    profile's own pool, and with boot's ``cron.max_parallel_jobs: 1`` they still run
+    one at a time, in submit order."""
     from cron.scheduler_provider import _profile_cron_scope
 
     sched, _fork, due = lane
     satellite = tmp_path / "profiles" / "grow-shop"
     (satellite / "cron").mkdir(parents=True)
-    default_ids = [_uid("defp0"), _uid("defp1")]
+    (satellite / "config.yaml").write_text("cron:\n  max_parallel_jobs: 1\n", encoding="utf-8")
+    lane_ids = [_uid("lane0"), _uid("lane1"), _uid("lane2")]
     satellite_ids = [_uid("satplain0"), _uid("satplain1"), _uid("satplain2")]
     rec = _Recorder()
     monkeypatch.setattr(sched, "run_job", rec.run_job)
 
-    due[:] = [_job(default_ids[0], workdir="/srv/auditor"), _job(default_ids[1], workdir="/srv/biglobster")]
-    assert sched.tick(verbose=False, sync=False) == 2
-    assert rec.started_event(default_ids[0]).wait(5)
+    due[:] = [_job(j, workdir=f"/srv/{j}") for j in lane_ids]
+    assert sched.tick(verbose=False, sync=False) == 3
+    assert rec.started_event(lane_ids[0]).wait(5)
 
     due[:] = [_job(j) for j in satellite_ids]
     with _profile_cron_scope(satellite):
         assert sched.tick(verbose=False, sync=False) == 3
 
-    rec.wait_for(default_ids + satellite_ids)
-    _assert_serialized(rec, default_ids)
-    lane_thread = rec.runs[default_ids[0]][1]
-    assert {rec.runs[j][1] for j in satellite_ids} == {lane_thread}, (
-        "a satellite store's job left the lane")
-    first_satellite_start = min(rec.runs[j][2] for j in satellite_ids)
-    assert first_satellite_start >= max(rec.runs[j][3] for j in default_ids), (
-        "a satellite store's job started while a profile job held the lane")
+    rec.wait_for(lane_ids + satellite_ids)
+    _assert_serialized(rec, lane_ids)
+    lane_thread = rec.runs[lane_ids[0]][1]
+    sat = sorted((rec.runs[j][2], rec.runs[j][3], rec.runs[j][1], j) for j in satellite_ids)
+    assert all(t.startswith("cron-parallel") and t != lane_thread for _s, _e, t, _j in sat), (
+        "a profile-store job ran on the fork's lane")
+    assert len({t for _s, _e, t, _j in sat}) == 1, "max_parallel_jobs: 1 was not one worker"
+    for (_s1, end1, _t1, _j1), (start2, _e2, _t2, _j2) in zip(sat, sat[1:]):
+        assert start2 >= end1, "a profile's jobs overlapped despite max_parallel_jobs: 1"
+    assert [j for _s, _e, _t, j in sat] == satellite_ids, "submit order was not kept"
+    assert sat[0][0] < max(rec.runs[j][3] for j in lane_ids), (
+        "the profile's first job waited for the lane to drain")
 
 
 def test_tick_of_the_default_store_keeps_plain_jobs_parallel(lane, monkeypatch):
@@ -480,6 +484,42 @@ def test_webhook_cron_job_on_the_lane_keeps_the_routed_profile_scope(lane, monke
     thread, seen = asyncio.run(_fire())
     assert thread.startswith("cron-seq"), thread
     assert seen == "grow-shop"
+
+
+def test_a_webhook_fired_profile_job_queues_behind_the_profiles_tick_job(lane, monkeypatch, tmp_path):
+    """Step 5: upstream's webhook ``cron_job`` route would run a plain job on a worker
+    thread of its own. For a job in a profile's store that would overlap the profile's
+    tick jobs, so ``run_event_job`` puts it on the profile's pool (size 1), behind them."""
+    import asyncio
+
+    import cron.jobs
+    from cron.scheduler_provider import _profile_cron_scope
+
+    sched, fork, due = lane
+    satellite = tmp_path / "profiles" / "grow-shop"
+    (satellite / "cron").mkdir(parents=True)
+    (satellite / "config.yaml").write_text("cron:\n  max_parallel_jobs: 1\n", encoding="utf-8")
+    tick_id = _uid("sattick")
+    rec = _Recorder()
+    monkeypatch.setattr(sched, "run_job", rec.run_job)
+    monkeypatch.setattr(cron.jobs, "resolve_job_ref", lambda ref: _job(ref))
+    fired = {}
+
+    def _fire():
+        fired["start"] = time.monotonic()
+        fired["thread"] = threading.current_thread().name
+
+    async def _event():
+        with _profile_cron_scope(satellite):
+            due[:] = [_job(tick_id)]
+            assert sched.tick(verbose=False, sync=False) == 1
+            assert rec.started_event(tick_id).wait(5)
+            await fork.run_event_job("hook-job", _fire)
+
+    asyncio.run(_event())
+    rec.wait_for([tick_id])
+    assert fired["thread"].startswith("cron-parallel"), fired["thread"]
+    assert fired["start"] >= rec.runs[tick_id][3], "the webhook job overlapped the profile's tick job"
 
 
 def test_shutdown_parallel_pool_drains_the_fork_lane():

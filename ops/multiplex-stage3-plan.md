@@ -725,6 +725,13 @@ a week, it returns nothing, and `dispatch.py` goes with the re-anchor in
 `scheduler_tick.py:108`. Tests: `tests/cron/test_sequential_dispatch_fork.py`,
 `tests/test_incident_sweep_regression.py` (stall detection).
 
+**Phase A done (PR open):** `PROFILE_OVERRIDES` in `boot_reconcile.py` pins
+`cron.max_parallel_jobs: 1` on every **named** profile, and `is_sequential` returns only
+`workdir` jobs. One deviation from the line above: main is **not** pinned. Its plain jobs
+were never on the lane, and a pinned main would queue the hourly incident watcher behind
+the ~33-minute nightly backup. Phase B (the lane returns nothing, `dispatch.py` and the
+`scheduler_tick.py` re-anchor go) follows after a clean week.
+
 ---
 
 ## 6. Acceptance: production checks per step
