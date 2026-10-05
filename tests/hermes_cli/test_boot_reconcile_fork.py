@@ -252,3 +252,21 @@ def test_the_hook_calls_the_module():
     assert 'HERMES_HOME="$HERMES_HOME"' in call
     assert 'as_hermes "$PY" -m hermes_cli.fork_ext.boot_reconcile' in call
     assert "overrides = {" not in hook and "inject = [" not in hook
+
+
+# ── stage 3 step 5: one cron job at a time per named profile ───────────────────
+
+
+@pytest.mark.parametrize("label", ["biglobster", "grow-shop", "auditor", "bl-shoroban"])
+def test_every_named_profile_runs_one_cron_job_at_a_time(label):
+    cfg = {"cron": {"max_parallel_jobs": 4}}  # forced, like every other override
+    assert br.reconcile_cfg(cfg, label, {}) is True
+    assert cfg["cron"]["max_parallel_jobs"] == 1
+
+
+def test_main_keeps_its_unbounded_cron_pool():
+    """Main's plain jobs (backups, the incident watcher) were never on the lane;
+    pinning them would queue the hourly watcher behind the nightly backup."""
+    cfg = {}
+    br.reconcile_cfg(cfg, "main", {}, profiles_src=Path("/nonexistent"))
+    assert "max_parallel_jobs" not in (cfg.get("cron") or {})
