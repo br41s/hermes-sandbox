@@ -489,7 +489,7 @@ constraint-dependencies = [
   # Auth-header leak across cross-origin redirects, plus body/multipart parse
   # DoS. Our webhook path is unused (Telegram polls), but the AsyncHTTPClient
   # advisories are not webhook-specific. 6.5.8 closes all seven open advisories.
-  "tornado>=6.5.8,<7",  # CVE-2026-49853/49854/49855/82397/91990/91991/91992
+  "tornado>=6.5.9,<7",  # CVE-2026-49853/49854/49855/82397/91990/91991/91992; GHSA-3hv7-mjh2-fv65, GHSA-c2m8-h5v5-343r, GHSA-chx6-46f5-w4vp
   "msgpack>=1.2.1,<2",  # CVE-2026-57585
   "httplib2>=0.32.0,<1",  # CVE-2026-59939 — pulled in by google-auth-httplib2
   # Upper bound is <7, not <6: upstream v2026.8.31's [vercel] extra (vercel==0.7.2)

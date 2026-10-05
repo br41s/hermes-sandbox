@@ -179,3 +179,13 @@ reason = "Pygments — dev/TUI-formatting path, not a request-handling surface. 
 id = "CVE-2026-13311"
 ignoreUntil = 2026-12-31
 reason = "shell-quote — apps/desktop chain, verified absent from /opt/hermes/node_modules."
+
+# --- docs site: no fixed version exists ---------------------------------------
+# website/package-lock.json is never copied into the image, and Docusaurus
+# emits a static site, so its dev/build tooling has no runtime. braces 3.0.3
+# is the latest release and OSV lists it as last_affected with no fix, so no
+# upgrade can clear this; it closes by decision or when upstream ships one.
+[[IgnoredVulns]]
+id = "CVE-2026-93687"
+ignoreUntil = 2026-12-31
+reason = "braces 3.0.3 (GHSA-vfj7-8cjw-p6xm), docs site only via chokidar/micromatch. Never ships; no fixed version exists. Re-check by 2026-12-31."
