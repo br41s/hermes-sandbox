@@ -7,15 +7,17 @@
 Run as `hermes`, never root (root flips jobs.json ownership), from the
 hermes-sandbox clone (prompt_source paths resolve against it).
 
-Both jobs are deliberately created WITHOUT `profile` and `workdir`:
+Both jobs are deliberately created in the default store (no `-p`) and WITHOUT
+`workdir`:
 
 * they run in the default profile, whose process env carries the studio and
   publishing keys straight from Zeabur — so those keys never have to be
   copied into every profile's .env by the boot hook;
-* profile/workdir jobs share ONE sequential thread (CLAUDE.md, "One long
-  agent run starves every other agent"). These two need neither, so they
-  stay off it — and neither waits on a render anyway: the producer submits
-  and exits, the publisher collects what finished.
+* the default store's pool is unbounded, while a named profile's runs one job
+  at a time (CLAUDE.md, "One cron job at a time per profile; profiles run side
+  by side"), so neither queues behind another job — and neither waits on a
+  render anyway: the producer submits and exits, the publisher collects what
+  finished.
 
 Schedules are in the configured Hermes timezone, which this script prints.
 The publisher runs twice: once after the producer's renders finish, and once

@@ -158,8 +158,8 @@ PIN_IF_MISSING = {
     ("delegation", "max_concurrent_children"): 3,
     # Upstream v2026.8.31 (c32119b12c) made the agent loop's default UNLIMITED;
     # cron now takes its cap only from agent.max_turns. 90 is the budget
-    # auditor.pending's DEFAULT_LIMIT is sized against (CLAUDE.md, "One long
-    # agent run starves every other agent").
+    # auditor.pending's DEFAULT_LIMIT is sized against (CLAUDE.md, "One cron
+    # job at a time per profile; profiles run side by side").
     ("agent", "max_turns"): 90,
 }
 

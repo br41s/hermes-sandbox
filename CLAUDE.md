@@ -88,12 +88,14 @@ it with a plain message in General; tests alone passed both stages the first tim
 `tools/cronjob_tools.py` — a job with `workdir` set injects the project context file from
 that directory into its system prompt, and points terminal/file/code_exec at it.
 
-Resolution order (`agent/prompt_builder.py:2011`), **first match wins, only one loads**:
+Resolution order (`agent/prompt_builder.py` `build_context_files_prompt`), **first type
+found wins, only one type loads**:
 
 1. `.hermes.md` / `HERMES.md` — walks up to the git root
-2. `AGENTS.md` / `agents.md` — cwd only
+2. `AGENTS.override.md` / `AGENTS.md` / `agents.md` — every directory from the git root
+   down to cwd, one file per directory (override first), all of them loaded
 3. `CLAUDE.md` / `claude.md` — cwd only
-4. `.cursorrules` / `.cursor/rules/*.mdc`
+4. `.cursorrules` / `.cursor/rules/*.mdc` — cwd only
 
 Consequences to hold in mind:
 
@@ -127,9 +129,10 @@ Widening moves the risk rather than removing it. **Spend lands at once**: conten
 share one OpenRouter key and weekly limit, and several profiles running together reach it
 sooner (it 402'd the auditor for a day once). **Pod load stacks**: agent loops, `git clone
 --local` checkouts and MCP stdio servers pile up in one container with no liveness probe.
-So **bounding each agent still matters**. The agent loop hard-stops at
-`max_iterations=90` (`run_agent.py:434`), so the ceiling is ~90 tool calls, and a job's queue
-must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
+So **bounding each agent still matters**. Upstream's agent loop is unlimited by default
+since v2026.8.31; cron takes its cap from `agent.max_turns`, which boot pins to 90 on main
+and every profile (`boot_reconcile.py` `OVERRIDES`). The ceiling is ~90 tool calls, and a
+job's queue must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
 
 **Every cron agent run also has a wall-clock ceiling: `HERMES_CRON_MAX_RUNTIME`,
 default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
@@ -413,7 +416,7 @@ timestamp across several tools means they were issued as one parallel batch.
 findable by `sessionId`.** Trace-level attributes flush when the trace finalises;
 each observation flushes when it ends, carrying its own `sessionId` (this is what
 the propagation fix below buys). Interrupt the process — the cron inactivity watchdog
-at `cron/scheduler.py:4048` does this at `HERMES_CRON_TIMEOUT`, default 600s — and the
+(`cron/scheduler.py` `_inactivity_watchdog_loop`) does this at `HERMES_CRON_TIMEOUT`, default 600s — and the
 completed tool calls survive the query above while the root and the in-flight
 generation never land, because a span that never ends never exports. Verified
 2026-09-22 against a deliberately unfinalised run. Absence of the root is therefore
@@ -554,9 +557,9 @@ it writes from. Sold to a client without one it goes quiet on every run.
 
 `shorts/STUDIO.md` is the design and setup guide. The short version:
 
-- **Two cron agents, no profile, no workdir.** The Producer writes a JSON *package*
+- **Two cron agents, default store, no workdir.** The Producer writes a JSON *package*
   per post and submits it, the Publisher collects and publishes. Neither waits on a
-  render, and neither sits on the shared profile/workdir thread (see above). Their
+  render, and both run on main's unbounded pool, queued behind nothing. Their
   keys (`SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*`, `META_*`) live only in the
   service env. **Do not add them to `INJECT` in `hermes_cli/fork_ext/boot_reconcile.py`**, which would copy
   BigLobster's publishing tokens into every profile.

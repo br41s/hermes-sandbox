@@ -107,6 +107,10 @@ itself reporting two separate accounts with independent usage. Future clients
 are structural — `--openrouter-key` is `required=True` and validated live before
 any profile or job is created.
 
+> **Superseded (stage 3, 2026-10):** `_job_profile_context` is gone; a profile job
+> runs from its own store with its `.env` as the run's secret scope, and
+> `get_env_value()` reads that scope. The near-miss below no longer applies.
+
 Note the near-miss: `get_env_value()` checks `os.environ` FIRST and
 `_job_profile_context` never loads the profile `.env` into it, so
 `get_env_value("OPENROUTER_API_KEY")` under a tenant context really does return

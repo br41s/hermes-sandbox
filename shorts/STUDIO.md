@@ -24,7 +24,7 @@ unchanged and keeps rendering in-container; see §9 for how it moves onto the st
 ## 1. Architecture
 
 ```
- Hermes cron (default profile, no workdir — off the shared profile thread)
+ Hermes cron (default profile, no workdir — main's unbounded pool)
  ┌──────────────────────────────── Shorts Producer (daily) ────────────────────────┐
  │ shorts_studio posts(en) → article → submit ─┐   then the same for es            │
  └─────────────────────────────────────────────┼───────────────────────────────────┘
@@ -46,8 +46,8 @@ unchanged and keeps rendering in-container; see §9 for how it moves onto the st
 ```
 
 Why the render is not in Hermes: a Remotion render is ~1,800 browser frames a
-minute of video. The Zeabur pod is CPU-only, and every profile/workdir cron job
-shares one thread, so a 4-minute render there would stall the fleet. Actions
+minute of video. The Zeabur pod is CPU-only and runs every profile's agents at
+once, so a 4-minute render there would stall the fleet. Actions
 minutes are free, isolated and come with Chromium. Neither agent waits on a
 render: the producer submits and exits, the publisher collects what finished.
 
