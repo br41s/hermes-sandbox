@@ -97,3 +97,20 @@ $RCLONE copy "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --transfers 1
 $RCLONE check "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --one-way
 echo "== drive: VolumeBackups/$STAMP verified"
 $RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"
+
+# Retention (Brais, 2026-10-06): 14 days on the host, 30 in Drive. Only reached after
+# the upload above verified, so a failing night never prunes. Only stamp-named
+# directories are considered, by their UTC date in the name.
+HOST_KEEP_DAYS=14; DRIVE_KEEP_DAYS=30
+host_cutoff=$(date -u -d "$HOST_KEEP_DAYS days ago" +%Y%m%d)
+drive_cutoff=$(date -u -d "$DRIVE_KEEP_DAYS days ago" +%Y%m%d)
+for d in "$STAGE"/*/; do
+  n=$(basename "$d")
+  [[ $n =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+  if [ "${n:0:8}" -lt "$host_cutoff" ]; then echo "prune host: $n"; rm -rf -- "$STAGE/$n"; fi
+done
+$RCLONE lsf "hermesdrive:/VolumeBackups/" --dirs-only | tr -d '/' | while read -r n; do
+  [[ $n =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+  if [ "${n:0:8}" -lt "$drive_cutoff" ]; then echo "prune drive: $n"; $RCLONE purge "hermesdrive:/VolumeBackups/$n"; fi
+done
+echo "== retention: host keeps >= $host_cutoff, drive keeps >= $drive_cutoff"
