@@ -24,12 +24,13 @@ with a status header saying where the work landed:
 
 Two scripts, two homes:
 
-- **`backup-full.sh` lives on the volume, not in this repo**:
-  `/opt/data/scripts/backup-full.sh`, run nightly by the default profile's cron job
-  `3f6f866ce1af` (no agent). It zips `/opt/data` with `hermes backup`, keeps 7 local
-  zips, and mirrors the newest to Drive `hermesdrive:/HermesBackups` with
-  `/opt/data/scripts/bin/rclone`. The zip excludes `backups/` itself. Edit it on the
-  host path as root and keep it `10000:10000`, or the next run fails on permissions.
+- **`backup-full.sh` runs from the volume; this directory holds the versioned copy.**
+  The live file is `/opt/data/scripts/backup-full.sh`, run nightly by the default
+  profile's cron job `3f6f866ce1af` (no agent). It zips `/opt/data` with `hermes backup`,
+  keeps the newest zips, and mirrors the newest to Drive `hermesdrive:/HermesBackups`
+  with `/opt/data/scripts/bin/rclone`. The zip excludes `backups/` itself. After editing
+  `ops/backup-full.sh`, copy it to the volume path as root and keep it `10000:10000`, or
+  the next run fails on permissions.
   **2026-10-06**: `hermes backup` exits non-zero when a file vanishes between its scan
   and the archive (cron output pruned mid-run) but still writes the zip atomically; the
   script deleted that zip, so 7 of the 10 nights before the fix had no backup at all.
@@ -38,8 +39,11 @@ Two scripts, two homes:
 - **`backup-volumes.sh` (this directory) runs as root on the host.** It dumps the
   other services' volumes (three Postgres via `pg_dumpall`, the chatwoot Redis RDB, the
   BigLobster sentinel SQLite via the online backup API, the idle Chrome/CDP volumes as
-  tars) into a root-only staging dir `/var/backups/volumes/<stamp>/` on the host and
-  uploads it with the host's own `rclone` (Ubuntu package) and a root-only config
+  tars; each PVC prefix must match exactly one directory, a missing one is a skip; the
+  Redis `SAVE` reply must be `OK`; every dump is size- and `gzip -t`-checked) into a
+  root-only staging dir `/var/backups/volumes/<stamp>/` on the host, uploads it with
+  the host's own `rclone` (Ubuntu package), and fails unless `rclone check` confirms
+  every file in Drive by size and hash. It uses a root-only config
   `/root/.config/rclone/backup.conf` (the container's Drive OAuth stanza, copied
   2026-10-06), to `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never
   touches the Hermes container or its volume, where every agent has file tools and the

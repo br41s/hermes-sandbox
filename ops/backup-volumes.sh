@@ -34,6 +34,18 @@ STAGE=/var/backups/volumes
 OUT=$STAGE/$STAMP
 mkdir -p "$OUT" && chmod 700 "$STAGE" "$OUT"
 
+# Resolve a PVC prefix to exactly one directory. Zero matches is a clean skip (prints
+# nothing, returns 1); more than one is a hard failure, never a guess.
+one_dir() {  # prefix
+  local matches=()
+  for d in "$ST"/"$1"*; do [ -d "$d" ] && matches+=("$d"); done
+  case ${#matches[@]} in
+    0) echo "skip $1: volume no longer exists" >&2; return 1 ;;
+    1) printf '%s\n' "${matches[0]}" ;;
+    *) echo "refusing: $1 matches ${#matches[@]} volumes: ${matches[*]}" >&2; exit 1 ;;
+  esac
+}
+
 dump_pg() {  # ns deploy label
   kubectl exec -n "$1" "$2" -- sh -c 'pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists' \
     | gzip > "$OUT/$3-pg_dumpall.sql.gz"
@@ -42,33 +54,46 @@ dump_pg "$HNS" deploy/service-6a7dac382b4272705cd16068 biglobster-eu-chatwoot-pg
 dump_pg environment-6a5f3b21b0b7a4abeb4e65ea deploy/service-6a5f3b214d439e41ee4d120e social-agenda-postgres
 dump_pg environment-6a77a9a65f062718bc7b8222 deploy/service-6a77aa1bb3e95d61b0de29d4 flywell-postgres
 
-# Redis (chatwoot sessions/cache): force a snapshot, then copy the RDB file.
-kubectl exec -n "$HNS" deploy/service-6a7dac382b4272705cd16077 -- \
-  sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning save' >/dev/null
-cp "$(ls -d "$ST"/pvc-9f0ca35c*)/dump.rdb" "$OUT/biglobster-eu-redis-dump.rdb"
+# Redis (chatwoot sessions/cache): force a snapshot and insist on Redis saying OK
+# (redis-cli exits 0 on an auth error), then copy the RDB file.
+if REDIS=$(one_dir pvc-9f0ca35c); then
+  reply=$(kubectl exec -n "$HNS" deploy/service-6a7dac382b4272705cd16077 -- \
+    sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning save' 2>&1 | tr -d '\r')
+  [ "$reply" = "OK" ] || { echo "redis SAVE did not return OK: $reply" >&2; exit 1; }
+  cp "$REDIS/dump.rdb" "$OUT/biglobster-eu-redis-dump.rdb"
+fi
 
 # BigLobster sentinel (SQLite in WAL mode): online backup API, then the rest of the volume.
-SENT=$(ls -d "$ST"/pvc-2b694de2*)
-python3 - "$SENT/sentinel.db" "$OUT/biglobster-cursin-sentinel.db" <<'PY'
+if SENT=$(one_dir pvc-2b694de2); then
+  python3 - "$SENT/sentinel.db" "$OUT/biglobster-cursin-sentinel.db" <<'PY'
 import sqlite3, sys
 src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 dst = sqlite3.connect(sys.argv[2])
 src.backup(dst)
+ok = dst.execute("pragma integrity_check").fetchone()[0]
 dst.close(); src.close()
+sys.exit(0 if ok == "ok" else 1)
 PY
-tar -C "$SENT" --exclude='sentinel.db*' -czf "$OUT/biglobster-cursin-data.tar.gz" .
+  tar -C "$SENT" --exclude='sentinel.db*' -czf "$OUT/biglobster-cursin-data.tar.gz" .
+fi
 
 # "untitled" project (Chrome/CDP proxy, no running workload): plain tars. Its volumes
 # were deleted on 2026-10-06; a missing volume is skipped, not an error.
 for v in pvc-0b325c83 pvc-43eae7d9 pvc-11946d91; do
-  d=$(ls -d "$ST"/${v}* 2>/dev/null || true)
-  [ -n "$d" ] || { echo "skip $v: volume no longer exists"; continue; }
+  d=$(one_dir "$v") || continue
   tar -C "$d" -czf "$OUT/untitled-$(basename "$d" | sed 's/.*_//').tar.gz" .
 done
 
+# Every staged file must be non-empty and every gzip must decompress.
+for f in "$OUT"/*; do
+  [ -s "$f" ] || { echo "empty dump: $f" >&2; exit 1; }
+  case $f in *.gz) gzip -t "$f" || { echo "corrupt gzip: $f" >&2; exit 1; } ;; esac
+done
 echo "== staged (root-only): $OUT"; ls -la "$OUT"; du -sh "$OUT"
 
-# Off-host copy from the host itself; the container is not involved.
+# Off-host copy from the host itself; the container is not involved. `check` fails
+# the run unless Drive holds every staged file with matching size and hash.
 $RCLONE copy "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --transfers 1
-echo "== drive: VolumeBackups/$STAMP"
+$RCLONE check "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --one-way
+echo "== drive: VolumeBackups/$STAMP verified"
 $RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"
