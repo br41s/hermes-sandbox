@@ -56,9 +56,10 @@ Two scripts, two homes:
   `/root/backup-volumes-cron.sh`), which appends one `OK` / `FAILED exit=N` line per run
   to `/var/log/backup-volumes.log` (logrotate weekly, 8 kept). Check it with
   `ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'`. **Nothing pages
-  on failure**: the incident watcher does not see host cron. **No retention yet**: each
-  run leaves ~48 MB in `/var/backups/volumes/<stamp>/` and in Drive; pruning is a
-  pending decision, not an oversight.
+  on failure**: the incident watcher does not see host cron. **Retention** (Brais,
+  2026-10-06): 14 days of stamps on the host, 30 in Drive, pruned by the script itself
+  only after that night's upload verified, matching stamp-named directories by their
+  UTC date. About 0.7 GB on the host and 1.5 GB in Drive at steady state.
 
 ## Server access (key-only since 2026-10-06)
 
