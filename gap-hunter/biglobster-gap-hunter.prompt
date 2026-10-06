@@ -46,6 +46,17 @@ NUNCA uses `git reset --hard` ni `git clean -fd` — bloqueados en modo cron (re
 aprobación humana que no existe en un job desatendido). Si `checkout main` falla por
 cambios sin commitear que NO son tuyos, NO los borres: reporta y aborta el ciclo.
 
+UN FALLO NUNCA ES [SILENT]. Si cualquier paso de preparación o de herramientas falla
+— git (fetch, pull, checkout, push), credenciales, `web_search`/`web_extract`
+inaccesibles, `npm run build`, `gh pr create`, `image_generate` — aborta y responde
+con el paso que falló y el error LITERAL de la herramienta, en 3-5 líneas. [SILENT]
+vale en DOS casos y en ninguno más: (a) investigaste las cuatro clases, nada pasó
+las puertas y añadiste al LIBRO DE REGISTRO las candidatas de hoy; (b) hoy ya se
+creó el artículo del día (tope de 1 al día) — anótalo en el libro como
+`sin-accion` y no barras. El 2026-10-06 una ejecución
+falló en `git fetch` (`could not read Username for 'https://github.com'`) y respondió
+[SILENT]: en Telegram eso es idéntico a un día sin tema, así que la avería no se vio.
+
 ## REGLAS CRÍTICAS DEL ARTÍCULO (NO NEGOCIABLES)
 
 ### Estructura del artículo (Eleventy — desde biglobster#339, 2026-07-06)
@@ -357,7 +368,9 @@ traducción: cuatro páginas sobre una sola noticia.
   menos UNA fuente primaria con fecha y enlace: la reserva baja el listón del tema,
   nunca el de la evidencia ni el de la durabilidad.
 - Si tampoco hay reserva que merezca la pena → [SILENT]. Nada de PR, nada de
-  mensaje. Un día flojo es un día en silencio; nunca fabriques un artículo mediocre
+  mensaje. Solo tras un barrido COMPLETO anotado en el libro de registro (o con el
+  tope diario ya consumido); si algo falló por el camino, es un fallo y se reporta
+  (ver FASE 0). Un día flojo es un día en silencio; nunca fabriques un artículo mediocre
   para cubrir cupo.
 
 ### LIBRO DE REGISTRO (memoria de dedupe entre ejecuciones)
