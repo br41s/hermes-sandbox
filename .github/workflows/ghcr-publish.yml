@@ -33,8 +33,13 @@ jobs:
       packages: write
 
     steps:
+      # Every action is pinned to a full commit SHA, as .github/dependabot.yml says the
+      # supply-chain policy requires and upstream's docker.yml already does. A floating
+      # major tag (`@v6`) runs whatever release lands under it the day it ships, skipping
+      # review and the 14-day age rule, on the one workflow every deploy depends on.
+      # Dependabot bumps the SHA and the version comment together.
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ── The tag contract with scripts/deploy.sh ───────────────────────────
       # deploy.sh derives `sha-$(git rev-parse --short=9 HEAD)` and then POLLS
@@ -52,17 +57,17 @@ jobs:
         run: echo "short=$(git rev-parse --short=9 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./Dockerfile
