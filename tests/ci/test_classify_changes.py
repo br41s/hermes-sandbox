@@ -32,6 +32,7 @@ DEFAULT = {
     "python": True,
     "python_prod": True,
     "frontend": True,
+    "desktop": True,
     "docker": True,
     "docker_meta": True,
     "nix": True,
@@ -48,7 +49,7 @@ DEFAULT = {
 }
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, installer=False, desktop_updater=False, rust=False, mcp_catalog=False, docker_meta=False, ci_review=False, python_prod=None, nix=None, docker=None) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, installer=False, desktop_updater=False, desktop=False, rust=False, mcp_catalog=False, docker_meta=False, ci_review=False, python_prod=None, nix=None, docker=None) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     #
@@ -63,6 +64,7 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_
         "docker": (docker_meta or _product) if docker is None else docker,
         "nix": _product if nix is None else nix,
         "frontend": frontend,
+        "desktop": desktop,
         "docker_meta": docker_meta,
         "site": site,
         "scan": scan,
@@ -84,10 +86,12 @@ CASES = {
     # also re-arms the desktop_updater integration tests (fail-open).
     "dep manifest → python": (["pyproject.toml"], _lanes(python=True, scan=True, deps=True, uv_lock=True, desktop_updater=True)),
     "uv.lock → python": (["uv.lock"], _lanes(python=True, uv_lock=True)),
-    "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(frontend=True)),
+    "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(desktop=True, frontend=True)),
+    # Fork: the ~20-minute desktop leg runs only for its own tree; a web-only PR skips it.
+    "web source → frontend, not desktop": (["web/src/pages/CronPage.tsx"], _lanes(frontend=True)),
     "ui-tui → frontend": (["ui-tui/src/entry.ts"], _lanes(frontend=True)),
     # Lockfile bump shifts every TS package's tree, but not the Python suite.
-    "root lockfile → frontend, not python": (["package-lock.json"], _lanes(frontend=True, npm_lock=True)),
+    "root lockfile → frontend, not python": (["package-lock.json"], _lanes(desktop=True, frontend=True, npm_lock=True)),
     "nested lockfile → npm_lock": (["website/package-lock.json"], _lanes(site=True, npm_lock=True)),
     # A website file the Python suite cannot read stays site-only.
     "website config → site": (["website/docusaurus.config.ts"], _lanes(site=True)),
@@ -98,20 +102,20 @@ CASES = {
         ["website/docs/developer-guide/plugins/index.md"],
         _lanes(python=True, site=True),
     ),
-    "frontend → no uv_lock": (["apps/desktop/src/store/profile.ts"], _lanes(frontend=True)),
+    "frontend → no uv_lock": (["apps/desktop/src/store/profile.ts"], _lanes(desktop=True, frontend=True)),
     # Cross-language contract JSON under apps/: the pytest that pins it against
     # the Python side must run even when nothing else in the PR is Python.
     "generated gateway contract → python + frontend": (
         ["apps/shared/src/gateway-contract.generated.ts"],
-        _lanes(python=True, frontend=True),
+        _lanes(desktop=True, python=True, frontend=True),
     ),
     "gateway OpenRPC document → python + frontend": (
         ["apps/shared/src/gateway-contract.openrpc.json"],
-        _lanes(python=True, frontend=True),
+        _lanes(desktop=True, python=True, frontend=True),
     ),
     "desktop slash-registry JSON → python + frontend": (
         ["apps/desktop/src/lib/desktop-slash-registry.json"],
-        _lanes(python=True, frontend=True),
+        _lanes(desktop=True, python=True, frontend=True),
     ),
     # The published CIMD document is asserted about by the Python suite, so a
     # lone edit there must not skip the lane that would catch a bad edit.
@@ -171,7 +175,7 @@ CASES = {
     # a page-only change must run that suite as well as the server tests.
     "updater ui.html → frontend + desktop_updater": (
         ["scripts/desktop-update/ui.html"],
-        _lanes(python=True, frontend=True, desktop_updater=True),
+        _lanes(desktop=True, python=True, frontend=True, desktop_updater=True),
     ),
     "desktop-update test → desktop_updater": (
         ["tests/scripts/desktop_update/test_desktop_update_windows_progress.py"],
@@ -179,7 +183,7 @@ CASES = {
     ),
     "updater-process.ts → desktop_updater": (
         ["apps/desktop/electron/updater-process.ts"],
-        _lanes(frontend=True, desktop_updater=True),
+        _lanes(desktop=True, frontend=True, desktop_updater=True),
     ),
     "python source alone → no desktop_updater lane": (["hermes_state.py"], _lanes(python=True, scan=True)),
     # `.rs` lives under apps/, so it matches `frontend` too. That lane builds
@@ -242,7 +246,7 @@ CASES = {
     # CI-sensitive files require explicit review label.
     "eslint config → ci_review": (
         ["apps/desktop/eslint.config.mjs"],
-        _lanes(frontend=True, ci_review=True),
+        _lanes(desktop=True, frontend=True, ci_review=True),
     ),
     "shared eslint config → ci_review": (
         ["eslint.config.shared.mjs"],
@@ -258,7 +262,7 @@ CASES = {
     ),
     "shared package eslint config → ci_review": (
         ["apps/shared/eslint.config.mjs"],
-        _lanes(frontend=True, ci_review=True),
+        _lanes(desktop=True, frontend=True, ci_review=True),
     ),
     "bootstrap-installer eslint config → ci_review": (
         ["apps/bootstrap-installer/eslint.config.mjs"],
@@ -279,7 +283,7 @@ CASES = {
     # Normal desktop source doesn't trigger ci_review.
     "desktop src → no ci_review": (
         ["apps/desktop/src/app.tsx"],
-        _lanes(frontend=True),
+        _lanes(desktop=True, frontend=True),
     ),
     # Fail open: CI-config / empty / blank diffs run everything.
     ".github change → all": ([".github/workflows/tests.yml"], DEFAULT),

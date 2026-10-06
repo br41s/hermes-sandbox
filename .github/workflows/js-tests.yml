@@ -3,6 +3,15 @@ name: JS Tests
 
 on:
   workflow_call:
+    inputs:
+      desktop:
+        # Fork: apps/desktop is upstream's Electron app; the fork ships no desktop and has
+        # no commits in it, and its leg is the slowest in CI (~20 min on a 4-core runner).
+        # ci.yml turns it on only for a PR touching apps/desktop, apps/shared or the root
+        # npm tree. Defaults on so any other caller keeps the full matrix.
+        description: Include the apps/desktop package in the matrix
+        type: boolean
+        default: true
 
 jobs:
   workspaces:
@@ -27,8 +36,12 @@ jobs:
         with:
           command: npm ci --ignore-scripts
       - id: set-matrix
+        env:
+          DESKTOP: ${{ inputs.desktop }}
         run: |
-          PACKAGES=$(npm query .workspace | jq -c '[.[].location]')
+          PACKAGES=$(npm query .workspace | jq -c --argjson desktop "$DESKTOP" \
+            '[.[].location | select($desktop or . != "apps/desktop")]')
+          echo "desktop leg: $DESKTOP -> $PACKAGES"
           if [ "$PACKAGES" = "[]" ] || [ -z "$PACKAGES" ]; then
             echo "::error::Workspace discovery produced an empty package list — refusing to emit a zero-length matrix (would skip all JS/TS checks silently)."
             exit 1
