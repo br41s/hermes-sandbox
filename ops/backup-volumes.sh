@@ -3,9 +3,11 @@
 # and mirror them to Google Drive next to the nightly Hermes zip.
 #
 # Runs as root ON THE HOST (not in a container): it reads the k3s local-path
-# volumes directly and uses kubectl for the logical dumps. The Hermes nightly
-# zip excludes backups/, so the output is written there and uploaded explicitly
-# with the Hermes container's own rclone + OAuth config, as user hermes.
+# volumes directly and uses kubectl for the logical dumps. Dumps are staged in a
+# root-only directory on the host and streamed one by one into the Hermes
+# container's rclone (its OAuth config, as user hermes) over stdin, so other
+# projects' data never lands on the Hermes volume, where every agent running in
+# that container has file tools.
 #
 # Why dumps and not a tar of a running database: a file copy of a live Postgres
 # data directory is not guaranteed restorable. pg_dumpall / a forced Redis SAVE /
@@ -13,25 +15,16 @@
 #
 # First run 2026-10-06 (one-off, see ops/README.md). Not scheduled yet.
 set -euo pipefail
+set -o noclobber
 
 ST=/var/lib/rancher/k3s/storage
-HERMES_PVC=$ST/pvc-29ddc303-6b0f-4ab2-9e33-8866c3a6aa06_environment-6a5ea4ecb0b7a4abeb4e61fd_data-service-6a5ea5074d439e41ee4cd38c
 HNS=environment-6a5ea4ecb0b7a4abeb4e61fd
 HDEP=deploy/service-6a5ea5074d439e41ee4cd38c
-HERMES_UID=10000
+RCLONE="runuser -u hermes -- /opt/data/scripts/bin/rclone --config /opt/data/.config/rclone/rclone.conf"
 STAMP=$(date -u +%Y%m%d-%H%M%S)
-VOLDIR=$HERMES_PVC/backups/volumes
-OUT=$VOLDIR/$STAMP
-
-# This runs as root but writes into a directory the Hermes container (uid 10000) can
-# also write to. Refuse to follow anything the container could have turned into a
-# symlink, and never overwrite an existing file.
-for p in "$HERMES_PVC" "$HERMES_PVC/backups" "$VOLDIR"; do
-  if [ -L "$p" ]; then echo "refusing: $p is a symlink" >&2; exit 1; fi
-done
-mkdir -p "$OUT"
-[ "$(realpath "$OUT")" = "$OUT" ] || { echo "refusing: $OUT resolves elsewhere" >&2; exit 1; }
-set -o noclobber
+STAGE=/var/backups/volumes
+OUT=$STAGE/$STAMP
+mkdir -p "$OUT" && chmod 700 "$STAGE" "$OUT"
 
 dump_pg() {  # ns deploy label
   kubectl exec -n "$1" "$2" -- sh -c 'pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists' \
@@ -57,20 +50,20 @@ dst.close(); src.close()
 PY
 tar -C "$SENT" --exclude='sentinel.db*' -czf "$OUT/biglobster-cursin-data.tar.gz" .
 
-# "untitled" project (Chrome/CDP proxy, no running workload): plain tars.
+# "untitled" project (Chrome/CDP proxy, no running workload): plain tars. Its volumes
+# were deleted on 2026-10-06; a missing volume is skipped, not an error.
 for v in pvc-0b325c83 pvc-43eae7d9 pvc-11946d91; do
-  d=$(ls -d "$ST"/${v}*)
+  d=$(ls -d "$ST"/${v}* 2>/dev/null || true)
+  [ -n "$d" ] || { echo "skip $v: volume no longer exists"; continue; }
   tar -C "$d" -czf "$OUT/untitled-$(basename "$d" | sed 's/.*_//').tar.gz" .
 done
 
-chown -R "$HERMES_UID:$HERMES_UID" "$HERMES_PVC/backups/volumes"
-echo "== local: $OUT"; ls -la "$OUT"; du -sh "$OUT"
+echo "== staged (root-only): $OUT"; ls -la "$OUT"; du -sh "$OUT"
 
-# Off-host copy, as hermes, with the container's rclone and OAuth token.
-kubectl exec -n "$HNS" "$HDEP" -- runuser -u hermes -- \
-  /opt/data/scripts/bin/rclone --config /opt/data/.config/rclone/rclone.conf \
-  copy "/opt/data/backups/volumes/$STAMP" "hermesdrive:/VolumeBackups/$STAMP" --transfers 1
+# Off-host copy: stream each file into the container's rclone over stdin. The
+# container never gets a file on disk, only the bytes it uploads.
+for f in "$OUT"/*; do
+  kubectl exec -i -n "$HNS" "$HDEP" -- $RCLONE rcat "hermesdrive:/VolumeBackups/$STAMP/$(basename "$f")" < "$f"
+done
 echo "== drive: VolumeBackups/$STAMP"
-kubectl exec -n "$HNS" "$HDEP" -- runuser -u hermes -- \
-  /opt/data/scripts/bin/rclone --config /opt/data/.config/rclone/rclone.conf \
-  lsl "hermesdrive:/VolumeBackups/$STAMP"
+kubectl exec -n "$HNS" "$HDEP" -- $RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"

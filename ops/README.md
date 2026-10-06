@@ -38,10 +38,13 @@ Two scripts, two homes:
 - **`backup-volumes.sh` (this directory) runs as root on the host.** It dumps the
   other services' volumes (three Postgres via `pg_dumpall`, the chatwoot Redis RDB, the
   BigLobster sentinel SQLite via the online backup API, the idle Chrome/CDP volumes as
-  tars) into `/opt/data/backups/volumes/<stamp>/` and uploads them with the Hermes
-  container's rclone to `hermesdrive:/VolumeBackups/<stamp>`. First run 2026-10-06
-  (192 MB). Installed as `/root/backup-volumes.sh` on the host; **not scheduled**, so
-  those volumes are only as fresh as the last manual run.
+  tars) into a root-only staging dir `/var/backups/volumes/<stamp>/` on the host and
+  streams each file over stdin into the Hermes container's rclone, to
+  `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never touches the Hermes
+  volume, where every agent has file tools. First run 2026-10-06 (192 MB). Installed as
+  `/root/backup-volumes.sh` on the host; **not scheduled**, so those volumes are only as
+  fresh as the last manual run. The very first run (`20261006-140910`) staged under
+  `/opt/data/backups/volumes/` before this rule existed; remove that directory by hand.
 
 ## Server access (key-only since 2026-10-06)
 
