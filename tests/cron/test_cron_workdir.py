@@ -142,11 +142,6 @@ class TestTickWorkdirPartition:
         ]
         monkeypatch.setattr(sched, "get_due_jobs", lambda: jobs)
         monkeypatch.setattr(sched, "claim_job_for_fire", lambda *_a, **_kw: True)
-        # Fork: its own lane (cron/fork_ext/dispatch.py) deliberately keeps
-        # workdir jobs one-at-a-time, pinned by test_sequential_dispatch_fork.py.
-        # Here, bypass that partition to test what this test is about: the
-        # upstream parallel pool running two workdir jobs at once.
-        monkeypatch.setattr("cron.fork_ext.dispatch.is_sequential", lambda _job: False)
 
         barrier = threading.Barrier(2, timeout=5)
         calls: list[tuple[str, str]] = []

@@ -122,6 +122,38 @@ class TestProvisionClone:
         finally:
             _cleanup_isolated_checkout(cleanup)
 
+    def test_concurrent_runs_of_one_job_get_separate_checkouts(self, source_repo, checkout_base):
+        """Stage 3 step 5 put main's workdir jobs on main's unbounded pool, so two runs of the
+        same job can now provision at the same time. Each must get its own tree: a write in
+        one is invisible to the other and to the source."""
+        import threading
+
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
+
+        barrier = threading.Barrier(2, timeout=10)
+        results: list = []
+
+        def _provision():
+            barrier.wait()
+            results.append(_provision_isolated_checkout("jobA", "biglobster", str(source_repo)))
+
+        threads = [threading.Thread(target=_provision) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        try:
+            assert len(results) == 2
+            (eff_a, _), (eff_b, _) = results
+            assert eff_a != eff_b
+            assert str(source_repo) not in (eff_a, eff_b)
+            (Path(eff_a) / "web" / "article.html").write_text("<h1>run A</h1>\n", encoding="utf-8")
+            assert (Path(eff_b) / "web" / "article.html").read_text() == "<h1>v1</h1>\n"
+            assert (source_repo / "web" / "article.html").read_text() == "<h1>v1</h1>\n"
+        finally:
+            for _eff, cleanup in results:
+                _cleanup_isolated_checkout(cleanup)
+
     def test_origin_points_at_source_remote(self, source_repo, checkout_base):
         from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
         eff, cleanup = _provision_isolated_checkout("jobA", "bl", str(source_repo))

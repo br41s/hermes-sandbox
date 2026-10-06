@@ -527,8 +527,8 @@ class WebhookAdapter(BasePlatformAdapter):
                 # default home; to_thread copies contextvars so the scope follows. A cron job is a full agent
                 # run (minutes) — keep it off the gateway event loop.
                 with self._profile_scope(profile):
-                    # fork: a workdir job runs on the sequential lane and a profile-store job on its
-                    # profile's pool (cron/fork_ext/dispatch.py run_event_job), not a thread of its own.
+                    # fork: a profile-store job runs on its profile's pool (cron/fork_ext/dispatch.py
+                    # run_event_job), behind the profile's tick jobs, not on a thread of its own.
                     result = await run_event_job(job_ref, execute_job_for_event, job_ref, event_context)
                 if not result.get("success"):
                     logger.warning("[webhook] cron-trigger job=%s route=%s did not complete cleanly: %s", job_ref,
@@ -551,9 +551,9 @@ class WebhookAdapter(BasePlatformAdapter):
 
         Unlike upstream's ``cron_job`` (``_handle_cron_trigger``, which claims the job and runs it with the
         event as extra context), the job is ENQUEUED through ``cron.scheduler.dispatch_job_async`` onto the
-        scheduler's own lanes, so a profile/workdir job queues behind tick's on the fork's single-thread lane
-        (cron/fork_ext/dispatch.py) and a multi-minute run never blocks this event loop. ``cron_job`` reaches
-        the same lane through ``run_event_job``. 200 on queued or benign dedup, 502 on an
+        pool tick uses for the job's store, so a profile's job queues behind that profile's tick jobs (its
+        pool is sized 1) and a multi-minute run never blocks this event loop. ``cron_job`` reaches the same
+        pool through ``run_event_job`` (cron/fork_ext/dispatch.py). 200 on queued or benign dedup, 502 on an
         unknown job or a dispatch exception."""
         trigger_job_id = route_config["trigger_cron_job_id"]
         try:

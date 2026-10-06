@@ -310,7 +310,7 @@ class TestTickProfilePartition:
         assert os.environ["HERMES_HOME"] == str(root)
         assert sched._get_hermes_home() == root
 
-    def test_workdir_jobs_run_sequentially(self, isolated_cron_profile_home, monkeypatch):
+    def test_workdir_jobs_share_the_parallel_pool(self, isolated_cron_profile_home, monkeypatch):
         import threading
         import cron.scheduler as sched
 
@@ -343,19 +343,12 @@ class TestTickProfilePartition:
 
         assert n == 2
         ids = [job_id for job_id, _thread_name in calls]
-        # Each ran exactly once. No order between them: they run on different pools, so the
-        # profile-less job can legitimately finish first under load (it did, once, on a busy
-        # runner). The lane orders profile jobs among themselves, not against the parallel pool.
+        # Each ran exactly once. No order between them: main's pool is unbounded.
         assert sorted(ids) == ["a", "b"]
-        # Profile jobs dispatch to the persistent single-worker "cron-seq" pool
-        # (never inline on the caller's thread — that pool exists precisely so
-        # a slow profile job can't block the ticker) while profile-less jobs go
-        # to the separate "cron-parallel" pool. The invariant under test is
-        # that they land on DIFFERENT pools, not on any specific thread name.
-        profile_thread_name = next(thread for job_id, thread in calls if job_id == "a")
-        parallel_thread_name = next(thread for job_id, thread in calls if job_id == "b")
-        assert profile_thread_name.startswith("cron-seq")
-        assert parallel_thread_name.startswith("cron-parallel")
+        # Stage 3 step 5 retired the fork's single-thread lane: a workdir job runs on the
+        # store's own pool beside a plain one (each run gets its own isolated checkout),
+        # never on a separate "cron-seq" thread, and never inline on the ticker's thread.
+        assert all(thread.startswith("cron-parallel") for _job_id, thread in calls)
 
 
 class TestProfileHomeDoesNotLeakAcrossThreads:

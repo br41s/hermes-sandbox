@@ -103,9 +103,6 @@ def _tick_admitted(
         def _submit(job: dict, job_pool):
             return _sched._submit_with_guard(
                 job, job_pool, _process_job, source="builtin" if adapters is not None else "cli")
-
-        # fork: profile/workdir jobs run one at a time on the fork's own lane (cron/fork_ext/dispatch.py).
-        due_jobs = _sched._fork_submit_sequential(due_jobs, _submit, _all_futures, _results, sync)
         for job in due_jobs:
             fut = _submit(job, pool)
             if fut is None:

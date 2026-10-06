@@ -88,12 +88,14 @@ it with a plain message in General; tests alone passed both stages the first tim
 `tools/cronjob_tools.py` — a job with `workdir` set injects the project context file from
 that directory into its system prompt, and points terminal/file/code_exec at it.
 
-Resolution order (`agent/prompt_builder.py:2011`), **first match wins, only one loads**:
+Resolution order (`agent/prompt_builder.py` `build_context_files_prompt`), **first type
+found wins, only one type loads**:
 
 1. `.hermes.md` / `HERMES.md` — walks up to the git root
-2. `AGENTS.md` / `agents.md` — cwd only
+2. `AGENTS.override.md` / `AGENTS.md` / `agents.md` — every directory from the git root
+   down to cwd, one file per directory (override first), all of them loaded
 3. `CLAUDE.md` / `claude.md` — cwd only
-4. `.cursorrules` / `.cursor/rules/*.mdc`
+4. `.cursorrules` / `.cursor/rules/*.mdc` — cwd only
 
 Consequences to hold in mind:
 
@@ -109,18 +111,16 @@ Consequences to hold in mind:
 
 ### One cron job at a time per profile; profiles run side by side
 
-Since stage 3 step 5 (`ops/multiplex-stage3-plan.md`), a job from a profile's own
-`profiles/<name>/cron/jobs.json` runs on upstream's **per-profile** parallel pool, which
-boot sizes to `cron.max_parallel_jobs: 1` on every named profile
-(`hermes_cli/fork_ext/boot_reconcile.py` `PROFILE_OVERRIDES`). A profile's jobs stay
-serial and in submit order; different profiles run at the same time. Main is not pinned:
-its plain jobs (backups, the incident watcher) run unbounded, as they always did. Only a
-job with a `workdir` still goes on the fork's **single-thread lane**
-(`cron/fork_ext/dispatch.py`), shared by every store; that lane goes once the
-widening has been clean for a week.
+Since stage 3 step 5 (`ops/multiplex-stage3-plan.md`), every cron job runs on upstream's
+**per-profile** parallel pool, which boot sizes to `cron.max_parallel_jobs: 1` on every
+named profile (`hermes_cli/fork_ext/boot_reconcile.py` `PROFILE_OVERRIDES`). A profile's
+jobs stay serial and in submit order; different profiles run at the same time. Main is
+not pinned: its jobs (backups, the incident watcher, the Infographic Engineer's `workdir`
+runs, each in its own checkout) run unbounded. Both webhook entry points queue a profile's
+job on the same pool, behind its tick jobs (`cron/fork_ext/dispatch.py`).
 
-Before the widening, one lane held every profile job, and a slow run blocked all the
-others. On 2026-09-12 a 38-minute auditor run held it while the BigLobster Gap Hunter
+Before the widening, the fork's own single-thread lane held every profile and `workdir`
+job, and a slow run blocked all the others. On 2026-09-12 a 38-minute auditor run held it while the BigLobster Gap Hunter
 (`ce583d11dedd`) sat silent for 20+ minutes, which read on Telegram exactly like a crash.
 **Within one profile that can still happen**: a queued run sits in `claimed` with no log
 output, indistinguishable from a dead one.
@@ -129,18 +129,19 @@ Widening moves the risk rather than removing it. **Spend lands at once**: conten
 share one OpenRouter key and weekly limit, and several profiles running together reach it
 sooner (it 402'd the auditor for a day once). **Pod load stacks**: agent loops, `git clone
 --local` checkouts and MCP stdio servers pile up in one container with no liveness probe.
-So **bounding each agent still matters**. The agent loop hard-stops at
-`max_iterations=90` (`run_agent.py:434`), so the ceiling is ~90 tool calls, and a job's queue
-must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
+So **bounding each agent still matters**. Upstream's agent loop is unlimited by default
+since v2026.8.31; cron takes its cap from `agent.max_turns`, which boot pins to 90 on main
+and every profile (`boot_reconcile.py` `OVERRIDES`). The ceiling is ~90 tool calls, and a
+job's queue must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
 
 **Every cron agent run also has a wall-clock ceiling: `HERMES_CRON_MAX_RUNTIME`,
 default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
 watchdog cannot catch a hung model call: a waiting stream refreshes the activity
 clock every 30s. On 2026-09-29 an `auditor-review` run hung after its fourth model
-call and held the lane for 95 minutes, with nothing logged. `merge-on-green` and a
+call and held the fork's old single-thread lane for 95 minutes, with nothing logged. `merge-on-green` and a
 rental's Product Sheet Writer queued behind it, and the auditor looked down. At the
 ceiling the run dumps every thread's stack to the log, is interrupted and fails,
-and the profile's pool (or the lane) moves on. A job that legitimately needs longer is a job to split, not
+and the profile's pool moves on. A job that legitimately needs longer is a job to split, not
 a reason to raise the ceiling for everyone.
 
 **Each model call has its own, tighter deadline: `request_timeout_seconds`** (600s
@@ -167,8 +168,7 @@ the wrong client's site). Child processes get the scope through
 upstream v2026.8.31 delete `_terminal_cwd_lock` safely.
 
 Corollary when triaging: before calling a quiet cron job dead, check whether
-another job of the same profile (or, for a `workdir` job, any `workdir` job) is
-running. `hermes cron runs <job_id>` shows the holder.
+another job of the same profile is running. `hermes cron runs <job_id>` shows the holder.
 
 **A job moved into its profile's own store answers only to `-p`.** `hermes cron
 move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the
@@ -416,7 +416,7 @@ timestamp across several tools means they were issued as one parallel batch.
 findable by `sessionId`.** Trace-level attributes flush when the trace finalises;
 each observation flushes when it ends, carrying its own `sessionId` (this is what
 the propagation fix below buys). Interrupt the process — the cron inactivity watchdog
-at `cron/scheduler.py:4048` does this at `HERMES_CRON_TIMEOUT`, default 600s — and the
+(`cron/scheduler.py` `_inactivity_watchdog_loop`) does this at `HERMES_CRON_TIMEOUT`, default 600s — and the
 completed tool calls survive the query above while the root and the in-flight
 generation never land, because a span that never ends never exports. Verified
 2026-09-22 against a deliberately unfinalised run. Absence of the root is therefore
@@ -557,9 +557,9 @@ it writes from. Sold to a client without one it goes quiet on every run.
 
 `shorts/STUDIO.md` is the design and setup guide. The short version:
 
-- **Two cron agents, no profile, no workdir.** The Producer writes a JSON *package*
+- **Two cron agents, default store, no workdir.** The Producer writes a JSON *package*
   per post and submits it, the Publisher collects and publishes. Neither waits on a
-  render, and neither sits on the shared profile/workdir thread (see above). Their
+  render, and both run on main's unbounded pool, queued behind nothing. Their
   keys (`SHORTS_STUDIO_GITHUB_TOKEN`, `YOUTUBE_*`, `META_*`) live only in the
   service env. **Do not add them to `INJECT` in `hermes_cli/fork_ext/boot_reconcile.py`**, which would copy
   BigLobster's publishing tokens into every profile.

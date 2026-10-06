@@ -423,8 +423,8 @@ def wall_clock_deadline(seconds: int, what: str):
 
     A hung judge is worse than a failed one. Exit 4 is already wired to mean
     "the gate is broken" and makes the auditor fail closed and escalate; an
-    indefinite hang instead holds the single-thread cron pool and starves every
-    other agent while nobody is told anything.
+    indefinite hang instead holds the auditor profile's cron pool (one job at a
+    time) and starves every other auditor job while nobody is told anything.
 
     SIGALRM is main-thread-and-Unix only. Off that path this yields unchanged
     rather than pretending to bound anything — the CLI (the cron path) is

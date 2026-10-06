@@ -7,8 +7,8 @@ model call refreshes that clock every 30s while it waits
 looks alive and nothing ever ends the run.
 
 On 2026-09-29 an ``auditor-review`` run went silent after its fourth model call
-(10:48:47 UTC) and held the single-thread profile/workdir lane
-(``cron/fork_ext/dispatch.py``) for 95 minutes, until a container restart. No
+(10:48:47 UTC) and held the fork's single-thread profile/workdir lane (retired in
+stage 3 step 5) for 95 minutes, until a container restart. No
 stale-stream kill, retry or inactivity timeout was logged. ``merge-on-green``
 and a rental's Product Sheet Writer queued behind it, and the auditor reviewed
 nothing, which read as the auditor being down.
@@ -16,9 +16,10 @@ nothing, which read as the auditor being down.
 This caps the run itself: ``HERMES_CRON_MAX_RUNTIME`` seconds, default 1800,
 ``0`` = unlimited. On expiry the run takes the same path as an inactivity
 timeout: dump every thread's stack (so the hang is diagnosable next time),
-hard-interrupt the agent, abandon its thread, and fail the run so the lane moves
-on and the incident watcher reports it. It bounds each agent rather than
-widening the pool (CLAUDE.md, "One long agent run starves every other agent").
+hard-interrupt the agent, abandon its thread, and fail the run so the profile's pool moves
+on and the incident watcher reports it. Within a profile (pool of 1) a hung run
+still holds every later job, so this bounds each agent (CLAUDE.md, "One cron job at
+a time per profile; profiles run side by side").
 """
 
 from __future__ import annotations
