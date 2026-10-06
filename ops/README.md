@@ -50,10 +50,15 @@ Two scripts, two homes:
   rclone binary itself is writable. **Accepted trade-off:** the Drive folder is still
   readable with the token the container holds, which already reads the nightly Hermes
   zip; encrypting the dumps (rclone `crypt`) was declined on 2026-10-06 so a restore
-  never depends on a key. First run 2026-10-06 (192 MB). Installed as
-  `/root/backup-volumes.sh` on the host; **not scheduled**, so those volumes are only as
-  fresh as the last manual run. The very first run (`20261006-140910`) staged under
-  `/opt/data/backups/volumes/` before this rule existed; remove that directory by hand.
+  never depends on a key. Installed as `/root/backup-volumes.sh` on the host.
+  **Scheduled nightly at 02:00 UTC** since 2026-10-06 by `/etc/cron.d/backup-volumes`
+  through `backup-volumes-cron.sh` (this directory, installed as
+  `/root/backup-volumes-cron.sh`), which appends one `OK` / `FAILED exit=N` line per run
+  to `/var/log/backup-volumes.log` (logrotate weekly, 8 kept). Check it with
+  `ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'`. **Nothing pages
+  on failure**: the incident watcher does not see host cron. **No retention yet**: each
+  run leaves ~48 MB in `/var/backups/volumes/<stamp>/` and in Drive; pruning is a
+  pending decision, not an oversight.
 
 ## Server access (key-only since 2026-10-06)
 
