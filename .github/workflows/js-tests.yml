@@ -75,5 +75,6 @@ jobs:
       - uses: ./.github/actions/retry
         with:
           command: npm ci
+      # Fork: no `fix` step. Every package's `check` already lints, and nothing read what
+      # eslint --fix / prettier --write changed, so it only added time (85s on desktop).
       - run: npm run --prefix ${{ matrix.package }} check
-      - run: npm run --prefix ${{ matrix.package }} fix
