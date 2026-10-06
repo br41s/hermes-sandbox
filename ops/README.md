@@ -39,9 +39,11 @@ Two scripts, two homes:
   other services' volumes (three Postgres via `pg_dumpall`, the chatwoot Redis RDB, the
   BigLobster sentinel SQLite via the online backup API, the idle Chrome/CDP volumes as
   tars) into a root-only staging dir `/var/backups/volumes/<stamp>/` on the host and
-  streams each file over stdin into the Hermes container's rclone, to
-  `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never touches the Hermes
-  volume, where every agent has file tools. First run 2026-10-06 (192 MB). Installed as
+  uploads it with the host's own `rclone` (Ubuntu package) and a root-only config
+  `/root/.config/rclone/backup.conf` (the container's Drive OAuth stanza, copied
+  2026-10-06), to `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never
+  touches the Hermes container or its volume, where every agent has file tools and the
+  rclone binary itself is writable. First run 2026-10-06 (192 MB). Installed as
   `/root/backup-volumes.sh` on the host; **not scheduled**, so those volumes are only as
   fresh as the last manual run. The very first run (`20261006-140910`) staged under
   `/opt/data/backups/volumes/` before this rule existed; remove that directory by hand.

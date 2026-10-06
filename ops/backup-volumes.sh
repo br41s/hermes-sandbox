@@ -3,11 +3,13 @@
 # and mirror them to Google Drive next to the nightly Hermes zip.
 #
 # Runs as root ON THE HOST (not in a container): it reads the k3s local-path
-# volumes directly and uses kubectl for the logical dumps. Dumps are staged in a
-# root-only directory on the host and streamed one by one into the Hermes
-# container's rclone (its OAuth config, as user hermes) over stdin, so other
-# projects' data never lands on the Hermes volume, where every agent running in
-# that container has file tools.
+# volumes directly and uses kubectl only for the logical dumps. Dumps are staged
+# in a root-only directory and uploaded by the host's own rclone (Ubuntu package,
+# root-owned binary) with a root-only config, so other projects' data never
+# passes through the Hermes container, whose volume every agent can read and
+# whose rclone binary and config live on that writable volume.
+# /root/.config/rclone/backup.conf holds the same Drive OAuth stanza as the
+# container's rclone.conf (copied 2026-10-06); revoking that OAuth client stops both.
 #
 # Why dumps and not a tar of a running database: a file copy of a live Postgres
 # data directory is not guaranteed restorable. pg_dumpall / a forced Redis SAVE /
@@ -20,7 +22,7 @@ set -o noclobber
 ST=/var/lib/rancher/k3s/storage
 HNS=environment-6a5ea4ecb0b7a4abeb4e61fd
 HDEP=deploy/service-6a5ea5074d439e41ee4cd38c
-RCLONE="runuser -u hermes -- /opt/data/scripts/bin/rclone --config /opt/data/.config/rclone/rclone.conf"
+RCLONE="/usr/bin/rclone --config /root/.config/rclone/backup.conf"
 STAMP=$(date -u +%Y%m%d-%H%M%S)
 STAGE=/var/backups/volumes
 OUT=$STAGE/$STAMP
@@ -60,10 +62,7 @@ done
 
 echo "== staged (root-only): $OUT"; ls -la "$OUT"; du -sh "$OUT"
 
-# Off-host copy: stream each file into the container's rclone over stdin. The
-# container never gets a file on disk, only the bytes it uploads.
-for f in "$OUT"/*; do
-  kubectl exec -i -n "$HNS" "$HDEP" -- $RCLONE rcat "hermesdrive:/VolumeBackups/$STAMP/$(basename "$f")" < "$f"
-done
+# Off-host copy from the host itself; the container is not involved.
+$RCLONE copy "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --transfers 1
 echo "== drive: VolumeBackups/$STAMP"
-kubectl exec -n "$HNS" "$HDEP" -- $RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"
+$RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"
