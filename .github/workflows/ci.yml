@@ -39,6 +39,7 @@ jobs:
     outputs:
       python: ${{ steps.classify.outputs.python }}
       frontend: ${{ steps.classify.outputs.frontend }}
+      desktop: ${{ steps.classify.outputs.desktop }}
       site: ${{ steps.classify.outputs.site }}
       scan: ${{ steps.classify.outputs.scan }}
       deps: ${{ steps.classify.outputs.deps }}
@@ -85,6 +86,10 @@ jobs:
     needs: detect
     if: needs.detect.outputs.frontend == 'true'
     uses: ./.github/workflows/js-tests.yml
+    with:
+      # Fork: the apps/desktop leg (~20 min) only on a PR that touches it. Push runs
+      # fail open to every lane, so without the event check it would run on every merge.
+      desktop: ${{ needs.detect.outputs.event_name == 'pull_request' && needs.detect.outputs.desktop == 'true' }}
     secrets: inherit
 
   docs-site:

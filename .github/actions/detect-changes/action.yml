@@ -21,6 +21,9 @@ outputs:
   frontend:
     description: Run the TypeScript testing matrix + desktop build.
     value: ${{ steps.classify.outputs.frontend }}
+  desktop:
+    description: Fork - run the apps/desktop leg of the TS matrix (its own tree, apps/shared, root npm).
+    value: ${{ steps.classify.outputs.desktop }}
   docker_meta:
     description: Docker setup and meta files have changed.
     value: ${{ steps.classify.outputs.docker_meta }}

@@ -17,6 +17,10 @@ Lanes:
 * ``docker`` — any product change + docker meta
 * ``nix``         — ``nix flake check``: the flake inputs and any product change.
 * ``frontend``    — TS typecheck matrix + desktop build.
+* ``desktop``     — fork: the apps/desktop leg of that matrix (~20 min on a
+  4-core runner). The fork ships no desktop app and has no commits there, so
+  it runs only when a PR touches the desktop tree, the shared package it
+  builds on, or the root npm tree (upstream merges do).
 * ``site``        — Docusaurus + generated skill docs.
 * ``scan``        — supply-chain scan (Python files, .pth, setup hooks).
 * ``deps``        — pyproject.toml dependency bounds check.
@@ -69,6 +73,7 @@ import sys
 _FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
 # Shipped page outside those packages, exercised by the desktop Electron suite.
 _FRONTEND_FILES = {"scripts/desktop-update/ui.html"}
+_DESKTOP = ("apps/desktop/", "apps/shared/")  # fork: the desktop leg and what it builds on
 _ROOT_NPM = {"package.json", "package-lock.json"}  # shifts every package's tree
 _DOCKER_META = ("docker/", ".hadolint.yml", "Dockerfile") # docker setup
 _NIX_PATHS = ("nix/",) # nix files
@@ -244,6 +249,10 @@ def classify(files: list[str]) -> dict[str, bool]:
         "docker": docker_meta or python_prod or frontend,
         "docker_meta": docker_meta,
         "frontend": frontend,
+        "desktop": any(
+            f.startswith(_DESKTOP) or f in _ROOT_NPM or f in _FRONTEND_FILES
+            for f in files
+        ),
         "site": any(f.startswith(_SITE) for f in files),
         "scan": any(_is_scan(f) for f in files),
         "deps": deps,
@@ -262,6 +271,7 @@ def classify(files: list[str]) -> dict[str, bool]:
         ret["docker"] = True
         ret["docker_meta"] = True
         ret["frontend"] = True
+        ret["desktop"] = True
         ret["site"] = True
         ret["scan"] = True
         ret["deps"] = True
