@@ -36,9 +36,15 @@ updates:
       prefix: "chore(actions)"
       include: "scope"
     groups:
-      # Batch routine action bumps into one PR per week to reduce noise.
+      # Batch every action bump, majors included, into one PR per week.
       # Security updates still open individually and bypass grouping.
-      actions-minor-patch:
+      # Fork: majors used to open one PR each. On 2026-10-05 five landed at
+      # once, ~140 CI jobs against the free plan's 20-job concurrency cap
+      # (6-8 min queues for everything), and each needed its own ci-reviewed
+      # label. One batch is one CI run and one review. If a major breaks the
+      # batch, drop it with `@dependabot ignore <dep> major version`.
+      actions-weekly:
         update-types:
+          - "major"
           - "minor"
           - "patch"
