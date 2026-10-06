@@ -170,6 +170,13 @@ upstream v2026.8.31 delete `_terminal_cwd_lock` safely.
 Corollary when triaging: before calling a quiet cron job dead, check whether
 another job of the same profile is running. `hermes cron runs <job_id>` shows the holder.
 
+**The panel's "Run now" queues; it does not run.** Upstream's trigger route ran the
+job inside the dashboard request, so a 20-minute Gap Hunter run outlived Zeabur's
+proxy and the panel never confirmed (2026-10-06). The fork's route
+(`hermes_cli/fork_ext/web.py`, mounted ahead of upstream's) marks the job due and
+answers at once; the gateway ticker starts it within 60s as `source=builtin`. A job
+already claimed or running gets a 409. An external `cron.provider` keeps upstream's fire.
+
 **A job moved into its profile's own store answers only to `-p`.** `hermes cron
 move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the
 id, schedule phase, executions, output and notepad, and never calls `remove_job`.

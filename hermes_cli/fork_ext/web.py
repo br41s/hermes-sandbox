@@ -139,6 +139,75 @@ async def copy_cron_job(
 
 
 # ---------------------------------------------------------------------------
+# Cron job trigger — the panel's "Run now"
+# ---------------------------------------------------------------------------
+#
+# Upstream's handler (web_routers/cron.py ``_trigger_cron_job_sync``) runs the
+# job synchronously inside the dashboard request via ``fire_due``. A Gap Hunter
+# run takes 20+ minutes, so Zeabur's proxy drops the request long before it
+# returns and the panel never shows its confirmation (2026-10-06) — and the run
+# executes in the dashboard process with ``adapters=None`` instead of the
+# gateway. Here the job is only marked due (``trigger_job``, what
+# ``hermes cron run`` does); the gateway's ticker fires it within one 60s tick,
+# on the profile's own pool, and the request answers at once. Same path wins
+# over upstream's because this router is mounted first.
+
+
+def _job_in_flight(home, job_id: str) -> bool:
+    """True when the store's executions ledger holds a claimed/running attempt.
+
+    Read from the store's executions.db directly: the scheduler's in-process
+    registry lives in the gateway, not in the dashboard serving this request.
+    """
+    import sqlite3
+    from pathlib import Path
+
+    db = Path(home) / "cron" / "executions.db"
+    if not db.exists():
+        return False
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        row = con.execute(
+            "SELECT 1 FROM executions WHERE job_id=? AND status IN ('claimed', 'running') LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    finally:
+        con.close()
+    return row is not None
+
+
+def _trigger_cron_job_sync(job_id: str, profile: Optional[str]) -> Dict[str, Any]:
+    from cron.scheduler_provider import InProcessCronScheduler, resolve_cron_scheduler
+    from hermes_cli.web_routers import cron as upstream_cron
+
+    selected = upstream_cron._job_profile(job_id, profile)
+    _name, home = _cron_helper("_cron_profile_home")(selected)
+    with _cron_helper("_cron_store_scope")(home):
+        provider = resolve_cron_scheduler()
+    if not isinstance(provider, InProcessCronScheduler):
+        # An external provider fires remotely; marking the local store due would do nothing.
+        return upstream_cron._trigger_cron_job_sync(job_id, profile)
+
+    job = _call_cron_for_profile(selected, "resolve_job_ref", job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if _job_in_flight(home, job["id"]):
+        raise HTTPException(status_code=409, detail="Job is already running")
+    try:
+        queued = _call_cron_for_profile(selected, "trigger_job", job["id"])
+    except ValueError as exc:  # terminal one-shot: trigger_job names the resume command
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not queued:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return queued
+
+
+@router.post("/api/cron/jobs/{job_id}/trigger")
+async def trigger_cron_job(job_id: str, profile: Optional[str] = None):
+    return await asyncio.to_thread(_trigger_cron_job_sync, job_id, profile)
+
+
+# ---------------------------------------------------------------------------
 # Delegate API — async task delegation for external orchestrators
 # ---------------------------------------------------------------------------
 
