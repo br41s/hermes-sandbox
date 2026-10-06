@@ -208,6 +208,9 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] Imagen guardada como JPG en web/assets/blog/covers/
 - [ ] El tema NO está anclado a regulación/subvenciones/geografía española (CBAM, VeriFactu, Galicia, IRPF...) salvo que el propio gap sea explícitamente sobre ese mercado
 - [ ] El artículo cita ≥1 fuente primaria con fecha y enlace (también en RESERVA)
+- [ ] El tema pasa la PUERTA 2 (duradera): no trata de precios, planes, licencias,
+      versiones, betas ni incidentes, y el título no depende de una fecha, un precio
+      ni un número de versión (salvo fecha de entrada en vigor de una norma)
 - [ ] La infografía existe en web/assets/blog/infographics/<slug>.jpg y está insertada
 - [ ] Cover e infografía las generaste TÚ en esta ejecución con image_generate —
       ninguna copiada, renombrada ni reutilizada de otro artículo
@@ -221,23 +224,38 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
    hoy lo que ya rechazaste otro día.
 
 ### FASE 1A: Barrido de fuentes primarias (PRIMERO, antes de cualquier web_search genérico)
+EL BLOG ES EVERGREEN (decisión de la CEO, 2026-10-01). Buscamos cambios que DURAN:
+una ley que obliga durante años, un paper que cambia cómo se hace algo, un avance de
+IA que redefine lo que una pyme puede hacer sola. NO buscamos noticias de plataforma
+— subidas de precio, cambios de plan, lanzamientos de versión — que caducan en
+semanas y dejan el artículo diciendo algo falso. Ver PUERTA 2.
+
 Una fuente primaria es de PRIMERA MANO y con fecha: la publica quien hizo la cosa.
 Un blog QUE HABLA de la cosa NO es la cosa. Recorre LAS CUATRO clases, siempre —
-no te pares en la primera que dé fruto. Vendor casi siempre tiene novedades, y si
-cortas ahí este barrido se convierte de facto en un lector de changelogs y las otras
-tres clases no se consultan nunca. Reúne los candidatos de las cuatro y deja que
-decidan las puertas de la FASE 2, no el orden de esta lista.
+no te pares en la primera que dé fruto. Reúne los candidatos de las cuatro y deja
+que decidan las puertas de la FASE 2, no el orden de esta lista.
 
-  1. VENDOR — changelogs y notas de versión de primera mano (anthropic.com/news,
-     openai.com/news, blog.google/technology/ai, Microsoft 365 roadmap, AWS
-     what's-new). web_extract directo sobre la página de novedades.
-  2. REGULACIÓN Y ESTÁNDARES — el organismo emisor, nunca la prensa que lo resume
-     (actos de implementación del EU AI Act, NIST AI RMF, guías de AEPD/ICO).
-  3. BENCHMARK O INCIDENTE — evaluaciones publicadas, post-mortems de caídas y
-     divulgaciones de seguridad que afecten a herramientas que usan pymes.
-  4. ARXIV — web_extract sobre https://arxiv.org/list/cs.AI/recent (y cs.CL);
-     luego la página /abs/<id> del que te interese. web_extract también lee el PDF
-     directamente si necesitas más profundidad.
+  1. REGULACIÓN Y ESTÁNDARES — el organismo emisor, nunca la prensa que lo resume
+     (actos de implementación y guías del EU AI Act, NIST AI RMF, ISO/IEC 42001,
+     guías de AEPD/ICO/EDPB). Una obligación nueva dura años: es la clase más
+     evergreen que tienes.
+  2. CIENCIA — papers que cambian cómo se hace algo, no que mejoran un benchmark
+     un 2%. web_extract sobre https://arxiv.org/list/cs.AI/recent (y cs.CL), luego
+     la página /abs/<id> del que te interese; también Nature, Science y los
+     estudios publicados con datos reales de empresas (productividad, adopción,
+     fiabilidad). web_extract también lee el PDF si necesitas más profundidad.
+  3. AVANCE DE IA DURADERO — una capacidad NUEVA que cambia lo que una pyme puede
+     hacer sin contratar a nadie (p. ej. agentes que manejan un ordenador, modelos
+     abiertos que corren en local, contexto largo que lee un archivo entero), de la
+     página de investigación o de novedades del propio laboratorio
+     (anthropic.com/news, openai.com/news, blog.google/technology/ai, ai.meta.com).
+     De esas páginas SOLO te interesa la capacidad. Precios, planes, licencias,
+     bundles, betas y "ya disponible la versión X.Y" no son esta clase: descártalos
+     sin evaluarlos.
+  4. ESTUDIO O EVALUACIÓN INDEPENDIENTE — evaluaciones y estudios publicados por
+     quien los hizo (institutos de seguridad de IA, universidades, OCDE, organismos
+     estadísticos) cuyo hallazgo seguirá siendo cierto dentro de un año. Caídas
+     puntuales y post-mortems de un servicio NO: son noticia de una semana.
 
 REGLA DE HERRAMIENTAS: usa web_extract y web_search. NO uses execute_code ni
 python3 -c/-e (bloqueados en cron, igual que en el buzón). Nada de curl con tokens
@@ -248,18 +266,32 @@ PRESUPUESTO DE CONTEXTO: este barrido ocurre ANTES de escribir, y escribir neces
 margen — la FASE 3 son 8-12 llamadas seguidas (ver "Límites de escritura"). No te
 gastes aquí el margen que vas a necesitar allí:
 - web_extract de 1-2 URLs por llamada, nunca 5 de golpe.
-- Quédate en abstracts, changelogs y notas de versión. El PDF completo de un paper
+- Quédate en abstracts, resúmenes oficiales de la norma y notas de investigación. El PDF completo de un paper
   solo si ese candidato ya pasó las puertas y vas a escribir sobre él.
 - En cuanto una clase te dé 1-2 candidatos, pasa a la SIGUIENTE clase. No agotes
   ninguna: el objetivo es ver las cuatro, no exprimir una.
 
-### FASE 2: Decisión — cuatro puertas, en orden
+### FASE 2: Decisión — cinco puertas, en orden
 Aplica en orden y para en la primera que falle (la más barata primero):
 
   PUERTA 1 — ¿PRIMARIA? De primera mano, con fecha, de una de las cuatro clases.
     Si es un artículo SOBRE la noticia en vez de la noticia → descarta.
-  PUERTA 2 — ¿NUEVA PARA ESTE LECTOR? NO preguntes "¿existe cobertura?": de una
-    novedad de vendor la prensa tech escribe en horas, así que con esa pregunta
+  PUERTA 2 — ¿DURADERA? Pregúntate: si alguien llega a este artículo desde Google
+    dentro de 18 meses, ¿lo que dice sigue siendo cierto y útil? Si no → descarta.
+    Descarte AUTOMÁTICO, sin excepciones y en cualquier clase (también en RESERVA):
+      · subidas o bajadas de precio, cambios de plan, tarifa, licencia o bundle
+      · lanzamientos de versión, renombrados y funciones en beta o preview
+      · ofertas, fechas de fin de promoción, cambios de cuota o de límites de uso
+      · caídas e incidentes puntuales de un servicio
+    Prueba rápida: si el titular necesita una fecha, un precio o un número de
+    versión para tener sentido, es noticia, no evergreen. La excepción es la
+    regulación con fecha de entrada en vigor: la fecha caduca, la obligación no.
+    Por qué es dura: el 2026-10-01 salió un post sobre la subida de precios de
+    Atlassian del 13 de octubre. Dos semanas después ya es historia, y en cuanto
+    Atlassian vuelva a tocar precios dirá algo falso. Cada post así resta
+    credibilidad al resto del blog.
+  PUERTA 3 — ¿NUEVA PARA ESTE LECTOR? NO preguntes "¿existe cobertura?": de una
+    novedad relevante la prensa tech escribe en horas, así que con esa pregunta
     NADA pasaría nunca esta puerta y el barrido se volvería inútil. Pregunta:
     ¿existe ya una pieza en inglés que le explique a un dueño de pyme QUÉ HACER
     con esto? Si sí → descarta. Si lo único que hay es prensa tech, análisis para
@@ -274,35 +306,56 @@ Aplica en orden y para en la primera que falle (la más barata primero):
     NO CIERRA EL HUECO la guía "para empresas" del propio vendor, ni su página de
     producto, ni su landing: eso es material de venta, no consejo — nunca te va a
     decir cuándo NO te conviene, que es justo la mitad que tu lector necesita.
-  PUERTA 3 — ¿CONSECUENTE? Tienes que ser capaz de NOMBRAR la acción concreta que
+  PUERTA 4 — ¿CONSECUENTE? Tienes que ser capaz de NOMBRAR la acción concreta que
     el lector emprende al terminar de leer. Vale cualquiera de estas formas:
       · evaluar o adoptar algo nuevo      · cambiar un proceso que ya tiene
-      · presupuestar o reservar dinero    · renegociar un contrato o un plan
-      · DEJAR de usar algo, migrar o cancelarlo
+      · prepararse para una obligación    · presupuestar una inversión
+      · DEJAR de hacer algo a mano o de pagar algo que ya no hace falta
       · posponer una decisión a propósito, sabiendo por qué
-    Las acciones de DEJAR DE HACER (una herramienta que sube de precio, un servicio
-    que se discontinúa, una función que ya no hace falta pagar aparte) están entre
-    las más valiosas que puedes escribir: ahorran dinero de verdad y casi nadie las
-    escribe, porque no venden nada. No las descartes por no encajar en "adoptar
-    algo nuevo".
-    EL PLAZO: la acción tiene que poder EMPEZAR en los próximos ~30 días. No exige
-    terminar ahí — prepararse para una obligación que vence dentro de seis meses SÍ
-    cuenta, porque el primer paso se da ya. Lo que no cuenta es aquello que no
-    tiene primer paso.
+    Las acciones de DEJAR DE HACER son valiosas y casi nadie las escribe, pero el
+    motivo tiene que ser duradero (una capacidad que ya viene incluida, un proceso
+    que una regla nueva vuelve innecesario), nunca un precio del momento.
+    LA ACCIÓN TIENE QUE SEGUIR VALIENDO: el lector que llegue dentro de un año
+    tiene que poder darla igual. "Cancela antes del día X" no sirve; "revisa si
+    este proceso sigue mereciendo una persona" sí.
     Si no sabes nombrar la acción, es que no la hay → descarta. Esta puerta es la
     que impide que arxiv inunde la cola.
-  PUERTA 4 — DEMANDA, SOLO COMO DESEMPATE. Entre las candidatas que pasaron 1-3,
+  PUERTA 5 — DEMANDA, SOLO COMO DESEMPATE. Entre las candidatas que pasaron 1-4,
     elige aquella cuya búsqueda alguien teclearía de verdad. NUNCA uses esta puerta
-    para descartar algo que ya pasó las tres anteriores.
+    para descartar algo que ya pasó las cuatro anteriores.
 
-- Si algo pasa las cuatro puertas → Crear (FASE 3).
-- Si NADA pasa las puertas 1-3 → RESERVA: haz el web_search genérico de siempre
+- Si algo pasa las cinco puertas → COMPROBACIÓN DE DUPLICADO, y solo después Crear
+  (FASE 3).
+
+### COMPROBACIÓN DE DUPLICADO (OBLIGATORIA, justo antes de la FASE 3)
+Mirar los nombres de fichero en la FASE 1 NO basta: el slug cambia aunque el tema
+sea el mismo. El 2026-10-06 se publicó por segunda vez la subida de precios de
+Atlassian (`atlassian-price-increase-small-teams-2026`) cinco días después de la
+primera (`atlassian-price-rise-october-2026-small-teams`), cada una con su
+traducción: cuatro páginas sobre una sola noticia.
+
+1. Elige 2-3 términos que identifiquen el tema sin ambigüedad: el nombre propio
+   (marca, norma, paper, capacidad) y su variante en español si la hay.
+   Ej.: `Atlassian`, `AI Act` / `Ley de IA`, `ISO 42001`.
+2. Busca cada término en el título y la descripción de TODOS los posts, en los
+   dos idiomas:
+     grep -ilE '"(title|description)":.*<término>' site/en/blog/*.html site/blog/*.html
+3. Si sale algo, lee su `title` y su `article-summary`. Si trata el MISMO tema
+   (mismo hecho, misma norma, mismo paper o misma capacidad), aunque el enfoque
+   o el slug sean otros → descarta: anota `rechazado:duplicado` en el libro de
+   registro con la ruta del post existente en la nota, y vuelve a la FASE 2 con
+   la siguiente candidata. Que otro post solo MENCIONE el término no es
+   duplicado.
+4. Si no sale nada → FASE 3.
+- Si NADA pasa las puertas 1-4 → RESERVA: haz el web_search genérico de siempre
   (temas universales de automatización/IA para pymes con relevancia mundial:
-  herramientas, procesos, comparativas, guías prácticas; EVITA gaps anclados a
-  regulación, subvenciones o trámites específicos de España/Galicia, ese ángulo ya
-  lo cubre el backlog en español). El artículo de reserva SIGUE OBLIGADO a citar al
+  procesos, conceptos, guías prácticas, cómo decidir entre enfoques; EVITA gaps
+  anclados a regulación, subvenciones o trámites específicos de España/Galicia,
+  ese ángulo ya lo cubre el backlog en español). La PUERTA 2 aplica también aquí:
+  una comparativa de herramientas vale si compara enfoques y criterios, no si su
+  eje es el precio de hoy. El artículo de reserva SIGUE OBLIGADO a citar al
   menos UNA fuente primaria con fecha y enlace: la reserva baja el listón del tema,
-  nunca el de la evidencia.
+  nunca el de la evidencia ni el de la durabilidad.
 - Si tampoco hay reserva que merezca la pena → [SILENT]. Nada de PR, nada de
   mensaje. Un día flojo es un día en silencio; nunca fabriques un artículo mediocre
   para cubrir cupo.
@@ -322,8 +375,12 @@ y luego escribe el fichero. Nunca lo borres ni lo reescribas entero: solo añade
 Vive FUERA de tu checkout a propósito: `$PWD` sufre el vaivén de ramas de la FASE 4
 y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
 
-  Formato: YYYY-MM-DD | clase | url | veredicto(escrito|rechazado:puerta-N) | nota
-  Ejemplo: 2026-09-07 | vendor | https://... | rechazado:puerta-2 | ya cubierto en 5 blogs
+  Formato: YYYY-MM-DD | clase | url | veredicto(escrito|rechazado:<puerta>) | nota
+  <puerta> es el NOMBRE, no el número: primaria | duradera | nueva | consecuente |
+  duplicado (este último, de la COMPROBACIÓN DE DUPLICADO).
+  (Las líneas anteriores al 2026-10-01 usan rechazado:puerta-N con la numeración
+  vieja de cuatro puertas — no las reinterpretes, solo te sirven para no repetir url.)
+  Ejemplo: 2026-10-02 | avance-ia | https://... | rechazado:duradera | subida de precio del plan Pro
 
 ### FASE 3: Creación
 1. Lee la plantilla site/en/blog/microsoft-365-copilot-for-smbs.html
@@ -401,7 +458,8 @@ hazlo; no la sustituyas por prosa ni por un relato del `npm run build`.
 - PR: [link]
 - Gap: [descripción]
 - Fuente primaria: [URL con fecha]
-- Clase: [vendor | regulación | benchmark/incidente | arxiv | reserva]
+- Clase: [regulación | ciencia | avance-ia | estudio | reserva]
+- Por qué dura: [una frase — por qué seguirá siendo cierto dentro de 18 meses]
 - ✅ Humanizado (sin vocabulario IA)
 - ✅ Estructura correcta (plantilla)
 - ✅ Cover fotorealismo JPG (personas reales, no SVG/infografía)
