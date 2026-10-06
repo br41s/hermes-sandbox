@@ -1,62 +1,26 @@
-"""The fork's sequential cron lane (fork-owned).
+"""Webhook entry points onto upstream's cron pools, and the profile-store test (fork-owned).
 
-Every cron job that sets ``workdir`` runs on ONE single-thread executor, one at a
-time, across ticks and across entry points (the tick and the webhook triggers:
-``trigger_cron_job_id`` and upstream's ``cron_job``). Since stage 3 step 5 a job
-from a profile's own store runs on upstream's per-profile pool instead, sized 1 by
-``boot_reconcile.PROFILE_OVERRIDES``; the lane goes once that has been clean a week.
+Stage 3 step 5 (``ops/multiplex-stage3-plan.md``) retired the fork's single-thread lane:
+every due job now runs on upstream's per-profile parallel pool, which boot sizes to 1 on
+every named profile (``boot_reconcile.PROFILE_OVERRIDES``), so a profile's jobs stay
+serial while profiles run side by side. What is left here:
 
-History: a profile run used to load its ``.env`` (its ``GITHUB_TOKEN`` among
-it) into ``os.environ`` and a workdir run wrote ``TERMINAL_CWD``, so two
-overlapping runs leaked one identity into the other. Neither is true any
-more — the profile ``.env`` is the run's secret scope
-(``cron/fork_ext/profile_scope.py``, #338) and v2026.8.31 scopes the workdir
-per task. The lane kept profile runs in the order and pacing production had always
-had until step 5 widened it (CLAUDE.md, "One long agent run starves every other
-agent").
-
-Upstream deleted its own sequential pool and dispatches every due job in
-parallel (``parallel_jobs = due_jobs``); the fork re-anchors one call in
-upstream's ``tick``:
-
-    parallel_jobs = _fork_submit_sequential(parallel_jobs, _submit_with_guard, _all_futures, _results, sync)
-
-and ``tests/cron/test_sequential_dispatch_fork.py`` fails if it is lost.
-
-Collaborators that stay in ``cron.scheduler`` (``run_one_job``, the running-job
-guard, the parallel pool, ``_interpreter_shutting_down``) are looked up on that
-module at call time, so existing ``cron.scheduler`` monkeypatches still apply.
+- ``in_profile_store`` — whether this context runs a profile's OWN store (the identity
+  path in ``profile_scope`` and the scheduler's ``.env`` guard key on it);
+- ``dispatch_job_async`` — the fork's ``trigger_cron_job_id`` webhook: enqueue on the
+  job's pool, never inline in the gateway event loop;
+- ``run_event_job`` — upstream's ``cron_job`` webhook route: a profile-store job goes to
+  that profile's pool, so it queues behind the profile's tick jobs instead of
+  overlapping them on a worker thread of its own.
 """
 
-import atexit
-import concurrent.futures
 import contextvars
 import logging
-import threading
-from typing import Callable, Optional
+from typing import Callable
 
 # Same logger as before the move, so agent.log lines keep their
 # ``cron.scheduler`` name.
 logger = logging.getLogger("cron.scheduler")
-
-_sequential_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
-# Guards lazy creation. The tick thread and the webhook path (gateway event
-# loop) can both reach get_sequential_executor(); without the lock a first-use
-# race could build TWO single-thread executors, i.e. two concurrent workers.
-_sequential_executor_lock = threading.Lock()
-
-
-def is_sequential(job: dict) -> bool:
-    """True for a job the fork runs on the single-thread lane: a job with a ``workdir``.
-
-    Stage 3 step 5 (``ops/multiplex-stage3-plan.md``) widened the lane. A job from a
-    profile's own store now goes to upstream's per-profile parallel pool, which boot
-    sizes to 1 for every named profile (``boot_reconcile.PROFILE_OVERRIDES``): serial
-    within a profile, profiles side by side. Once that has been clean for a week this
-    returns nothing and the lane goes. The retired ``profile`` field does not count
-    (step 2): a record that still carries it is refused before it runs.
-    """
-    return bool((job.get("workdir") or "").strip())
 
 
 def in_profile_store() -> bool:
@@ -80,88 +44,18 @@ def in_profile_store() -> bool:
         return True
 
 
-def get_sequential_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Return (or create) the persistent single-thread executor.
-
-    A single worker guarantees env-mutating jobs never overlap, even across
-    ticks: a job queued by a newer tick (or a webhook trigger) waits for the
-    previous one to finish rather than corrupting its ``os.environ`` state.
-    Thread names keep the ``cron-seq`` prefix they had on upstream's pool.
-    """
-    global _sequential_executor
-    with _sequential_executor_lock:
-        if _sequential_executor is None:
-            _sequential_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="cron-seq",
-            )
-        return _sequential_executor
-
-
-def shutdown_sequential_executor() -> None:
-    """Shut the executor down (waiting for the running job, keeping queued
-    ones) and forget it, so the next use creates a fresh one.
-
-    ``cron.scheduler._shutdown_parallel_pool`` calls this, exactly as it used
-    to shut down upstream's sequential pool — tests rely on that call to drain
-    the lane between cases. Also registered with ``atexit`` on its own, so the
-    lane is still drained at exit if a merge ever drops that call."""
-    global _sequential_executor
-    with _sequential_executor_lock:
-        executor, _sequential_executor = _sequential_executor, None
-    if executor is not None:
-        executor.shutdown(wait=True, cancel_futures=False)
-
-
-atexit.register(shutdown_sequential_executor)
-
-
-def submit_sequential_jobs(
-    due_jobs: list,
-    submit: Callable,
-    futures: list,
-    results: list,
-    sync: bool,
-) -> list:
-    """Dispatch ``tick``'s profile/workdir jobs onto the sequential lane.
-
-    ``submit`` is ``tick``'s own ``_submit_with_guard(job, pool)``, so the
-    in-flight dedup guard, execution record and shutdown handling are exactly
-    upstream's. Futures go into ``futures``; in async mode each dispatched job
-    is optimistically counted in ``results`` (as ``tick`` does for its own
-    passes). Returns the remaining parallel-safe jobs, in their original order.
-    """
-    sequential_jobs = [j for j in due_jobs if is_sequential(j)]
-    if sequential_jobs:
-        executor = get_sequential_executor()
-        for job in sequential_jobs:
-            fut = submit(job, executor)
-            if fut is None:
-                continue
-            futures.append(fut)
-            if not sync:
-                results.append(True)  # optimistically counted
-    return [j for j in due_jobs if not is_sequential(j)]
-
-
 def dispatch_job_async(job: dict) -> dict:
-    """Enqueue a job on the SAME lanes ``tick`` uses, fire-and-forget, and
+    """Enqueue a job on the pool ``tick`` uses for its store, fire-and-forget, and
     return immediately without running it inline.
 
-    Why this exists: a job with a profile (or workdir) mutates process-global
-    state inside ``run_job`` — most importantly the profile's
-    ``GITHUB_TOKEN``/``GH_TOKEN`` in ``os.environ``. ``tick`` keeps those jobs
-    on the single-thread SEQUENTIAL lane so only one runs at a time. But the
-    webhook direct-trigger used to run ``run_one_job`` INLINE (in the gateway
-    event loop), concurrently with a tick-dispatched profile job — the two then
-    raced on ``os.environ`` and one profile's identity leaked into the other's
-    ``gh``/``git`` subprocess. That is how biglobster content PRs got authored
-    as ``hermes-auditor`` (so the auditor skipped its own PR): a content job's
-    ``gh pr create`` inherited the auditor's leaked token while the auditor ran
-    from a PR webhook. Routing webhook runs through the same sequential lane
-    serializes them with tick's profile jobs, so no two identities mutate the
-    env at once — and it also stops the multi-minute run from blocking the
-    event loop.
+    The webhook direct-trigger (``trigger_cron_job_id``) used to run ``run_one_job``
+    INLINE in the gateway event loop, beside tick's runs of the same profile: that
+    once leaked one profile's identity into another's ``gh``/``git`` (biglobster
+    content PRs authored as ``hermes-auditor``) and blocked the event loop for the
+    whole multi-minute run. Identity no longer lives in ``os.environ``, but a
+    profile's jobs must still not overlap: its pool is sized 1
+    (``boot_reconcile.PROFILE_OVERRIDES``), so a webhook run queues behind the
+    profile's tick runs.
 
     Honors the same in-flight dedup guard as tick (``try_register_running_job``): a job
     already running (from a tick or a prior trigger) is not re-dispatched.
@@ -176,14 +70,8 @@ def dispatch_job_async(job: dict) -> dict:
     if sched._interpreter_shutting_down():
         return {"queued": False, "reason": "interpreter shutting down"}
 
-    # Same partition rule as tick: profile/workdir jobs are env-mutating and
-    # MUST run on the single-thread sequential lane; everything else is
-    # parallel-safe.
-    pool = (
-        get_sequential_executor()
-        if is_sequential(job)
-        else sched._get_parallel_pool(sched._resolve_max_parallel_workers())
-    )
+    # The active store's pool, exactly as tick picks it (sized by that profile's config).
+    pool = sched._get_parallel_pool(sched._resolve_max_parallel_workers())
 
     # Upstream's single dedupe owner (v2026.8.31): also makes the run visible
     # to the gateway shutdown drain and the stale in-flight sweep.
@@ -211,40 +99,25 @@ def dispatch_job_async(job: dict) -> dict:
 
 
 async def run_event_job(job_ref: str, fire: Callable, *args):
-    """Await ``fire(*args)`` for upstream's webhook ``cron_job`` route: on the
-    lane when ``job_ref`` names a workdir job; on the profile's own parallel pool
-    when the route runs in a profile's store (stage 3 step 5: that pool is sized 1,
-    so the event queues behind the profile's tick jobs instead of overlapping them);
-    otherwise on a worker thread exactly as upstream does.
+    """Await ``fire(*args)`` for upstream's webhook ``cron_job`` route.
 
     Upstream's ``_handle_cron_trigger`` runs ``execute_job_for_event`` through
-    ``asyncio.to_thread``, a fresh worker per event, so a profile/workdir job
-    fired by a webhook ran beside whatever held the lane. Only WHERE it runs
-    changes here: ``fire`` still resolves, claims, dedupes, injects the event
-    context and delivers when the lane reaches it, the same way tick's own
-    jobs claim when the lane starts them. A tick that fires the same job
-    first therefore wins the claim, and the event reports "already being
-    fired" as it would upstream.
-
-    Fails closed: a ref that cannot be resolved here (unknown, ambiguous, the
-    store unreadable) goes to the lane, and ``fire`` reports the error.
+    ``asyncio.to_thread``, a fresh worker per event. In a profile's own store that
+    would overlap the profile's tick jobs, so there the event goes to the profile's
+    pool (sized 1), behind them. Only WHERE it runs changes: ``fire`` still resolves,
+    claims, dedupes, injects the event context and delivers when the pool reaches it,
+    the same way tick's own jobs claim when they start, so a tick that fires the same
+    job first wins the claim and the event reports "already being fired" as upstream
+    would. The launch store keeps upstream's ``to_thread``.
     """
     import asyncio
 
-    try:
-        from cron.jobs import resolve_job_ref
+    if not in_profile_store():
+        return await asyncio.to_thread(fire, *args)
+    import cron.scheduler as sched
 
-        job = resolve_job_ref(job_ref)
-    except Exception:
-        job = None
-    # to_thread copies the caller's context (the routed profile's scope); a
-    # bare executor.submit does not, so carry it explicitly.
+    # to_thread copies the caller's context (the routed profile's scope); a bare
+    # executor.submit does not, so carry it explicitly.
     ctx = contextvars.copy_context()
-    if job is not None and not is_sequential(job):
-        if not in_profile_store():
-            return await asyncio.to_thread(fire, *args)
-        import cron.scheduler as sched
-
-        pool = sched._get_parallel_pool(sched._resolve_max_parallel_workers())
-        return await asyncio.wrap_future(pool.submit(ctx.run, fire, *args))
-    return await asyncio.wrap_future(get_sequential_executor().submit(ctx.run, fire, *args))
+    pool = sched._get_parallel_pool(sched._resolve_max_parallel_workers())
+    return await asyncio.wrap_future(pool.submit(ctx.run, fire, *args))

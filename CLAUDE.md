@@ -109,18 +109,16 @@ Consequences to hold in mind:
 
 ### One cron job at a time per profile; profiles run side by side
 
-Since stage 3 step 5 (`ops/multiplex-stage3-plan.md`), a job from a profile's own
-`profiles/<name>/cron/jobs.json` runs on upstream's **per-profile** parallel pool, which
-boot sizes to `cron.max_parallel_jobs: 1` on every named profile
-(`hermes_cli/fork_ext/boot_reconcile.py` `PROFILE_OVERRIDES`). A profile's jobs stay
-serial and in submit order; different profiles run at the same time. Main is not pinned:
-its plain jobs (backups, the incident watcher) run unbounded, as they always did. Only a
-job with a `workdir` still goes on the fork's **single-thread lane**
-(`cron/fork_ext/dispatch.py`), shared by every store; that lane goes once the
-widening has been clean for a week.
+Since stage 3 step 5 (`ops/multiplex-stage3-plan.md`), every cron job runs on upstream's
+**per-profile** parallel pool, which boot sizes to `cron.max_parallel_jobs: 1` on every
+named profile (`hermes_cli/fork_ext/boot_reconcile.py` `PROFILE_OVERRIDES`). A profile's
+jobs stay serial and in submit order; different profiles run at the same time. Main is
+not pinned: its jobs (backups, the incident watcher, the Infographic Engineer's `workdir`
+runs, each in its own checkout) run unbounded. Both webhook entry points queue a profile's
+job on the same pool, behind its tick jobs (`cron/fork_ext/dispatch.py`).
 
-Before the widening, one lane held every profile job, and a slow run blocked all the
-others. On 2026-09-12 a 38-minute auditor run held it while the BigLobster Gap Hunter
+Before the widening, the fork's own single-thread lane held every profile and `workdir`
+job, and a slow run blocked all the others. On 2026-09-12 a 38-minute auditor run held it while the BigLobster Gap Hunter
 (`ce583d11dedd`) sat silent for 20+ minutes, which read on Telegram exactly like a crash.
 **Within one profile that can still happen**: a queued run sits in `claimed` with no log
 output, indistinguishable from a dead one.
@@ -137,10 +135,10 @@ must fit inside it; `auditor.pending`'s `DEFAULT_LIMIT` exists for exactly that.
 default 1800s, `0` = off** (`cron/fork_ext/max_runtime.py`). The 600s inactivity
 watchdog cannot catch a hung model call: a waiting stream refreshes the activity
 clock every 30s. On 2026-09-29 an `auditor-review` run hung after its fourth model
-call and held the lane for 95 minutes, with nothing logged. `merge-on-green` and a
+call and held the fork's old single-thread lane for 95 minutes, with nothing logged. `merge-on-green` and a
 rental's Product Sheet Writer queued behind it, and the auditor looked down. At the
 ceiling the run dumps every thread's stack to the log, is interrupted and fails,
-and the profile's pool (or the lane) moves on. A job that legitimately needs longer is a job to split, not
+and the profile's pool moves on. A job that legitimately needs longer is a job to split, not
 a reason to raise the ceiling for everyone.
 
 **Each model call has its own, tighter deadline: `request_timeout_seconds`** (600s
@@ -167,8 +165,7 @@ the wrong client's site). Child processes get the scope through
 upstream v2026.8.31 delete `_terminal_cwd_lock` safely.
 
 Corollary when triaging: before calling a quiet cron job dead, check whether
-another job of the same profile (or, for a `workdir` job, any `workdir` job) is
-running. `hermes cron runs <job_id>` shows the holder.
+another job of the same profile is running. `hermes cron runs <job_id>` shows the holder.
 
 **A job moved into its profile's own store answers only to `-p`.** `hermes cron
 move <id> --to-profile <p>` (`cron/fork_ext/move.py`, stage 3 step 0f) keeps the

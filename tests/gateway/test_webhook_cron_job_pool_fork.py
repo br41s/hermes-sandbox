@@ -1,6 +1,8 @@
-"""Fork: upstream's webhook ``cron_job`` route runs a workdir or profile-store job on the
-sequential lane (``cron/fork_ext/dispatch.py::run_event_job``), not on a worker
-thread of its own. Upstream's own route tests are in test_webhook_cron_trigger.py.
+"""Fork: upstream's webhook ``cron_job`` route runs a profile-store job on that profile's
+pool (``cron/fork_ext/dispatch.py::run_event_job``), behind its tick jobs, not on a
+worker thread of its own. A launch-store job keeps upstream's ``to_thread``, workdir or
+not: stage 3 step 5 removed the fork's lane. Upstream's own route tests are in
+test_webhook_cron_trigger.py.
 """
 
 import asyncio
@@ -31,22 +33,22 @@ async def _post_and_drain(adapter: WebhookAdapter) -> int:
 
 
 @pytest.fixture
-def lane():
-    from cron.fork_ext import dispatch
+def pools():
+    import cron.scheduler as sched
 
-    dispatch.shutdown_sequential_executor()
+    sched._shutdown_parallel_pool()
     yield
-    dispatch.shutdown_sequential_executor()
+    sched._shutdown_parallel_pool()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fields, on_lane", [
-    ({"workdir": "/srv/site"}, True),
-    ({}, False),
+@pytest.mark.parametrize("fields", [
+    {"workdir": "/srv/site"},
+    {},
     # Stage 3 step 2: the retired field no longer counts (run_job refuses the record).
-    ({"profile": "grow-shop"}, False),
+    {"profile": "grow-shop"},
 ])
-async def test_cron_job_route_runs_workdir_jobs_on_the_lane(lane, fields, on_lane):
+async def test_cron_job_route_in_the_launch_store_runs_on_a_worker_thread(pools, fields):
     fired = []
 
     def _fake_execute(job_ref, extra_prompt=None):
@@ -62,11 +64,11 @@ async def test_cron_job_route_runs_workdir_jobs_on_the_lane(lane, fields, on_lan
     job_ref, extra_prompt, thread = fired[0]
     assert job_ref == "review-sweeper"
     assert "event 1" in extra_prompt
-    assert thread.startswith("cron-seq") is on_lane, thread
+    assert not thread.startswith(("cron-seq", "cron-parallel")), thread
 
 
 @pytest.mark.asyncio
-async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_its_pool(lane):
+async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_its_pool(pools):
     """Stage 3 step 0a. A ``/p/<profile>/`` route resolves its job under the
     profile's home override alone, with no ``use_cron_store``: the store comes from
     the home fallback in ``cron.jobs._current_cron_store``. A job in that store has

@@ -725,12 +725,29 @@ a week, it returns nothing, and `dispatch.py` goes with the re-anchor in
 `scheduler_tick.py:108`. Tests: `tests/cron/test_sequential_dispatch_fork.py`,
 `tests/test_incident_sweep_regression.py` (stall detection).
 
-**Phase A done (PR open):** `PROFILE_OVERRIDES` in `boot_reconcile.py` pins
+**Phase A done (deployed 2026-10-05):** `PROFILE_OVERRIDES` in `boot_reconcile.py` pins
 `cron.max_parallel_jobs: 1` on every **named** profile, and `is_sequential` returns only
 `workdir` jobs. One deviation from the line above: main is **not** pinned. Its plain jobs
 were never on the lane, and a pinned main would queue the hourly incident watcher behind
 the ~33-minute nightly backup. Phase B (the lane returns nothing, `dispatch.py` and the
 `scheduler_tick.py` re-anchor go) follows after a clean week.
+
+**Phase B done (PR open):** started 2026-10-06 after one clean night instead of a week,
+on the owner's call: every profile's nightly jobs had run once side by side, all `ok`,
+with no 402s and no runtime-ceiling hits. The lane is gone: `is_sequential`, the
+single-thread executor, `submit_sequential_jobs`, the re-anchor in `scheduler_tick.py`
+and the `_fork_shutdown_sequential()` call in `_shutdown_parallel_pool`. `dispatch.py`
+stays, smaller: `in_profile_store` (the identity path and the `.env` guard key on it),
+`dispatch_job_async` (enqueue on the store's pool, never inline) and `run_event_job` (a
+profile-store `cron_job` event queues on the profile's pool; the launch store keeps
+upstream's `to_thread`, without resolving the ref first). The one behaviour change: main's
+only `workdir` job, the BigLobster Infographic Engineer (`2988bba27c73`), runs on main's
+unbounded pool instead of the lane; each run already gets its own isolated checkout.
+Tests: `tests/cron/test_sequential_dispatch_fork.py` became
+`tests/cron/test_profile_pool_dispatch_fork.py` (adds profiles-side-by-side and a
+lane-is-gone check), and `tests/gateway/test_webhook_cron_job_lane_fork.py` became
+`tests/gateway/test_webhook_cron_job_pool_fork.py`. **Rollback:** revert and redeploy;
+phase A's pins keep a profile's jobs serial either way.
 
 ---
 

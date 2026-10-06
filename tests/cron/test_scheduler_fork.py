@@ -326,10 +326,9 @@ class TestJobRunLock:
 
 
 class TestDispatchJobAsync:
-    """Webhook-triggered jobs must enqueue on the scheduler's own lanes (so
-    profile jobs serialize with tick and can't leak os.environ identity across
-    concurrent runs), not run inline. The sequential lane is the fork's own
-    executor in cron/fork_ext/dispatch.py."""
+    """Webhook-triggered jobs enqueue on the pool tick uses for their store (sized 1
+    for a profile, so they queue behind its tick jobs), never inline in the gateway
+    event loop. Stage 3 step 5 removed the fork's lane: a workdir job is no exception."""
 
     class _InlinePool:
         def submit(self, fn):
@@ -339,21 +338,20 @@ class TestDispatchJobAsync:
             fut.set_result(True)
             return fut
 
-    def test_workdir_job_queues_on_sequential_pool(self, monkeypatch):
+    @pytest.mark.parametrize("job_id, fields", [("j1", {"workdir": "/repo"}), ("j3", {})])
+    def test_every_job_queues_on_its_stores_pool(self, monkeypatch, job_id, fields):
         import cron.scheduler as sched
-        from cron.fork_ext import dispatch as fork_dispatch
 
-        calls = {"run": 0, "seq": 0, "par": 0}
+        calls = {"run": 0, "par": 0}
         monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: calls.__setitem__("run", calls["run"] + 1))
-        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
         monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
-        sched._running_job_ids.discard("j1")
 
-        res = sched.dispatch_job_async({"id": "j1", "workdir": "/repo"})
+        res = sched.dispatch_job_async({"id": job_id, **fields})
 
-        assert res["queued"] is True
-        assert calls == {"run": 1, "seq": 1, "par": 0}       # ran, via SEQUENTIAL pool
-        assert "j1" not in sched._running_job_ids            # in-flight guard released
+        assert res == {"queued": True, "reason": None}
+        assert calls == {"run": 1, "par": 1}                 # ran, via the store's pool
+        assert sched.try_register_running_job(job_id), "in-flight guard was not released"
+        sched.release_running_job(job_id)
 
     def test_skips_when_already_running(self, monkeypatch):
         import cron.scheduler as sched
@@ -369,22 +367,6 @@ class TestDispatchJobAsync:
             assert calls["run"] == 0
         finally:
             sched.release_running_job("j2")
-
-    def test_workdirless_job_uses_parallel_pool(self, monkeypatch):
-        import cron.scheduler as sched
-        from cron.fork_ext import dispatch as fork_dispatch
-
-        calls = {"seq": 0, "par": 0}
-        monkeypatch.setattr(sched, "run_one_job", lambda job, **kw: None)
-        monkeypatch.setattr(fork_dispatch, "get_sequential_executor", lambda: (calls.__setitem__("seq", calls["seq"] + 1), self._InlinePool())[1])
-        monkeypatch.setattr(sched, "_get_parallel_pool", lambda mw: (calls.__setitem__("par", calls["par"] + 1), self._InlinePool())[1])
-        sched._running_job_ids.discard("j3")
-
-        res = sched.dispatch_job_async({"id": "j3"})  # launch store, no workdir
-
-        assert res["queued"] is True
-        assert calls == {"seq": 0, "par": 1}                 # parallel pool
-        sched._running_job_ids.discard("j3")
 
 
 class TestJobSubprocessIdentityTripwire:
