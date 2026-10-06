@@ -11,6 +11,12 @@
 # /root/.config/rclone/backup.conf holds the same Drive OAuth stanza as the
 # container's rclone.conf (copied 2026-10-06); revoking that OAuth client stops both.
 #
+# Accepted trade-off (Brais, 2026-10-06): the Drive folder is reachable with the
+# token the container also holds, so a compromised container could download these
+# dumps from Drive. That token already reads the nightly Hermes zip (every profile's
+# .env), so the marginal exposure is these dumps. Encrypting with an rclone crypt
+# remote was offered and declined to keep restores key-free.
+#
 # Why dumps and not a tar of a running database: a file copy of a live Postgres
 # data directory is not guaranteed restorable. pg_dumpall / a forced Redis SAVE /
 # SQLite's online backup API are.

@@ -43,7 +43,10 @@ Two scripts, two homes:
   `/root/.config/rclone/backup.conf` (the container's Drive OAuth stanza, copied
   2026-10-06), to `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never
   touches the Hermes container or its volume, where every agent has file tools and the
-  rclone binary itself is writable. First run 2026-10-06 (192 MB). Installed as
+  rclone binary itself is writable. **Accepted trade-off:** the Drive folder is still
+  readable with the token the container holds, which already reads the nightly Hermes
+  zip; encrypting the dumps (rclone `crypt`) was declined on 2026-10-06 so a restore
+  never depends on a key. First run 2026-10-06 (192 MB). Installed as
   `/root/backup-volumes.sh` on the host; **not scheduled**, so those volumes are only as
   fresh as the last manual run. The very first run (`20261006-140910`) staged under
   `/opt/data/backups/volumes/` before this rule existed; remove that directory by hand.
