@@ -297,8 +297,8 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   and the pod never cycled.
 
   Cloud Build tags every build `sha-<commit>` as well as `latest`. Point the service at the
-  sha — the spec changes, so a rollout has to happen, and afterwards you can name exactly
-  which build is running:
+  sha — the spec changes, so a rollout should happen (but see below), and afterwards you
+  can name exactly which build is running:
 
   ```bash
   # 1. wait for the build to finish and publish, then:
@@ -314,6 +314,18 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   a string, which an older image can also contain.
 
   `-t latest` puts it back on the floating tag when you want that.
+
+  **A moved tag is not always rolled out (2026-10-06).** Zeabur saved `sha-a0b79d9d0` on
+  the service and never created a pod for it: the pod that predated the move kept serving
+  the old commit, with no failed rollout anywhere, until a manual **Restart** on the
+  service page (dash.zeabur.com → `hermes-eu` → `hermes`) rolled it out. That page keeps no
+  deployment history for this service. The signature is the new tag under *Source*, a single
+  pod in the *Running 1/1* dropdown, and `deploy.sh --status` still reporting the old commit.
+  `deploy.sh` now reads the serving pod's name and commit before the move and again at its
+  5-minute deadline, and says "never rolled it out" instead of "may still be in progress".
+  Before clicking Restart, check no cron run is in flight; if the new pod does not come up,
+  move the tag back to the old sha and Restart again. Do not leave it: the next routine pod
+  restart deploys the saved tag unattended.
 
   **Never read Cloud Build substitutions into a terminal.** `gcloud builds describe ...
   --format="value(substitutions)"` prints `_GITHUB_TOKEN` in clear. The token is stored in
