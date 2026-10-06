@@ -106,6 +106,24 @@ confirm() {
   [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
 }
 
+# Classify a rollout that timed out. Args: the pod name and build SHA read just
+# BEFORE the tag moved, then the pod name and build SHA read at the deadline.
+# Prints `not_started` when the very same pod is still serving the very same
+# commit, i.e. Zeabur saved the new tag but never created a pod for it
+# (2026-10-06: the spec said sha-a0b79d9d0 while the pod that predated the move
+# kept serving, and only a manual Restart rolled it out). Prints `in_progress`
+# otherwise, including whenever a value could not be read: "unknown" must never
+# turn into a Restart instruction.
+rollout_diagnosis() {
+  local pod_before="$1" sha_before="$2" pod_after="$3" sha_after="$4"
+  if [ -n "$pod_before" ] && [ -n "$sha_before" ] \
+      && [ "$pod_before" = "$pod_after" ] && [ "$sha_before" = "$sha_after" ]; then
+    echo not_started
+  else
+    echo in_progress
+  fi
+}
+
 cd "$(dirname "$0")/.."
 
 # ── --status: what is actually running out there? ────────────────────────────
@@ -424,6 +442,21 @@ if [ "$DO_BUILD" -eq 1 ]; then
   fi
 fi
 
+# Which pod, on which commit, is serving right now. Read again at the deadline,
+# this is what tells "Zeabur never rolled the new tag out" (same pod, same
+# commit) apart from a rollout that is merely slow. A pod's hostname is its
+# Kubernetes pod name, so a replaced pod always answers with a new one.
+read_pod() {
+  zeabur service exec --id "$SERVICE_ID" -i=false -- \
+    sh -c 'echo "$(cat /etc/hostname 2>/dev/null) $(cat /opt/hermes/.hermes_build_sha 2>/dev/null)"' \
+    2>/dev/null | tr -d '\r' | tail -1
+}
+POD_BEFORE=""
+SHA_BEFORE=""
+if [ "$DRY_RUN" -eq 0 ]; then
+  read -r POD_BEFORE SHA_BEFORE <<< "$(read_pod || true)" || true
+fi
+
 echo "→ Pointing service at $TAG"
 run zeabur service update tag --id "$SERVICE_ID" -t "$TAG" -y -i=false
 
@@ -456,9 +489,26 @@ else
     fi
   done
   if [ "$POD_READY" -eq 0 ]; then
-    echo "⚠ Pod did not report $SHA within 5 min (last seen: ${RUNNING_SHA:-none})." >&2
-    echo "  The tag was moved, so the rollout may still be in progress. Check with:" >&2
-    echo "      scripts/deploy.sh --status" >&2
+    POD_AFTER=""
+    SHA_AFTER=""
+    read -r POD_AFTER SHA_AFTER <<< "$(read_pod || true)" || true
+    if [ "$(rollout_diagnosis "$POD_BEFORE" "$SHA_BEFORE" "$POD_AFTER" "$SHA_AFTER")" = not_started ]; then
+      echo "✗ Zeabur saved $TAG but never rolled it out." >&2
+      echo "  The pod that was serving before the move ($POD_BEFORE) is still serving" >&2
+      echo "  $SHA_BEFORE, and no new pod was created (on 2026-10-06 waiting never fixed it)." >&2
+      echo "  To finish the deploy:" >&2
+      echo "    1. Check no cron run is in flight: re-run scripts/deploy.sh and answer N." >&2
+      echo "    2. Click Restart on the hermes service (dash.zeabur.com, project hermes-eu)." >&2
+      echo "    3. scripts/deploy.sh --status   until production reports $SHA." >&2
+      echo "  If the new pod is not up within ~5 min, roll back and Restart again:" >&2
+      echo "      zeabur service update tag --id $SERVICE_ID -t sha-$SHA_BEFORE -y -i=false" >&2
+      echo "  Do not leave it: the spec now names $TAG, so the next routine pod restart" >&2
+      echo "  deploys it unattended." >&2
+    else
+      echo "⚠ Pod did not report $SHA within 5 min (last seen: ${RUNNING_SHA:-none})." >&2
+      echo "  The tag was moved, so the rollout may still be in progress. Check with:" >&2
+      echo "      scripts/deploy.sh --status" >&2
+    fi
     exit 1
   fi
 fi
