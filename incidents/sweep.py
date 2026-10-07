@@ -35,6 +35,9 @@ Signals:
     ``gateway.previous_unclean_exit`` line to ``logs/gateway-exit-diag.log`` when
     a boot finds the previous life never ran an exit path (SIGKILL / OOM). Each
     one cost a ``PRAGMA quick_check`` on state.db before Telegram connected.
+  * ChatMemo's backup on the Mac going quiet — the nightly launchd job rewrites a
+    secret gist after each verified dump; no new beat in 50h is a brief. Catches the
+    job not running at all, which it cannot report itself.
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -666,6 +669,107 @@ def judge_liveness_incidents(
             "`python -m auditor.llm --tier content --repo <r> --number <n>`; "
             "exit 4 means the credential is not resolving"
         ),
+    )]
+
+
+# ChatMemo's nightly backup runs on Brais's Mac (launchd, 03:00) and, after each verified
+# dump, rewrites this secret gist file with {"job", "ok_at", "dump", "bytes"} — no memory data.
+LAPTOP_BACKUP_GIST = "55d5ce71debc612036b60e95cfbe4e80"
+LAPTOP_BACKUP_FILE = "chatmemo-backup-heartbeat.json"
+LAPTOP_BACKUP_STALE_HOURS = 50  # two missed nightly runs, plus slack for a late wake
+
+
+def _fetch_gist_file(gist_id: str, filename: str) -> Optional[str]:
+    """One file's content from a gist. Same three outcomes as ``_fetch_deploy_compare``:
+    text, None (transient: stay quiet, the next sweep is an hour away), or
+    ``DependencyAlertBlind`` (refused, or the file is gone: someone must act).
+
+    A secret gist is readable by id without a credential; one call an hour is far
+    inside the unauthenticated 60/h per egress IP.
+    """
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"https://api.github.com/gists/{gist_id}",
+        headers={"Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+            gist = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in _BLIND_STATUSES:
+            raise DependencyAlertBlind(exc.code, f"gist {gist_id}") from exc
+        return None
+    except Exception:
+        return None
+    file = (gist.get("files") or {}).get(filename)
+    if not file:
+        raise DependencyAlertBlind(404, f"gist {gist_id} has no file {filename}")
+    return file.get("content") or ""
+
+
+def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
+                            in_deployment: Optional[bool] = None,
+                            now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when ChatMemo's nightly backup on the Mac has not reported in.
+
+    The backup posts its own notification when it fails, but from May to October
+    2026 it never ran at all — its LaunchAgent pointed at a script that did not
+    exist — and a job that does not run cannot report anything. Only an outside
+    "has it succeeded lately" check catches that, the same shape as the judge's
+    liveness. The dedup id carries the last success, so one stall is one brief.
+
+    Outside the deployment (laptop, CI) there is nothing to watch from: return []
+    without touching the network, as ``deploy_drift_incidents`` does.
+    """
+    now = now or _now()
+    if heartbeat is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        try:
+            raw = _fetch_gist_file(LAPTOP_BACKUP_GIST, LAPTOP_BACKUP_FILE)
+        except DependencyAlertBlind as blind:
+            return [Incident(
+                id=f"laptop-backup-blind:{blind.status}:{now.strftime('%Y-%m-%d')}",
+                kind="laptop_backup",
+                title=f"ChatMemo backup heartbeat is BLIND (HTTP {blind.status})",
+                detail=(f"{blind.detail}\nUntil this clears, 'no backup alert' means "
+                        "'cannot tell', not 'the Mac backed up'."),
+                handoff=("check the gist id and file in incidents/sweep.py "
+                         "(LAPTOP_BACKUP_GIST) against the ChatMemo backup script"),
+            )]
+        if raw is None:
+            return []
+        try:
+            heartbeat = json.loads(raw)
+        except ValueError:
+            heartbeat = {}
+
+    ok_raw = str(heartbeat.get("ok_at") or "") if isinstance(heartbeat, dict) else ""
+    ok_at = _parse_iso(ok_raw) if ok_raw else None
+    if ok_at is not None:
+        age_h = (now - ok_at).total_seconds() / 3600.0
+        if age_h < LAPTOP_BACKUP_STALE_HOURS:
+            return []
+        last = (f"{age_h:.0f}h ago ({ok_raw}), {heartbeat.get('dump', '?')}, "
+                f"{heartbeat.get('bytes', '?')} bytes")
+    else:
+        last = "unreadable — the heartbeat has no valid ok_at"
+
+    return [Incident(
+        id=f"laptop-backup-stale:{ok_raw or 'unreadable'}",
+        kind="laptop_backup",
+        title="ChatMemo backup on the Mac has not run",
+        detail=(f"last good backup: {last}\n"
+                f"threshold: {LAPTOP_BACKUP_STALE_HOURS}h\n"
+                "The job (launchd com.chatmemo.backup, 03:00) notifies on the Mac when it "
+                "fails, but cannot when it does not run, or when the Mac is off."),
+        handoff=("on the Mac: `tail ~/backups/chatmemo/backup.err` and "
+                 "`launchctl print gui/$(id -u)/com.chatmemo.backup`; "
+                 "chatmemo docs/ADMIN_GUIDE.md section 12.2"),
     )]
 
 
@@ -1377,6 +1481,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           judge_liveness: Optional[List[Incident]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
           unclean_exits: Optional[List[Incident]] = None,
+          laptop_backup: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1399,6 +1504,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     dd = deploy_drift if deploy_drift is not None else deploy_drift_incidents(now=now)
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
     ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
+    lb = laptop_backup if laptop_backup is not None else laptop_backup_incidents(now=now)
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -1433,7 +1539,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue))
+                 + list(ue) + list(lb))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
