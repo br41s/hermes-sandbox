@@ -455,9 +455,10 @@ Pasos:
    `git commit -m "blog: [TÍTULO]\n\n- URL: /blog/NOMBRE.html\n- Keyword: [keyword]\n- Gap: [descripción]\n- [lista archivos]"`
 4. `git push origin blog/TITULO-CORTO-YYYYMMDD`
 5. Para crear el PR, usa `gh pr create --base main --head <rama> --title "…" --body "…"` (gh ya está autenticado en el contenedor). No uses curl ni incrustes tokens/claves. Usa descripcion y resto de datos acorde a estandares.
-6. Cierre: vuelve a `main` y borra la rama local (ya vive en el remoto vía el PR):
-   `git checkout main && git branch -D blog/TITULO-CORTO-YYYYMMDD`
-   Deja el checkout listo para la próxima ejecución sin ramas locales acumuladas.
+6. Cierre: vuelve a `main` con `git checkout main` y deja la rama local como está.
+   NO la borres: `git branch -D` está bloqueado en cron y `-d` se niega mientras el PR
+   siga abierto. Una rama local sobrante es inofensiva — el paso 1 usa `-B`, así que
+   repetir el nombre nunca falla — y no hace falta mencionarla en la respuesta final.
 
 ### Respuesta final (en español, aunque el artículo esté en inglés):
 OBLIGATORIO, y no es un ejemplo a imitar: tu última respuesta son EXACTAMENTE estas
