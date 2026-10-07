@@ -189,6 +189,11 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 
 ### SEO
 - Meta description de 1-2 frases naturales (campo `description` del frontmatter)
+- LÍMITES DE LONGITUD, comprobados por CI (`scripts/seo-titles.test.mjs`,
+  `scripts/seo-descriptions.test.mjs`): `title` como máximo 60 caracteres CONTANDO
+  el sufijo ` | BigLobster` (te quedan 47 para el título), y `description` como
+  máximo 160. El 2026-10-07 el PR #641 salió con 67 y 165, CI en rojo y el
+  artículo bloqueado hasta que alguien lo recortó a mano.
 - OG tags, canonical y JSON-LD Article/Breadcrumb se GENERAN del frontmatter —
   no los escribas a mano; solo rellena bien el frontmatter
 - Schema extra (p.ej. FAQPage) → campo `headExtra` del frontmatter
@@ -199,6 +204,7 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] El archivo NO contiene `<html>`, `<head>`, nav ni footer (solo frontmatter + cuerpo)
 - [ ] Frontmatter completo: title, description, date, image, badges, excerpt, readingTime, permalink
 - [ ] `npm run build` pasa y `_site/blog/<slug>.html` existe (raíz inglesa) con nav/footer correctos
+- [ ] `npm test` pasa (lo mismo que corre CI; incluye los límites de `title` y `description`)
 - [ ] Frontmatter tiene `"lang": "en"` y `"permalink": "/blog/<slug>.html"` (sin prefijo)
 - [ ] NO tocaste blog.html, sitemap.xml, feed.xml, web/*.html ni site/_includes/
 - [ ] NO añadiste entrada en site/_data/langmap.json (no hay traducción real que mapear)
@@ -408,6 +414,9 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
 6. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
    en `_site/blog.html` (el índice inglés en la raíz — la tarjeta se genera sola del
    frontmatter — NO edites blog.html ni sitemap.xml ni feed.xml)
+7. Corre `npm test`, lo mismo que CI. Si falla un test por tu artículo (p. ej. un
+   `title` o `description` demasiado largo), corrige el frontmatter y repítelo hasta
+   que pase. No abras el PR con un test en rojo: el auditor lo bloquea.
 
 ### Límites de escritura (CRÍTICO — si los ignoras, el job muere)
 
