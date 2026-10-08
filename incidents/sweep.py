@@ -38,6 +38,14 @@ Signals:
   * ChatMemo's backup on the Mac going quiet — the nightly launchd job rewrites a
     secret gist after each verified dump; no new beat in 50h is a brief. Catches the
     job not running at all, which it cannot report itself.
+  * Products down — one GET per public address in ``SITE_PROBES`` (FinView, SocialAgenda,
+    FlyWell, ChatMemo, BigLobster, ...; FinView's API every 3h); two failures 20s apart
+    are a brief, one a day.
+  * The host's nightly volume dump not landing — the newest dated folder in
+    ``hermesdrive:/VolumeBackups`` must be under 50h old and hold every Postgres dump.
+    The dump runs from host cron, which no cron store records.
+  * OpenRouter keys refused, exhausted or under 20% of their cap — every key in the main
+    and profile .env files, asked of OpenRouter's own key endpoint.
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -73,6 +81,7 @@ RUNAWAY_FRACTION = 0.95  # a run this close to the cap did not choose to stop
 UNCLEAN_EXIT_WINDOW_HOURS = 26  # older records are history, not news (the log is never pruned)
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
+_WATCHER_USER_AGENT = "Mozilla/5.0 (compatible; hermes-incident-watcher)"
 
 
 @dataclass
@@ -771,6 +780,405 @@ def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
                  "`launchctl print gui/$(id -u)/com.chatmemo.backup`; "
                  "chatmemo docs/ADMIN_GUIDE.md section 12.2"),
     )]
+
+
+# Public addresses of the products Hermes does not run itself: (name, url, where to look).
+# Nothing else watches them — Ops Sentinel is retired — and FinView's 2026-09-29 outage
+# (a billing budget disabled the GCP project) was found by opening the app. One GET each per
+# sweep, from the Frankfurt egress IP; redirects are followed, so a root that sends you to
+# /login counts as up when /login does. The bl-site-package fleet is left out: the Website
+# Maintenance agent already checks every deployment.
+SITE_PROBES = (
+    ("FinView API", "https://finview-api-cqxkgvzgrq-ew.a.run.app/api/health",
+     "Cloud Run finview-api (europe-west1); FinView docs/deployment.md"),
+    ("FinView", "https://fin-view-topaz.vercel.app/", "Vercel project fin-view"),
+    ("SocialAgenda", "https://socialagenda.biglobster.top/health", "Zeabur social-agenda"),
+    ("FlyWell", "https://flywell.biglobster.top/", "Zeabur flywell"),
+    ("ChatMemo", "https://chatmemo-one.vercel.app/", "Vercel project chatmemo"),
+    ("BigLobster", "https://biglobster.top/health", "Zeabur biglobster"),
+    ("grow-shop", "https://grow-shop.com/", "Zeabur grow-shop"),
+    ("experiencianatural", "https://experiencianatural.com/", "Zeabur experiencianatural"),
+    ("Shambhala Bangkok", "https://shambhalabangkok.vercel.app/", "Vercel project shambhalabangkok"),
+)
+# Probed only in UTC hours divisible by this; everything else every sweep. FinView's API
+# scales to zero and lives on Cloud Run's free tier (crons were halved on 2026-10-01 to fit
+# it), and most hourly probes would cold-start it: every 3 hours is Brais's call, 2026-10-08.
+SITE_EVERY_HOURS = {"FinView API": 3}
+SITE_TIMEOUT_SECONDS = 60  # FinView's API scales to zero: a cold start took ~15s on 2026-10-08
+SITE_RETRY_SECONDS = 20  # a second look before calling anything down
+
+
+def _probe_site(url: str, timeout: float = SITE_TIMEOUT_SECONDS) -> tuple:
+    """One GET: ``(status, seconds, error)``. ``status`` is None when no HTTP answer
+    came back at all (DNS, TLS, refused, timeout), and ``error`` then says which."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": _WATCHER_USER_AGENT})
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https list)
+            return resp.status, time.monotonic() - start, ""
+    except urllib.error.HTTPError as exc:
+        return exc.code, time.monotonic() - start, ""
+    except Exception as exc:
+        return None, time.monotonic() - start, f"{type(exc).__name__}: {exc}"[:200]
+
+
+def probe_verdict(status: Optional[int], seconds: float, error: str) -> Optional[str]:
+    """Why one probe counts as DOWN, or None when the site answered well enough.
+
+    ``status`` is the final HTTP status after redirects (None = no answer, ``error``
+    says why); ``seconds`` is how long the answer took, a FinView cold start included.
+    The reason string goes straight into the brief, so say what was seen.
+
+    Down is no answer within ``SITE_TIMEOUT_SECONDS`` or any 4xx/5xx. Every address in
+    ``SITE_PROBES`` answered 200 from the Frankfurt IP when it was added, so a 4xx means
+    something changed there (a broken route, a new auth wall) and is worth a look.
+    Slowness alone is not down: one threshold cannot fit both a static page and a
+    15-second Cloud Run cold start, and the timeout already bounds the wait.
+    """
+    if status is None:
+        return f"no answer after {seconds:.0f}s ({error or 'unknown error'})"
+    if status >= 400:
+        return f"HTTP {status} after {seconds:.1f}s"
+    return None
+
+
+def site_down_incidents(*, probes=SITE_PROBES, probe=None,
+                        in_deployment: Optional[bool] = None,
+                        now: Optional[datetime] = None,
+                        sleep=None) -> List[Incident]:
+    """Raise when a product's public address stops answering.
+
+    Every site is probed at once, so the sweep's other signals wait at most one
+    timeout plus the retry, however many sites hang. A failing site gets a second
+    look ``SITE_RETRY_SECONDS`` later and only two failures in a row are a brief: one
+    dropped connection is not an outage. The id carries the UTC day, so a site that
+    stays down is one brief a day, not one an hour.
+    A site listed in ``SITE_EVERY_HOURS`` is skipped outside its hours.
+
+    Outside the deployment (laptop, CI) return [] without touching the network.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    now = now or _now()
+    if probe is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        probe = _probe_site
+    if sleep is None:
+        import time
+        sleep = time.sleep
+
+    def _check(site):
+        name, url, where = site
+        reason = probe_verdict(*probe(url))
+        if reason is None:
+            return None
+        sleep(SITE_RETRY_SECONDS)
+        again = probe_verdict(*probe(url))
+        if again is None:
+            return None
+        return Incident(
+            id=f"site-down:{name}:{now.strftime('%Y-%m-%d')}",
+            kind="site_down",
+            title=f"{name} is down",
+            detail=(f"{url}\nfirst look: {reason}\n"
+                    f"second look, {SITE_RETRY_SECONDS}s later: {again}"),
+            handoff=f"check {where}; the probe list is SITE_PROBES in incidents/sweep.py",
+            error=again,
+        )
+
+    due = [s for s in probes if now.hour % SITE_EVERY_HOURS.get(s[0], 1) == 0]
+    if not due:
+        return []
+    with ThreadPoolExecutor(max_workers=len(due)) as pool:
+        return [i for i in pool.map(_check, due) if i is not None]
+
+
+# The host's nightly volume dump (ops/backup-volumes.sh via /etc/cron.d, 02:00 host time =
+# 18:00 UTC) runs outside the container, so no cron store records it. What the container
+# can see is the result: a dated folder in Drive, through the same rclone and remote the
+# Hermes nightly backup uses.
+VOLUME_BACKUP_REMOTE = "hermesdrive:/VolumeBackups"
+VOLUME_BACKUP_STALE_HOURS = 50  # two missed nights, plus slack
+# The Postgres dumps the script always writes (Chatwoot, SocialAgenda, FlyWell); smallest
+# was 32 KB on 2026-10-08, so a few bytes means the dump did not happen.
+VOLUME_BACKUP_DUMPS = (
+    "biglobster-eu-chatwoot-pgvector-pg_dumpall.sql.gz",
+    "social-agenda-postgres-pg_dumpall.sql.gz",
+    "flywell-postgres-pg_dumpall.sql.gz",
+)
+VOLUME_BACKUP_MIN_BYTES = 1024
+# rclone creates the dated folder before the last dump lands; a sweep during the upload
+# would see a partial folder, so a folder this young is not judged for completeness yet.
+VOLUME_BACKUP_SETTLE_HOURS = 1
+_STAMP_FORMAT = "%Y%m%d-%H%M%S"  # backup-volumes.sh: date -u +%Y%m%d-%H%M%S
+
+
+def _rclone_lsjson(remote_path: str) -> Optional[list]:
+    """``rclone lsjson`` of one Drive path. Same three outcomes as ``_fetch_gist_file``:
+    the listing, None (rclone's own "temporary error", exit 5, or a timeout: stay quiet),
+    or ``DependencyAlertBlind`` carrying rclone's exit code (no binary or config, an
+    expired token, a missing folder: someone must act)."""
+    import subprocess
+
+    from hermes_constants import get_hermes_home
+    home = get_hermes_home()
+    rclone = home / "scripts" / "bin" / "rclone"  # what ops/backup-full.sh uses
+    conf = home / ".config" / "rclone" / "rclone.conf"
+    if not rclone.is_file() or not conf.is_file():
+        raise DependencyAlertBlind(127, f"{rclone} or {conf} is missing")
+    try:
+        res = subprocess.run([str(rclone), "--config", str(conf), "lsjson", remote_path],
+                             capture_output=True, encoding="utf-8", errors="replace",
+                             timeout=120)
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError as exc:  # present but not executable, or the like
+        raise DependencyAlertBlind(126, f"cannot run {rclone}: {exc}") from exc
+    if res.returncode == 5:
+        return None
+    if res.returncode != 0:
+        last = (res.stderr.strip().splitlines() or ["no output"])[-1]
+        raise DependencyAlertBlind(res.returncode, f"rclone lsjson {remote_path}: {last[:300]}")
+    try:
+        listing = json.loads(res.stdout or "[]")
+    except ValueError:
+        return None
+    return listing if isinstance(listing, list) else None
+
+
+def volume_backup_incidents(*, folders: Optional[list] = None,
+                            newest_files: Optional[list] = None,
+                            in_deployment: Optional[bool] = None,
+                            now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when the host's nightly volume dump has not landed in Drive.
+
+    The cron wrapper writes OK/FAILED to /var/log/backup-volumes.log on the host and
+    nothing reads it, so a broken night was findable but never reported. This reads the
+    outcome instead: the newest dated folder must be under ``VOLUME_BACKUP_STALE_HOURS``
+    old and hold every Postgres dump. The id carries the newest folder's name, so one
+    stall is one brief.
+
+    Gap, by design: a run whose final ``rclone check`` failed after the dumps had landed
+    reads as healthy here. The host log stays the record for that.
+
+    ``folders`` / ``newest_files`` are lsjson entries, injected by tests. Outside the
+    deployment return [] without running rclone.
+    """
+    now = now or _now()
+    blind = None
+    if folders is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        try:
+            folders = _rclone_lsjson(VOLUME_BACKUP_REMOTE)
+        except DependencyAlertBlind as exc:
+            blind = exc
+        if folders is None and blind is None:
+            return []
+    if blind is not None:
+        return [Incident(
+            id=f"volume-backup-blind:{blind.status}:{now.strftime('%Y-%m-%d')}",
+            kind="volume_backup",
+            title=f"Volume backup check is BLIND (rclone exit {blind.status})",
+            detail=(f"{blind.detail}\nUntil this clears, 'no backup alert' means "
+                    "'cannot tell', not 'the host backed up'."),
+            handoff=("check the rclone remote with ops/backup-full.sh's binary and config; "
+                     "on the host: `sudo tail -n 20 /var/log/backup-volumes.log`"),
+        )]
+
+    stamps = []
+    for entry in folders:
+        if not isinstance(entry, dict) or not entry.get("IsDir"):
+            continue
+        try:
+            when = datetime.strptime(str(entry.get("Name")), _STAMP_FORMAT)
+        except ValueError:
+            continue
+        stamps.append((when.replace(tzinfo=timezone.utc), entry["Name"]))
+    handoff = ("on the host: `sudo tail -n 20 /var/log/backup-volumes.log` and "
+               "`sudo cat /etc/cron.d/backup-volumes`; ops/README.md, backup-volumes.sh")
+    if not stamps:
+        return [Incident(
+            id="volume-backup-stale:none", kind="volume_backup",
+            title="Host volume backup: no dated folder in Drive",
+            detail=f"{VOLUME_BACKUP_REMOTE} holds no YYYYMMDD-HHMMSS folder.",
+            handoff=handoff)]
+
+    newest_at, newest = max(stamps)
+    age_h = (now - newest_at).total_seconds() / 3600.0
+    if age_h >= VOLUME_BACKUP_STALE_HOURS:
+        return [Incident(
+            id=f"volume-backup-stale:{newest}", kind="volume_backup",
+            title="Host volume backup has not run",
+            detail=(f"newest folder: {VOLUME_BACKUP_REMOTE}/{newest}, {age_h:.0f}h old\n"
+                    f"threshold: {VOLUME_BACKUP_STALE_HOURS}h\n"
+                    "The host cron logs OK/FAILED on the host only; nothing else reports it."),
+            handoff=handoff)]
+    if age_h < VOLUME_BACKUP_SETTLE_HOURS:
+        return []
+
+    if newest_files is None:
+        try:
+            newest_files = _rclone_lsjson(f"{VOLUME_BACKUP_REMOTE}/{newest}")
+        except DependencyAlertBlind:
+            newest_files = None  # the folder was listed a moment ago: treat as transient
+        if newest_files is None:
+            return []
+    sizes = {e.get("Name"): e.get("Size") for e in newest_files if isinstance(e, dict)}
+    missing = [n for n in VOLUME_BACKUP_DUMPS
+               if not isinstance(sizes.get(n), (int, float))
+               or sizes[n] < VOLUME_BACKUP_MIN_BYTES]
+    if not missing:
+        return []
+    return [Incident(
+        id=f"volume-backup-incomplete:{newest}", kind="volume_backup",
+        title="Host volume backup is incomplete",
+        detail=(f"{VOLUME_BACKUP_REMOTE}/{newest} is missing or has an empty: "
+                f"{', '.join(missing)}"),
+        handoff=handoff)]
+
+
+# Every OpenRouter key Hermes holds, checked against its own spending cap. Content jobs
+# share one key with a weekly limit (it 402'd the auditor for a day on 2026-09-01), and a
+# BYOK rental's key can sit near its cap unnoticed: bl-shoroban's was at $4.69 of $5 on
+# 2026-09-22. A refused key (rotated in main but not in a profile) is caught here too.
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_LOW_FRACTION = 0.2  # brief when less than this share of the cap is left
+_OPENROUTER_KEY_VARS = ("OPENROUTER_API_KEY", "HERMES_AUDITOR_OPENROUTER_API_KEY")
+
+
+def _openrouter_keys(home: Optional[Path] = None) -> dict:
+    """{key: [who holds it]} from the main .env and every real profile's .env.
+
+    Read from the files because a no-agent script never sees ``OPENROUTER_API_KEY``
+    (``local_env_policy`` blocklists provider credentials). Keys are deduplicated so the
+    shared one is asked about once; they never leave this process except to OpenRouter.
+    """
+    from agent.secret_scope import load_env_file
+    from hermes_cli.fork_ext.boot_reconcile import real_profiles
+    from hermes_constants import get_hermes_home
+
+    home = home or get_hermes_home()
+    keys: dict = {}
+    sources = [("main", home / ".env")] + [(p.name, p / ".env") for p in real_profiles(home)]
+    for who, path in sources:
+        env = load_env_file(path)
+        for var in _OPENROUTER_KEY_VARS:
+            value = (env.get(var) or "").strip()
+            if value:
+                label = who if var == "OPENROUTER_API_KEY" else f"{who} (auditor key)"
+                keys.setdefault(value, []).append(label)
+    return keys
+
+
+def _fetch_openrouter_key(key: str) -> Optional[dict]:
+    """The key's own record (``limit``, ``limit_remaining``, ``limit_reset``, ...), None on
+    a transient failure, ``DependencyAlertBlind`` when OpenRouter refuses the key."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(OPENROUTER_KEY_URL,
+                                 headers={"Authorization": f"Bearer {key}",
+                                          "User-Agent": _WATCHER_USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (openrouter.ai)
+            body = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise DependencyAlertBlind(exc.code, "OpenRouter refused the key") from exc
+        return None
+    except Exception:
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+def _dollars(value) -> float:
+    """A usage figure for a brief: a number, or 0 when OpenRouter sent anything else."""
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _limit_period(reset: Optional[str], now: datetime) -> str:
+    """The window a cap belongs to, so a low key is one brief per window (per cap when
+    it never resets)."""
+    if reset == "daily":
+        return now.strftime("%Y-%m-%d")
+    if reset == "weekly":
+        year, week, _ = now.isocalendar()
+        return f"{year}-W{week:02d}"
+    if reset == "monthly":
+        return now.strftime("%Y-%m")
+    return "cap"
+
+
+def openrouter_budget_incidents(*, records: Optional[List[tuple]] = None,
+                                in_deployment: Optional[bool] = None,
+                                now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when an OpenRouter key Hermes holds is refused, exhausted or nearly so.
+
+    ``records`` is ``[(holders, data_or_status)]``: the key's ``data`` dict, or the HTTP
+    status OpenRouter refused it with. Tests inject it; in the deployment it is built
+    from the .env files. A key with no cap (``limit`` null) is never low. Neither the key
+    nor its OpenRouter label appears in a brief — only who holds it.
+    """
+    now = now or _now()
+    if records is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        records = []
+        for key, holders in _openrouter_keys().items():
+            try:
+                data = _fetch_openrouter_key(key)
+            except DependencyAlertBlind as exc:
+                data = exc.status
+            if data is not None:
+                records.append((holders, data))
+
+    out: List[Incident] = []
+    for holders, data in records:
+        who = ", ".join(holders[:3]) + (f" and {len(holders) - 3} more" if len(holders) > 3 else "")
+        ref = "+".join(sorted(holders))
+        handoff = ("compare the profile .env with main's (rotations do not reach profile "
+                   ".env files — hermes-sandbox CLAUDE.md); key settings at "
+                   "openrouter.ai/settings/keys")
+        if isinstance(data, int):
+            out.append(Incident(
+                id=f"openrouter-refused:{ref}:{now.strftime('%Y-%m-%d')}",
+                kind="openrouter_budget",
+                title=f"OpenRouter refuses the key held by {who}",
+                detail=(f"HTTP {data} from {OPENROUTER_KEY_URL}. Every model call on this key "
+                        "fails until it is replaced."),
+                handoff=handoff))
+            continue
+        limit = data.get("limit")
+        remaining = data.get("limit_remaining")
+        if not isinstance(limit, (int, float)) or limit <= 0 or not isinstance(remaining, (int, float)):
+            continue
+        if remaining > limit * OPENROUTER_LOW_FRACTION:
+            continue
+        state = "exhausted" if remaining <= 0 else "low"
+        reset = data.get("limit_reset")
+        out.append(Incident(
+            id=f"openrouter-{state}:{ref}:{limit}:{_limit_period(reset, now)}",
+            kind="openrouter_budget",
+            title=f"OpenRouter key held by {who} is {state}",
+            detail=(f"${max(remaining, 0):.2f} left of a ${limit:.2f} cap "
+                    f"({'resets ' + reset if reset else 'never resets'}); "
+                    f"used today ${_dollars(data.get('usage_daily')):.2f}, "
+                    f"this week ${_dollars(data.get('usage_weekly')):.2f}"),
+            handoff=handoff))
+    return out
 
 
 def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
@@ -1482,6 +1890,9 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
           unclean_exits: Optional[List[Incident]] = None,
           laptop_backup: Optional[List[Incident]] = None,
+          site_down: Optional[List[Incident]] = None,
+          volume_backup: Optional[List[Incident]] = None,
+          openrouter_budget: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1505,6 +1916,10 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
     ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
     lb = laptop_backup if laptop_backup is not None else laptop_backup_incidents(now=now)
+    sd = site_down if site_down is not None else site_down_incidents(now=now)
+    vb = volume_backup if volume_backup is not None else volume_backup_incidents(now=now)
+    ob = (openrouter_budget if openrouter_budget is not None
+          else openrouter_budget_incidents(now=now))
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -1539,7 +1954,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue) + list(lb))
+                 + list(ue) + list(lb) + list(sd) + list(vb) + list(ob))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
