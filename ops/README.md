@@ -51,12 +51,16 @@ Two scripts, two homes:
   readable with the token the container holds, which already reads the nightly Hermes
   zip; encrypting the dumps (rclone `crypt`) was declined on 2026-10-06 so a restore
   never depends on a key. Installed as `/root/backup-volumes.sh` on the host.
-  **Scheduled nightly at 02:00 UTC** since 2026-10-06 by `/etc/cron.d/backup-volumes`
+  **Scheduled nightly at 02:00 host time** (the host clock is UTC+8, so 18:00 UTC, which is
+  what the log's start stamps show) since 2026-10-06 by `/etc/cron.d/backup-volumes`
   through `backup-volumes-cron.sh` (this directory, installed as
   `/root/backup-volumes-cron.sh`), which appends one `OK` / `FAILED exit=N` line per run
   to `/var/log/backup-volumes.log` (logrotate weekly, 8 kept). Check it with
-  `ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'`. **Nothing pages
-  on failure**: the incident watcher does not see host cron. **Retention** (Brais,
+  `ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'`. **The incident
+  watcher checks the outcome** (`volume_backup_incidents` in `incidents/sweep.py`): the
+  newest dated folder in Drive must be under 50h old and hold the three Postgres dumps,
+  or the Incidents topic gets a brief. A night whose final `rclone check` failed after
+  the dumps had landed still shows only in this log. **Retention** (Brais,
   2026-10-06): 14 days of stamps on the host, 30 in Drive, pruned by the script itself
   only after that night's upload verified, matching stamp-named directories by their
   UTC date. About 0.7 GB on the host and 1.5 GB in Drive at steady state.

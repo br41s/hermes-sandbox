@@ -38,6 +38,9 @@ Signals:
   * ChatMemo's backup on the Mac going quiet — the nightly launchd job rewrites a
     secret gist after each verified dump; no new beat in 50h is a brief. Catches the
     job not running at all, which it cannot report itself.
+  * The host's nightly volume dump not landing — the newest dated folder in
+    ``hermesdrive:/VolumeBackups`` must be under 50h old and hold every Postgres dump.
+    The dump runs from host cron, which no cron store records.
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -773,6 +776,153 @@ def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
     )]
 
 
+# The host's nightly volume dump (ops/backup-volumes.sh via /etc/cron.d, 02:00 host time =
+# 18:00 UTC) runs outside the container, so no cron store records it. What the container
+# can see is the result: a dated folder in Drive, through the same rclone and remote the
+# Hermes nightly backup uses.
+VOLUME_BACKUP_REMOTE = "hermesdrive:/VolumeBackups"
+VOLUME_BACKUP_STALE_HOURS = 50  # two missed nights, plus slack
+# The Postgres dumps the script always writes (Chatwoot, SocialAgenda, FlyWell); smallest
+# was 32 KB on 2026-10-08, so a few bytes means the dump did not happen.
+VOLUME_BACKUP_DUMPS = (
+    "biglobster-eu-chatwoot-pgvector-pg_dumpall.sql.gz",
+    "social-agenda-postgres-pg_dumpall.sql.gz",
+    "flywell-postgres-pg_dumpall.sql.gz",
+)
+VOLUME_BACKUP_MIN_BYTES = 1024
+# rclone creates the dated folder before the last dump lands; a sweep during the upload
+# would see a partial folder, so a folder this young is not judged for completeness yet.
+VOLUME_BACKUP_SETTLE_HOURS = 1
+_STAMP_FORMAT = "%Y%m%d-%H%M%S"  # backup-volumes.sh: date -u +%Y%m%d-%H%M%S
+
+
+def _rclone_lsjson(remote_path: str) -> Optional[list]:
+    """``rclone lsjson`` of one Drive path. Same three outcomes as ``_fetch_gist_file``:
+    the listing, None (rclone's own "temporary error", exit 5, or a timeout: stay quiet),
+    or ``DependencyAlertBlind`` carrying rclone's exit code (no binary or config, an
+    expired token, a missing folder: someone must act)."""
+    import subprocess
+
+    from hermes_constants import get_hermes_home
+    home = get_hermes_home()
+    rclone = home / "scripts" / "bin" / "rclone"  # what ops/backup-full.sh uses
+    conf = home / ".config" / "rclone" / "rclone.conf"
+    if not rclone.is_file() or not conf.is_file():
+        raise DependencyAlertBlind(127, f"{rclone} or {conf} is missing")
+    try:
+        res = subprocess.run([str(rclone), "--config", str(conf), "lsjson", remote_path],
+                             capture_output=True, encoding="utf-8", errors="replace",
+                             timeout=120)
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError as exc:  # present but not executable, or the like
+        raise DependencyAlertBlind(126, f"cannot run {rclone}: {exc}") from exc
+    if res.returncode == 5:
+        return None
+    if res.returncode != 0:
+        last = (res.stderr.strip().splitlines() or ["no output"])[-1]
+        raise DependencyAlertBlind(res.returncode, f"rclone lsjson {remote_path}: {last[:300]}")
+    try:
+        listing = json.loads(res.stdout or "[]")
+    except ValueError:
+        return None
+    return listing if isinstance(listing, list) else None
+
+
+def volume_backup_incidents(*, folders: Optional[list] = None,
+                            newest_files: Optional[list] = None,
+                            in_deployment: Optional[bool] = None,
+                            now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when the host's nightly volume dump has not landed in Drive.
+
+    The cron wrapper writes OK/FAILED to /var/log/backup-volumes.log on the host and
+    nothing reads it, so a broken night was findable but never reported. This reads the
+    outcome instead: the newest dated folder must be under ``VOLUME_BACKUP_STALE_HOURS``
+    old and hold every Postgres dump. The id carries the newest folder's name, so one
+    stall is one brief.
+
+    Gap, by design: a run whose final ``rclone check`` failed after the dumps had landed
+    reads as healthy here. The host log stays the record for that.
+
+    ``folders`` / ``newest_files`` are lsjson entries, injected by tests. Outside the
+    deployment return [] without running rclone.
+    """
+    now = now or _now()
+    blind = None
+    if folders is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        try:
+            folders = _rclone_lsjson(VOLUME_BACKUP_REMOTE)
+        except DependencyAlertBlind as exc:
+            blind = exc
+        if folders is None and blind is None:
+            return []
+    if blind is not None:
+        return [Incident(
+            id=f"volume-backup-blind:{blind.status}:{now.strftime('%Y-%m-%d')}",
+            kind="volume_backup",
+            title=f"Volume backup check is BLIND (rclone exit {blind.status})",
+            detail=(f"{blind.detail}\nUntil this clears, 'no backup alert' means "
+                    "'cannot tell', not 'the host backed up'."),
+            handoff=("check the rclone remote with ops/backup-full.sh's binary and config; "
+                     "on the host: `sudo tail -n 20 /var/log/backup-volumes.log`"),
+        )]
+
+    stamps = []
+    for entry in folders:
+        if not isinstance(entry, dict) or not entry.get("IsDir"):
+            continue
+        try:
+            when = datetime.strptime(str(entry.get("Name")), _STAMP_FORMAT)
+        except ValueError:
+            continue
+        stamps.append((when.replace(tzinfo=timezone.utc), entry["Name"]))
+    handoff = ("on the host: `sudo tail -n 20 /var/log/backup-volumes.log` and "
+               "`sudo cat /etc/cron.d/backup-volumes`; ops/README.md, backup-volumes.sh")
+    if not stamps:
+        return [Incident(
+            id="volume-backup-stale:none", kind="volume_backup",
+            title="Host volume backup: no dated folder in Drive",
+            detail=f"{VOLUME_BACKUP_REMOTE} holds no YYYYMMDD-HHMMSS folder.",
+            handoff=handoff)]
+
+    newest_at, newest = max(stamps)
+    age_h = (now - newest_at).total_seconds() / 3600.0
+    if age_h >= VOLUME_BACKUP_STALE_HOURS:
+        return [Incident(
+            id=f"volume-backup-stale:{newest}", kind="volume_backup",
+            title="Host volume backup has not run",
+            detail=(f"newest folder: {VOLUME_BACKUP_REMOTE}/{newest}, {age_h:.0f}h old\n"
+                    f"threshold: {VOLUME_BACKUP_STALE_HOURS}h\n"
+                    "The host cron logs OK/FAILED on the host only; nothing else reports it."),
+            handoff=handoff)]
+    if age_h < VOLUME_BACKUP_SETTLE_HOURS:
+        return []
+
+    if newest_files is None:
+        try:
+            newest_files = _rclone_lsjson(f"{VOLUME_BACKUP_REMOTE}/{newest}")
+        except DependencyAlertBlind:
+            newest_files = None  # the folder was listed a moment ago: treat as transient
+        if newest_files is None:
+            return []
+    sizes = {e.get("Name"): e.get("Size") for e in newest_files if isinstance(e, dict)}
+    missing = [n for n in VOLUME_BACKUP_DUMPS
+               if not isinstance(sizes.get(n), (int, float))
+               or sizes[n] < VOLUME_BACKUP_MIN_BYTES]
+    if not missing:
+        return []
+    return [Incident(
+        id=f"volume-backup-incomplete:{newest}", kind="volume_backup",
+        title="Host volume backup is incomplete",
+        detail=(f"{VOLUME_BACKUP_REMOTE}/{newest} is missing or has an empty: "
+                f"{', '.join(missing)}"),
+        handoff=handoff)]
+
+
 def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     """Read the site-checkout drift signal and surface each one.
 
@@ -1482,6 +1632,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
           unclean_exits: Optional[List[Incident]] = None,
           laptop_backup: Optional[List[Incident]] = None,
+          volume_backup: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1505,6 +1656,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
     ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
     lb = laptop_backup if laptop_backup is not None else laptop_backup_incidents(now=now)
+    vb = volume_backup if volume_backup is not None else volume_backup_incidents(now=now)
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -1539,7 +1691,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue) + list(lb))
+                 + list(ue) + list(lb) + list(vb))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
