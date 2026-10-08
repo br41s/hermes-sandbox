@@ -158,6 +158,40 @@ def test_product_sheets_prompt_forbids_shrinking_a_sheet():
     assert "120 y 250 palabras" not in text
 
 
+# --- Product Guide Agent: guides on the client's own catalogue ---------------
+
+
+def test_product_guides_need_no_old_site_url():
+    # It was first written to send traffic back to a distributor-hosted store;
+    # it now works only from the client's own catalogue, so ordering it must
+    # never depend on a previous website.
+    assert "product-articles" not in AGENTS_REQUIRING_OLD_SITE
+    text = (REPO_ROOT / AGENT_SOURCES["product-articles"][0]).read_text(encoding="utf-8")
+    assert "OLD_SITE_URL" not in text
+
+
+def test_product_guides_can_reach_the_tool_their_prompt_publishes_with():
+    _source, display_name, schedule_kind, toolsets = AGENT_SOURCES["product-articles"]
+    assert display_name == "Product Guide Agent"
+    assert schedule_kind == "daily"
+    # None meant the cron default, which has no bl_site_publish: the agent
+    # could never have published a single guide.
+    assert toolsets and "bl_site_publish" in toolsets
+
+
+def test_product_guides_prompt_keeps_its_safety_rules():
+    text = (REPO_ROOT / AGENT_SOURCES["product-articles"][0]).read_text(encoding="utf-8")
+    # The CTA goes to the client's own product sheet, as an absolute URL.
+    assert "{BL_SITE_URL}/productos/{slug}" in text
+    # Prices and stock move several times a day; a static article must not
+    # freeze them.
+    assert "Precios y stock: no los escribas" in text
+    # The site parses exactly this heading for FAQPage rich results.
+    assert "## Preguntas frecuentes" in text
+    # Posts go live with no review, so the run is capped.
+    assert "UNA guía por ejecución" in text
+
+
 # --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
 
 

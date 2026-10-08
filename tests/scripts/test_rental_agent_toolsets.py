@@ -38,17 +38,21 @@ FORK_TOOLS = {"bl_site_product", "product_enrich", "bl_site_publish"}
 # fixed, because their run logs say exactly which tools they use and a list can
 # be built that adds the missing one without taking anything away.
 #
-# These five have never run. Their prompts name the tools they intend, but a
+# These four have never run. Their prompts name the tools they intend, but a
 # prompt is what the agent was told to do, not what it turned out to need — the
 # three that did run all reached for terminal and file, which none of their
 # prompts mention. Guessing a list here would swap a known gap for an unknown
 # one, so they keep the cron default until a first run says what to declare.
 #
+# product-articles left this set without a first run, on purpose: it was
+# rewritten as the Product Guide Agent, whose workflow is gap-hunter's (public
+# catalogue reads, a live post, an AI cover), so it takes gap-hunter's list —
+# which IS built from run logs — rather than a guess.
+#
 # Shrinking this set is the point — do not add to it without a note here.
 AGENTS_WITHOUT_THEIR_TOOLS = {
     "seo",
     "onboarding-content",
-    "product-articles",
     "site-setup",
     "shorts",
 }

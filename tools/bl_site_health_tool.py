@@ -137,7 +137,7 @@ JSONLD_SELF_URL_TYPES = ("BlogPosting", "Article")
 
 # --- Old-site redirect sweep -----------------------------------------------
 # Only runs when the profile carries OLD_SITE_URL (same optional flag the
-# onboarding-content and product-articles agents use). Bounded: the old URL
+# onboarding-content agent uses). Bounded: the old URL
 # list comes from the old sitemap, or failing that one level of homepage links.
 OLD_SITE_PATH_CAP = 40
 # Paths worth sweeping. Assets are excluded — a missing old .jpg is not a lost
@@ -999,8 +999,8 @@ def _run_form_check(
 def _get_old_site_url() -> Optional[str]:
     """The client's previous site, if they gave one at provisioning.
 
-    Same per-profile env var the onboarding-content and product-articles agents
-    read (``scripts/provision_bl_client.py`` writes it). Absent for a client
+    Same per-profile env var the onboarding-content agent reads
+    (``scripts/provision_bl_client.py`` writes it). Absent for a client
     with no previous site, and the sweep then does not run at all.
     """
     from hermes_cli.config import get_env_value
