@@ -48,14 +48,14 @@ it if the client didn't order image generation; agents then publish text-only
 `--image-model`, else the client's panel choice (GET /api/site/config
 `image_model`), else the FAL default.
 
-`--old-site-url` is required when `onboarding-content` and/or
-`product-articles` is ordered. `onboarding-content` is a one-shot agent that
-scans the old site once, shortly after provisioning, and populates the new
-site's blank pages from it. `product-articles` is daily (like gap-hunter/seo)
-but scoped to the old site's product catalog: it crawls it for product pages,
-skips ones it's already covered, and writes up to 3 new product blog posts
-per run (draft, with a CTA button back to the original product page) until
-the catalog is exhausted. Omit both flags if the client has no existing site.
+`--old-site-url` is required when `onboarding-content` is ordered: a one-shot
+agent that scans the old site once, shortly after provisioning, and populates
+the new site's blank pages from it. Omit it if the client has no existing site.
+
+`product-articles` (*Product Guide Agent*) is daily, like gap-hunter, and only
+makes sense for a client with a catalogue: each run publishes one buying/usage
+guide built around real products from the client's own shop, live, with the CTA
+button on the featured product's sheet. It needs no extra flags.
 
 `shorts` is the *Social Shorts* subscription product: a daily job that turns one
 not-yet-processed blog post into 3-5 vertical MP4s for Instagram Reels and
@@ -146,11 +146,18 @@ AGENT_SOURCES = {
         "once",
         None,
     ),
+    # Publishes ONE buying/usage guide per run ("cómo elegir…", "X vs Y"),
+    # built around real products from the client's own catalogue, with the CTA
+    # button on the featured product's sheet. Only useful to a client with a
+    # catalogue: with none, every run goes [SILENT]. Reads the catalogue through
+    # the public /api/products endpoints, so it gets the same list as
+    # gap-hunter — it has to reach `bl_site_publish`, which it never could
+    # while this entry was None.
     "product-articles": (
         "product-articles/bl-site-package-product-articles.prompt",
-        "Product Article Agent",
+        "Product Guide Agent",
         "daily",
-        None,
+        ["bl_site_publish", "image_gen", "web", "file", "terminal", "skills", "todo"],
     ),
     # Writes the product sheets the distributor never wrote. Only useful to a
     # client whose catalogue comes from a distributor feed — it works from the
@@ -258,7 +265,7 @@ AGENT_SOURCES = {
 }
 
 # Agents that need --old-site-url (the client's existing site to migrate/read from).
-AGENTS_REQUIRING_OLD_SITE = {"onboarding-content", "product-articles"}
+AGENTS_REQUIRING_OLD_SITE = {"onboarding-content"}
 
 # Agents that need --pexels-key (the client's OWN Pexels key, BYOK like FAL_KEY).
 # Hard requirement rather than a graceful degradation: without it every scene
@@ -793,7 +800,7 @@ def main() -> int:
     parser.add_argument(
         "--old-site-url",
         default=None,
-        help="Client's existing site to migrate/read content from — required if --agents includes onboarding-content and/or product-articles",
+        help="Client's existing site to migrate/read content from — required if --agents includes onboarding-content",
     )
     args = parser.parse_args()
 

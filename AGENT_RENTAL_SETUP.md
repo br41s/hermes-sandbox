@@ -12,8 +12,8 @@ There are now **two triggers**, both landing on the same
    flow. The CEO has already confirmed the client signed up (per
    `bl-site-package`'s own `ONBOARDING-INTERNO.md`/`FORMULARIO-CLIENTE.md`) and
    has their site URL, panel password and their own model API key in hand. If
-   the client ordered `onboarding-content` or `product-articles`, the CEO also
-   needs their existing/old site URL.
+   the client ordered `onboarding-content`, the CEO also needs their
+   existing/old site URL.
 2. **Payment-confirmed webhook (fully automatic).** For the *Site Launch*
    checkout product. BigLobster's Stripe side POSTs a confirmed order to
    `POST /api/bl/rental/provision` on this engine and provisioning runs with
@@ -45,7 +45,7 @@ redirect work its own prompt actually documents.
 | Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (goes live immediately) | daily |
 | SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `update_blog_post` (link repairs only), `bl_site_redirect` (verified matches auto-publish) | daily |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
-| Product Article Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (goes live immediately, with CTA) | daily |
+| Product Guide Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (one guide per run, goes live immediately, CTA to the featured product's own sheet) | daily |
 | Infographic Engineer | `infographic/infographic-engineer.prompt` (shared with biglobster) | `update_blog_post` (inserts one inline SVG, or one HTML table) | daily |
 | Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
@@ -85,17 +85,21 @@ existing pages already filled by the client via `/setup` are left untouched.
 Order it only when the client actually has an old site to migrate content
 from; there's nothing for it to do otherwise.
 
-Product Article Agent is for clients whose real storefront is still a
-distributor-hosted catalog (`--old-site-url`, same flag as onboarding-content)
-that they can't sell from directly (e.g. Shoroban's Grupo Solutex catalog
-pages) — it crawls that catalog for individual product pages, skips ones it's
-already written about (`bl_site_publish(action="list_posts")`, which sees the
-client's own drafts too, not just published posts), and writes up to 3 new product
-articles per run (description, specs, usage tutorial, comparison with real
-catalog products, FAQ, CTA button back to the original product page) until
-the catalog is covered, then goes quiet (`[SILENT]`). Needs
-`bl-site-package`'s blog schema to support `cta_url`/`cta_label` and markdown
-content — ship that migration first if a client's site predates it.
+Product Guide Agent (key `product-articles`) is for clients who sell from their
+own catalogue. Each run publishes ONE buying or usage guide ("cómo elegir…",
+"X vs Y", "cómo usar…") built around real products from that catalogue, read
+through the public `GET /api/products/facets` and `GET /api/products?q=&limit=`
+endpoints and the products' own `/productos/{slug}` pages. The CTA button goes
+to the featured product's sheet on the client's own site, and that `cta_url` is
+also the dedup key: a product that already has its guide never headlines
+another one. It complements the Product Sheet Writer rather than overlapping
+it. Sheets answer "what is this product"; guides answer "which one do I need",
+a query a product page cannot rank for. It writes no prices or stock levels,
+because the sync moves both several times a day. With no catalogue it goes
+quiet (`[SILENT]`) every run, so only order it for a client that has one.
+Until 2026-10 this key was a crawler of a distributor-hosted *old* store with
+the CTA pointing back there. It never ran: its toolsets were `None`, so it
+could not reach `bl_site_publish`.
 
 SEO/GEO On-Site also finds and fixes same-site 404s, independent of the
 5-page text review above and independent of whether the client also has
@@ -203,7 +207,7 @@ prose-is-immutable rule. See "Social Shorts" below.
 > works only because that agent reads the API, never the rendered page.
 
 Web research is **bundled, not BYOK — free ddgs, never the client's own key.**
-Content Gap Hunter, Onboarding Content, Product Article Agent, and Site Launch
+Content Gap Hunter, Onboarding Content, Product Guide Agent, and Site Launch
 all call `web_search`. BigLobster's own profiles use Exa (paid, via
 `EXA_API_KEY`); every rented tenant is pinned to the free `ddgs` backend
 instead (`web.search_backend: ddgs` in `_write_config()`, re-asserted every
@@ -323,9 +327,8 @@ booleans from `GET /api/site/status`, which separates "presumably sent" from
 
 Four things the SKU would be better with. (2) shipped as bl-site-package PR #32
 and the health tool consumes it; (3) is half-closed by the same endpoint. The
-rest stay blocked on a bl-site-package change — same treatment as the
-`cta_url`/`cta_label` migration the Product Article Agent needs: ship them
-there first, then the agent can use them.
+rest stay blocked on a bl-site-package change: ship them there first, then the
+agent can use them.
 
 1. **`POST /api/site/notify`** (authenticated), body
    `{"subject": "...", "body_markdown": "..."}` → sends through the instance's
@@ -577,8 +580,9 @@ section of the report reads "no aplica"; nothing else changes.
 schema in `scripts/bl_site_setup.py` — and applies the fixed site template
 deterministically before any job is scheduled. It cannot be combined with
 `onboarding-content`. `--old-site-url` is required if
-`onboarding-content` and/or `product-articles` is ordered — omit both if the
-client has no existing site. `--model` sets the profile's base/orchestrator
+`onboarding-content` is ordered — omit it if the client has no existing site.
+`product-articles` (the Product Guide Agent) needs no extra flags, but only
+does anything for a client with a catalogue. `--model` sets the profile's base/orchestrator
 model (defaults to `deepseek/deepseek-v4-flash`, the cheap orchestrator, billed
 to the client's own key); override it only if a client wants a different model.
 `--fal-key` is the client's own FAL key (BYOK) for image generation — blog
@@ -752,7 +756,7 @@ await fetch(url, { method: "POST", body: raw, headers: {
 | `panel_password` | no | Omit and one is generated and **returned** — email it to the buyer. |
 | `fal_key` | no | The buyer's own FAL key for image generation. Omit → text-only content. With `shorts`, it also buys the optional AI opening hook. |
 | `pexels_key` | with `shorts` | The buyer's own Pexels key (BYOK, free at pexels.com/api). Stock B-roll bills to their 200/hour + 20k/month, never BigLobster's. A `shorts` order without one is rejected as `invalid_order`. |
-| `old_site_url` | required for `onboarding-content` / `product-articles` | The buyer's existing site. |
+| `old_site_url` | required for `onboarding-content` | The buyer's existing site. |
 | `image_model` | no | Pins the FAL image model. |
 
 ### Responses
