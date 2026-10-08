@@ -41,6 +41,8 @@ Signals:
   * The host's nightly volume dump not landing — the newest dated folder in
     ``hermesdrive:/VolumeBackups`` must be under 50h old and hold every Postgres dump.
     The dump runs from host cron, which no cron store records.
+  * OpenRouter keys refused, exhausted or under 20% of their cap — every key in the main
+    and profile .env files, asked of OpenRouter's own key endpoint.
 
 Output behaviour (matches the configured policy):
   * new incidents found            -> print brief(s)   (delivered)
@@ -76,6 +78,7 @@ RUNAWAY_FRACTION = 0.95  # a run this close to the cap did not choose to stop
 UNCLEAN_EXIT_WINDOW_HOURS = 26  # older records are history, not news (the log is never pruned)
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
+_WATCHER_USER_AGENT = "Mozilla/5.0 (compatible; hermes-incident-watcher)"
 
 
 @dataclass
@@ -923,6 +926,140 @@ def volume_backup_incidents(*, folders: Optional[list] = None,
         handoff=handoff)]
 
 
+# Every OpenRouter key Hermes holds, checked against its own spending cap. Content jobs
+# share one key with a weekly limit (it 402'd the auditor for a day on 2026-09-01), and a
+# BYOK rental's key can sit near its cap unnoticed: bl-shoroban's was at $4.69 of $5 on
+# 2026-09-22. A refused key (rotated in main but not in a profile) is caught here too.
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_LOW_FRACTION = 0.2  # brief when less than this share of the cap is left
+_OPENROUTER_KEY_VARS = ("OPENROUTER_API_KEY", "HERMES_AUDITOR_OPENROUTER_API_KEY")
+
+
+def _openrouter_keys(home: Optional[Path] = None) -> dict:
+    """{key: [who holds it]} from the main .env and every real profile's .env.
+
+    Read from the files because a no-agent script never sees ``OPENROUTER_API_KEY``
+    (``local_env_policy`` blocklists provider credentials). Keys are deduplicated so the
+    shared one is asked about once; they never leave this process except to OpenRouter.
+    """
+    from agent.secret_scope import load_env_file
+    from hermes_cli.fork_ext.boot_reconcile import real_profiles
+    from hermes_constants import get_hermes_home
+
+    home = home or get_hermes_home()
+    keys: dict = {}
+    sources = [("main", home / ".env")] + [(p.name, p / ".env") for p in real_profiles(home)]
+    for who, path in sources:
+        env = load_env_file(path)
+        for var in _OPENROUTER_KEY_VARS:
+            value = (env.get(var) or "").strip()
+            if value:
+                label = who if var == "OPENROUTER_API_KEY" else f"{who} (auditor key)"
+                keys.setdefault(value, []).append(label)
+    return keys
+
+
+def _fetch_openrouter_key(key: str) -> Optional[dict]:
+    """The key's own record (``limit``, ``limit_remaining``, ``limit_reset``, ...), None on
+    a transient failure, ``DependencyAlertBlind`` when OpenRouter refuses the key."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(OPENROUTER_KEY_URL,
+                                 headers={"Authorization": f"Bearer {key}",
+                                          "User-Agent": _WATCHER_USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (openrouter.ai)
+            body = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise DependencyAlertBlind(exc.code, "OpenRouter refused the key") from exc
+        return None
+    except Exception:
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    return data if isinstance(data, dict) else None
+
+
+def _dollars(value) -> float:
+    """A usage figure for a brief: a number, or 0 when OpenRouter sent anything else."""
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _limit_period(reset: Optional[str], now: datetime) -> str:
+    """The window a cap belongs to, so a low key is one brief per window (per cap when
+    it never resets)."""
+    if reset == "daily":
+        return now.strftime("%Y-%m-%d")
+    if reset == "weekly":
+        year, week, _ = now.isocalendar()
+        return f"{year}-W{week:02d}"
+    if reset == "monthly":
+        return now.strftime("%Y-%m")
+    return "cap"
+
+
+def openrouter_budget_incidents(*, records: Optional[List[tuple]] = None,
+                                in_deployment: Optional[bool] = None,
+                                now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when an OpenRouter key Hermes holds is refused, exhausted or nearly so.
+
+    ``records`` is ``[(holders, data_or_status)]``: the key's ``data`` dict, or the HTTP
+    status OpenRouter refused it with. Tests inject it; in the deployment it is built
+    from the .env files. A key with no cap (``limit`` null) is never low. Neither the key
+    nor its OpenRouter label appears in a brief — only who holds it.
+    """
+    now = now or _now()
+    if records is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        records = []
+        for key, holders in _openrouter_keys().items():
+            try:
+                data = _fetch_openrouter_key(key)
+            except DependencyAlertBlind as exc:
+                data = exc.status
+            if data is not None:
+                records.append((holders, data))
+
+    out: List[Incident] = []
+    for holders, data in records:
+        who = ", ".join(holders[:3]) + (f" and {len(holders) - 3} more" if len(holders) > 3 else "")
+        ref = "+".join(sorted(holders))
+        handoff = ("compare the profile .env with main's (rotations do not reach profile "
+                   ".env files — hermes-sandbox CLAUDE.md); key settings at "
+                   "openrouter.ai/settings/keys")
+        if isinstance(data, int):
+            out.append(Incident(
+                id=f"openrouter-refused:{ref}:{now.strftime('%Y-%m-%d')}",
+                kind="openrouter_budget",
+                title=f"OpenRouter refuses the key held by {who}",
+                detail=(f"HTTP {data} from {OPENROUTER_KEY_URL}. Every model call on this key "
+                        "fails until it is replaced."),
+                handoff=handoff))
+            continue
+        limit = data.get("limit")
+        remaining = data.get("limit_remaining")
+        if not isinstance(limit, (int, float)) or limit <= 0 or not isinstance(remaining, (int, float)):
+            continue
+        if remaining > limit * OPENROUTER_LOW_FRACTION:
+            continue
+        state = "exhausted" if remaining <= 0 else "low"
+        reset = data.get("limit_reset")
+        out.append(Incident(
+            id=f"openrouter-{state}:{ref}:{limit}:{_limit_period(reset, now)}",
+            kind="openrouter_budget",
+            title=f"OpenRouter key held by {who} is {state}",
+            detail=(f"${max(remaining, 0):.2f} left of a ${limit:.2f} cap "
+                    f"({'resets ' + reset if reset else 'never resets'}); "
+                    f"used today ${_dollars(data.get('usage_daily')):.2f}, "
+                    f"this week ${_dollars(data.get('usage_weekly')):.2f}"),
+            handoff=handoff))
+    return out
+
+
 def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     """Read the site-checkout drift signal and surface each one.
 
@@ -1633,6 +1770,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           unclean_exits: Optional[List[Incident]] = None,
           laptop_backup: Optional[List[Incident]] = None,
           volume_backup: Optional[List[Incident]] = None,
+          openrouter_budget: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1657,6 +1795,8 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
     lb = laptop_backup if laptop_backup is not None else laptop_backup_incidents(now=now)
     vb = volume_backup if volume_backup is not None else volume_backup_incidents(now=now)
+    ob = (openrouter_budget if openrouter_budget is not None
+          else openrouter_budget_incidents(now=now))
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -1691,7 +1831,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue) + list(lb) + list(vb))
+                 + list(ue) + list(lb) + list(vb) + list(ob))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
