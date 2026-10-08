@@ -38,6 +38,9 @@ Signals:
   * ChatMemo's backup on the Mac going quiet — the nightly launchd job rewrites a
     secret gist after each verified dump; no new beat in 50h is a brief. Catches the
     job not running at all, which it cannot report itself.
+  * Products down — one GET per public address in ``SITE_PROBES`` (FinView, SocialAgenda,
+    FlyWell, ChatMemo, BigLobster, ...; FinView's API every 3h); two failures 20s apart
+    are a brief, one a day.
   * The host's nightly volume dump not landing — the newest dated folder in
     ``hermesdrive:/VolumeBackups`` must be under 50h old and hold every Postgres dump.
     The dump runs from host cron, which no cron store records.
@@ -777,6 +780,124 @@ def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
                  "`launchctl print gui/$(id -u)/com.chatmemo.backup`; "
                  "chatmemo docs/ADMIN_GUIDE.md section 12.2"),
     )]
+
+
+# Public addresses of the products Hermes does not run itself: (name, url, where to look).
+# Nothing else watches them — Ops Sentinel is retired — and FinView's 2026-09-29 outage
+# (a billing budget disabled the GCP project) was found by opening the app. One GET each per
+# sweep, from the Frankfurt egress IP; redirects are followed, so a root that sends you to
+# /login counts as up when /login does. The bl-site-package fleet is left out: the Website
+# Maintenance agent already checks every deployment.
+SITE_PROBES = (
+    ("FinView API", "https://finview-api-cqxkgvzgrq-ew.a.run.app/api/health",
+     "Cloud Run finview-api (europe-west1); FinView docs/deployment.md"),
+    ("FinView", "https://fin-view-topaz.vercel.app/", "Vercel project fin-view"),
+    ("SocialAgenda", "https://socialagenda.biglobster.top/health", "Zeabur social-agenda"),
+    ("FlyWell", "https://flywell.biglobster.top/", "Zeabur flywell"),
+    ("ChatMemo", "https://chatmemo-one.vercel.app/", "Vercel project chatmemo"),
+    ("BigLobster", "https://biglobster.top/health", "Zeabur biglobster"),
+    ("grow-shop", "https://grow-shop.com/", "Zeabur grow-shop"),
+    ("experiencianatural", "https://experiencianatural.com/", "Zeabur experiencianatural"),
+    ("Shambhala Bangkok", "https://shambhalabangkok.vercel.app/", "Vercel project shambhalabangkok"),
+)
+# Probed only in UTC hours divisible by this; everything else every sweep. FinView's API
+# scales to zero and lives on Cloud Run's free tier (crons were halved on 2026-10-01 to fit
+# it), and most hourly probes would cold-start it: every 3 hours is Brais's call, 2026-10-08.
+SITE_EVERY_HOURS = {"FinView API": 3}
+SITE_TIMEOUT_SECONDS = 60  # FinView's API scales to zero: a cold start took ~15s on 2026-10-08
+SITE_RETRY_SECONDS = 20  # a second look before calling anything down
+
+
+def _probe_site(url: str, timeout: float = SITE_TIMEOUT_SECONDS) -> tuple:
+    """One GET: ``(status, seconds, error)``. ``status`` is None when no HTTP answer
+    came back at all (DNS, TLS, refused, timeout), and ``error`` then says which."""
+    import time
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": _WATCHER_USER_AGENT})
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https list)
+            return resp.status, time.monotonic() - start, ""
+    except urllib.error.HTTPError as exc:
+        return exc.code, time.monotonic() - start, ""
+    except Exception as exc:
+        return None, time.monotonic() - start, f"{type(exc).__name__}: {exc}"[:200]
+
+
+def probe_verdict(status: Optional[int], seconds: float, error: str) -> Optional[str]:
+    """Why one probe counts as DOWN, or None when the site answered well enough.
+
+    ``status`` is the final HTTP status after redirects (None = no answer, ``error``
+    says why); ``seconds`` is how long the answer took, a FinView cold start included.
+    The reason string goes straight into the brief, so say what was seen.
+
+    Down is no answer within ``SITE_TIMEOUT_SECONDS`` or any 4xx/5xx. Every address in
+    ``SITE_PROBES`` answered 200 from the Frankfurt IP when it was added, so a 4xx means
+    something changed there (a broken route, a new auth wall) and is worth a look.
+    Slowness alone is not down: one threshold cannot fit both a static page and a
+    15-second Cloud Run cold start, and the timeout already bounds the wait.
+    """
+    if status is None:
+        return f"no answer after {seconds:.0f}s ({error or 'unknown error'})"
+    if status >= 400:
+        return f"HTTP {status} after {seconds:.1f}s"
+    return None
+
+
+def site_down_incidents(*, probes=SITE_PROBES, probe=None,
+                        in_deployment: Optional[bool] = None,
+                        now: Optional[datetime] = None,
+                        sleep=None) -> List[Incident]:
+    """Raise when a product's public address stops answering.
+
+    Every site is probed at once, so the sweep's other signals wait at most one
+    timeout plus the retry, however many sites hang. A failing site gets a second
+    look ``SITE_RETRY_SECONDS`` later and only two failures in a row are a brief: one
+    dropped connection is not an outage. The id carries the UTC day, so a site that
+    stays down is one brief a day, not one an hour.
+    A site listed in ``SITE_EVERY_HOURS`` is skipped outside its hours.
+
+    Outside the deployment (laptop, CI) return [] without touching the network.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    now = now or _now()
+    if probe is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        probe = _probe_site
+    if sleep is None:
+        import time
+        sleep = time.sleep
+
+    def _check(site):
+        name, url, where = site
+        reason = probe_verdict(*probe(url))
+        if reason is None:
+            return None
+        sleep(SITE_RETRY_SECONDS)
+        again = probe_verdict(*probe(url))
+        if again is None:
+            return None
+        return Incident(
+            id=f"site-down:{name}:{now.strftime('%Y-%m-%d')}",
+            kind="site_down",
+            title=f"{name} is down",
+            detail=(f"{url}\nfirst look: {reason}\n"
+                    f"second look, {SITE_RETRY_SECONDS}s later: {again}"),
+            handoff=f"check {where}; the probe list is SITE_PROBES in incidents/sweep.py",
+            error=again,
+        )
+
+    due = [s for s in probes if now.hour % SITE_EVERY_HOURS.get(s[0], 1) == 0]
+    if not due:
+        return []
+    with ThreadPoolExecutor(max_workers=len(due)) as pool:
+        return [i for i in pool.map(_check, due) if i is not None]
 
 
 # The host's nightly volume dump (ops/backup-volumes.sh via /etc/cron.d, 02:00 host time =
@@ -1769,6 +1890,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           dependency_alerts: Optional[List[Incident]] = None,
           unclean_exits: Optional[List[Incident]] = None,
           laptop_backup: Optional[List[Incident]] = None,
+          site_down: Optional[List[Incident]] = None,
           volume_backup: Optional[List[Incident]] = None,
           openrouter_budget: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
@@ -1794,6 +1916,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     jl = judge_liveness if judge_liveness is not None else judge_liveness_incidents(now=now)
     ue = unclean_exits if unclean_exits is not None else unclean_exit_incidents(now=now)
     lb = laptop_backup if laptop_backup is not None else laptop_backup_incidents(now=now)
+    sd = site_down if site_down is not None else site_down_incidents(now=now)
     vb = volume_backup if volume_backup is not None else volume_backup_incidents(now=now)
     ob = (openrouter_budget if openrouter_budget is not None
           else openrouter_budget_incidents(now=now))
@@ -1831,7 +1954,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue) + list(lb) + list(vb) + list(ob))
+                 + list(ue) + list(lb) + list(sd) + list(vb) + list(ob))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
