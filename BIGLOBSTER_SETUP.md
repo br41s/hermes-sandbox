@@ -128,17 +128,20 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 `deepseek/deepseek-v4.1-flash` via OpenRouter — the standing default (CEO, 2026-09-20), superseding `openai/gpt-5.6-luna`.
 
-> **The table below is the TARGET, not a verified reading.** The last verification against the live Zeabur service was 2026-09-05, before this change. Zeabur is the source of truth, so these values are only true once the vars are set there — confirm with `hermes doctor` after a full container restart.
+> **The table below is the TARGET, not a verified reading.** The last verification against the live Zeabur service was 2026-10-09 (model roles above). Zeabur is the source of truth, so these values are only true once the vars are set there — confirm with `hermes doctor` after a full container restart.
 
 Set via env vars in Zeabur — the `03-biglobster-config` boot hook reconciles `config.yaml` on the persistent volume at **every boot**. `docker/config.yaml` in the repo is only the *first-boot seed*: an existing volume keeps its own file, so the env var is the source of truth, not the repo.
 
 | Role | Env var | Value |
 |---|---|---|
 | Main | `HERMES_DEFAULT_MODEL` | `deepseek/deepseek-v4.1-flash` |
-| Fallback | `HERMES_FALLBACK_MODEL` | `tencent/hy3` |
-| Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4-flash-0731` |
-| Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `deepseek/deepseek-v4.1-flash` |
-| Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `deepseek/deepseek-v4.1-flash` |
+| Fallback | `HERMES_FALLBACK_MODEL` | `z-ai/glm-5.3-flash` |
+| Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4.1-flash` (live value; the older `-0731` slug in this table was never what Zeabur held) |
+| Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `xiaomi/mimo-v2.6-flash` |
+| Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `xiaomi/mimo-v2.6-flash` |
+| Vision (auxiliary) | `AUXILIARY_VISION_MODEL` | `deepseek/deepseek-v4.1-flash` |
+
+**Role changes of 2026-10-09 (verified against the live Zeabur service that day):** the reviewers moved to a different model family than the main model on purpose, so the judge does not share the author's blind spots. A reviewer model must allow `reasoning: {enabled: false}` (`HERMES_AUDITOR_JUDGE_REASONING_EFFORT=off`): `z-ai/glm-5.3-flash` has mandatory reasoning, so it is a valid **fallback** and an invalid judge. The orchestrator stays on the deepseek default (its job pin in `jobs.json` also names it). `meta/muse-image` (`OPENROUTER_IMAGE_MODEL`) has no zero-retention provider; it only works while the OpenRouter account is not forcing ZDR.
 
 Code defaults, used only when a var above is unset, are `deepseek/deepseek-v4.1-flash` for **both** tiers — the standing Hermes default. The content default was `openrouter/owl-alpha` until 2026-09-20; that model no longer exists on OpenRouter, so the default was a guaranteed 404 — harmless only because the env var is set. Keep both defaults **live**: a dead default turns a missing env var into a broken gate instead of a degraded one.
 
