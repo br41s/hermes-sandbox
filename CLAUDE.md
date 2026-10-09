@@ -353,10 +353,17 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 - **Container restarts every 1–2h are benign** — Zeabur deployment rollouts re-serialise the
   env array, producing a new pod-template-hash and a k8s rolling restart. Not a crash, not
   OOM; there are no liveness probes. Self-heals in ~3 min. Do not chase it.
-- **Rotated secrets do not reach profile `.env` files.** Main `.env` is the source of truth
-  for provider keys, but each profile carries its own. A rotation that updates only the main
-  file leaves profiles on revoked keys — surfacing as OpenRouter 401 "User not found", not
-  as a config error.
+- **Rotating the OpenRouter key = Zeabur env + a full container restart.** Set
+  `OPENROUTER_API_KEY` (and `HERMES_AUDITOR_OPENROUTER_API_KEY` for the auditor) on the
+  `hermes` service, then `zeabur service restart --id <id>`. `zeabur variable update` alone
+  changes nothing at runtime, and the panel's "Restart Gateway" does not re-run cont-init.
+  On every boot `boot_reconcile.py` writes the env value into the main `.env` and every
+  non-tenant profile `.env` (`INJECT`) and pins the auditor profile to its dedicated key.
+  Rented tenants (profiles with `BL_SITE_URL`, e.g. `bl-shoroban`) keep their own client
+  key on purpose. A profile still on a revoked key (OpenRouter 401 "User not found") means
+  the boot hook did not run: look for `Synced env vars into` and `Auditor profile pinned to
+  dedicated OpenRouter key` in the boot log. To check without printing a key, compare a hash
+  of each profile's `OPENROUTER_API_KEY=` line with the main one (verified 2026-10-09).
 - **`group_topics` belongs at top-level `telegram.extra`**, not `display.telegram.extra`,
   which is dead config the adapter never loads.
 - **Zeabur `service delete` half-completes** — UI hides it, backend record and PVC linger,
@@ -468,7 +475,7 @@ read a `HERMES_`-prefixed variable of its own, or go unauthenticated against a p
 repo. Falling back to `GITHUB_TOKEN` looks right in tests and is dead in production:
 it left the deploy-drift and dependency-alert signals blind until 2026-09-26.
 
-Keys live in Zeabur env vars and propagate to profile `.env` files. **Never print a variable
+Keys live in Zeabur env vars and propagate to profile `.env` files at boot (see "Rotating the OpenRouter key"). **Never print a variable
 table or `env[N].value` into a session transcript** — path-based redaction does not catch
 those, and keys have leaked here that way before.
 
