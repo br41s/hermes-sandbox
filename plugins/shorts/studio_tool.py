@@ -25,13 +25,14 @@ from __future__ import annotations
 import calendar
 import json
 import logging
-import os
 import re
 import shutil
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from plugins.shorts._env import env
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -101,11 +102,11 @@ def _fail(error: str, **payload: Any) -> str:
 
 def publish_mode() -> str:
     """``live`` publishes; anything else is shadow mode (render and report only)."""
-    return "live" if (os.environ.get("SHORTS_PUBLISH_MODE") or "").strip().lower() == "live" else "shadow"
+    return "live" if env("SHORTS_PUBLISH_MODE").lower() == "live" else "shadow"
 
 
 def _feeds() -> Dict[str, str]:
-    raw = (os.environ.get("SHORTS_FEEDS") or "").strip()
+    raw = env("SHORTS_FEEDS")
     if raw:
         try:
             parsed = json.loads(raw)

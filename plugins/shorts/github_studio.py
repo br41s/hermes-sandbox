@@ -19,11 +19,12 @@ import base64
 import gzip
 import io
 import json
-import os
 import time
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from plugins.shorts._env import env
 
 API = "https://api.github.com"
 UPLOADS = "https://uploads.github.com"
@@ -38,15 +39,15 @@ class StudioError(RuntimeError):
 
 
 def token() -> str:
-    return (os.environ.get("SHORTS_STUDIO_GITHUB_TOKEN") or "").strip()
+    return env("SHORTS_STUDIO_GITHUB_TOKEN")
 
 
 def repo() -> str:
-    return (os.environ.get("SHORTS_STUDIO_REPO") or "br41s/hermes-sandbox").strip()
+    return env("SHORTS_STUDIO_REPO", "br41s/hermes-sandbox")
 
 
 def ref() -> str:
-    return (os.environ.get("SHORTS_STUDIO_REF") or "main").strip()
+    return env("SHORTS_STUDIO_REF", "main")
 
 
 def configured() -> bool:
