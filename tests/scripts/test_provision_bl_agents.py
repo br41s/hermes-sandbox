@@ -192,6 +192,23 @@ def test_product_guides_prompt_keeps_its_safety_rules():
     assert "UNA guía por ejecución" in text
 
 
+def test_product_guides_prompt_asks_for_the_sections_good_guides_have():
+    text = (REPO_ROOT / AGENT_SOURCES["product-articles"][0]).read_text(encoding="utf-8")
+    # The quick verdict readers and AI answers lift, and per-product pros/cons
+    # drawn from the product page.
+    assert "**Si tienes prisa:**" in text
+    assert "**Lo mejor:**" in text and "**A tener en cuenta:**" in text
+    # Honest method: the guide compares specifications, nobody tested anything,
+    # and it must never pretend otherwise.
+    assert "«Cómo hemos elegido»" in text
+    assert "Nunca digas ni insinúes que se han probado" in text
+    # Sources are cited, and a competing shop is never one of them.
+    assert "## Fuentes" in text
+    assert "Nunca otra tienda" in text
+    # Length band set by the CEO (2026-10-09).
+    assert "1500–2500 palabras" in text
+
+
 # --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
 
 

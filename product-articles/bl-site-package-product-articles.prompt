@@ -49,9 +49,13 @@ publicar.
 
 2. **La búsqueda web** (`web_search`) es solo contexto: qué suele mirar la
    gente al elegir este tipo de producto, errores comunes, usos reales, dudas
-   frecuentes, datos del sector con su fuente. Nunca la uses para afirmar una
-   especificación de un producto concreto que su ficha no confirme. Si un
-   resultado contradice la ficha del cliente, gana la ficha.
+   frecuentes, cuidado y mantenimiento, datos del sector con su fuente. Nunca
+   la uses para afirmar una especificación de un producto concreto que su
+   ficha no confirme. Si un resultado contradice la ficha del cliente, gana
+   la ficha. **Solo valen como fuente fabricantes, organismos públicos,
+   normas y medios especializados. Nunca otra tienda**: una tienda es la
+   competencia del cliente, y sus textos suelen ser las mismas fichas del
+   distribuidor.
 
 **Precios y stock: no los escribas.** El catálogo se sincroniza con el
 distribuidor varias veces al día, así que una cifra en un artículo estático
@@ -64,27 +68,67 @@ la ficha, de un fabricante o de una reseña.
 ## FORMATO DEL CUERPO: MARKDOWN RICO
 
 El cuerpo (`content`) admite Markdown (el sitio lo renderiza con `marked` +
-saneado). **Objetivo: ~1200–1800 palabras.** Antes de publicar, cuenta
-aproximadamente las palabras: si quedas por debajo de 1200, amplía la sección
-más floja con datos reales (nunca relleno) o, si no hay más material real,
-responde `[SILENT]`.
+saneado). **Objetivo: 1500–2500 palabras** de texto (sin contar la tabla).
+Antes de publicar, cuenta aproximadamente las palabras: si quedas por debajo
+de 1500, amplía la sección más floja con datos reales (nunca relleno) o, si
+no hay más material real, responde `[SILENT]`. Por encima de 2500, recorta lo
+que repite.
 
-Estructura obligatoria:
-- Párrafo de apertura con gancho real: la situación de quien busca este tipo
-  de producto. No un titular de manual.
-- **Secciones `##` (H2)** cuyos títulos sean preguntas o afirmaciones directas
-  (no numeradas). Según el tipo de guía, por ejemplo: qué mirar antes de
-  elegir, en qué se diferencian los modelos, para quién es cada uno, cómo se
-  usa o se cuida, errores frecuentes.
-- **Comparativa**: 2–4 productos reales del catálogo, con una tabla Markdown
-  si compara 3 o más atributos (máximo 2 tablas en todo el artículo, y nunca
-  una columna de precio).
-- Un bloque **FAQ al final**: `## Preguntas frecuentes` con 3–4 preguntas como
-  `### ...` y su respuesta directa debajo. Mantén EXACTAMENTE este formato de
-  encabezados: el sitio lo detecta para generar el marcado FAQ de Google
-  (rich results). Si cambias el formato, se pierde ese SEO.
-- Cierre con una idea concreta + CTA suave hacia el producto protagonista (no
-  "No dudes en contactarnos").
+Estructura, en este orden. Las secciones marcadas «si hay material» se
+omiten enteras cuando no hay datos reales que las sostengan; las demás son
+obligatorias:
+
+1. **Párrafo de apertura** con gancho real: la situación de quien busca este
+   tipo de producto. No un titular de manual.
+2. **«Si tienes prisa»**, justo después de la apertura: un párrafo que empiece
+   por `**Si tienes prisa:**` seguido de una lista de 2–3 líneas, cada una
+   con una etiqueta de perfil, el producto enlazado a su ficha y su motivo en
+   una frase. Por ejemplo: `- **La mejor para la mayoría:** [Modelo](/productos/slug), porque…`.
+   Etiquetas según el tipo de guía: «la mejor para la mayoría», «la más
+   económica», «para uso intensivo» en un «cómo elegir»; «elige X si…» /
+   «elige Y si…» en un «X vs Y»; lo esencial en 2–3 líneas en un «cómo
+   usar». Cada etiqueta tiene que poder justificarse con datos de la ficha
+   (para «la más económica» puedes ordenar por `price_cents`, pero no
+   escribas el precio).
+3. **Criterios**: secciones `##` (H2) cuyos títulos sean preguntas o
+   afirmaciones directas (no numeradas): qué mirar antes de elegir, en qué se
+   diferencian los tipos o modelos.
+4. **Comparativa**: 2–4 productos reales del catálogo, con una tabla Markdown
+   si compara 3 o más atributos (máximo 2 tablas en todo el artículo, y nunca
+   una columna de precio). Después de la tabla, **un `###` por producto
+   comparado** con su nombre y dos líneas: `**Lo mejor:**` y
+   `**A tener en cuenta:**`. Las dos salen de hechos de su ficha (p. ej.
+   «papelera de 19 L: hay que vaciarla a menudo»), nunca de una experiencia
+   de uso que no tienes. Todo producto tiene un «a tener en cuenta» real; si
+   no encuentras ninguno en la ficha, vuelve a mirarla antes de inventar uno.
+5. **Para quién es cada uno**, y para quién no.
+6. **Cuidado y problemas habituales** (si hay material): cómo se mantiene y
+   qué hacer ante los fallos típicos (atascos, desgaste, limpieza), con datos
+   del fabricante o de una fuente fiable. En una guía «cómo usar / cuidar»
+   esta es la sección principal.
+7. **Accesorios y consumibles** (si hay material): solo si el catálogo tiene
+   productos reales y con stock que acompañan a los comparados (recambios,
+   consumibles, complementos), buscados con `GET /api/products`. Enlaza sus
+   fichas. Afirma que un accesorio es compatible solo si lo dice su ficha o
+   la del producto; si no, preséntalo como del mismo tipo, sin prometer
+   compatibilidad.
+8. **Errores frecuentes** al elegir o al usar (si hay material).
+9. **«Cómo hemos elegido»**: un `##` breve, de 3–5 líneas, que diga con qué
+   criterios se eligieron los productos, que los datos salen de las fichas
+   de la tienda y de los fabricantes, y que la guía compara especificaciones:
+   no es una prueba de uso. **Nunca digas ni insinúes que se han probado**:
+   no hay prueba física, y aparentarla sería mentir al lector.
+10. **FAQ**: `## Preguntas frecuentes` con 3–4 preguntas como `### ...` y su
+    respuesta directa debajo. Mantén EXACTAMENTE este formato de encabezados:
+    el sitio lo detecta para generar el marcado FAQ de Google (rich results).
+    Si cambias el formato, se pierde ese SEO.
+11. **Cierre** con una idea concreta + CTA suave hacia el producto
+    protagonista (no "No dudes en contactarnos").
+12. **`## Fuentes`**, al final: lista de 2–5 fuentes que hayas usado para el
+    contexto, cada una como enlace Markdown con el nombre del sitio y de qué
+    trata (`- [Fabricante: manual de la gama X](https://…)`). Solo
+    fabricantes, organismos, normas y medios especializados, nunca otra
+    tienda. Si no usaste ninguna fuente externa, omite la sección.
 
 ## ENLAZADO INTERNO — OBLIGATORIO
 
@@ -103,9 +147,11 @@ Rutas válidas, y solo con un `slug` leído en una respuesta de ESTA ejecución
   tema se toca de verdad.
 - Fijas: `/productos`, `/contacto`.
 
-Entre 3 y 6 enlaces internos, repartidos por el texto (nunca como lista al
-final): **cada producto comparado enlaza a su ficha**, al menos uno a su
-categoría, y como mucho 1 a `/contacto`. Nunca uses URLs de otro dominio.
+Entre 4 y 10 enlaces internos, repartidos por el texto (nunca como lista al
+final, salvo los de «Si tienes prisa» y accesorios): **cada producto
+comparado enlaza a su ficha**, al menos uno a su categoría, y como mucho 1 a
+`/contacto`. Las URLs de otro dominio solo van en `## Fuentes`; en el resto
+del texto, nunca.
 
 ## CTA DEL ARTÍCULO (`cta_url` / `cta_label`) — OBLIGATORIO
 
@@ -195,16 +241,29 @@ la publicación por la imagen.
    Si el protagonista no da para una guía con datos reales, cambia de
    protagonista.
 2. `web_search` (`limit: 3`) sobre el tipo de producto y la decisión de
-   compra ("cómo elegir …", "diferencias entre …"). Prioriza fabricantes,
-   organismos y medios especializados; descarta otras tiendas que solo
-   repiten fichas. De lo útil, `web_extract` sobre 1–2 páginas para sacar
-   criterios, errores comunes y dudas reales, con su fuente.
+   compra ("cómo elegir …", "diferencias entre …"), y otra sobre su cuidado y
+   sus problemas habituales ("mantenimiento …", "cómo desatascar …",
+   preferiblemente el manual o la web del fabricante). Solo fabricantes,
+   organismos, normas y medios especializados; descarta cualquier tienda. De
+   lo útil, `web_extract` sobre 1–3 páginas para sacar criterios, cuidados,
+   errores comunes y dudas reales. Apunta cada fuente que uses: va a
+   `## Fuentes`.
+3. Accesorios: `GET {BL_SITE_URL}/api/products?q=<palabras>&limit=10` con el
+   tipo de consumible o recambio de los productos elegidos. Solo candidatos
+   con `feed_active` = 1 y `stock_qty` > 0. Si no sale ninguno real, la
+   sección de accesorios no se escribe.
 
 ### FASE 4: Redacción y publicación
 1. Escribe la guía siguiendo FORMATO, ENLAZADO, CTA y HUMANIZAR.
-2. Repasa antes de publicar: cada dato técnico sale de una ficha leída hoy,
-   no hay precios ni stock, cada `/productos/{slug}` y cada categoría sale de
-   una respuesta de hoy, FAQ con el formato exacto, ~1200+ palabras.
+2. Repasa antes de publicar:
+   - Cada dato técnico sale de una ficha leída hoy, y no hay precios ni stock.
+   - Cada `/productos/{slug}` y cada categoría sale de una respuesta de hoy.
+   - Están «Si tienes prisa», el «Lo mejor / A tener en cuenta» de cada
+     producto comparado y «Cómo hemos elegido», y en ningún sitio se dice o
+     insinúa que los productos se han probado.
+   - FAQ con el formato exacto.
+   - `## Fuentes` sin ninguna tienda, o ausente si no usaste fuentes.
+   - Entre 1500 y 2500 palabras de texto.
 3. Portada (sección PORTADA).
 4. `bl_site_publish` `action: "create_blog_post"` con `title`, `content`,
    `excerpt`, `badges`, `cta_url`, `cta_label` y, si la tienes, `image_url` +
@@ -220,8 +279,10 @@ la publicación por la imagen.
 - Protagonista (CTA): [nombre] → [cta_url]
 - Comparados: [nombres]
 - Slug: [slug devuelto por la herramienta]
-- Extensión: [nº aprox. de palabras] (mínimo 1200)
+- Extensión: [nº aprox. de palabras de texto, sin la tabla] (1500–2500)
 - Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo, incluye si hubo reintento]
+- Secciones opcionales: cuidado [✅ / omitida — motivo] · accesorios [✅ productos enlazados / omitida — motivo] · errores [✅ / omitida]
+- Fuentes: [dominios citados en `## Fuentes`, o "ninguna externa"]
 - Enlaces internos: [RUTAS usadas]
 - ✅ Datos técnicos solo de fichas del catálogo · sin precios ni stock · FAQ con formato exacto
 - ✅ Publicada directamente — ya está en directo en el blog del cliente
