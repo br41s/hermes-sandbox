@@ -575,3 +575,57 @@ def test_publish_story_without_a_story_cut_is_a_clear_error(sample, submit_env, 
     out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid,
                                               "target": "instagram_story"}))
     assert not out["success"] and "Story cut" in out["error"]
+
+
+# ---------------------------------------------------------------------------
+# Multiplex: one process serves every profile, so os.environ is the default
+# profile's env for everyone. The studio's keys must come from the run's scope.
+# ---------------------------------------------------------------------------
+
+_BL_KEYS = {
+    "SHORTS_STUDIO_GITHUB_TOKEN": "bl-token",
+    "YOUTUBE_CLIENT_ID": "a", "YOUTUBE_CLIENT_SECRET": "b", "YOUTUBE_REFRESH_TOKEN": "c",
+    "META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t", "META_IG_USER_ID": "2",
+    "SHORTS_PUBLISH_MODE": "live",
+}
+
+
+@pytest.fixture
+def multiplex(monkeypatch):
+    import agent.secret_scope as ss
+
+    for k, v in _BL_KEYS.items():
+        monkeypatch.setenv(k, v)  # BigLobster's keys in the shared process env
+    ss.set_multiplex_active(True)
+    yield ss
+    ss.set_multiplex_active(False)
+
+
+def test_a_rented_tenant_never_sees_the_studio_or_biglobster_keys(multiplex):
+    from plugins.shorts.social import meta, youtube
+
+    token = multiplex.set_secret_scope({"OPENROUTER_API_KEY": "tenant", "BL_SITE_URL": "https://c.example"})
+    try:
+        assert st.check_studio_available() is False
+        assert github_studio.token() == ""
+        assert youtube.configured() is False and meta.configured(instagram=True) is False
+        assert st.publish_mode() == "shadow"
+    finally:
+        multiplex.reset_secret_scope(token)
+
+
+def test_the_default_profile_still_resolves_its_own_keys(multiplex):
+    from plugins.shorts.social import youtube
+
+    token = multiplex.set_secret_scope(dict(_BL_KEYS))
+    try:
+        assert st.check_studio_available() is True
+        assert github_studio.token() == "bl-token" and youtube.configured() is True
+        assert st.publish_mode() == "live"
+    finally:
+        multiplex.reset_secret_scope(token)
+
+
+def test_no_scope_under_multiplex_reads_as_unconfigured_not_as_the_process_env(multiplex):
+    assert st.check_studio_available() is False
+    assert st.publish_mode() == "shadow"

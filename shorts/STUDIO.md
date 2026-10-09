@@ -101,8 +101,11 @@ into chat, a commit, or a printed env table (CLAUDE.md, *Secrets*).
 Optional: `SHORTS_STUDIO_REPO` / `SHORTS_STUDIO_REF` (defaults
 `br41s/hermes-sandbox` / `main`), `SHORTS_FEEDS` (JSON `{"en": url, "es": url}`).
 
-Actions cost: ~7 min per short, 2 shorts a day, so
-~450 min/month, inside the free private-repo allowance.
+Actions cost: ~7 min per short, 2 shorts a day, ~450 min/month. `br41s/hermes-sandbox`
+is a **public** repo, and GitHub-hosted runners are free and unmetered for public repos,
+so these minutes never draw on the account's Actions allowance or spending limit. The
+flip side: run logs and the `short-*` artifacts are readable by anyone signed in to
+GitHub for their 7-day retention. Packages and renders carry only published blog content.
 
 ### 3.2 YouTube
 
@@ -184,7 +187,7 @@ decision, not a code one.
 |---|---|
 | Script writing | LLM tokens for two short agent runs a day |
 | Voice (Edge TTS), footage (Pexels/Mixkit), music (Mixkit) | €0 |
-| Render (GitHub Actions) | €0 inside the free minutes |
+| Render (GitHub Actions) | €0 — public repo, unmetered runners |
 | YouTube Data API, Meta Graph API | €0 |
 | X | €0 (posted by hand) |
 | Remotion | €0 while BigLobster has ≤3 employees. Above that, or when selling renders to clients at scale, the Company licence ("Automators", $0.01/render, $100/month minimum) applies |

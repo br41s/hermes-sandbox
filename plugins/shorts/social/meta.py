@@ -22,10 +22,11 @@ if processing outlasts the budget, the container id is returned as
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from plugins.shorts._env import env
 
 TIMEOUT = 300.0
 PROCESS_BUDGET = 240.0
@@ -39,7 +40,7 @@ class MetaError(RuntimeError):
 
 
 def _v() -> str:
-    return (os.environ.get("META_GRAPH_VERSION") or "v23.0").strip()
+    return env("META_GRAPH_VERSION", "v23.0")
 
 
 def graph() -> str:
@@ -48,11 +49,11 @@ def graph() -> str:
 
 def configured(instagram: bool = False) -> bool:
     keys = REQUIRED_ENV + (("META_IG_USER_ID",) if instagram else ())
-    return all((os.environ.get(k) or "").strip() for k in keys)
+    return all(env(k) for k in keys)
 
 
 def _token() -> str:
-    return os.environ["META_PAGE_ACCESS_TOKEN"].strip()
+    return env("META_PAGE_ACCESS_TOKEN")
 
 
 def _client():
@@ -90,7 +91,7 @@ def _rupload(client, url: str, video: Path) -> Dict[str, Any]:
 def facebook_reel(video: Path, description: str) -> Dict[str, Any]:
     if not configured():
         raise MetaError("Meta is not configured (META_PAGE_ID / META_PAGE_ACCESS_TOKEN)")
-    page = os.environ["META_PAGE_ID"].strip()
+    page = env("META_PAGE_ID")
     with _client() as client:
         start = _json(client.post(f"{graph()}/{page}/video_reels",
                                   data={"upload_phase": "start", "access_token": _token()}),
@@ -115,7 +116,7 @@ def _cover_url(client, cover: Path) -> Optional[str]:
     Instagram's ``cover_url`` must be public. An unpublished Page photo gives
     one without any hosting of our own and never appears on the Page.
     """
-    page = os.environ["META_PAGE_ID"].strip()
+    page = env("META_PAGE_ID")
     with open(cover, "rb") as handle:
         resp = client.post(f"{graph()}/{page}/photos",
                            data={"published": "false", "access_token": _token()},
@@ -144,7 +145,7 @@ def _wait_container(client, container_id: str, budget: float) -> str:
 
 
 def _publish_container(client, container_id: str) -> Dict[str, Any]:
-    ig = os.environ["META_IG_USER_ID"].strip()
+    ig = env("META_IG_USER_ID")
     media = _json(client.post(f"{graph()}/{ig}/media_publish",
                               data={"creation_id": container_id, "access_token": _token()}),
                   "publish to Instagram")
@@ -162,7 +163,7 @@ def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path
     """
     if not configured(instagram=True):
         raise MetaError("Instagram is not configured (META_PAGE_ACCESS_TOKEN / META_IG_USER_ID)")
-    ig = os.environ["META_IG_USER_ID"].strip()
+    ig = env("META_IG_USER_ID")
     warnings = []
     with _client() as client:
         container_id = pending_container

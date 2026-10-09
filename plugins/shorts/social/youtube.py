@@ -22,9 +22,10 @@ privacy YouTube actually applied, so that state is never silent.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from plugins.shorts._env import env
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
@@ -41,7 +42,7 @@ class YouTubeError(RuntimeError):
 
 
 def configured() -> bool:
-    return all((os.environ.get(k) or "").strip() for k in REQUIRED_ENV)
+    return all(env(k) for k in REQUIRED_ENV)
 
 
 def _client():
@@ -52,9 +53,9 @@ def _client():
 
 def access_token(client) -> str:
     resp = client.post(TOKEN_URL, data={
-        "client_id": os.environ["YOUTUBE_CLIENT_ID"].strip(),
-        "client_secret": os.environ["YOUTUBE_CLIENT_SECRET"].strip(),
-        "refresh_token": os.environ["YOUTUBE_REFRESH_TOKEN"].strip(),
+        "client_id": env("YOUTUBE_CLIENT_ID"),
+        "client_secret": env("YOUTUBE_CLIENT_SECRET"),
+        "refresh_token": env("YOUTUBE_REFRESH_TOKEN"),
         "grant_type": "refresh_token",
     })
     if resp.status_code != 200:
@@ -80,12 +81,12 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool) -> Dic
             "title": title[:100],
             "description": (yt.get("description") or "")[:4900],
             "tags": [t for t in (yt.get("tags") or [])][:15],
-            "categoryId": os.environ.get("SHORTS_YOUTUBE_CATEGORY", "27").strip() or "27",
+            "categoryId": env("SHORTS_YOUTUBE_CATEGORY", "27") or "27",
             "defaultLanguage": lang,
             "defaultAudioLanguage": lang,
         },
         "status": {
-            "privacyStatus": os.environ.get("SHORTS_YOUTUBE_PRIVACY", "public").strip() or "public",
+            "privacyStatus": env("SHORTS_YOUTUBE_PRIVACY", "public") or "public",
             "selfDeclaredMadeForKids": False,
             # YouTube's disclosure for realistic synthetic people — true when
             # the short carries an AI avatar.
