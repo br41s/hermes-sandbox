@@ -69,6 +69,17 @@ Cada beat lleva:
   - `broll`: 1–4 palabras EN INGLÉS (también en el short español: los bancos de
     vídeo buscan en inglés) que se puedan filmar: "invoice paperwork",
     "team meeting office". Nunca conceptos ("digital transformation").
+  - `scene` (opcional, COMO MUCHO 3 por short): el fondo de ese beat se genera
+    con un modelo de vídeo de pago en lugar de buscarlo en el banco. Úsalo en
+    el `hook` (siempre que puedas: es lo que decide si alguien sigue mirando) y
+    en los 1–2 beats más visuales. Escríbelo EN INGLÉS, 15–40 palabras, como una
+    toma de cine: qué se ve, dónde, la luz y el movimiento de cámara. Ejemplo:
+    "Slow push-in on a small bakery counter at dawn, flour in the air, an owner
+    checking a tablet, warm window light".
+    Es solo imagen: nada de texto, letras, cifras, gráficos, pantallas legibles,
+    logos ni marcas (la herramienta lo rechaza: el texto y las cifras los pone
+    la plantilla encima), y nunca personas reales ni famosos. El beat lleva
+    igualmente su `broll`: si el presupuesto del día se acaba, se usa ese.
 
 REGLAS DURAS
 - Nada que el artículo no diga. Cada cifra, tal como la escribe el artículo. La
@@ -115,7 +126,7 @@ FORMATO DEL PAQUETE
   "article": {"url": "<url>", "title": "<título>", "slug": "<slug del post>"},
   "style": {"palette": "teal-amber", "motif": "rings"},
   "beats": [
-    {"kind": "hook", "kicker": "…", "onscreen": "…", "vo": "…", "broll": "…"},
+    {"kind": "hook", "kicker": "…", "onscreen": "…", "vo": "…", "broll": "…", "scene": "…"},
     {"kind": "point", "onscreen": "…", "vo": "…", "broll": "…"},
     {"kind": "stat", "value": "73%", "label": "…", "vo": "…", "broll": "…"},
     {"kind": "list", "onscreen": "…", "items": ["…", "…", "…"], "vo": "…", "broll": "…"},
@@ -135,8 +146,8 @@ Si no enviaste nada y nada falló → exactamente `[SILENT]`.
 Si no:
 
 🎬 Shorts enviados a render
-- EN: [título] → [request_id] ([paleta]/[motivo], [n] beats)
-- ES: [título] → [request_id] ([paleta]/[motivo], [n] beats)
+- EN: [título] → [request_id] ([paleta]/[motivo], [n] beats, [k] escenas generadas)
+- ES: [título] → [request_id] ([paleta]/[motivo], [n] beats, [k] escenas generadas)
 (o "EN: sin posts nuevos" / "ES: rechazado 3 veces — [problema principal]")
 
 El Publisher los recoge en su próxima ejecución.

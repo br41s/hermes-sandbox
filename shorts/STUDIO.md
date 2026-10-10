@@ -82,6 +82,10 @@ render: the producer submits and exits, the publisher collects what finished.
 - **Shadow mode.** Nothing is published unless `SHORTS_PUBLISH_MODE=live`.
 - **Avatars.** An avatar beat must use a library clip and speak its stored line,
   so captions always match the mouth.
+- **Generated scenes.** At most 3 per short, only on hook/point/stat/list/quote
+  beats, and a `scene` that asks for text, letters, numbers, charts, logos or
+  brands is rejected (`package.py`): the model garbles lettering, and a figure it
+  drew would bypass the grounding check. Spend is capped in `genvideo.py` (§3.5).
 
 ## 3. One-time setup
 
@@ -156,6 +160,37 @@ Prompt edits reach the live jobs only through
 `scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-producer.prompt`
 (and the same for the publisher), or by re-running `setup_shorts_jobs.py`.
 
+### 3.5 Generated scenes (paid, optional)
+
+The producer may mark up to 3 beats per short with a `scene`: the hook and the
+most visual ones. The render farm generates those backgrounds with
+`heygen/heygen-video-1` through OpenRouter's video API (text to video, 5–15 s,
+768p; not an avatar model, no lip sync) and every other beat keeps its free
+stock footage. Text and figures are always Remotion's, drawn on top.
+
+1. On openrouter.ai, create a key **used for nothing else**, with a **daily
+   limit of $1**. The agents' shared key has a weekly limit that a runaway
+   render would otherwise drain, and the key's own limit is the hard stop.
+2. Repo secret **`SHORTS_OPENROUTER_API_KEY`** (Settings → Secrets → Actions).
+   Only a real dispatch passes it to the render; the push smoke test never spends.
+3. Optional repo *variables*: `SHORTS_AI_DAILY_CAP_USD` (default 1.00),
+   `SHORTS_AI_SHORT_BUDGET_USD` (default 0.50), `SHORTS_AI_PRICE_PER_SECOND`
+   (default 0.015, the 768p launch price, which ends after October; raise it to
+   the real price then, or fewer scenes fit than the budget allows).
+
+How the cap holds: each short plans its scenes against its own budget ($0.50,
+so the two daily shorts, which render in parallel and cannot see each other,
+stay within $1 together), then against the day's cap using what OpenRouter
+reports the key has spent today (UTC). A scene that does not fit, a 402, a model
+error or a 10-minute timeout leaves that beat on its `broll`: a short never
+fails for a paid clip. The manifest records each scene's id, status, real cost
+and reason; the ledger keeps `ai_scenes` and `ai_spend_usd`, and the publisher's
+summary on Telegram shows the day's spend. A short with a generated scene is
+uploaded with YouTube's `containsSyntheticMedia: true`.
+
+Not set through the Meta API: Meta's own "AI info" label. Check how Instagram and
+Facebook label the first live shorts with generated scenes before relying on it.
+
 ## 4. Avatars (Google Flow: Martín, Lucía)
 
 Flow has no API; programmatic Veo access is pay-per-second. So a human still
@@ -187,6 +222,7 @@ decision, not a code one.
 |---|---|
 | Script writing | LLM tokens for two short agent runs a day |
 | Voice (Edge TTS), footage (Pexels/Mixkit), music (Mixkit) | €0 |
+| Generated scenes (HeyGen Video 1 via OpenRouter, ≤3 per short) | ≤ $1/day, capped in code and on the key (§3.5); ~$0.10–0.15 per 8 s scene at the launch price |
 | Render (GitHub Actions) | €0 — public repo, unmetered runners |
 | YouTube Data API, Meta Graph API | €0 |
 | X | €0 (posted by hand) |
@@ -208,7 +244,11 @@ ffmpeg loudness/Story path.
 including Instagram's resumable upload for Stories and the unpublished-photo
 cover trick. They are written to the documented API, but the first live-mode run
 is the real test, which is why shadow mode comes first. Also unproven: a Pexels
-key in the render farm.
+key in the render farm. And generated scenes: `genvideo.py` follows the request
+shape `generar-plano` uses in `br41s/fizz` (OpenRouter `/api/v1/videos`: submit,
+poll, download) and is covered with a mocked OpenRouter, but no paid clip has
+been rendered yet. The first dispatch with the key set is the test; its log's
+`[studio] ai:` lines say what happened to each scene.
 
 ## 7. Operating it
 

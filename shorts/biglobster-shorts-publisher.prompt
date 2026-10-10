@@ -53,4 +53,5 @@ detrás de otro, y al final un resumen corto:
 
 📊 Shorts
 - [EN|ES] [título]: [publicado en YouTube/IG/FB/Story | en revisión (shadow) | QA ❌ motivo | render ❌]
+- Escenas generadas: [suma de `ai_scenes`] · gasto [suma de `ai_spend_usd`] $ (sólo si alguna lo tiene)
 - Avisos: [warnings de publish, p. ej. YouTube forzado a privado; sólo si los hay]

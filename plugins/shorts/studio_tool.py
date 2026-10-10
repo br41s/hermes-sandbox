@@ -340,6 +340,9 @@ def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
         duration_s=manifest.get("duration_s"),
         music_id=(manifest.get("music") or {}).get("id"),
         broll_ids=[b.get("id") for b in manifest.get("broll") or []],
+        ai_scenes=int((manifest.get("ai_video") or {}).get("generated") or 0),
+        ai_spend_usd=(manifest.get("ai_video") or {}).get("spent_usd"),
+        synthetic=bool(manifest.get("synthetic")),
     )
     return fields
 
@@ -454,7 +457,8 @@ def _action_publish(args: Dict[str, Any]) -> str:
         return _fail(f"the Story cut for {request_id} is missing; run status first")
     pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8"))
     social = pkg.get("social") or {}
-    synthetic = bool(entry.get("avatars"))
+    # A render that predates the manifest's own flag still counts its avatars.
+    synthetic = bool(entry.get("synthetic") or entry.get("avatars"))
 
     try:
         if target == "youtube":
