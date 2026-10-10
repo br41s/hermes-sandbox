@@ -333,6 +333,8 @@ def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
         return fields
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     qa_report = manifest.get("qa") or {}
+    paid = [r for r in (manifest.get("ai_video"), manifest.get("presenter")) if r]
+    spend = [r["spent_usd"] for r in paid if r.get("spent_usd") is not None]
     fields.update(
         state="ready" if qa_report.get("passed") else "qa_failed",
         qa={"passed": bool(qa_report.get("passed")), "errors": qa_report.get("errors", []),
@@ -341,7 +343,9 @@ def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
         music_id=(manifest.get("music") or {}).get("id"),
         broll_ids=[b.get("id") for b in manifest.get("broll") or []],
         ai_scenes=int((manifest.get("ai_video") or {}).get("generated") or 0),
-        ai_spend_usd=(manifest.get("ai_video") or {}).get("spent_usd"),
+        presenter_beats=len((manifest.get("presenter") or {}).get("used") or []),
+        # scenes and presenter share one budget, so the ledger records their sum
+        ai_spend_usd=round(sum(spend), 4) if spend else None,
         synthetic=bool(manifest.get("synthetic")),
     )
     return fields

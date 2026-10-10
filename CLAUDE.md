@@ -604,11 +604,15 @@ it writes from. Sold to a client without one it goes quiet on every run.
   BigLobster's publishing tokens into every profile.
 - **Rendering is Remotion in `.github/workflows/shorts-studio.yml`**, never in the
   pod: ~1,800 browser frames a minute of video would starve the fleet.
-- **Up to 3 beats a short get a paid generated background** (`studio/genvideo.py`,
-  HeyGen Video 1 via OpenRouter), on their own key (`SHORTS_OPENROUTER_API_KEY`,
-  an Actions secret with a $1 daily limit on the key), never the agents' shared
-  one. $0.50 per short and $1 a day are enforced before any request; anything
-  refused or failed falls back to stock footage. Text and figures stay Remotion's.
+- **The hook and the CTA are said to camera by a presenter** (`studio/presenter.py`,
+  HeyGen Avatar IV: Lucía in Spanish, Martín in English, from the fixed photos in
+  `shorts/studio/presenters/`), and **up to 3 beats get a paid generated
+  background** (`studio/genvideo.py`, HeyGen Video 1). Both go through OpenRouter
+  on their own key (`SHORTS_OPENROUTER_API_KEY`, an Actions secret with a $2 daily
+  limit on the key), never the agents' shared one, and share one budget: $1 per
+  short and $2 a day, enforced before any request, the presenter planned first.
+  Anything refused or failed falls back to the voice-over or stock footage.
+  Text and figures stay Remotion's.
 - **Hermes publishes YouTube; SocialBot (Buzz) publishes Facebook, Instagram and X.**
   Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
   (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image); with

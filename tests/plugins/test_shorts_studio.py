@@ -683,16 +683,28 @@ def test_plan_keeps_each_short_inside_its_budget_and_the_day_inside_the_cap(samp
     pkg, timeline = _scene_pkg(sample)
     cfg = {"price_per_s": 0.03, "short_budget": 0.5, "daily_cap": 1.0}
 
-    jobs, skipped = genvideo.plan(pkg, timeline, cfg, daily_used=0.0, fps=30)
+    def budget(used, committed=0.0):
+        return {"cfg": cfg, "daily_used": used, "committed": committed}
+
+    b = budget(0.0)
+    jobs, skipped = genvideo.plan(pkg, timeline, b, fps=30)
     assert [j["beat"] for j in jobs] == [0, 1]           # 8 s x $0.03 = $0.24 each; the third breaks $0.50
     assert skipped[0]["beat"] == 2 and "short budget" in skipped[0]["reason"]
+    assert b["committed"] == pytest.approx(0.48)
 
-    jobs, skipped = genvideo.plan(pkg, timeline, cfg, daily_used=0.80, fps=30)
+    jobs, skipped = genvideo.plan(pkg, timeline, budget(0.80), fps=30)
     assert jobs == [] and all("daily cap" in s["reason"] for s in skipped)
 
-    jobs, _ = genvideo.plan(pkg, timeline, cfg, daily_used=None, fps=30)
+    jobs, _ = genvideo.plan(pkg, timeline, budget(None), fps=30)
     assert len(jobs) == 2                                # unknown spend: the per-short budget still holds
     assert "pink" not in jobs[0]["prompt"] and "No text" in jobs[0]["prompt"]
+
+    jobs, _ = genvideo.plan(pkg, timeline, budget(0.0, committed=0.20), fps=30)
+    assert [j["beat"] for j in jobs] == [0]              # the presenter planned first and took $0.20
+
+    timeline[0]["presenter"] = "presenter/p00.mp4"
+    jobs, skipped = genvideo.plan(pkg, timeline, budget(0.0), fps=30)
+    assert [j["beat"] for j in jobs] == [1, 2] and skipped == []   # a presenter beat needs no background
 
 
 @pytest.mark.parametrize("url,gets_key", [
@@ -792,6 +804,102 @@ def test_a_refused_or_unkeyed_scene_falls_back_to_stock_footage(sample, tmp_path
     pkg, timeline = _scene_pkg(sample, n=1)
     report = genvideo.render_scenes(pkg, timeline, tmp_path, tmp_path / "public", "rid-2", fps=30, offline=False)
     assert report["scenes"] == [{"beat": 0, "status": "skipped", "reason": "SHORTS_OPENROUTER_API_KEY is not set"}]
+
+
+def test_only_the_hook_and_cta_are_said_to_camera_and_briefly(sample):
+    raw = copy.deepcopy(sample)
+    raw["beats"][0]["presenter"] = True
+    raw["beats"][-1]["presenter"] = True
+    pkg = pkg_mod.validate_package(raw)
+    assert pkg["beats"][0]["presenter"] is True and pkg["beats"][-1]["presenter"] is True
+    assert not any(b.get("presenter") for b in pkg["beats"][1:-1])
+
+    middle = copy.deepcopy(sample)
+    middle["beats"][1]["presenter"] = True
+    with pytest.raises(pkg_mod.PackageError, match="only the hook and the CTA"):
+        pkg_mod.validate_package(middle)
+
+    wordy = copy.deepcopy(sample)
+    wordy["beats"][-1]["presenter"] = True
+    wordy["beats"][-1]["vo"] = " ".join(["palabra"] * (pkg_mod.MAX_PRESENTER_WORDS + 1))
+    with pytest.raises(pkg_mod.PackageError, match="said to camera"):
+        pkg_mod.validate_package(wordy)
+
+    stringy = copy.deepcopy(sample)
+    stringy["beats"][0]["presenter"] = "yes"
+    with pytest.raises(pkg_mod.PackageError, match="true or absent"):
+        pkg_mod.validate_package(stringy)
+
+
+def test_every_language_has_a_presenter_photo():
+    from plugins.shorts.studio import presenter
+
+    assert set(presenter.PRESENTERS) == set(pkg_mod.DEFAULT_VOICES)
+    for slug, _name in presenter.PRESENTERS.values():
+        url = presenter.photo_data_url(slug)
+        assert url and url.startswith("data:image/jpeg;base64,"), slug
+
+
+def _presenter_pkg(sample):
+    raw = copy.deepcopy(sample)
+    raw["beats"][0]["presenter"] = True
+    raw["beats"][-1]["presenter"] = True
+    return pkg_mod.validate_package(raw)
+
+
+def test_presenter_clips_are_requested_with_the_photo_and_share_the_budget(sample, tmp_path, monkeypatch):
+    import httpx
+
+    from plugins.shorts.studio import presenter
+
+    fake = _FakeOpenRouter()
+    monkeypatch.setattr(httpx, "Client", fake)
+    monkeypatch.setattr(genvideo, "POLL_EVERY_S", 0)
+    for k, v in {"SHORTS_OPENROUTER_API_KEY": "sk-test", "SHORTS_PRESENTER_VOICE_EN": "voice-en-1"}.items():
+        monkeypatch.setenv(k, v)
+    pkg = _presenter_pkg(sample)
+    budget = genvideo.open_budget(offline=False)
+    assert budget["daily_used"] == pytest.approx(0.10)
+
+    got = presenter.render(pkg, tmp_path, budget, offline=False)
+    last = len(pkg["beats"]) - 1
+    assert sorted(got["clips"]) == [0, last] and got["report"]["presenter"] == ("Martín" if pkg["lang"] == "en" else "Lucía")
+    body = fake.posts[0]
+    assert body["model"] == "heygen/avatar-iv" and body["prompt"] == pkg["beats"][0]["vo"]
+    assert body["input_references"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    params = body["provider"]["options"]["heygen"]["parameters"]
+    assert "motion_prompt" in params and ("voice_id" in params) is (pkg["lang"] == "en")
+    # Two clips at the fake's reported $0.12 each: the estimate is replaced by the real cost.
+    assert got["report"]["spent_usd"] == pytest.approx(0.24) and budget["committed"] == pytest.approx(0.24)
+
+
+def test_presenter_respects_the_budget_and_never_fails_the_render(sample, tmp_path, monkeypatch):
+    from plugins.shorts.studio import presenter
+
+    pkg = _presenter_pkg(sample)
+    cfg = dict(genvideo.config(), key="sk-test", short_budget=0.05)
+    got = presenter.render(pkg, tmp_path, {"cfg": cfg, "daily_used": 0.0, "committed": 0.0}, offline=False)
+    assert got["clips"] == {} and all("short budget" in b["reason"] for b in got["report"]["beats"])
+
+    got = presenter.render(pkg, tmp_path, genvideo.open_budget(offline=True), offline=True)
+    assert got["clips"] == {} and got["report"]["beats"][0]["reason"] == "offline render"
+
+    monkeypatch.setattr(presenter, "PHOTO_DIR", tmp_path / "nowhere")
+    cfg = dict(genvideo.config(), key="sk-test")
+    got = presenter.render(pkg, tmp_path, {"cfg": cfg, "daily_used": 0.0, "committed": 0.0}, offline=False)
+    assert got["clips"] == {} and "missing" in got["report"]["beats"][0]["reason"]
+
+
+def test_a_presenter_beat_gets_no_stock_footage_and_reaches_remotion(sample, tmp_path):
+    pkg = _presenter_pkg(sample)
+    timeline = [{"from": 0, "duration": 90} for _ in pkg["beats"]]
+    timeline[0]["presenter"] = "presenter/p00.mp4"
+    used = build_mod.gather_broll(pkg, timeline, tmp_path, tmp_path / "public", "seed", offline=True)
+    assert used == [] and timeline[0]["broll"] is None
+    props = build_mod.remotion_props(pkg, {"timeline": timeline, "words": [], "frames": 90 * len(timeline)})
+    assert props["beats"][0]["presenter"] == "presenter/p00.mp4"
+    assert props["beats"][0]["presenterName"] in ("Lucía", "Martín")
+    assert "presenter" not in props["beats"][-1]          # its clip was not made: the template CTA
 
 
 def test_stock_footage_never_overwrites_a_generated_scene(sample, tmp_path):

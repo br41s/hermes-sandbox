@@ -6,12 +6,14 @@ API (default model ``heygen/heygen-video-1``: text to video, 5-15 s, 768p, no
 avatars, no lip sync), cropped to 1080x1920 under the same Remotion graphics as
 stock footage. Every other beat keeps its free ``broll``.
 
-Spend is capped three ways, cheapest check first:
+Spend is capped three ways, cheapest check first. The caps are shared with
+the presenter clips (``presenter.py``), which plan first: one budget, opened
+once per short by ``open_budget``.
 
-1. Per short: ``SHORTS_AI_SHORT_BUDGET_USD`` (default 0.50). Two shorts a day
+1. Per short: ``SHORTS_AI_SHORT_BUDGET_USD`` (default 1.00). Two shorts a day
    render in parallel and cannot see each other, so this is what keeps their
    sum inside the daily cap.
-2. Per day: ``SHORTS_AI_DAILY_CAP_USD`` (default 1.00) against what the key
+2. Per day: ``SHORTS_AI_DAILY_CAP_USD`` (default 2.00) against what the key
    has spent today (UTC), read from OpenRouter before planning. Catches
    retries and manual dispatches. If OpenRouter does not report it, only the
    per-short budget applies, and the log says so.
@@ -41,7 +43,7 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 API = "https://openrouter.ai/api/v1/videos"
 KEY_INFO = "https://openrouter.ai/api/v1/key"
@@ -76,8 +78,8 @@ def config() -> Dict[str, Any]:
         "model": (os.environ.get("SHORTS_AI_VIDEO_MODEL") or "heygen/heygen-video-1").strip(),
         "resolution": (os.environ.get("SHORTS_AI_RESOLUTION") or "768p").strip(),
         "price_per_s": _env_float("SHORTS_AI_PRICE_PER_SECOND", 0.015),
-        "daily_cap": _env_float("SHORTS_AI_DAILY_CAP_USD", 1.0),
-        "short_budget": _env_float("SHORTS_AI_SHORT_BUDGET_USD", 0.5),
+        "daily_cap": _env_float("SHORTS_AI_DAILY_CAP_USD", 2.0),
+        "short_budget": _env_float("SHORTS_AI_SHORT_BUDGET_USD", 1.0),
         "timeout_s": _env_float("SHORTS_AI_TIMEOUT_S", 600.0),
     }
 
@@ -96,27 +98,35 @@ def numeric_seed(seed: str) -> int:
     return int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16)
 
 
-def plan(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], cfg: Dict[str, Any],
-         daily_used: Optional[float], fps: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Decide which scenes fit the budget, in the order they appear (the hook first)."""
+def over_budget(budget: Dict[str, Any], estimate: float) -> Optional[str]:
+    """Why ``estimate`` more would break a cap, or None when it fits."""
+    cfg, committed, used = budget["cfg"], budget["committed"], budget["daily_used"]
+    if committed + estimate > cfg["short_budget"] + 1e-9:
+        return f"short budget ${cfg['short_budget']:.2f} reached"
+    if used is not None and used + committed + estimate > cfg["daily_cap"] + 1e-9:
+        return f"daily cap ${cfg['daily_cap']:.2f} reached (${used:.2f} spent today)"
+    return None
+
+
+def plan(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], budget: Dict[str, Any],
+         fps: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Decide which scenes fit the budget, in the order they appear (the hook first).
+
+    A beat that already has a presenter clip needs no background, so its scene
+    (kept in the package as the fallback) is not generated.
+    """
     jobs: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
-    reserved = 0.0
     for i, (beat, slot) in enumerate(zip(pkg["beats"], timeline)):
-        if not beat.get("scene"):
+        if not beat.get("scene") or slot.get("presenter"):
             continue
         seconds = clip_seconds(slot["duration"] / fps)
-        estimate = round(seconds * cfg["price_per_s"], 4)
-        if reserved + estimate > cfg["short_budget"] + 1e-9:
-            skipped.append({"beat": i, "status": "skipped",
-                            "reason": f"short budget ${cfg['short_budget']:.2f} reached"})
+        estimate = round(seconds * budget["cfg"]["price_per_s"], 4)
+        why = over_budget(budget, estimate)
+        if why:
+            skipped.append({"beat": i, "status": "skipped", "reason": why})
             continue
-        if daily_used is not None and daily_used + reserved + estimate > cfg["daily_cap"] + 1e-9:
-            skipped.append({"beat": i, "status": "skipped",
-                            "reason": f"daily cap ${cfg['daily_cap']:.2f} reached "
-                                      f"(${daily_used:.2f} spent today)"})
-            continue
-        reserved += estimate
+        budget["committed"] += estimate
         jobs.append({"beat": i, "seconds": seconds, "estimate": estimate,
                      "prompt": prompt_for(beat["scene"], pkg["style"]["palette"])})
     return jobs, skipped
@@ -144,10 +154,42 @@ def daily_spend(client, key: str) -> Optional[float]:
         return None
 
 
+def open_budget(*, offline: bool) -> Dict[str, Any]:
+    """The short's one budget: config, today's spend (read once) and what is committed."""
+    cfg = config()
+    budget: Dict[str, Any] = {"cfg": cfg, "daily_used": None, "committed": 0.0}
+    if offline or not cfg["key"]:
+        return budget
+    import httpx
+
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        budget["daily_used"] = daily_spend(client, cfg["key"])
+    if budget["daily_used"] is None:
+        _log("OpenRouter did not report today's spend; only the per-short budget applies")
+    return budget
+
+
+def settle(job: Dict[str, Any], budget: Dict[str, Any]) -> float:
+    """What a finished job cost, with the budget's estimate swapped for it.
+
+    A clip we paid for but could not use still counts; an unreported cost is
+    taken at the estimate, never at zero. A request never accepted costs nothing.
+    """
+    spent = job.get("cost")
+    if spent is None:
+        spent = job["estimate"] if job.get("id") else 0.0
+    budget["committed"] += spent - job["estimate"]
+    return spent
+
+
 def _submit(client, cfg: Dict[str, Any], job: Dict[str, Any], seed: int) -> None:
-    body = {"model": cfg["model"], "prompt": job["prompt"], "duration": job["seconds"],
-            "aspect_ratio": "9:16", "resolution": cfg["resolution"], "seed": seed}
-    resp = client.post(API, headers=_headers(API, cfg["key"]), json=body)
+    submit_body(client, cfg["key"], job, {
+        "model": cfg["model"], "prompt": job["prompt"], "duration": job["seconds"],
+        "aspect_ratio": "9:16", "resolution": cfg["resolution"], "seed": seed})
+
+
+def submit_body(client, key: str, job: Dict[str, Any], body: Dict[str, Any]) -> None:
+    resp = client.post(API, headers=_headers(API, key), json=body)
     if resp.status_code == 402:
         raise RuntimeError("OpenRouter refused: no credit or the key's limit is reached (402)")
     if resp.status_code >= 400:
@@ -184,17 +226,61 @@ def _cost(status: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def wait_for(client, key: str, jobs: List[Dict[str, Any]], deadline: float, work: Path, *,
+             prefix: str, finish: Optional[Callable[[Dict[str, Any], Path], None]] = None) -> float:
+    """Poll every pending job until done or ``deadline``; download each finished clip.
+
+    A clip lands in ``job["src"]`` and, after ``finish`` (which may raise),
+    the job is ``generated``. Returns the highest observed price per second.
+    """
+    observed_price = 0.0
+    while any(j.get("state") == "pending" for j in jobs) and time.time() < deadline:
+        time.sleep(POLL_EVERY_S)
+        for job in (j for j in jobs if j.get("state") == "pending"):
+            try:
+                resp = client.get(job["poll"], headers=_headers(job["poll"], key))
+                status = resp.json() if resp.status_code == 200 else {}
+            except Exception as exc:
+                _log(f"beat {job['beat']}: poll: {exc}")
+                continue
+            state = status.get("status")
+            if state in ("failed", "cancelled", "expired", "error"):
+                job.update(state="failed", cost=_cost(status) or 0.0,
+                           reason=f"model said {state}: {str(status.get('error') or '')[:400]}")
+            elif state == "completed":
+                job["cost"] = _cost(status)
+                urls = status.get("unsigned_urls") or [f"{API}/{job['id']}/content?index=0"]
+                try:
+                    job["src"] = _download(client, urls[0], key, work / f"{prefix}_{job['beat']:02d}.mp4")
+                    if finish:
+                        finish(job, job["src"])
+                    job["state"] = "generated"
+                except Exception as exc:
+                    job.update(state="failed", reason=f"after generation: {exc}")
+                if job.get("cost") and job.get("seconds"):
+                    observed_price = max(observed_price, job["cost"] / job["seconds"])
+    for job in jobs:
+        if job.get("state") == "pending":
+            job.update(state="failed", reason="not finished within the timeout")
+    return observed_price
+
+
 def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path, public: Path,
-                  seed: str, *, fps: int, offline: bool) -> Dict[str, Any]:
+                  seed: str, *, fps: int, offline: bool,
+                  budget: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Generate the planned scenes and point their timeline slots at the clips.
 
     Sets ``slot["broll"]`` for every beat that got a clip, so the stock pass
-    leaves it alone. Returns the report that goes into the manifest.
+    leaves it alone. ``budget`` is the short's (``open_budget``), shared with
+    the presenter; without one a fresh one is opened. Returns the report that
+    goes into the manifest.
     """
     from plugins.shorts.studio import media
 
-    cfg = config()
-    wanted = [i for i, b in enumerate(pkg["beats"]) if b.get("scene")]
+    budget = budget if budget is not None else open_budget(offline=offline)
+    cfg = budget["cfg"]
+    wanted = [i for i, (b, slot) in enumerate(zip(pkg["beats"], timeline))
+              if b.get("scene") and not slot.get("presenter")]
     report: Dict[str, Any] = {"model": cfg["model"], "requested": len(wanted), "generated": 0,
                               "spent_usd": 0.0, "scenes": []}
     if not wanted:
@@ -207,15 +293,19 @@ def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Pat
 
     import httpx
 
-    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
-        used = daily_spend(client, cfg["key"])
-        report["spent_today_before_usd"] = used
-        if used is None:
-            _log("OpenRouter did not report today's spend; only the per-short budget applies")
-        jobs, skipped = plan(pkg, timeline, cfg, used, fps)
-        report["scenes"].extend(skipped)
-        base_seed = numeric_seed(seed)
+    report["spent_today_before_usd"] = budget["daily_used"]
+    jobs, skipped = plan(pkg, timeline, budget, fps)
+    report["scenes"].extend(skipped)
+    base_seed = numeric_seed(seed)
 
+    def place(job: Dict[str, Any], src: Path) -> None:
+        rel = f"ai/s{job['beat']:02d}.mp4"
+        (public / "ai").mkdir(parents=True, exist_ok=True)
+        slot = timeline[job["beat"]]
+        media.normalize_clip(src, public / rel, slot["duration"] / fps)
+        slot["broll"] = rel
+
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
         for job in jobs:
             try:
                 _submit(client, cfg, job, base_seed)
@@ -223,56 +313,21 @@ def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Pat
             except Exception as exc:
                 job.update(state="failed", reason=str(exc))
                 _log(f"beat {job['beat']}: {exc}")
+        observed_price = wait_for(client, cfg["key"], jobs, time.time() + cfg["timeout_s"], work,
+                                  prefix="ai_src", finish=place)
 
-        deadline = time.time() + cfg["timeout_s"]
-        observed_price = 0.0
-        while any(j.get("state") == "pending" for j in jobs) and time.time() < deadline:
-            time.sleep(POLL_EVERY_S)
-            for job in (j for j in jobs if j.get("state") == "pending"):
-                try:
-                    resp = client.get(job["poll"], headers=_headers(job["poll"], cfg["key"]))
-                    status = resp.json() if resp.status_code == 200 else {}
-                except Exception as exc:
-                    _log(f"beat {job['beat']}: poll: {exc}")
-                    continue
-                state = status.get("status")
-                if state in ("failed", "cancelled", "expired", "error"):
-                    job.update(state="failed", cost=_cost(status) or 0.0,
-                               reason=f"model said {state}: {str(status.get('error') or '')[:160]}")
-                elif state == "completed":
-                    job["cost"] = _cost(status)
-                    urls = status.get("unsigned_urls") or [f"{API}/{job['id']}/content?index=0"]
-                    try:
-                        src = _download(client, urls[0], cfg["key"], work / f"ai_src_{job['beat']:02d}.mp4")
-                        rel = f"ai/s{job['beat']:02d}.mp4"
-                        (public / "ai").mkdir(parents=True, exist_ok=True)
-                        slot = timeline[job["beat"]]
-                        media.normalize_clip(src, public / rel, slot["duration"] / fps)
-                        slot["broll"] = rel
-                        job["state"] = "generated"
-                    except Exception as exc:
-                        job.update(state="failed", reason=f"after generation: {exc}")
-                    if job.get("cost"):
-                        observed_price = max(observed_price, job["cost"] / job["seconds"])
-
-        for job in jobs:
-            if job.get("state") == "pending":
-                job.update(state="failed", reason=f"not finished within {cfg['timeout_s']:.0f}s")
-            # A clip we paid for but could not use still counts; an unreported
-            # cost is taken at the estimate, never at zero.
-            spent = job.get("cost")
-            if spent is None:
-                spent = job["estimate"] if job.get("id") else 0.0
-            report["spent_usd"] += spent
-            entry = {"beat": job["beat"], "status": job["state"], "id": job.get("id"),
-                     "seconds": job["seconds"], "cost_usd": round(spent, 4)}
-            if job.get("reason"):
-                entry["reason"] = job["reason"]
-            report["scenes"].append(entry)
-        if observed_price > cfg["price_per_s"] * 1.01:   # 1% slack: float rounding is not a price rise
-            _log(f"observed ${observed_price:.4f}/s, above the configured "
-                 f"${cfg['price_per_s']:.4f}/s — raise SHORTS_AI_PRICE_PER_SECOND")
-            report["observed_price_per_s"] = round(observed_price, 4)
+    for job in jobs:
+        spent = settle(job, budget)
+        report["spent_usd"] += spent
+        entry = {"beat": job["beat"], "status": job["state"], "id": job.get("id"),
+                 "seconds": job["seconds"], "cost_usd": round(spent, 4)}
+        if job.get("reason"):
+            entry["reason"] = job["reason"]
+        report["scenes"].append(entry)
+    if observed_price > cfg["price_per_s"] * 1.01:   # 1% slack: float rounding is not a price rise
+        _log(f"observed ${observed_price:.4f}/s, above the configured "
+             f"${cfg['price_per_s']:.4f}/s — raise SHORTS_AI_PRICE_PER_SECOND")
+        report["observed_price_per_s"] = round(observed_price, 4)
 
     report["scenes"].sort(key=lambda s: s["beat"])
     report["generated"] = sum(1 for s in report["scenes"] if s["status"] == "generated")

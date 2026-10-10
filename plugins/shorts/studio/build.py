@@ -19,9 +19,11 @@ outputs are still written, so the report can say why); 1 = could not render.
 Order, and why:
 1. Voice first. Every scene is as long as its line takes to say, so nothing
    visual can be timed before the audio exists.
+   The presenter's lines come first of all (``presenter``, paid): a talking
+   clip brings its own voice, so its length is the beat's.
 2. Generated scenes for the beats that ask for one (``genvideo``, paid and
-   capped), then free footage for every other beat, and music — all trimmed
-   to the scene lengths the voice fixed.
+   capped, sharing the presenter's budget), then free footage for every other
+   beat, and music — all trimmed to the scene lengths the voice fixed.
 3. Remotion renders picture only (muted); audio is mixed by ffmpeg, where
    ducking and two-pass loudness are reliable.
 4. QA reads the finished file, never the inputs.
@@ -40,7 +42,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from plugins.shorts.studio import genvideo, media, qa, sources, voice
+from plugins.shorts.studio import genvideo, media, presenter, qa, sources, voice
 from plugins.shorts.studio.package import PackageError, validate_package
 
 FPS = media.FPS
@@ -48,6 +50,7 @@ LEAD_IN = 0.20        # silence before the first word
 GAP = 0.28            # breath between beats
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
+PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
 STORY_LIMIT = 59.5
 
 BRANDS = {
@@ -107,8 +110,15 @@ def _download_avatar(url: str, dest: Path) -> Path:
 # 1. Voice and timeline
 # ---------------------------------------------------------------------------
 
-def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice: bool) -> Dict[str, Any]:
-    """Synthesize every beat and lay them end to end on frame boundaries."""
+def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice: bool,
+                   presenter_clips: Optional[Dict[int, Path]] = None) -> Dict[str, Any]:
+    """Synthesize every beat and lay them end to end on frame boundaries.
+
+    A beat in ``presenter_clips`` is voiced by its clip; its video runs from
+    the first frame of the beat, so it gets no lead-in silence (lips and voice
+    stay together) and holds its last frame through the tail.
+    """
+    presenter_clips = presenter_clips or {}
     beats = pkg["beats"]
     segments: List[Path] = []
     timeline: List[Dict[str, Any]] = []
@@ -118,7 +128,15 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
     for i, beat in enumerate(beats):
         raw = work / f"vo_{i:02d}.mp3"
         clip_rel: Optional[str] = None
-        if beat["kind"] == "avatar":
+        talking = presenter_clips.get(i)
+        if talking is not None and not media.has_audio(talking):
+            _log(f"presenter beat {i}: the clip has no audio track; using the voice-over")
+            talking = None
+        if talking is not None:
+            wav = media.extract_audio(talking, work / f"vo_{i:02d}.wav")
+            speech = min(media.duration(talking), PRESENTER_MAX)
+            beat_words = voice.spread_words(beat["vo"], speech)
+        elif beat["kind"] == "avatar":
             src = _download_avatar(beat["clip_url"], work / f"avatar_src_{i:02d}.mp4")
             if not media.has_audio(src):
                 raise BuildError(f"beat {i}: the avatar clip has no audio track")
@@ -138,10 +156,15 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
             speech = media.duration(wav)
 
         voice.attach_raw(beat_words, beat["vo"])
-        lead = LEAD_IN if i == 0 else 0.0
+        lead = LEAD_IN if i == 0 and talking is None else 0.0
         tail = CTA_TAIL if i == len(beats) - 1 else GAP
         frames = _frames(lead + speech + tail)
         seconds = frames / FPS
+        presenter_rel: Optional[str] = None
+        if talking is not None:
+            (public / "presenter").mkdir(parents=True, exist_ok=True)
+            presenter_rel = f"presenter/p{i:02d}.mp4"
+            media.normalize_clip(talking, public / presenter_rel, seconds, hold=True)
         segments.append(media.pad_segment(wav, work / f"seg_{i:02d}.wav", lead, seconds))
 
         start_ms = cursor_frames / FPS * 1000 + lead * 1000
@@ -151,7 +174,8 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
                 words.append({"text": text, "raw": str(w.get("raw") or text),
                               "startMs": round(start_ms + w["start"] * 1000),
                               "endMs": round(start_ms + w["end"] * 1000), "beat": i})
-        timeline.append({"from": cursor_frames, "duration": frames, "avatar": clip_rel})
+        timeline.append({"from": cursor_frames, "duration": frames, "avatar": clip_rel,
+                         "presenter": presenter_rel})
         cursor_frames += frames
 
     voice_raw = media.concat_wavs(segments, work / "voice_raw.wav")
@@ -178,7 +202,7 @@ def gather_broll(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path
 
     for i, (beat, slot) in enumerate(zip(pkg["beats"], timeline)):
         slot.setdefault("broll", None)
-        if beat["kind"] == "avatar":
+        if beat["kind"] == "avatar" or slot.get("presenter"):
             continue
         query = beat.get("broll") or query
         if slot["broll"] or not query or offline:
@@ -245,6 +269,9 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
             "number": number if middle else 0, "broll": slot.get("broll"),
             "avatar": slot.get("avatar"),
         }
+        if slot.get("presenter"):
+            entry["presenter"] = slot["presenter"]
+            entry["presenterName"] = (presenter.who(pkg["lang"]) or ("", ""))[1]
         for key in ("onscreen", "kicker", "value", "label", "items", "url"):
             if beat.get(key):
                 entry[key] = beat[key]
@@ -338,11 +365,15 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     shutil.copyfile(font_src, public / "fonts" / FONT_FILE)
 
     t0 = time.time()
-    tl = build_timeline(pkg, work, public, fake_voice=fake_voice)
+    budget = genvideo.open_budget(offline=offline)
+    talking = presenter.render(pkg, work, budget, offline=offline)
+    tl = build_timeline(pkg, work, public, fake_voice=fake_voice, presenter_clips=talking["clips"])
+    talking["report"]["used"] = [i for i, s in enumerate(tl["timeline"]) if s.get("presenter")]
     total_seconds = tl["frames"] / FPS
     _log(f"voice: {len(pkg['beats'])} beats, {total_seconds:.2f}s, {len(tl['words'])} words")
 
-    ai_video = genvideo.render_scenes(pkg, tl["timeline"], work, public, seed, fps=FPS, offline=offline)
+    ai_video = genvideo.render_scenes(pkg, tl["timeline"], work, public, seed, fps=FPS,
+                                      offline=offline, budget=budget)
     broll = gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
     music = gather_music(pkg, work, seed, offline=offline)
     _log(f"sources: {len(broll)} clips, music={'none' if not music else music['id']}")
@@ -385,8 +416,11 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
         "music": {k: music[k] for k in ("id", "source", "url")} if music else None,
         "avatars": [b["avatar"] for b in pkg["beats"] if b["kind"] == "avatar"],
         "ai_video": ai_video,
-        # Realistic generated footage or an AI avatar: YouTube's containsSyntheticMedia.
-        "synthetic": bool(ai_video["generated"]) or any(b["kind"] == "avatar" for b in pkg["beats"]),
+        "presenter": talking["report"],
+        # Realistic generated footage, a generated presenter or an AI avatar:
+        # YouTube's containsSyntheticMedia.
+        "synthetic": (bool(ai_video["generated"]) or bool(talking["report"]["used"])
+                      or any(b["kind"] == "avatar" for b in pkg["beats"])),
         "covers": pkg["covers"],
         "social": pkg["social"],
         "qa": {"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"],

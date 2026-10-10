@@ -14,13 +14,14 @@ Shape::
       "style": {"palette": "indigo-coral", "motif": "diamonds"},
       "beats": [
         {"kind": "hook",  "vo": "...", "onscreen": "...", "kicker": "...", "broll": "...",
-         "scene": "..."},
+         "scene": "...", "presenter": true},
         {"kind": "point", "vo": "...", "onscreen": "...", "broll": "..."},
         {"kind": "stat",  "vo": "...", "value": "73%", "label": "...", "broll": "..."},
         {"kind": "list",  "vo": "...", "onscreen": "...", "items": ["...", "..."]},
         {"kind": "quote", "vo": "...", "onscreen": "..."},
         {"kind": "avatar","vo": "...", "clip_url": "https://...", "avatar": "martin"},
-        {"kind": "cta",   "vo": "...", "onscreen": "...", "url": "biglobster.top/..."}
+        {"kind": "cta",   "vo": "...", "onscreen": "...", "url": "biglobster.top/...",
+         "presenter": true}
       ],
       "covers": {"cover_title": "...", "thumb_title": "..."},
       "social": {"youtube": {"title": "...", "description": "...", "tags": []},
@@ -39,6 +40,12 @@ footage (``genvideo.py``). It describes a picture only: the model garbles
 letters and numbers, so text, figures and logos always come from Remotion on
 top, and a scene that asks for any of them is rejected here. ``broll`` stays
 the fallback when the budget, the key or the model says no.
+
+``presenter: true`` (hook and CTA only) has the brand's presenter say that
+line to camera — Lucía in Spanish, Martín in English — with a generated
+talking clip (``presenter.py``). The line is short (``MAX_PRESENTER_WORDS``)
+because the presenter costs by the second. If the clip is not made, the beat
+falls back to the voice-over, over its ``scene`` or ``broll``.
 """
 
 from __future__ import annotations
@@ -90,6 +97,8 @@ MAX_HOOK_LEAD_WORDS = 8     # the hook's first sentence: ~3 s at the voices' pac
 MAX_SCENES = 3              # generated backgrounds per short; the rest is stock footage
 SCENE_KINDS = ("hook", "point", "stat", "list", "quote")
 MIN_SCENE_WORDS = 6
+PRESENTER_KINDS = ("hook", "cta")
+MAX_PRESENTER_WORDS = 24    # ~11 s said to camera; the presenter is paid by the second
 MAX_SCENE_WORDS = 60
 MAX_SCENE_CHARS = 400
 
@@ -280,6 +289,18 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
                         f"brands (Remotion draws those on top); remove {bad}: {scene!r}"
                     )
                 beat["scene"] = scene
+
+        presenter = b.get("presenter")
+        if presenter not in (None, False):
+            if presenter is not True:
+                problems.append(f"{where}.presenter: true or absent, got {presenter!r}")
+            elif kind not in PRESENTER_KINDS:
+                problems.append(f"{where}.presenter: only the hook and the CTA are said to camera")
+            elif _words(beat["vo"]) > MAX_PRESENTER_WORDS:
+                problems.append(f"{where}.vo: a line said to camera is {MAX_PRESENTER_WORDS} words "
+                                f"at most, got {_words(beat['vo'])}")
+            else:
+                beat["presenter"] = True
 
         if kind in ("hook", "point", "quote", "list", "cta"):
             beat["onscreen"] = _text(b.get("onscreen"))

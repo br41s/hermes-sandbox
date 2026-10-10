@@ -91,6 +91,19 @@ Cada beat lleva:
     logos ni marcas (la herramienta lo rechaza: el texto y las cifras los pone
     la plantilla encima), y nunca personas reales ni famosos. El beat lleva
     igualmente su `broll`: si el presupuesto del día se acaba, se usa ese.
+    En un beat con `presenter` la escena es solo el plan B: se genera si el
+    presentador no sale.
+  - `presenter: true` (SOLO en el `hook` y en el `cta`, y ponlo en los dos): esa
+    frase la dice a cámara nuestro presentador, con su voz y sus gestos: Lucía
+    en el short español, Martín en el inglés. Es lo que hace que el vídeo sea de
+    una persona y no de una plantilla. Escribe esa frase como la diría una
+    persona cercana, honesta y sin prisa a alguien que le importa: tuteando, con
+    "vamos a" mejor que "debes", sin jerga corporativa ni exageraciones.
+    ≤24 palabras (la herramienta lo rechaza si pasa: se paga por segundo).
+    Nunca se presenta ni saluda ("Soy Lucía…", "Hola"): su nombre ya sale en
+    pantalla y el hook va directo a la promesa. Si el presupuesto del día no
+    llega, esa frase la dice la voz en off: escribe el beat igual de completo
+    (`onscreen`, `broll` y, en el hook, `scene`).
 
 REGLAS DURAS
 - Nada que el artículo no diga. Cada cifra, tal como la escribe el artículo. La
@@ -137,11 +150,11 @@ FORMATO DEL PAQUETE
   "article": {"url": "<url>", "title": "<título>", "slug": "<slug del post>"},
   "style": {"palette": "teal-amber", "motif": "rings"},
   "beats": [
-    {"kind": "hook", "kicker": "…", "onscreen": "…", "vo": "…", "broll": "…", "scene": "…"},
+    {"kind": "hook", "kicker": "…", "onscreen": "…", "vo": "…", "broll": "…", "scene": "…", "presenter": true},
     {"kind": "point", "onscreen": "…", "vo": "…", "broll": "…"},
     {"kind": "stat", "value": "73%", "label": "…", "vo": "…", "broll": "…"},
     {"kind": "list", "onscreen": "…", "items": ["…", "…", "…"], "vo": "…", "broll": "…"},
-    {"kind": "cta", "onscreen": "…", "url": "<url>", "vo": "…"}
+    {"kind": "cta", "onscreen": "…", "url": "<url>", "vo": "…", "presenter": true}
   ],
   "covers": {"cover_title": "…", "thumb_title": "…"},
   "social": {"youtube": {"title": "…", "description": "…", "tags": ["…"]},
