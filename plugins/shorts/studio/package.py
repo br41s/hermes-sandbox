@@ -13,7 +13,8 @@ Shape::
       "article": {"url": "...", "title": "...", "slug": "..."},
       "style": {"palette": "indigo-coral", "motif": "diamonds"},
       "beats": [
-        {"kind": "hook",  "vo": "...", "onscreen": "...", "kicker": "...", "broll": "..."},
+        {"kind": "hook",  "vo": "...", "onscreen": "...", "kicker": "...", "broll": "...",
+         "scene": "..."},
         {"kind": "point", "vo": "...", "onscreen": "...", "broll": "..."},
         {"kind": "stat",  "vo": "...", "value": "73%", "label": "...", "broll": "..."},
         {"kind": "list",  "vo": "...", "onscreen": "...", "items": ["...", "..."]},
@@ -31,6 +32,13 @@ Shape::
 The first beat is always the hook and the last is always the CTA. Scene
 length follows the speech (the renderer measures each line), so nothing here
 carries a duration.
+
+``scene`` (optional, at most ``MAX_SCENES`` per package) asks the renderer to
+generate that beat's background with a paid video model instead of stock
+footage (``genvideo.py``). It describes a picture only: the model garbles
+letters and numbers, so text, figures and logos always come from Remotion on
+top, and a scene that asks for any of them is rejected here. ``broll`` stays
+the fallback when the budget, the key or the model says no.
 """
 
 from __future__ import annotations
@@ -78,6 +86,11 @@ MAX_STAT_VALUE_CHARS = 8
 MAX_LIST_ITEMS = 4
 MAX_LIST_ITEM_WORDS = 5
 MAX_COVER_TITLE_WORDS = 7
+MAX_SCENES = 3              # generated backgrounds per short; the rest is stock footage
+SCENE_KINDS = ("hook", "point", "stat", "list", "quote")
+MIN_SCENE_WORDS = 6
+MAX_SCENE_WORDS = 60
+MAX_SCENE_CHARS = 400
 
 MAX_X_CHARS = 280
 MAX_YT_TITLE_CHARS = 100
@@ -88,6 +101,16 @@ MAX_YT_TAGS = 15
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _WORD = re.compile(r"\S+")
+# What a generated background must never be asked for: rendered lettering,
+# figures or marks (the model garbles them, and they would bypass the
+# grounding check), or someone else's brand.
+_SCENE_FORBIDDEN = re.compile(
+    r"\b(text|texts|caption|captions|subtitles?|letters?|lettering|typography|fonts?|words?|"
+    r"headlines?|writing|written|logos?|watermarks?|brand(?:ed|s)?|trademarks?|signage|"
+    r"numbers?|digits?|charts?|graphs?|infographics?|"
+    r"texto|letras?|rótulos?|carteles?|logotipos?|marcas?|números?|cifras?|gráficos?)\b",
+    re.IGNORECASE,
+)
 
 
 class PackageError(ValueError):
@@ -210,6 +233,24 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             _check_text(problems, f"{where}.broll", broll, max_words=6, max_chars=60)
             beat["broll"] = broll
 
+        scene = _text(b.get("scene"))
+        if scene:
+            if kind not in SCENE_KINDS:
+                problems.append(f"{where}.scene: only {list(SCENE_KINDS)} beats get a generated scene")
+            else:
+                _check_text(problems, f"{where}.scene", scene,
+                            max_words=MAX_SCENE_WORDS, max_chars=MAX_SCENE_CHARS)
+                if _words(scene) < MIN_SCENE_WORDS:
+                    problems.append(f"{where}.scene: describe the picture in at least "
+                                    f"{MIN_SCENE_WORDS} words: {scene!r}")
+                bad = sorted({m.group(0).lower() for m in _SCENE_FORBIDDEN.finditer(scene)})
+                if bad:
+                    problems.append(
+                        f"{where}.scene: a generated scene is a picture only, never text, figures or "
+                        f"brands (Remotion draws those on top); remove {bad}: {scene!r}"
+                    )
+                beat["scene"] = scene
+
         if kind in ("hook", "point", "quote", "list", "cta"):
             beat["onscreen"] = _text(b.get("onscreen"))
             _check_text(problems, f"{where}.onscreen", beat["onscreen"],
@@ -253,6 +294,11 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
                     f"got {beat['url']!r}"
                 )
         beats.append(beat)
+
+    scenes = sum(1 for b in beats if b.get("scene"))
+    if scenes > MAX_SCENES:
+        problems.append(f"beats: {scenes} generated scenes, max {MAX_SCENES} per short "
+                        "(the hook and the most visual beats; the rest uses broll)")
 
     if beats_raw and not (MIN_TOTAL_WORDS <= total_words <= MAX_TOTAL_WORDS):
         problems.append(

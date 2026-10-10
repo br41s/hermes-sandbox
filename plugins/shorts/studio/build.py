@@ -19,7 +19,9 @@ outputs are still written, so the report can say why); 1 = could not render.
 Order, and why:
 1. Voice first. Every scene is as long as its line takes to say, so nothing
    visual can be timed before the audio exists.
-2. Footage and music, trimmed to the scene lengths the voice fixed.
+2. Generated scenes for the beats that ask for one (``genvideo``, paid and
+   capped), then free footage for every other beat, and music — all trimmed
+   to the scene lengths the voice fixed.
 3. Remotion renders picture only (muted); audio is mixed by ffmpeg, where
    ducking and two-pass loudness are reliable.
 4. QA reads the finished file, never the inputs.
@@ -38,7 +40,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from plugins.shorts.studio import media, qa, sources, voice
+from plugins.shorts.studio import genvideo, media, qa, sources, voice
 from plugins.shorts.studio.package import PackageError, validate_package
 
 FPS = media.FPS
@@ -164,7 +166,10 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
 
 def gather_broll(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path, public: Path,
                  seed: str, *, offline: bool) -> List[Dict[str, Any]]:
-    """One clip per distinct query; beats that share a query continue the clip."""
+    """One clip per distinct query; beats that share a query continue the clip.
+
+    A beat that already has a generated scene keeps it.
+    """
     used: List[Dict[str, Any]] = []
     by_query: Dict[str, Dict[str, Any]] = {}
     avoid = list(pkg.get("avoid_broll_ids") or [])
@@ -172,11 +177,11 @@ def gather_broll(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path
     (public / "broll").mkdir(parents=True, exist_ok=True)
 
     for i, (beat, slot) in enumerate(zip(pkg["beats"], timeline)):
-        slot["broll"] = None
+        slot.setdefault("broll", None)
         if beat["kind"] == "avatar":
             continue
         query = beat.get("broll") or query
-        if not query or offline:
+        if slot["broll"] or not query or offline:
             continue
         entry = by_query.get(query)
         if entry is None:
@@ -337,6 +342,7 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     total_seconds = tl["frames"] / FPS
     _log(f"voice: {len(pkg['beats'])} beats, {total_seconds:.2f}s, {len(tl['words'])} words")
 
+    ai_video = genvideo.render_scenes(pkg, tl["timeline"], work, public, seed, fps=FPS, offline=offline)
     broll = gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
     music = gather_music(pkg, work, seed, offline=offline)
     _log(f"sources: {len(broll)} clips, music={'none' if not music else music['id']}")
@@ -378,6 +384,9 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
         "broll": broll,
         "music": {k: music[k] for k in ("id", "source", "url")} if music else None,
         "avatars": [b["avatar"] for b in pkg["beats"] if b["kind"] == "avatar"],
+        "ai_video": ai_video,
+        # Realistic generated footage or an AI avatar: YouTube's containsSyntheticMedia.
+        "synthetic": bool(ai_video["generated"]) or any(b["kind"] == "avatar" for b in pkg["beats"]),
         "covers": pkg["covers"],
         "social": pkg["social"],
         "qa": {"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"],

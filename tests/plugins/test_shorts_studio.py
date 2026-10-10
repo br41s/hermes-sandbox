@@ -22,6 +22,7 @@ from plugins.shorts import github_studio, ledger
 from plugins.shorts import studio_tool as st
 from plugins.shorts.studio import article as article_mod
 from plugins.shorts.studio import build as build_mod
+from plugins.shorts.studio import genvideo
 from plugins.shorts.studio import package as pkg_mod
 from plugins.shorts.studio import voice as voice_mod
 
@@ -293,12 +294,13 @@ def test_submit_requires_avatar_clips_from_the_library(sample, submit_env):
     assert out["success"], out
 
 
-def _fake_artifact(passed=True):
+def _fake_artifact(passed=True, **extra):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("manifest.json", json.dumps({
             "duration_s": 58.2, "music": {"id": "516"}, "broll": [{"id": "pexels-9"}],
             "qa": {"passed": passed, "errors": [] if passed else ["loudness"], "warnings": []},
+            **extra,
         }))
         z.writestr("master.mp4", b"x")
         z.writestr("cover.jpg", b"x")
@@ -629,3 +631,204 @@ def test_the_default_profile_still_resolves_its_own_keys(multiplex):
 def test_no_scope_under_multiplex_reads_as_unconfigured_not_as_the_process_env(multiplex):
     assert st.check_studio_available() is False
     assert st.publish_mode() == "shadow"
+
+
+# ---------------------------------------------------------------------------
+# Generated scenes (genvideo): schema, budget, key handling, fallback
+# ---------------------------------------------------------------------------
+
+SCENE = "Slow push-in on a small bakery counter at dawn, flour in the air, warm window light"
+
+
+def test_a_scene_is_a_picture_only_and_at_most_three_per_short(sample):
+    ok = copy.deepcopy(sample)
+    ok["beats"][0]["scene"] = SCENE
+    assert pkg_mod.validate_package(ok)["beats"][0]["scene"] == SCENE
+
+    texty = copy.deepcopy(sample)
+    texty["beats"][0]["scene"] = "A neon sign with the brand logo and big numbers on a wall"
+    with pytest.raises(pkg_mod.PackageError) as exc:
+        pkg_mod.validate_package(texty)
+    assert "picture only" in str(exc.value) and "logo" in str(exc.value)
+
+    on_cta = copy.deepcopy(sample)
+    on_cta["beats"][-1]["scene"] = SCENE
+    with pytest.raises(pkg_mod.PackageError, match="generated scene"):
+        pkg_mod.validate_package(on_cta)
+
+    too_many = copy.deepcopy(sample)
+    for beat in too_many["beats"][:-1]:
+        beat["scene"] = SCENE
+    assert len(too_many["beats"]) - 1 > pkg_mod.MAX_SCENES
+    with pytest.raises(pkg_mod.PackageError, match="max 3 per short"):
+        pkg_mod.validate_package(too_many)
+
+
+def test_clip_length_follows_the_scene_within_the_models_range():
+    assert genvideo.clip_seconds(2.1) == 5
+    assert genvideo.clip_seconds(7.0) == 7
+    assert genvideo.clip_seconds(7.01) == 8
+    assert genvideo.clip_seconds(31) == 15
+
+
+def _scene_pkg(sample, n=3):
+    pkg = pkg_mod.validate_package(sample)
+    for beat in pkg["beats"][:n]:
+        beat["scene"] = SCENE
+    timeline = [{"from": 0, "duration": 8 * 30} for _ in pkg["beats"]]
+    return pkg, timeline
+
+
+def test_plan_keeps_each_short_inside_its_budget_and_the_day_inside_the_cap(sample):
+    pkg, timeline = _scene_pkg(sample)
+    cfg = {"price_per_s": 0.03, "short_budget": 0.5, "daily_cap": 1.0}
+
+    jobs, skipped = genvideo.plan(pkg, timeline, cfg, daily_used=0.0, fps=30)
+    assert [j["beat"] for j in jobs] == [0, 1]           # 8 s x $0.03 = $0.24 each; the third breaks $0.50
+    assert skipped[0]["beat"] == 2 and "short budget" in skipped[0]["reason"]
+
+    jobs, skipped = genvideo.plan(pkg, timeline, cfg, daily_used=0.80, fps=30)
+    assert jobs == [] and all("daily cap" in s["reason"] for s in skipped)
+
+    jobs, _ = genvideo.plan(pkg, timeline, cfg, daily_used=None, fps=30)
+    assert len(jobs) == 2                                # unknown spend: the per-short budget still holds
+    assert "pink" not in jobs[0]["prompt"] and "No text" in jobs[0]["prompt"]
+
+
+@pytest.mark.parametrize("url,gets_key", [
+    ("https://openrouter.ai/api/v1/videos/abc", True),
+    ("https://storage.example-cdn.com/v/abc.mp4?sig=1", False),
+    ("http://openrouter.ai/api/v1/videos/abc", False),
+    ("https://openrouter.ai.evil.example/x", False),
+])
+def test_the_openrouter_key_never_leaves_openrouter(url, gets_key):
+    assert ("Authorization" in genvideo._headers(url, "sk-test")) is gets_key
+
+
+class _ORResp:
+    def __init__(self, status=200, data=None, body=b""):
+        self.status_code, self._data, self._body = status, data or {}, body
+        self.text = json.dumps(self._data)
+
+    def json(self):
+        return self._data
+
+    def iter_bytes(self):
+        yield self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeOpenRouter:
+    """Submit -> one poll -> completed, with a reported cost; or a 402 on submit."""
+
+    def __init__(self, *, refuse=False, usage_daily=0.10):
+        self.refuse, self.usage_daily = refuse, usage_daily
+        self.posts, self.calls = [], []
+
+    def __call__(self, *a, **kw):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, headers=None):
+        self.calls.append((url, headers))
+        if url == genvideo.KEY_INFO:
+            return _ORResp(data={"data": {"usage_daily": self.usage_daily}})
+        return _ORResp(data={"status": "completed", "usage": {"cost": 0.12},
+                           "unsigned_urls": ["https://cdn.example.com/clip.mp4"]})
+
+    def post(self, url, headers=None, json=None):
+        self.posts.append(json)
+        if self.refuse:
+            return _ORResp(402, {"error": "no credit"})
+        return _ORResp(data={"id": f"job{len(self.posts)}"})
+
+    def stream(self, method, url, headers=None):
+        self.calls.append((url, headers))
+        return _ORResp(body=b"mp4")
+
+
+def _run_scenes(sample, tmp_path, monkeypatch, fake, **env):
+    import httpx
+
+    from plugins.shorts.studio import media
+
+    monkeypatch.setattr(httpx, "Client", fake)
+    monkeypatch.setattr(genvideo, "POLL_EVERY_S", 0)
+    monkeypatch.setattr(media, "normalize_clip", lambda src, dst, seconds, start=0.0: dst)
+    for k, v in {"SHORTS_OPENROUTER_API_KEY": "sk-test", **env}.items():
+        monkeypatch.setenv(k, v)
+    pkg, timeline = _scene_pkg(sample, n=2)
+    report = genvideo.render_scenes(pkg, timeline, tmp_path, tmp_path / "public", "rid-1", fps=30, offline=False)
+    return pkg, timeline, report
+
+
+def test_generated_scenes_fill_their_slots_and_record_the_real_cost(sample, tmp_path, monkeypatch):
+    fake = _FakeOpenRouter()
+    pkg, timeline, report = _run_scenes(sample, tmp_path, monkeypatch, fake)
+    assert report["generated"] == 2 and report["spent_usd"] == pytest.approx(0.24)
+    assert [s["broll"] for s in timeline[:2]] == ["ai/s00.mp4", "ai/s01.mp4"]
+    assert fake.posts[0]["model"] == "heygen/heygen-video-1" and fake.posts[0]["aspect_ratio"] == "9:16"
+    assert fake.posts[0]["seed"] == fake.posts[1]["seed"]                 # one look per short
+    cdn = [h for u, h in fake.calls if u.startswith("https://cdn.example.com")]
+    assert cdn and all("Authorization" not in h for h in cdn)
+
+
+def test_a_refused_or_unkeyed_scene_falls_back_to_stock_footage(sample, tmp_path, monkeypatch):
+    _, timeline, report = _run_scenes(sample, tmp_path, monkeypatch, _FakeOpenRouter(refuse=True))
+    assert report["generated"] == 0 and report["spent_usd"] == 0
+    assert all(not s.get("broll") for s in timeline) and "402" in report["scenes"][0]["reason"]
+
+    monkeypatch.delenv("SHORTS_OPENROUTER_API_KEY")
+    pkg, timeline = _scene_pkg(sample, n=1)
+    report = genvideo.render_scenes(pkg, timeline, tmp_path, tmp_path / "public", "rid-2", fps=30, offline=False)
+    assert report["scenes"] == [{"beat": 0, "status": "skipped", "reason": "SHORTS_OPENROUTER_API_KEY is not set"}]
+
+
+def test_stock_footage_never_overwrites_a_generated_scene(sample, tmp_path):
+    pkg = pkg_mod.validate_package(sample)
+    timeline = [{"from": 0, "duration": 90} for _ in pkg["beats"]]
+    timeline[0]["broll"] = "ai/s00.mp4"
+    build_mod.gather_broll(pkg, timeline, tmp_path, tmp_path / "public", "seed", offline=True)
+    assert timeline[0]["broll"] == "ai/s00.mp4" and timeline[1]["broll"] is None
+
+
+def test_a_short_with_generated_scenes_is_published_as_synthetic_media(sample, submit_env, monkeypatch):
+    st.handle_shorts_studio({"action": "submit", "package": sample})
+    rid = submit_env[0][0]
+    monkeypatch.setattr(github_studio, "get_run",
+                        lambda run_id: {"id": run_id, "status": "completed", "conclusion": "success", "html_url": "h"})
+
+    def fake_download(run_id, name, dest):
+        art = _fake_artifact(ai_video={"generated": 2, "spent_usd": 0.24}, synthetic=True)
+        with zipfile.ZipFile(io.BytesIO(art)) as z:
+            github_studio._safe_extract(z, dest)
+        return dest
+
+    monkeypatch.setattr(github_studio, "download_artifact", fake_download)
+    st.handle_shorts_studio({"action": "status"})
+    entry = ledger.get(rid)
+    assert entry["ai_scenes"] == 2 and entry["ai_spend_usd"] == 0.24 and entry["synthetic"] is True
+
+    seen = {}
+
+    def fake_upload(video, thumb, srt, social, lang, *, synthetic=False):
+        seen["synthetic"] = synthetic
+        return {"id": "yt1", "url": "u", "privacy": "public", "warnings": []}
+
+    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
+    monkeypatch.setattr(st, "_enabled_targets", lambda: ["youtube"])
+    from plugins.shorts.social import youtube as youtube_mod
+
+    monkeypatch.setattr(youtube_mod, "upload", fake_upload)
+    out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid, "target": "youtube"}))
+    assert out["success"] and seen["synthetic"] is True

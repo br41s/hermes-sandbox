@@ -57,6 +57,13 @@ jobs:
       REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}', matrix.sample) }}
       PACKAGE_B64: ${{ inputs.package }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      # Paid generated scenes (plugins/shorts/studio/genvideo.py). A dedicated key
+      # with its own daily limit on openrouter.ai, and only on a real dispatch:
+      # the push smoke test never spends.
+      SHORTS_OPENROUTER_API_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.SHORTS_OPENROUTER_API_KEY || '' }}
+      SHORTS_AI_DAILY_CAP_USD: ${{ vars.SHORTS_AI_DAILY_CAP_USD || '1.00' }}
+      SHORTS_AI_SHORT_BUDGET_USD: ${{ vars.SHORTS_AI_SHORT_BUDGET_USD || '0.50' }}
+      SHORTS_AI_PRICE_PER_SECOND: ${{ vars.SHORTS_AI_PRICE_PER_SECOND || '0.015' }}
       # Lets build.py download avatar clips stored as release assets of this repo.
       GITHUB_TOKEN: ${{ github.token }}
     steps:
