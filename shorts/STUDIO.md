@@ -130,6 +130,10 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
 
 ### 3.3 Facebook + Instagram
 
+**Skip this section when shorts go to Buzz (§3.6):** Facebook and Instagram are
+then SocialBot's, and the tool ignores `META_*` even if they are set, so the
+two systems can never post the same short twice.
+
 1. Instagram must be a **professional** account linked to the BigLobster Facebook Page.
 2. developers.facebook.com → create an app (type Business). Development mode is
    enough while only accounts with a role on the app post: no App Review.
@@ -190,6 +194,42 @@ uploaded with YouTube's `containsSyntheticMedia: true`.
 
 Not set through the Meta API: Meta's own "AI info" label. Check how Instagram and
 Facebook label the first live shorts with generated scenes before relying on it.
+
+### 3.6 Who publishes where: Hermes and Buzz (2026-10-10)
+
+BigLobster runs two agent teams. One factory and one owner per network:
+
+| | Owner | Why |
+|---|---|---|
+| Shorts from blog posts | **Hermes** (this studio) | runs in the cloud 24/7, checks every figure, QA-gates every render. VideoDesk in Buzz no longer makes them |
+| Bespoke videos, edits of Brais's recordings, clips | **VideoDesk** + **Guionista** (Buzz) | creative work that needs conversation and Brais's "aprobado vN" |
+| YouTube | **Hermes** | official API (§3.2) |
+| Facebook, Instagram, X | **SocialBot** (Buzz) | already runs those accounts: Zernio, community replies, DMs, UTMs, its calendar |
+
+The hand-over is one Buzz message. Once a short is live on YouTube, the
+publisher's `handoff` posts it to the shorts channel: `master.mp4`,
+`story.mp4` and `cover.jpg` attached, the Instagram, Facebook and X copy, the
+YouTube link, an AI-content note when the short has generated scenes or an
+avatar, and `@SocialBot`. SocialBot publishes and replies in that thread with
+the links. **Shadow mode never posts to Buzz**, so nothing reaches SocialBot
+until `SHORTS_PUBLISH_MODE=live`. A failed post is not marked and is retried on
+the next run. Code: `plugins/shorts/buzz_share.py`, through Block's `buzz` CLI,
+which the image builds from a pinned commit (Dockerfile, `buzz_cli` stage).
+
+Setup, once:
+
+1. In the Fizz repo, create Hermes's own Buzz identity with
+   `~/fizz/identidad-hermes.sh` (its own key, Brais's attestation, profile
+   "Hermes"). Never reuse a Fizz bot's key.
+2. In Buzz, create the channel `#shorts` and add Hermes and SocialBot.
+3. Zeabur service env: `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`
+   (from step 1) and `SHORTS_BUZZ_CHANNEL` (the channel's UUID). Optional:
+   `SHORTS_BUZZ_MENTION` (default `SocialBot`). Not in `INJECT`: they are
+   BigLobster's identity, never a profile's.
+4. Deploy. The same variables also bring up Hermes's Buzz gateway adapter
+   (`website/docs/user-guide/messaging/buzz.md`). Set `BUZZ_CHANNELS` to the
+   shorts channel so it only watches that one. With `BUZZ_ALLOWED_USERS`
+   empty it answers nobody; add Brais's npub there to talk to Hermes in Buzz.
 
 ## 4. Avatars (Google Flow: Martín, Lucía)
 

@@ -49,6 +49,26 @@ FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df228
 # 2.41) runtime.  Bumping to a new Node major is a one-line ARG change; see
 # #4977.
 FROM node:26-bookworm-slim@sha256:9e6f9357d371591e32ab6f2d8a26d63bdd0d17c29eee3f4f3e7e454d9634bf73 AS node_source
+
+# Block's `buzz` CLI, the client the Buzz gateway adapter and the shorts
+# hand-off to SocialBot (plugins/shorts/buzz_share.py) both shell out to.
+# Block publishes no prebuilt Linux CLI, so it is built here from a pinned
+# commit (tag v0.5.2), with the Rust version its rust-toolchain.toml names.
+# Bookworm, like node_source, so the binary links against glibc 2.36 and runs
+# on the trixie runtime. Bump: change both ARGs together.
+FROM rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS buzz_cli
+ARG BUZZ_CLI_TAG=v0.5.2
+ARG BUZZ_CLI_COMMIT=3e48f1b2365d326ee1c9582448d86a99b44ecd5d
+WORKDIR /src
+RUN git init -q . \
+    && git remote add origin https://github.com/block/buzz \
+    && git fetch -q --depth 1 origin "${BUZZ_CLI_COMMIT}" \
+    && git checkout -q FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${BUZZ_CLI_COMMIT}" \
+    && cargo build --release --locked -p buzz-cli --bin buzz \
+    && strip target/release/buzz \
+    && ./target/release/buzz --version
+
 FROM debian:13.4
 
 # Disable Python stdout buffering to ensure logs are printed immediately.
@@ -201,6 +221,7 @@ SHELL ["/bin/sh", "-c"]
 RUN useradd -u 10000 -m -d /opt/data hermes
 
 COPY --chmod=0755 --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
+COPY --chmod=0755 --from=buzz_cli /src/target/release/buzz /usr/local/bin/buzz
 
 # Node 26: copy the node binary plus the bundled npm JS install from the
 # upstream image.  npm and npx are recreated as symlinks because they're

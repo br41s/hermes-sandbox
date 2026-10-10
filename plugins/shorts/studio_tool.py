@@ -415,11 +415,16 @@ def _action_status(args: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 def _enabled_targets() -> List[str]:
+    from plugins.shorts import buzz_share
     from plugins.shorts.social import meta, youtube
 
     targets = []
     if youtube.configured():
         targets.append("youtube")
+    if buzz_share.configured():
+        # Facebook and Instagram are SocialBot's once shorts go to Buzz: two
+        # publishers on one account would double-post (shorts/STUDIO.md).
+        return targets
     if meta.configured():
         targets.append("facebook")
     if meta.configured(instagram=True):
@@ -549,13 +554,16 @@ def _action_avatars(args: Dict[str, Any]) -> str:
 def _action_handoff(args: Dict[str, Any]) -> str:
     """Build the human hand-off message for a finished short.
 
-    Live mode: the X post (X has no free API), after the automatic targets.
+    Live mode, Buzz configured: the files and every network's copy go to
+    SocialBot in Buzz (it owns Facebook, Instagram and X), and the message
+    here only reports it. Live mode without Buzz: the X post for a human
+    (X has no free API), after the automatic targets.
     Shadow mode: everything — files and every network's copy — and the short
-    moves to ``handed_off`` so it is not reported again.
+    moves to ``handed_off`` so it is not reported again. Never to Buzz.
     Paste ``message`` into your final response as-is: its MEDIA: lines are
     what attach the files on Telegram.
     """
-    from plugins.shorts import ledger
+    from plugins.shorts import buzz_share, ledger
 
     request_id = (args.get("request_id") or "").strip()
     try:
@@ -579,7 +587,20 @@ def _action_handoff(args: Dict[str, Any]) -> str:
     social = pkg.get("social") or {}
     lang = entry.get("lang", "").upper()
     lines: List[str] = []
-    if live:
+    if live and buzz_share.configured():
+        youtube_url = ((entry.get("published") or {}).get("youtube") or {}).get("url")
+        try:
+            sent = buzz_share.post(entry, files, social, youtube_url)
+        except buzz_share.BuzzError as exc:
+            # Not marked: the next run hands it over again.
+            return _fail(f"could not hand {request_id} to SocialBot in Buzz: {exc}")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ledger.update(request_id, x_handoff_at=stamp, buzz_posted_at=stamp)
+        lines += [f"🎬 Short {lang} publicado — {entry.get('title')}",
+                  f"• YouTube: {youtube_url or 'no publicado'}",
+                  f"• Entregado a SocialBot en Buzz ({', '.join(sent['attached'])}) para Facebook, "
+                  "Instagram y X."]
+    elif live:
         pub = entry.get("published") or {}
         lines.append(f"🎬 Short {lang} publicado — {entry.get('title')}")
         for key, label in (("youtube", "YouTube"), ("instagram_reel", "Instagram"),

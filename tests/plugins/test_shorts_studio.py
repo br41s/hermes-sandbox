@@ -858,3 +858,91 @@ def test_a_direct_hook_passes(sample):
     pkg = copy.deepcopy(sample)
     pkg["beats"][0]["vo"] = "¿Sigues escribiendo cada factura a mano? Hay una forma más rápida."
     assert pkg_mod.validate_package(pkg)["beats"][0]["vo"].startswith("¿Sigues")
+
+
+# ---------------------------------------------------------------------------
+# Hand-off to SocialBot in Buzz
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def buzz_env(monkeypatch):
+    for k, v in {"SHORTS_BUZZ_CHANNEL": "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd",
+                 "BUZZ_RELAY_URL": "wss://relay.example", "BUZZ_PRIVATE_KEY": "nsec1test",
+                 "BUZZ_AUTH_TAG": "[]", "META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t",
+                 "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
+                 "YOUTUBE_REFRESH_TOKEN": "r"}.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_buzz_takes_meta_away_from_hermes(buzz_env, monkeypatch):
+    assert st._enabled_targets() == ["youtube"]
+    monkeypatch.delenv("SHORTS_BUZZ_CHANNEL")
+    assert "facebook" in st._enabled_targets() and "instagram_reel" in st._enabled_targets()
+
+
+def _ready_short(sample, submit_env, **fields):
+    st.handle_shorts_studio({"action": "submit", "package": sample})
+    rid = submit_env[0][0]
+    out_dir = Path(ledger.get(rid)["dir"]) / "out"
+    out_dir.mkdir(parents=True)
+    for name in ("master.mp4", "story.mp4", "cover.jpg"):
+        (out_dir / name).write_bytes(b"x")
+    ledger.update(rid, qa={"passed": True}, **fields)
+    return rid
+
+
+def test_a_live_short_is_handed_to_socialbot_once(sample, submit_env, buzz_env, monkeypatch):
+    from plugins.shorts import buzz_share
+
+    rid = _ready_short(sample, submit_env, state="published", synthetic=True,
+                       published={"youtube": {"id": "yt1", "url": "https://youtube.com/shorts/yt1"}})
+    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
+    monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append((args, kw))
+        return type("Done", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+
+    monkeypatch.setattr(buzz_share.subprocess, "run", fake_run)
+    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
+    assert out["success"] and "SocialBot" in out["message"] and "MEDIA:" not in out["message"]
+    args, kw = calls[0]
+    assert args[:5] == ["/usr/local/bin/buzz", "messages", "send", "--channel",
+                        "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd"]
+    assert sum(a == "--file" for a in args) == 3
+    assert "@SocialBot" in kw["input"] and "youtube.com/shorts/yt1" in kw["input"]
+    assert "contenido IA" in kw["input"]
+    # Only the Buzz credentials reach the CLI, never the rest of the process env.
+    assert set(kw["env"]) <= {"PATH", "HOME", "BUZZ_RELAY_URL", "BUZZ_PRIVATE_KEY", "BUZZ_AUTH_TAG"}
+    assert ledger.get(rid)["buzz_posted_at"]
+
+    again = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
+    assert again.get("already") and len(calls) == 1
+
+
+def test_a_failed_buzz_post_is_retried_next_run(sample, submit_env, buzz_env, monkeypatch):
+    from plugins.shorts import buzz_share
+
+    rid = _ready_short(sample, submit_env, state="published")
+    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
+    monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
+    monkeypatch.setattr(buzz_share.subprocess, "run", lambda args, **kw: type(
+        "Done", (), {"returncode": 1, "stdout": "", "stderr": "relay said no"})())
+    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
+    assert not out["success"] and "relay said no" in out["error"]
+    assert not ledger.get(rid).get("x_handoff_at")
+
+
+def test_shadow_mode_never_posts_to_buzz(sample, submit_env, buzz_env, monkeypatch):
+    from plugins.shorts import buzz_share
+
+    rid = _ready_short(sample, submit_env, state="ready")
+    monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
+
+    def boom(*a, **kw):
+        raise AssertionError("shadow mode must not post to Buzz")
+
+    monkeypatch.setattr(buzz_share, "post", boom)
+    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
+    assert out["success"] and "[SHADOW]" in out["message"]
