@@ -52,8 +52,9 @@ def configured() -> bool:
 
 def _child_env() -> Dict[str, str]:
     """Only what the CLI needs: the scoped Buzz credentials, never the whole process env."""
-    child = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-             "HOME": os.environ.get("HOME", "/tmp")}
+    child = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
+    if os.environ.get("HOME"):
+        child["HOME"] = os.environ["HOME"]
     for name in _CREDENTIALS:
         value = env(name)
         if value:
