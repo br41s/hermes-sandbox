@@ -128,9 +128,14 @@ obligatorias:
    - Solo opiniones que hayas leído en esta ejecución, en una página cuyo
      modelo y referencia coincidan con el producto del catálogo. Una página
      de otra variante («Modelo X+» no es «Modelo X») no vale.
-   - Nombra de dónde salen («según las opiniones publicadas en dos tiendas online
-     y en la web del fabricante»), sin enlazar a tiendas y sin copiar frases
-     literales.
+   - Di el **tipo** de fuente, nunca su nombre: «según opiniones publicadas
+     en tiendas online y foros», «en la web del fabricante». No nombres ni
+     enlaces ninguna tienda: el blog del cliente no anuncia a su
+     competencia. Las URL exactas van solo en tu informe final, que no se
+     publica. Nunca copies frases literales.
+   - No vendas como consenso lo que son pocas opiniones: con menos de 20,
+     escribe «en las opiniones que hemos encontrado…», no «los compradores
+     destacan…».
    - Si de un modelo encuentras menos de 5 opiniones, escribe que no has
      encontrado opiniones suficientes de ese modelo: nada de rellenar con lo
      que dicen de otro.
@@ -320,7 +325,8 @@ bloquea la publicación.
    y «opiniones» (o su referencia), y `web_extract` sobre 1–2 páginas que
    tengan opiniones de ese modelo exacto. Comprueba en la página que el
    modelo y la referencia coinciden antes de usar nada. Apunta por producto
-   cuántas opiniones has leído y dónde, y qué se repite a favor y en contra.
+   cuántas opiniones has leído, la URL exacta de cada página (va a tu
+   informe, no al artículo) y qué se repite a favor y en contra.
 5. Fotos: apunta el `image_url` del catálogo de cada producto comparado
    (sección FOTOS DE LOS PRODUCTOS).
 
@@ -360,7 +366,7 @@ bloquea la publicación.
 - Extensión: [nº aprox. de palabras de texto, sin la tabla] (1500–3000)
 - Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo, incluye si hubo reintento]
 - Fotos de producto: [N de M con foto del catálogo · cuáles no tenían `image_url`]
-- Opiniones: [por producto: nº de opiniones leídas y dónde, o "insuficientes"]
+- Opiniones: [por producto: nº de opiniones leídas y las URL exactas de donde salen, o "insuficientes"]
 - Secciones opcionales: cuidado [✅ / omitida — motivo] · accesorios [✅ productos enlazados / omitida — motivo] · errores [✅ / omitida] · opiniones [✅ / omitida — motivo]
 - Fuentes: [dominios citados en `## Fuentes`, o "ninguna externa"]
 - Enlaces internos: [RUTAS usadas]

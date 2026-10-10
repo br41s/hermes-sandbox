@@ -227,6 +227,11 @@ def test_product_guides_prompt_photos_picks_and_opinions():
     # Opinions are summarised in words only: no scores (CEO, 2026-10-10), the
     # exact model, negatives included, and the provenance line.
     assert "**Sin notas, sin estrellas, sin porcentajes.**" in text
+    # The article names the kind of source, never the shop (no free advertising
+    # for the client's competitors); the exact URLs go to the unpublished run
+    # report so every summary stays auditable (CEO, 2026-10-10).
+    assert "Di el **tipo** de fuente, nunca su nombre" in text
+    assert "las URL exactas de donde salen" in text
     assert "No\n     verificamos que procedan de compradores del producto." in text
 
 
