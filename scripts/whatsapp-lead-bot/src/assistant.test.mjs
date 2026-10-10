@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateAssistantOutput } from "./assistant.js";
+import { validateAssistantOutput, getAssistantReply, PROVIDER_POLICY } from "./assistant.js";
 
 function validRaw(overrides = {}) {
   return JSON.stringify({
@@ -78,4 +78,26 @@ test("trims whitespace on string fields", () => {
   );
   assert.equal(result.lead.name, "Marta");
   assert.equal(result.lead.need, "reforma cocina");
+});
+
+test("every OpenRouter request asks for providers that neither store nor train on the prompt", async () => {
+  const realFetch = globalThis.fetch;
+  const env = { key: process.env.OPENROUTER_API_KEY, model: process.env.VISITOR_AGENT_MODEL };
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.VISITOR_AGENT_MODEL = "some/model";
+  let sent;
+  globalThis.fetch = async (url, opts) => {
+    sent = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: validRaw() } }] }) };
+  };
+  try {
+    await getAssistantReply({ knowledge: { items: [] }, chatwootMessages: [], visitorMessage: "hola" });
+  } finally {
+    globalThis.fetch = realFetch;
+    if (env.key === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = env.key;
+    if (env.model === undefined) delete process.env.VISITOR_AGENT_MODEL; else process.env.VISITOR_AGENT_MODEL = env.model;
+  }
+  assert.deepEqual(sent.provider, { data_collection: "deny" });
+  assert.deepEqual(PROVIDER_POLICY, { data_collection: "deny" });
+  assert.equal(sent.model, "some/model");
 });

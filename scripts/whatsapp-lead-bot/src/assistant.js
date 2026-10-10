@@ -84,6 +84,8 @@ function buildHistoryMessages(chatwootMessages) {
 // (webhook.js) must catch and treat any throw as "invalid_model_output" /
 // "openrouter_unavailable" per the escalation policy. Never returns a
 // partially-valid object.
+export const PROVIDER_POLICY = Object.freeze({ data_collection: "deny" });
+
 export async function getAssistantReply({ knowledge, chatwootMessages, visitorMessage }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
@@ -106,6 +108,9 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
       messages,
       response_format: { type: "json_object" },
       max_tokens: 500,
+      // Visitors' messages carry names and contact details: only providers that neither
+      // store the prompt nor train on it (replaces the account-wide ZDR switch).
+      provider: PROVIDER_POLICY,
     }),
   });
 

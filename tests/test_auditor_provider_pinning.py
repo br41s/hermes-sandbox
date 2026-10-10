@@ -19,19 +19,21 @@ from auditor import llm
 from hermes_cli.fork_ext import boot_reconcile as br
 
 IGNORE = ["open-inference"]
+DENY = "deny"  # provider_routing.data_collection, forced on every profile
 
 
 @pytest.mark.parametrize("label", ["main", "biglobster", "grow-shop"])
-def test_routing_is_auditor_only(label: str) -> None:
+def test_only_the_auditor_ignores_providers(label: str) -> None:
+    # Every profile gets the privacy policy; the OpenInference ignore stays auditor-only.
     cfg: dict = {}
     br.reconcile_cfg(cfg, label, {})
-    assert "provider_routing" not in cfg
+    assert cfg["provider_routing"] == {"data_collection": DENY}
 
 
 def test_auditor_ignores_openinference() -> None:
     cfg: dict = {"model": {"default": "deepseek/deepseek-v4-flash"}}
     br.reconcile_cfg(cfg, "auditor", {})
-    assert cfg["provider_routing"] == {"ignore": IGNORE}
+    assert cfg["provider_routing"] == {"ignore": IGNORE, "data_collection": DENY}
     # Second boot: no change (idempotent), so config.yaml is not rewritten.
     assert br.reconcile_cfg(cfg, "auditor", {}) is False
 
@@ -40,13 +42,14 @@ def test_the_dead_deepseek_pin_is_removed_from_existing_configs() -> None:
     # What every live auditor config.yaml holds until this reconcile runs.
     cfg: dict = {"provider_routing": {"order": ["deepseek"], "sort": "price"}}
     assert br.reconcile_cfg(cfg, "auditor", {}) is True
-    assert cfg["provider_routing"] == {"sort": "price", "ignore": IGNORE}
+    assert cfg["provider_routing"] == {"sort": "price", "ignore": IGNORE, "data_collection": DENY}
 
 
 def test_a_hand_set_order_survives() -> None:
     cfg: dict = {"provider_routing": {"order": ["together", "atlas-cloud"]}}
     br.reconcile_cfg(cfg, "auditor", {})
-    assert cfg["provider_routing"] == {"order": ["together", "atlas-cloud"], "ignore": IGNORE}
+    assert cfg["provider_routing"] == {
+        "order": ["together", "atlas-cloud"], "ignore": IGNORE, "data_collection": DENY}
 
 
 def test_the_judge_ignores_the_same_providers() -> None:

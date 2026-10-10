@@ -138,6 +138,14 @@ OVERRIDES = {
     # resume_pending before the drain, so they resume.
     ("agent", "restart_drain_timeout"): 10,
     ("agent", "cron_drain_timeout"): 10,
+    # Privacy: ask OpenRouter to route only to providers that neither store the prompt nor
+    # train on it. Replaces the account-wide Zero Data Retention switch, which left models
+    # with no provider at all (meta/muse-image and qwen3.7-flash had 0 ZDR endpoints).
+    # Read by the gateway turn (gateway/run_turn*.py), the cron agent (cron/scheduler.py)
+    # and delegation. NOT read by auxiliary tasks (vision, summaries: agent/auxiliary_client.py)
+    # nor by the image/video plugins; the auditor judge sends its own (auditor/llm.py).
+    # Forced like the rest of this table so a profile cannot opt itself out.
+    ("provider_routing", "data_collection"): "deny",
 }
 
 # Forced on every NAMED profile, never on main (stage 3 step 5, ops/multiplex-stage3-plan.md).
