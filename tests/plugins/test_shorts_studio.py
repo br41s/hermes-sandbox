@@ -41,6 +41,15 @@ def sample():
     return json.loads(SAMPLE.read_text(encoding="utf-8"))
 
 
+TIP_SAMPLE = REPO / "shorts" / "studio" / "samples" / "es-sample.json"
+
+
+@pytest.fixture
+def tip():
+    """The tip format, the only one the studio tool submits: the Spanish sample."""
+    return json.loads(TIP_SAMPLE.read_text(encoding="utf-8"))
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path, raising=False)
@@ -262,36 +271,34 @@ def submit_env(home, monkeypatch):
     return dispatched
 
 
-def test_submit_dispatches_and_records(sample, submit_env):
-    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+def test_submit_dispatches_and_records(tip, submit_env):
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert out["success"], out
     rid, sent = submit_env[0]
-    assert rid.startswith("en-when-to-adopt-ai-sme-2026-") and sent["request_id"] == rid
+    assert rid.startswith("es-when-to-adopt-ai-sme-2026-") and sent["request_id"] == rid
     entry = ledger.get(rid)
     assert entry["state"] == "rendering" and entry["run_id"] == 7
-    again = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+    again = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert not again["success"] and "already has a short" in again["error"]
 
 
-def test_submit_rejects_invented_figures_and_a_repeated_look(sample, submit_env):
-    ledger.add(_entry("es-x-1", palette="indigo-coral", motif="grid"))
-    sample["beats"][3]["value"] = "91%"
-    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+def test_submit_rejects_invented_figures_and_a_repeated_look(tip, submit_env):
+    ledger.add(_entry("es-x-1", palette="teal-amber", motif="grid"))
+    tip["beats"][3]["value"] = "91%"
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert not out["success"]
     joined = " ".join(out["problems"])
     assert "style.palette" in joined and "'91'" in joined
     assert submit_env == []
 
 
-def test_submit_requires_avatar_clips_from_the_library(sample, submit_env):
-    sample["beats"].insert(1, {"kind": "avatar", "avatar": "martin", "clip_url": "https://x/clip.mp4",
-                               "vo": "Hi, I am Martin."})
+def test_submit_accepts_only_tip_shorts(sample, tip, submit_env):
+    # Every short is the presenter's, in their one voice: the classic narrator format is refused.
     out = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
-    assert not out["success"] and "not in the avatar library" in " ".join(out["problems"])
-    ledger.add_avatar({"avatar": "martin", "lang": "en", "line": "Hi, I am Martin.",
-                       "clip_url": "https://x/clip.mp4", "seconds": 2.0})
-    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+    assert not out["success"] and "tip" in " ".join(out["problems"]) and submit_env == []
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert out["success"], out
+    assert ledger.get(out["request_id"])["format"] == "tip"
 
 
 def _fake_artifact(passed=True, **extra):
@@ -307,8 +314,8 @@ def _fake_artifact(passed=True, **extra):
     return buf.getvalue()
 
 
-def test_status_collects_a_finished_render(sample, submit_env, monkeypatch):
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+def test_status_collects_a_finished_render(tip, submit_env, monkeypatch):
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     monkeypatch.setattr(github_studio, "get_run",
                         lambda run_id: {"id": run_id, "status": "completed", "conclusion": "success", "html_url": "h"})
@@ -326,9 +333,9 @@ def test_status_collects_a_finished_render(sample, submit_env, monkeypatch):
     assert ledger.get(rid)["broll_ids"] == ["pexels-9"]
 
 
-def test_publish_is_refused_in_shadow_mode_and_handoff_delivers_files(sample, submit_env, monkeypatch):
+def test_publish_is_refused_in_shadow_mode_and_handoff_delivers_files(tip, submit_env, monkeypatch):
     monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     out_dir = Path(ledger.get(rid)["dir"]) / "out"
     out_dir.mkdir(parents=True)
@@ -344,9 +351,9 @@ def test_publish_is_refused_in_shadow_mode_and_handoff_delivers_files(sample, su
     assert ledger.get(rid)["state"] == "handed_off"
 
 
-def test_publish_refuses_a_short_that_failed_qa(sample, submit_env, monkeypatch):
+def test_publish_refuses_a_short_that_failed_qa(tip, submit_env, monkeypatch):
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     ledger.update(rid, state="qa_failed")
     out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid, "target": "youtube"}))
@@ -518,9 +525,9 @@ def test_workflow_token_only_goes_to_github_hosts(url, gets_token, monkeypatch):
     assert ("Authorization" in build_mod._github_headers(url)) is gets_token
 
 
-def test_shadow_handoff_does_not_relabel_a_published_short(sample, submit_env, monkeypatch):
+def test_shadow_handoff_does_not_relabel_a_published_short(tip, submit_env, monkeypatch):
     monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     ledger.update(rid, state="published")
     out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
@@ -551,11 +558,11 @@ def test_qa_catches_a_freeze_that_lasts_to_the_last_frame(tmp_path):
     assert any("frozen picture" in e for e in report["errors"]), report["errors"]
 
 
-def test_submit_refuses_a_colliding_request_id_before_dispatching(sample, submit_env, monkeypatch):
+def test_submit_refuses_a_colliding_request_id_before_dispatching(tip, submit_env, monkeypatch):
     monkeypatch.setattr(st, "_request_id", lambda pkg: "en-fixed-id-20260925000000")
-    first = json.loads(st.handle_shorts_studio({"action": "submit", "package": sample}))
+    first = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert first["success"], first
-    other = copy.deepcopy(sample)
+    other = copy.deepcopy(tip)
     other["article"]["url"] = "https://biglobster.top/blog/another-post"
     other["beats"][-1]["url"] = other["article"]["url"]
     other["style"] = {"palette": "violet-lime", "motif": "grid"}
@@ -564,11 +571,11 @@ def test_submit_refuses_a_colliding_request_id_before_dispatching(sample, submit
     assert len(submit_env) == 1  # no second render started
 
 
-def test_publish_story_without_a_story_cut_is_a_clear_error(sample, submit_env, monkeypatch):
+def test_publish_story_without_a_story_cut_is_a_clear_error(tip, submit_env, monkeypatch):
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
     for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t", "META_IG_USER_ID": "2"}.items():
         monkeypatch.setenv(k, v)
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     out_dir = Path(ledger.get(rid)["dir"]) / "out"
     out_dir.mkdir(parents=True)
@@ -912,8 +919,8 @@ def test_stock_footage_never_overwrites_a_generated_scene(sample, tmp_path):
     assert timeline[0]["broll"] == "ai/s00.mp4" and timeline[1]["broll"] is None
 
 
-def test_a_short_with_generated_scenes_is_published_as_synthetic_media(sample, submit_env, monkeypatch):
-    st.handle_shorts_studio({"action": "submit", "package": sample})
+def test_a_short_with_generated_scenes_is_published_as_synthetic_media(tip, submit_env, monkeypatch):
+    st.handle_shorts_studio({"action": "submit", "package": tip})
     rid = submit_env[0][0]
     monkeypatch.setattr(github_studio, "get_run",
                         lambda run_id: {"id": run_id, "status": "completed", "conclusion": "success", "html_url": "h"})
@@ -1005,10 +1012,10 @@ def _ready_short(sample, submit_env, **fields):
     return rid
 
 
-def test_a_live_short_is_handed_to_socialbot_once(sample, submit_env, buzz_env, monkeypatch):
+def test_a_live_short_is_handed_to_socialbot_once(tip, submit_env, buzz_env, monkeypatch):
     from plugins.shorts import buzz_share
 
-    rid = _ready_short(sample, submit_env, state="published", synthetic=True,
+    rid = _ready_short(tip, submit_env, state="published", synthetic=True,
                        published={"youtube": {"id": "yt1", "url": "https://youtube.com/shorts/yt1"}})
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
     monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
@@ -1035,10 +1042,10 @@ def test_a_live_short_is_handed_to_socialbot_once(sample, submit_env, buzz_env, 
     assert again.get("already") and len(calls) == 1
 
 
-def test_a_failed_buzz_post_is_retried_next_run(sample, submit_env, buzz_env, monkeypatch):
+def test_a_failed_buzz_post_is_retried_next_run(tip, submit_env, buzz_env, monkeypatch):
     from plugins.shorts import buzz_share
 
-    rid = _ready_short(sample, submit_env, state="published")
+    rid = _ready_short(tip, submit_env, state="published")
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
     monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
     monkeypatch.setattr(buzz_share.subprocess, "run", lambda args, **kw: type(
@@ -1048,10 +1055,10 @@ def test_a_failed_buzz_post_is_retried_next_run(sample, submit_env, buzz_env, mo
     assert not ledger.get(rid).get("x_handoff_at")
 
 
-def test_shadow_mode_never_posts_to_buzz(sample, submit_env, buzz_env, monkeypatch):
+def test_shadow_mode_never_posts_to_buzz(tip, submit_env, buzz_env, monkeypatch):
     from plugins.shorts import buzz_share
 
-    rid = _ready_short(sample, submit_env, state="ready")
+    rid = _ready_short(tip, submit_env, state="ready")
     monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
 
     def boom(*a, **kw):
@@ -1060,3 +1067,116 @@ def test_shadow_mode_never_posts_to_buzz(sample, submit_env, buzz_env, monkeypat
     monkeypatch.setattr(buzz_share, "post", boom)
     out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
     assert out["success"] and "[SHADOW]" in out["message"]
+
+
+# ---------------------------------------------------------------------------
+# The tip format: one take said to camera, cut between the presenter and cards
+
+
+def test_the_tip_sample_is_one_tip_said_to_camera(tip):
+    pkg = pkg_mod.validate_package(tip)
+    assert pkg["format"] == "tip" and pkg["version"] == 2
+    assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "presenter"]
+    words = sum(len(b["vo"].split()) for b in pkg["beats"])
+    assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS["es"]
+    assert pkg["beats"][1]["before"] and pkg["beats"][1]["after"]
+
+
+def test_the_longest_tip_take_fits_one_shorts_budget():
+    # Each presenter's pace decides how many words a $1 take holds.
+    from plugins.shorts.studio import presenter
+
+    for lang, words in pkg_mod.TIP_MAX_TOTAL_WORDS.items():
+        cost = presenter.estimate_seconds(" ".join(["palabra"] * words), lang) * 0.05
+        assert cost <= 1.0, (lang, cost)
+
+
+@pytest.mark.parametrize("change,problem", [
+    (lambda p: p["beats"][0].update(show="card"), "said to camera"),
+    (lambda p: [b.update(show="presenter") for b in p["beats"][1:3]], "card beats"),
+    (lambda p: p["beats"][-1].update(vo="La guía completa está en biglobster punto top, enlace abajo."), "save the tip"),
+    (lambda p: p["beats"][0].update(scene="Slow push-in on a bakery counter at dawn, warm light"), "no generated scenes"),
+    (lambda p: p["beats"][0].update(presenter=True), "use show"),
+    (lambda p: p["beats"][1].update(after=""), "after: required"),
+    (lambda p: p["beats"][2].update(vo=p["beats"][2]["vo"] + " " + "muy " * 20), "one tip"),
+    (lambda p: p["beats"].insert(1, {"kind": "avatar", "vo": "Hola.", "clip_url": "https://x/c.mp4", "avatar": "lucia"}), "middle beats"),
+])
+def test_the_tip_format_keeps_its_rules(tip, change, problem):
+    change(tip)
+    with pytest.raises(pkg_mod.PackageError, match=problem):
+        pkg_mod.validate_package(tip)
+
+
+def test_a_figure_in_a_before_or_after_must_be_in_the_article(tip):
+    pkg = pkg_mod.validate_package(tip)
+    pkg["beats"][1]["after"] = "Ahorrar 40% de horas"
+    assert any("beats[1].after" in p for p in pkg_mod.check_grounding(pkg, ARTICLE_TEXT))
+
+
+def test_cuts_land_in_the_pauses_between_lines():
+    lines = ["one two three four", "five six seven eight nine ten", "eleven twelve"]
+    # speech 0.3-9.5 s with breaths at 3.1-3.5 and 7.6-8.0, plus a short pause mid-line
+    pauses = [(0.0, 0.3), (3.1, 3.5), (5.0, 5.2), (7.6, 8.0), (9.5, 10.0)]
+    spans = build_mod.plan_cuts(lines, 10.0, pauses)
+    assert spans[0][0] == 0.0 and spans[-1][1] == 10.0
+    assert spans[0][1] == pytest.approx(3.3) and spans[1][1] == pytest.approx(7.8)
+    assert all(a < b for a, b in spans) and spans[0][1] == spans[1][0]
+
+    # No pauses at all: cuts by the share of the script, still in order.
+    spans = build_mod.plan_cuts(lines, 9.0, [])
+    assert [round(b, 2) for _, b in spans][:2] == sorted(round(b, 2) for _, b in spans[:2])
+    assert spans[-1][1] == 9.0
+
+
+def test_the_tip_take_is_one_request_with_the_whole_script(tip, tmp_path, monkeypatch):
+    import httpx
+
+    from plugins.shorts.studio import presenter
+
+    fake = _FakeOpenRouter()
+    monkeypatch.setattr(httpx, "Client", fake)
+    monkeypatch.setattr(genvideo, "POLL_EVERY_S", 0)
+    monkeypatch.setenv("SHORTS_OPENROUTER_API_KEY", "sk-test")
+    pkg = pkg_mod.validate_package(tip)
+    got = presenter.render(pkg, tmp_path, genvideo.open_budget(offline=False), offline=False)
+    assert len(fake.posts) == 1 and list(got["clips"]) == [0] and got["report"]["take"] is True
+    body = fake.posts[0]
+    assert body["prompt"] == " ".join(b["vo"] for b in pkg["beats"])
+    # Lucía speaks Spanish with her one fixed voice, in every short.
+    assert body["provider"]["options"]["heygen"]["voice_id"] == presenter.VOICES["es"]
+
+
+def test_tip_props_carry_the_take_the_framing_and_the_cards(tip):
+    pkg = pkg_mod.validate_package(tip)
+    timeline = [{"from": i * 90, "duration": 90, "show": b["show"]} for i, b in enumerate(pkg["beats"])]
+    props = build_mod.remotion_props(pkg, {"timeline": timeline, "words": [], "frames": 450,
+                                           "take": "presenter/take.mp4", "photo": "presenter/photo.jpg"})
+    assert props["format"] == "tip" and props["take"] == "presenter/take.mp4"
+    assert props["presenterName"] == "Lucía" and 0 < props["faceY"] < 1
+    assert props["presenterPhoto"] == "presenter/photo.jpg"
+    assert [b["show"] for b in props["beats"]] == [b["show"] for b in pkg["beats"]]
+    assert props["beats"][1]["before"] and props["beats"][1]["after"]
+
+
+def test_a_tip_short_without_its_take_never_ships_in_another_voice():
+    report = {"beats": [{"beat": 0, "status": "skipped", "reason": "daily cap $2.00 reached"}]}
+    error = build_mod.one_voice_error(True, False, True, report)
+    assert error and "presenter take missing" in error and "daily cap" in error
+    assert build_mod.one_voice_error(True, True, True, report) is None      # the take was made
+    assert build_mod.one_voice_error(True, False, False, report) is None    # no key: the smoke test
+    assert build_mod.one_voice_error(False, False, True, report) is None    # classic format
+    assert "not made" in build_mod.one_voice_error(True, False, True, {"beats": []})
+
+
+def test_cuts_stay_in_order_when_pauses_crowd_or_are_missing():
+    lines = ["a b c", "d e f", "g h i", "j k l"]
+    # One pause near every guess would pull two cuts onto it: the second must move on.
+    spans = build_mod.plan_cuts(lines, 8.0, [(0.0, 0.2), (3.0, 3.2)], snap=3.0)
+    starts = [a for a, _ in spans]
+    assert starts == sorted(starts) and len(set(starts)) == 4
+    assert all(b - a >= 0.5 for a, b in spans[1:-1])
+    # Silent from the start to the end: the whole take is the speech span.
+    spans = build_mod.plan_cuts(["x y", "z w"], 4.0, [(0.0, 4.0)])
+    assert spans[0] == (0.0, pytest.approx(2.0)) and spans[1][1] == 4.0
+    # A single line is the whole take.
+    assert build_mod.plan_cuts(["solo"], 3.0, []) == [(0.0, 3.0)]

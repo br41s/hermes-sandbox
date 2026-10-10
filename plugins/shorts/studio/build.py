@@ -40,7 +40,7 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from plugins.shorts.studio import genvideo, media, presenter, qa, sources, voice
 from plugins.shorts.studio.package import PackageError, validate_package
@@ -51,6 +51,7 @@ GAP = 0.28            # breath between beats
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
 PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
+TAKE_MAX = 40.0       # the tip take is <=55 words (~19 s); anything past this is a model fault
 STORY_LIMIT = 59.5
 
 BRANDS = {
@@ -184,6 +185,98 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
     return {"timeline": timeline, "words": words, "frames": cursor_frames, "voice": voice_polished}
 
 
+def _weight(text: str) -> int:
+    return sum(max(2, len(t)) for t in text.split())
+
+
+def plan_cuts(lines: List[str], total: float, pauses: List[Tuple[float, float]],
+              *, snap: float = 1.2) -> List[Tuple[float, float]]:
+    """Where each line starts and ends inside one take: (start, end) seconds.
+
+    The take is one recording of every line in order, so where one line ends
+    has to be found. Each cut is first placed by the share of the script said
+    so far, then moved to the middle of the nearest pause within ``snap``
+    seconds (a sentence ends in a breath). Pure, so it is tested directly.
+    """
+    speech_start = next((e for s0, e in pauses if s0 <= 0.05), 0.0)
+    speech_end = next((s0 for s0, e in reversed(pauses) if e >= total - 0.05), total)
+    if speech_end <= speech_start:
+        speech_start, speech_end = 0.0, total
+    weights = [_weight(t) for t in lines]
+    whole = float(sum(weights)) or 1.0
+    mids = [(a + b) / 2 for a, b in pauses if a > speech_start + 0.1 and b < speech_end - 0.1]
+    cuts: List[float] = []
+    done = 0.0
+    for w in weights[:-1]:
+        done += w
+        guess = speech_start + (speech_end - speech_start) * done / whole
+        floor = (cuts[-1] if cuts else speech_start) + 0.5
+        near = [m for m in mids if abs(m - guess) <= snap and m > floor]
+        cut = min(near, key=lambda m: abs(m - guess)) if near else max(guess, floor)
+        cuts.append(cut)
+    edges = [0.0] + cuts + [total]
+    return [(edges[i], edges[i + 1]) for i in range(len(lines))]
+
+
+def one_voice_error(tip: bool, has_take: bool, real_dispatch: bool,
+                    presenter_report: Dict[str, Any]) -> Optional[str]:
+    """The QA error for a tip short without its take, or None.
+
+    The presenter is the same person with the same voice in every short, so a
+    tip short voiced by the narrator instead is never published. A render with
+    no key (the push smoke test) is not a dispatch and keeps its fallback.
+    """
+    if not tip or has_take or not real_dispatch:
+        return None
+    why = "; ".join(b.get("reason") or b.get("status") or "" for b in presenter_report.get("beats") or [])
+    return (f"presenter take missing ({why or 'not made'}): a tip short is published only in "
+            "the presenter's own voice")
+
+
+def build_take_timeline(pkg: Dict[str, Any], work: Path, public: Path, take: Path) -> Dict[str, Any]:
+    """The tip format's timeline: one take, cut into the beats at its pauses.
+
+    The take's own audio is the whole voice track, untouched: beats only say
+    which picture shows while each line is said. The video holds its last
+    frame through the CTA's tail.
+    """
+    beats = pkg["beats"]
+    wav = media.extract_audio(take, work / "take.wav")
+    speech_total = min(media.duration(wav), TAKE_MAX)
+    spans = plan_cuts([b["vo"] for b in beats], speech_total, media.silences(wav))
+    timeline: List[Dict[str, Any]] = []
+    words: List[Dict[str, Any]] = []
+    cursor = 0
+    for i, (beat, (start, end)) in enumerate(zip(beats, spans)):
+        stop = end + (CTA_TAIL if i == len(beats) - 1 else 0.0)
+        frames = max(_frames(stop) - cursor, FPS // 2)
+        beat_words = voice.spread_words(beat["vo"], end - start)
+        voice.attach_raw(beat_words, beat["vo"])
+        for w in beat_words:
+            text = voice.clean_word(str(w["text"]))
+            if text:
+                words.append({"text": text, "raw": str(w.get("raw") or text),
+                              "startMs": round((start + w["start"]) * 1000),
+                              "endMs": round((start + w["end"]) * 1000), "beat": i})
+        timeline.append({"from": cursor, "duration": frames, "avatar": None, "presenter": None,
+                         "show": beat.get("show")})
+        cursor += frames
+    seconds = cursor / FPS
+    (public / "presenter").mkdir(parents=True, exist_ok=True)
+    media.normalize_clip(take, public / "presenter" / "take.mp4", seconds, hold=True)
+    padded = media.pad_segment(wav, work / "voice_raw.wav", 0.0, seconds)
+    voice_polished = media.polish_voice(padded, work / "voice.wav")
+    voice.paginate(words)
+    out = {"timeline": timeline, "words": words, "frames": cursor, "voice": voice_polished,
+           "take": "presenter/take.mp4", "photo": None}
+    person = presenter.who(pkg["lang"])
+    photo = presenter.PHOTO_DIR / f"{person[0]}.jpg" if person else None
+    if photo and photo.exists():     # the cover shows who the viewer will hear
+        shutil.copyfile(photo, public / "presenter" / "photo.jpg")
+        out["photo"] = "presenter/photo.jpg"
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 2. Footage and music
 # ---------------------------------------------------------------------------
@@ -272,7 +365,9 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
         if slot.get("presenter"):
             entry["presenter"] = slot["presenter"]
             entry["presenterName"] = (presenter.who(pkg["lang"]) or ("", ""))[1]
-        for key in ("onscreen", "kicker", "value", "label", "items", "url"):
+        if slot.get("show"):
+            entry["show"] = slot["show"]
+        for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
             if beat.get(key):
                 entry[key] = beat[key]
         if beat["kind"] == "avatar":
@@ -281,6 +376,11 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
     hook = pkg["beats"][0]
     return {
         "lang": pkg["lang"],
+        "format": pkg.get("format", "classic"),
+        "take": tl.get("take"),
+        "presenterPhoto": tl.get("photo"),
+        "presenterName": (presenter.who(pkg["lang"]) or ("", ""))[1],
+        "faceY": presenter.FACE_Y.get((presenter.who(pkg["lang"]) or ("", ""))[0], 0.25),
         "palette": pkg["style"]["palette"],
         "motif": pkg["style"]["motif"],
         "brand": BRANDS["biglobster"],
@@ -367,14 +467,28 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     t0 = time.time()
     budget = genvideo.open_budget(offline=offline)
     talking = presenter.render(pkg, work, budget, offline=offline)
-    tl = build_timeline(pkg, work, public, fake_voice=fake_voice, presenter_clips=talking["clips"])
-    talking["report"]["used"] = [i for i, s in enumerate(tl["timeline"]) if s.get("presenter")]
+    tip = pkg.get("format") == "tip"
+    take = talking["clips"].get(0) if tip else None
+    if take is not None and not media.has_audio(take):
+        _log("presenter take has no audio track; the script goes to the voice-over")
+        take = None
+    if take is not None:
+        tl = build_take_timeline(pkg, work, public, take)
+        talking["report"]["used"] = list(range(len(pkg["beats"])))
+    else:
+        # The tip format without its take: the same beats and cards, voiced by Edge.
+        tl = build_timeline(pkg, work, public, fake_voice=fake_voice,
+                            presenter_clips={} if tip else talking["clips"])
+        for slot, beat in zip(tl["timeline"], pkg["beats"]):
+            slot["show"] = beat.get("show")
+        talking["report"]["used"] = [i for i, s in enumerate(tl["timeline"]) if s.get("presenter")]
     total_seconds = tl["frames"] / FPS
     _log(f"voice: {len(pkg['beats'])} beats, {total_seconds:.2f}s, {len(tl['words'])} words")
 
     ai_video = genvideo.render_scenes(pkg, tl["timeline"], work, public, seed, fps=FPS,
                                       offline=offline, budget=budget)
-    broll = gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
+    # The take fills every frame (full or in its bubble over a card): no stock footage.
+    broll = [] if take is not None else gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
     music = gather_music(pkg, work, seed, offline=offline)
     _log(f"sources: {len(broll)} clips, music={'none' if not music else music['id']}")
 
@@ -393,7 +507,12 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
         media.story_cut(master, story, cut)
     (out / "captions.srt").write_text(voice.build_srt(tl["words"]), encoding="utf-8")
 
-    report = qa.check_master(master, expected_seconds=total_seconds)
+    report = qa.check_master(master, expected_seconds=total_seconds,
+                             target=qa.TIP_TARGET if tip else (qa.TARGET_MIN, qa.TARGET_MAX))
+    voice_error = one_voice_error(tip, take is not None, bool(budget["cfg"]["key"]), talking["report"])
+    if voice_error:
+        report["passed"] = False
+        report["errors"].append(voice_error)
     report["story"] = qa.check_story(story)
     report["cover"] = qa.check_still(visuals["cover"])
     report["thumb"] = qa.check_still(visuals["thumb"])

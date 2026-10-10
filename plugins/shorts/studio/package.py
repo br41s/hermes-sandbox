@@ -41,6 +41,18 @@ letters and numbers, so text, figures and logos always come from Remotion on
 top, and a scene that asks for any of them is rejected here. ``broll`` stays
 the fallback when the budget, the key or the model says no.
 
+``"format": "tip"`` is the presenter format (``TIP_*`` below): ONE tip in
+~20 s, and the whole script said to camera in one take by the presenter
+(Lucía in Spanish, Martín in English), so one voice runs from the first
+word to the last. Each beat's ``show`` picks the picture while that line is
+said: ``presenter`` (them, full-frame) or ``card`` (an animated card — steps,
+a before/after, a figure, a checklist, a key line — with the presenter in a
+bubble). The hook and the CTA are always ``presenter``; at least two beats
+are cards; the CTA asks the viewer to save or share it, because a tip worth
+keeping is the point. No ``scene`` and no per-beat ``presenter`` flag here:
+the take is the picture. ``compare`` (tip only) is a before/after:
+``before`` and ``after``, ≤8 words each.
+
 ``presenter: true`` (hook and CTA only) has the brand's presenter say that
 line to camera — Lucía in Spanish, Martín in English — with a generated
 talking clip (``presenter.py``). The line is short (``MAX_PRESENTER_WORDS``)
@@ -78,6 +90,8 @@ MOTIFS = ("diamonds", "circles", "chevrons", "dots", "bars", "rings", "grid", "w
 BEAT_KINDS = ("hook", "point", "stat", "list", "quote", "avatar", "cta")
 MIDDLE_KINDS = ("point", "stat", "list", "quote", "avatar")
 
+FORMATS = ("classic", "tip")
+
 MIN_BEATS = 4          # hook + 2 middle + cta
 MAX_BEATS = 10         # hook + 8 middle + cta
 
@@ -101,6 +115,24 @@ PRESENTER_KINDS = ("hook", "cta")
 MAX_PRESENTER_WORDS = 24    # ~11 s said to camera; the presenter is paid by the second
 MAX_SCENE_WORDS = 60
 MAX_SCENE_CHARS = 400
+
+# The tip format: one take said to camera, paid by the second (~$0.05/s at
+# ~3 words/s), so the script is short — one tip, ~15-20 s.
+TIP_MIDDLE_KINDS = ("point", "stat", "list", "compare", "quote")
+TIP_MAX_BEATS = 7
+TIP_MIN_TOTAL_WORDS = 40
+# Fits $1 a take at $0.05/s with each presenter's pace (presenter.WORDS_PER_SECOND):
+# Martín ~3 words/s, Lucía ~2.6.
+TIP_MAX_TOTAL_WORDS = {"en": 55, "es": 48}
+TIP_MIN_CARDS = 2
+SHOWS = ("presenter", "card")
+MAX_COMPARE_WORDS = 8
+# The CTA asks for the save or the share: a tip people keep is the goal.
+_SAVE_OR_SHARE = re.compile(
+    r"\b(save|share|bookmark|send (it|this)|guárdalo|guardalo|guárdate|guarda(lo|te)?|"
+    r"compárte(lo)?|comparte(lo)?|compartir|mándaselo|envíaselo|pásaselo)\b",
+    re.IGNORECASE,
+)
 
 MAX_X_CHARS = 280
 MAX_YT_TITLE_CHARS = 100
@@ -182,6 +214,27 @@ def _check_hook_lead(problems: List[str], where: str, vo: str) -> None:
         )
 
 
+def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Dict[str, Any],
+                    kind: str, i: int, n: int) -> None:
+    """Tip format: what is on screen while this line is said, and the before/after."""
+    show = _text(b.get("show")) or ("presenter" if kind in ("hook", "cta") else "card")
+    if show not in SHOWS:
+        problems.append(f"{where}.show: one of {list(SHOWS)}, got {show!r}")
+    elif kind in ("hook", "cta") and show != "presenter":
+        problems.append(f"{where}.show: the hook and the CTA are said to camera ('presenter')")
+    beat["show"] = show
+    if kind == "compare":
+        for side in ("before", "after"):
+            beat[side] = _text(b.get(side))
+            _check_text(problems, f"{where}.{side}", beat[side],
+                        max_words=MAX_COMPARE_WORDS, max_chars=MAX_ONSCREEN_CHARS)
+        beat["onscreen"] = _text(b.get("onscreen"))
+        _check_text(problems, f"{where}.onscreen", beat["onscreen"], required=False,
+                    max_words=MAX_ONSCREEN_WORDS, max_chars=MAX_ONSCREEN_CHARS)
+        if beat["show"] != "card":
+            problems.append(f"{where}.show: a compare beat is a card")
+
+
 def _host(url: str) -> str:
     parsed = urlparse(url if "://" in url else f"https://{url}")
     host = (parsed.hostname or "").lower()
@@ -239,13 +292,23 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         problems.append(f"style.motif: one of {list(MOTIFS)}, got {motif!r}")
     pkg["style"] = {"palette": palette, "motif": motif}
 
+    fmt = _text(raw.get("format")) or "classic"
+    if fmt not in FORMATS:
+        problems.append(f"format: one of {list(FORMATS)}, got {fmt!r}")
+    tip = fmt == "tip"
+    pkg["format"] = fmt
+    if tip:
+        pkg["version"] = 2
+
     beats_raw = raw.get("beats")
     beats: List[Dict[str, Any]] = []
     if not isinstance(beats_raw, list):
         problems.append("beats: must be a list")
         beats_raw = []
-    if beats_raw and not (MIN_BEATS <= len(beats_raw) <= MAX_BEATS):
-        problems.append(f"beats: {len(beats_raw)} beats, need {MIN_BEATS}-{MAX_BEATS} (hook + middle + cta)")
+    max_beats = TIP_MAX_BEATS if tip else MAX_BEATS
+    middle_kinds = TIP_MIDDLE_KINDS if tip else MIDDLE_KINDS
+    if beats_raw and not (MIN_BEATS <= len(beats_raw) <= max_beats):
+        problems.append(f"beats: {len(beats_raw)} beats, need {MIN_BEATS}-{max_beats} (hook + middle + cta)")
 
     total_words = 0
     for i, b in enumerate(beats_raw):
@@ -258,8 +321,8 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             problems.append(f"{where}: the first beat must be kind 'hook', got {kind!r}")
         elif i == len(beats_raw) - 1 and kind != "cta":
             problems.append(f"{where}: the last beat must be kind 'cta', got {kind!r}")
-        elif 0 < i < len(beats_raw) - 1 and kind not in MIDDLE_KINDS:
-            problems.append(f"{where}: middle beats are one of {list(MIDDLE_KINDS)}, got {kind!r}")
+        elif 0 < i < len(beats_raw) - 1 and kind not in middle_kinds:
+            problems.append(f"{where}: middle beats are one of {list(middle_kinds)}, got {kind!r}")
 
         beat: Dict[str, Any] = {"kind": kind, "vo": _text(b.get("vo"))}
         _check_text(problems, f"{where}.vo", beat["vo"], max_words=MAX_VO_WORDS)
@@ -272,8 +335,13 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             _check_text(problems, f"{where}.broll", broll, max_words=6, max_chars=60)
             beat["broll"] = broll
 
+        if tip:
+            _check_tip_beat(problems, where, b, beat, kind, i, len(beats_raw))
+
         scene = _text(b.get("scene"))
-        if scene:
+        if scene and tip:
+            problems.append(f"{where}.scene: the tip format has no generated scenes; the take is the picture")
+        elif scene:
             if kind not in SCENE_KINDS:
                 problems.append(f"{where}.scene: only {list(SCENE_KINDS)} beats get a generated scene")
             else:
@@ -291,7 +359,10 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
                 beat["scene"] = scene
 
         presenter = b.get("presenter")
-        if presenter not in (None, False):
+        if presenter not in (None, False) and tip:
+            problems.append(f"{where}.presenter: not in the tip format, where the whole script is "
+                            "said to camera; use show")
+        elif presenter not in (None, False):
             if presenter is not True:
                 problems.append(f"{where}.presenter: true or absent, got {presenter!r}")
             elif kind not in PRESENTER_KINDS:
@@ -351,11 +422,22 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         problems.append(f"beats: {scenes} generated scenes, max {MAX_SCENES} per short "
                         "(the hook and the most visual beats; the rest uses broll)")
 
-    if beats_raw and not (MIN_TOTAL_WORDS <= total_words <= MAX_TOTAL_WORDS):
+    lo, hi = ((TIP_MIN_TOTAL_WORDS, TIP_MAX_TOTAL_WORDS.get(lang, 48)) if tip
+              else (MIN_TOTAL_WORDS, MAX_TOTAL_WORDS))
+    if beats_raw and not (lo <= total_words <= hi):
         problems.append(
-            f"beats: {total_words} spoken words in total, need {MIN_TOTAL_WORDS}-{MAX_TOTAL_WORDS} "
-            "(~150 words is a 60s short)"
+            f"beats: {total_words} spoken words in total, need {lo}-{hi} "
+            + ("(one tip, ~20 s said to camera)" if tip else "(~150 words is a 60s short)")
         )
+    if tip and beats:
+        cards = sum(1 for b in beats if b.get("show") == "card")
+        if cards < TIP_MIN_CARDS:
+            problems.append(f"beats: {cards} card beats, need at least {TIP_MIN_CARDS}: show the tip, "
+                            "do not only say it")
+        cta = beats[-1]
+        if cta.get("kind") == "cta" and cta.get("vo") and not _SAVE_OR_SHARE.search(cta["vo"]):
+            problems.append(f"beats[{len(beats) - 1}].vo: the CTA asks the viewer to save the tip or "
+                            f"share it with someone it helps: {cta['vo']!r}")
     pkg["beats"] = beats
 
     covers = raw.get("covers") if isinstance(raw.get("covers"), dict) else {}
@@ -486,7 +568,8 @@ def check_grounding(pkg: Dict[str, Any], article_text: str) -> List[str]:
     problems: List[str] = []
     for i, beat in enumerate(pkg.get("beats") or []):
         fields = [("vo", beat.get("vo")), ("onscreen", beat.get("onscreen")),
-                  ("value", beat.get("value")), ("label", beat.get("label"))]
+                  ("value", beat.get("value")), ("label", beat.get("label")),
+                  ("before", beat.get("before")), ("after", beat.get("after"))]
         fields += [(f"items[{j}]", item) for j, item in enumerate(beat.get("items") or [])]
         for name, text in fields:
             for fig in figures(text or ""):

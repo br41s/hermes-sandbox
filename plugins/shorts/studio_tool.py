@@ -238,6 +238,11 @@ def _action_submit(args: Dict[str, Any]) -> str:
                      problems=exc.problems)
 
     problems: List[str] = []
+    if pkg.get("format") != "tip":
+        # Every short is the presenter's, in their one voice (owner's rule,
+        # 2026-10-10); the classic narrator format stays for the renderer only.
+        problems.append('format: the studio makes "tip" shorts only — one tip, said to camera by '
+                        "the presenter (see the producer prompt)")
     data = ledger.read()
     if pkg["article"]["url"] in ledger.done_urls(data):
         return _fail(f"{pkg['article']['url']} already has a short (see ledger)")
@@ -294,6 +299,7 @@ def _action_submit(args: Dict[str, Any]) -> str:
         "request_id": request_id, "lang": pkg["lang"], "slug": pkg["article"]["slug"],
         "article_url": pkg["article"]["url"], "title": pkg["article"]["title"],
         "palette": pkg["style"]["palette"], "motif": pkg["style"]["motif"],
+        "format": pkg.get("format"),
         "avatars": [b["avatar"] for b in pkg["beats"] if b["kind"] == "avatar"],
         "run_id": details.get("run_id"), "run_url": details.get("run_url"), "dir": str(workdir),
     })

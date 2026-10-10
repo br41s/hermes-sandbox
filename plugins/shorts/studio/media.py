@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 SAMPLE_RATE = 48000
@@ -140,6 +140,26 @@ def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0,
            "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
            str(dst), what=f"normalise {src.name}")
     return dst
+
+
+def silences(src: Path, *, noise_db: int = -35, min_s: float = 0.15) -> List[Tuple[float, float]]:
+    """The pauses in a voice track, as (start, end) seconds, from ffmpeg's silencedetect."""
+    out = run([binary("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(src), "-af",
+               f"silencedetect=noise={noise_db}dB:d={min_s}", "-f", "null", "-"], "silence detect")
+    found: List[Tuple[float, float]] = []
+    start: Optional[float] = None
+    for line in (out.stderr or "").splitlines():
+        m = re.search(r"silence_start: (-?[\d.]+)", line)
+        if m:
+            start = max(0.0, float(m.group(1)))
+            continue
+        m = re.search(r"silence_end: ([\d.]+)", line)
+        if m and start is not None:
+            found.append((start, float(m.group(1))))
+            start = None
+    if start is not None:   # silent to the end
+        found.append((start, duration(src)))
+    return found
 
 
 def extract_audio(src: Path, dst: Path) -> Path:
