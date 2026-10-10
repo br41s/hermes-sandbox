@@ -19,7 +19,7 @@ Config (Actions env), on top of genvideo's key and caps:
 
     SHORTS_PRESENTER_MODEL              default heygen/avatar-iv
     SHORTS_PRESENTER_PRICE_PER_SECOND   default 0.05
-    SHORTS_PRESENTER_VOICE_ES / _EN     a HeyGen voice id; unset = HeyGen's choice
+    SHORTS_PRESENTER_VOICE_ES / _EN     a HeyGen voice id; default VOICES below
     SHORTS_PRESENTER_TIMEOUT_S          default 600, for all clips of one short
 """
 
@@ -35,6 +35,10 @@ from plugins.shorts.studio import genvideo
 
 PHOTO_DIR = Path(__file__).resolve().parents[3] / "shorts" / "studio" / "presenters"
 PRESENTERS = {"es": ("lucia", "Lucía"), "en": ("martin", "Martín")}
+# Avatar IV needs a voice when it is given a script (OpenRouter answers 400
+# without one, and lists these). HeyGen stock voices: Amelia (Spanish, female)
+# for Lucía, Andrew (English, male) for Martín.
+VOICES = {"es": "246cdbf530954380a62109f3107fce0d", "en": "6be73833ef9a4eb0aeee399b8fe9d62b"}
 WORDS_PER_SECOND = 2.4       # HeyGen voices, measured loosely; only for the estimate
 MOTION = ("Speaks warmly and calmly straight to the camera with a genuine smile, small natural "
           "hand gestures, steady posture, no fast or abrupt movements.")
@@ -45,7 +49,7 @@ def config() -> Dict[str, Any]:
         "model": (os.environ.get("SHORTS_PRESENTER_MODEL") or "heygen/avatar-iv").strip(),
         "price_per_s": genvideo._env_float("SHORTS_PRESENTER_PRICE_PER_SECOND", 0.05),
         "timeout_s": genvideo._env_float("SHORTS_PRESENTER_TIMEOUT_S", 600.0),
-        "voice": {lang: (os.environ.get(f"SHORTS_PRESENTER_VOICE_{lang.upper()}") or "").strip()
+        "voice": {lang: (os.environ.get(f"SHORTS_PRESENTER_VOICE_{lang.upper()}") or VOICES[lang]).strip()
                   for lang in PRESENTERS},
     }
 
@@ -66,15 +70,15 @@ def photo_data_url(slug: str) -> Optional[str]:
 
 
 def request_body(cfg: Dict[str, Any], script: str, photo: str, lang: str) -> Dict[str, Any]:
-    params: Dict[str, Any] = {"motion_prompt": MOTION, "expressiveness": "medium"}
-    if cfg["voice"].get(lang):
-        params["voice_id"] = cfg["voice"][lang]
+    # Options sit directly under provider.options.heygen: that is where
+    # OpenRouter looks for voice_id (its 400 names the path).
+    heygen = {"voice_id": cfg["voice"][lang], "motion_prompt": MOTION, "expressiveness": "medium"}
     return {
         "model": cfg["model"],
         "prompt": script,
         "aspect_ratio": "9:16",
         "input_references": [{"type": "image_url", "image_url": {"url": photo}}],
-        "provider": {"options": {"heygen": {"parameters": params}}},
+        "provider": {"options": {"heygen": heygen}},
     }
 
 

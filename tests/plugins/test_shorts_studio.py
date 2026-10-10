@@ -867,8 +867,10 @@ def test_presenter_clips_are_requested_with_the_photo_and_share_the_budget(sampl
     body = fake.posts[0]
     assert body["model"] == "heygen/avatar-iv" and body["prompt"] == pkg["beats"][0]["vo"]
     assert body["input_references"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    params = body["provider"]["options"]["heygen"]["parameters"]
-    assert "motion_prompt" in params and ("voice_id" in params) is (pkg["lang"] == "en")
+    heygen = body["provider"]["options"]["heygen"]
+    assert "motion_prompt" in heygen
+    # A pinned voice wins; otherwise the presenter's default (Avatar IV refuses a script without one).
+    assert heygen["voice_id"] == ("voice-en-1" if pkg["lang"] == "en" else presenter.VOICES["es"])
     # Two clips at the fake's reported $0.12 each: the estimate is replaced by the real cost.
     assert got["report"]["spent_usd"] == pytest.approx(0.24) and budget["committed"] == pytest.approx(0.24)
 

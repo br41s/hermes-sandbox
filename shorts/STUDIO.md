@@ -254,17 +254,18 @@ needs no background, so its `scene` is generated only if the clip is not made.
 Anything refused, failed or late puts the line back on the Edge voice-over over
 the template: a short never fails for a presenter clip.
 
-Voice: HeyGen's own. Optional repo variables `SHORTS_PRESENTER_VOICE_ES` /
-`SHORTS_PRESENTER_VOICE_EN` pin a HeyGen voice id per language; unset leaves the
-choice to HeyGen. The manifest's `presenter` block records every clip's id,
-status, cost and reason; the ledger adds the presenter's spend to
+Voice: HeyGen's stock voices, required by Avatar IV for a script — Amelia
+(Spanish, female) for Lucía and Andrew (English, male) for Martín
+(`presenter.VOICES`). Repo variables `SHORTS_PRESENTER_VOICE_ES` /
+`SHORTS_PRESENTER_VOICE_EN` override them with another HeyGen voice id; the 400
+OpenRouter returns without a voice lists the stock ones. The manifest's
+`presenter` block records every clip's id, status, cost and reason; the ledger adds the presenter's spend to
 `ai_spend_usd` and counts `presenter_beats`. A short with a presenter clip is
 uploaded with `containsSyntheticMedia: true`.
 
-Not proven yet: the request shape. `input_references` with a data URL and the
-`provider.options.heygen.parameters` passthrough (`motion_prompt`,
-`expressiveness`, `voice_id`) are what OpenRouter documents for the model, but
-the first dispatch is the test; read its `[studio] ai: presenter` lines.
+Proven 2026-10-10 by the first dispatch: without a voice the request is refused
+(400), `voice_id` goes directly under `provider.options.heygen`, and the refusal
+fell back cleanly (voice-over, the hook's scene generated instead, QA passed).
 
 A new presenter photo: vertical, front-facing, three-quarter body with the face
 in the top third, plain background, no text on the clothes (the model redraws
