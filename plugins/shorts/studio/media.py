@@ -122,16 +122,21 @@ def polish_voice(src: Path, dst: Path) -> Path:
     return dst
 
 
-def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0) -> Path:
+def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0,
+                   hold: bool = False) -> Path:
     """Fill-crop a clip to 1080x1920@30 for exactly ``seconds``, looping if short.
 
     Trimmed to the scene rather than to a fixed 15s loop, so a clip never
-    visibly restarts or holds its last frame inside a scene.
+    visibly restarts or holds its last frame inside a scene. ``hold`` is for
+    someone speaking: a restart would replay the words, so a short clip holds
+    its last frame instead.
     """
-    ffmpeg("-stream_loop", "-1", "-ss", f"{max(0.0, start):.3f}", "-i", str(src),
+    head = ["-ss", f"{max(0.0, start):.3f}", "-i", str(src)]
+    pad = f",tpad=stop_mode=clone:stop_duration={seconds:.3f}" if hold else ""
+    ffmpeg(*([] if hold else ["-stream_loop", "-1"]), *head,
            "-t", f"{seconds:.3f}",
            "-vf", (f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
-                   f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1,format=yuv420p"),
+                   f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1{pad},format=yuv420p"),
            "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
            str(dst), what=f"normalise {src.name}")
     return dst

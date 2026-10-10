@@ -22,6 +22,9 @@ export type Beat = {
   /** Path under the public dir of the avatar clip (avatar beats only). */
   avatar?: string | null;
   avatarName?: string;
+  /** Path under the public dir of the presenter clip (a hook or CTA said to camera). */
+  presenter?: string | null;
+  presenterName?: string;
 };
 
 export type Word = {

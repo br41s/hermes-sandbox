@@ -86,6 +86,9 @@ render: the producer submits and exits, the publisher collects what finished.
   beats, and a `scene` that asks for text, letters, numbers, charts, logos or
   brands is rejected (`package.py`): the model garbles lettering, and a figure it
   drew would bypass the grounding check. Spend is capped in `genvideo.py` (§3.5).
+- **Presenter.** Only the hook and the CTA are said to camera, in ≤24 words, and
+  the presenter never introduces themself (`package.py`). It shares the scenes'
+  budget and plans first (§3.7).
 
 ## 3. One-time setup
 
@@ -173,18 +176,19 @@ most visual ones. The render farm generates those backgrounds with
 stock footage. Text and figures are always Remotion's, drawn on top.
 
 1. On openrouter.ai, create a key **used for nothing else**, with a **daily
-   limit of $1**. The agents' shared key has a weekly limit that a runaway
+   limit of $2** (since the presenter, 2026-10-10; it was $1). The agents' shared key has a weekly limit that a runaway
    render would otherwise drain, and the key's own limit is the hard stop.
 2. Repo secret **`SHORTS_OPENROUTER_API_KEY`** (Settings → Secrets → Actions).
    Only a real dispatch passes it to the render; the push smoke test never spends.
-3. Optional repo *variables*: `SHORTS_AI_DAILY_CAP_USD` (default 1.00),
-   `SHORTS_AI_SHORT_BUDGET_USD` (default 0.50), `SHORTS_AI_PRICE_PER_SECOND`
+3. Optional repo *variables*: `SHORTS_AI_DAILY_CAP_USD` (default 2.00),
+   `SHORTS_AI_SHORT_BUDGET_USD` (default 1.00), `SHORTS_AI_PRICE_PER_SECOND`
    (default 0.015, the 768p launch price, which ends after October; raise it to
    the real price then, or fewer scenes fit than the budget allows).
 
-How the cap holds: each short plans its scenes against its own budget ($0.50,
-so the two daily shorts, which render in parallel and cannot see each other,
-stay within $1 together), then against the day's cap using what OpenRouter
+How the cap holds: each short plans its presenter clips and then its scenes
+against its own budget ($1.00, so the two daily shorts, which render in
+parallel and cannot see each other, stay within $2 together), then against the
+day's cap using what OpenRouter
 reports the key has spent today (UTC). A scene that does not fit, a 402, a model
 error or a 10-minute timeout leaves that beat on its `broll`: a short never
 fails for a paid clip. The manifest records each scene's id, status, real cost
@@ -231,6 +235,42 @@ Setup, once:
    shorts channel so it only watches that one. With `BUZZ_ALLOWED_USERS`
    empty it answers nobody; add Brais's npub there to talk to Hermes in Buzz.
 
+### 3.7 The presenter: Lucía and Martín (paid, optional)
+
+The hook and the CTA can be said to camera by BigLobster's presenter: Lucía in
+the Spanish short, Martín in the English one. The producer marks those beats
+`presenter: true`; the render farm sends the line and the presenter's fixed
+photo (`shorts/studio/presenters/{lucia,martin}.jpg`) to `heygen/avatar-iv`
+through the same OpenRouter key, and HeyGen voices it and animates the face and
+hands (`presenter.py`). The clip's own audio is the beat's voice, so the beat
+lasts as long as they speak; Remotion plays it full-frame, keeps the face clear
+and puts the beat's words on a card over the chest, with a name tag.
+
+Budget: the same per-short and per-day caps as the scenes, and the presenter
+plans first: it is what people stay for. Estimates use
+`SHORTS_PRESENTER_PRICE_PER_SECOND` (default 0.05) on ~2.4 words a second, so a
+20-word hook is ~$0.47 and a 12-word CTA ~$0.30. A beat with a presenter clip
+needs no background, so its `scene` is generated only if the clip is not made.
+Anything refused, failed or late puts the line back on the Edge voice-over over
+the template: a short never fails for a presenter clip.
+
+Voice: HeyGen's stock voices, required by Avatar IV for a script — Amelia
+(Spanish, female) for Lucía and Andrew (English, male) for Martín
+(`presenter.VOICES`). Repo variables `SHORTS_PRESENTER_VOICE_ES` /
+`SHORTS_PRESENTER_VOICE_EN` override them with another HeyGen voice id; the 400
+OpenRouter returns without a voice lists the stock ones. The manifest's
+`presenter` block records every clip's id, status, cost and reason; the ledger adds the presenter's spend to
+`ai_spend_usd` and counts `presenter_beats`. A short with a presenter clip is
+uploaded with `containsSyntheticMedia: true`.
+
+Proven 2026-10-10 by the first dispatch: without a voice the request is refused
+(400), `voice_id` goes directly under `provider.options.heygen`, and the refusal
+fell back cleanly (voice-over, the hook's scene generated instead, QA passed).
+
+A new presenter photo: vertical, front-facing, three-quarter body with the face
+in the top third, plain background, no text on the clothes (the model redraws
+lettering badly).
+
 ## 4. Avatars (Google Flow: Martín, Lucía)
 
 Flow has no API; programmatic Veo access is pay-per-second. So a human still
@@ -262,7 +302,7 @@ decision, not a code one.
 |---|---|
 | Script writing | LLM tokens for two short agent runs a day |
 | Voice (Edge TTS), footage (Pexels/Mixkit), music (Mixkit) | €0 |
-| Generated scenes (HeyGen Video 1 via OpenRouter, ≤3 per short) | ≤ $1/day, capped in code and on the key (§3.5); ~$0.10–0.15 per 8 s scene at the launch price |
+| Presenter (HeyGen Avatar IV) and generated scenes (HeyGen Video 1), both via OpenRouter | ≤ $1 per short and $2/day together, capped in code and on the key (§3.5, §3.7); ~$0.05/s said to camera, ~$0.10–0.15 per 8 s scene at the launch price |
 | Render (GitHub Actions) | €0 — public repo, unmetered runners |
 | YouTube Data API, Meta Graph API | €0 |
 | X | €0 (posted by hand) |

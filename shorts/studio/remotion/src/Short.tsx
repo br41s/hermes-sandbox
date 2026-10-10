@@ -5,7 +5,7 @@ import {palette} from './theme';
 import {Background} from './components/Background';
 import {TopBar} from './components/TopBar';
 import {Karaoke} from './components/Karaoke';
-import {AvatarScene, CtaScene, HookScene, ListScene, PointScene, QuoteScene, StatScene} from './components/Scenes';
+import {AvatarScene, CtaScene, HookScene, ListScene, PointScene, PresenterScene, QuoteScene, StatScene} from './components/Scenes';
 import './fonts';
 
 export const Short: React.FC<ShortProps> = (props) => {
@@ -16,6 +16,7 @@ export const Short: React.FC<ShortProps> = (props) => {
       <Background beats={props.beats} pal={pal} motif={props.motif} seed={seed} />
       {props.beats.map((beat, i) => {
         const scene = (() => {
+          if (beat.presenter) return <PresenterScene beat={beat} pal={pal} brand={props.brand.site} />;
           switch (beat.kind) {
             case 'hook': return <HookScene beat={beat} pal={pal} />;
             case 'point': return <PointScene beat={beat} pal={pal} />;

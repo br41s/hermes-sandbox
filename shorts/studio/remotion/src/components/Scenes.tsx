@@ -270,3 +270,46 @@ export const CtaScene: React.FC<{beat: Beat; pal: Palette; brand: string}> = ({b
     </Zone>
   );
 };
+
+/**
+ * A hook or CTA said to camera by the presenter (Lucía, Martín): their clip
+ * full-frame with its own voice, the face left clear in the top third, and
+ * the beat's words on a card over the chest — the promise for a hook, the
+ * destination for a CTA — so the message holds with the sound off.
+ */
+const CARD_TOP = 800;
+
+export const PresenterScene: React.FC<{beat: Beat; pal: Palette; brand: string}> = ({beat, pal, brand}) => {
+  const frame = useCurrentFrame();
+  const enter = useEnter(6);
+  const fade = interpolate(frame, [0, 5, beat.duration - 6, beat.duration], [0, 1, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const bare = (beat.url ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const host = bare.split('/')[0] || brand;
+  return (
+    <AbsoluteFill style={{opacity: fade}}>
+      {beat.presenter ? (
+        <OffthreadVideo src={staticFile(beat.presenter)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+      ) : null}
+      <AbsoluteFill style={{background: `linear-gradient(180deg, ${pal.bg}B3 0%, transparent 18%, transparent 40%, ${pal.bg}59 62%, ${pal.bg}E6 100%)`}} />
+      {beat.presenterName ? (
+        <div style={{position: 'absolute', left: SAFE.left, top: CARD_TOP - 66, fontFamily: FONT, opacity: enter}}>
+          <div style={{display: 'inline-block', background: `${pal.bg}CC`, color: pal.text, fontWeight: 800, fontSize: 30,
+                       padding: '6px 18px', borderRadius: 10, borderLeft: `6px solid ${pal.accent}`}}>{beat.presenterName} · {brand}</div>
+        </div>
+      ) : null}
+      <div style={{position: 'absolute', top: CARD_TOP, left: SAFE.left, right: 1080 - SAFE.right, fontFamily: FONT,
+                   background: `${pal.bg}D9`, borderRadius: 28, padding: '28px 36px 34px',
+                   opacity: enter, transform: `translateY(${(1 - enter) * 40}px)`}}>
+        {beat.kind === 'hook' && beat.kicker ? (
+          <div style={{display: 'inline-block', background: pal.accent2, color: pal.bg, fontWeight: 850, fontSize: 32,
+                       padding: '6px 20px', borderRadius: 12, marginBottom: 18, letterSpacing: 1}}>{beat.kicker}</div>
+        ) : null}
+        <Headline text={beat.onscreen ?? ''} pal={pal} base={beat.kind === 'hook' ? 70 : 60} delay={4} />
+        {beat.kind === 'cta' ? (
+          <div style={{display: 'inline-block', marginTop: 26, background: pal.accent, color: pal.bg, borderRadius: 999,
+                       padding: '16px 36px', fontSize: 42, fontWeight: 900}}>{host} →</div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
