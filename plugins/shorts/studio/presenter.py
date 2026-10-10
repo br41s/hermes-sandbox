@@ -42,8 +42,10 @@ FACE_Y = {"lucia": 0.33, "martin": 0.21}
 # without one, and lists these). HeyGen stock voices: Amelia (Spanish, female)
 # for Lucía, Andrew (English, male) for Martín.
 VOICES = {"es": "246cdbf530954380a62109f3107fce0d", "en": "6be73833ef9a4eb0aeee399b8fe9d62b"}
-# Andrew said 29 words for $0.47 at $0.05/s on 2026-10-10: ~3.1 words a second.
-WORDS_PER_SECOND = 3.0       # only for the estimate; the real cost replaces it
+# Charged on 2026-10-10 at $0.05/s: Andrew (en) said 29 words for $0.47, ~3.1
+# words a second; Amelia (es) said 55 for $1.05, ~2.6. Only for the estimate;
+# the real cost replaces it.
+WORDS_PER_SECOND = {"en": 3.0, "es": 2.6}
 MOTION = ("Speaks warmly and calmly straight to the camera with a genuine smile, small natural "
           "hand gestures, steady posture, no fast or abrupt movements.")
 
@@ -62,10 +64,10 @@ def who(lang: str) -> Optional[tuple]:
     return PRESENTERS.get(lang)
 
 
-def estimate_seconds(script: str) -> float:
+def estimate_seconds(script: str, lang: str = "en") -> float:
     # +0.3 s for the breath in and out. A full second per clip over-billed the
     # first two real clips by 25% (11.7 s estimated, 9.4 s charged).
-    return round(len(script.split()) / WORDS_PER_SECOND + 0.3, 1)
+    return round(len(script.split()) / WORDS_PER_SECOND.get(lang, 2.6) + 0.3, 1)
 
 
 def photo_data_url(slug: str) -> Optional[str]:
@@ -129,13 +131,14 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
     jobs: List[Dict[str, Any]] = []
     for i in wanted:
         script = scripts[i]
-        estimate = round(estimate_seconds(script) * cfg["price_per_s"], 4)
+        seconds = estimate_seconds(script, pkg["lang"])
+        estimate = round(seconds * cfg["price_per_s"], 4)
         why = genvideo.over_budget(budget, estimate)
         if why:
             report["beats"].append({"beat": i, "status": "skipped", "reason": why})
             continue
         budget["committed"] += estimate
-        jobs.append({"beat": i, "estimate": estimate, "seconds": estimate_seconds(script),
+        jobs.append({"beat": i, "estimate": estimate, "seconds": seconds,
                      "body": request_body(cfg, script, photo, pkg["lang"])})
 
     with httpx.Client(timeout=120.0, follow_redirects=True) as client:

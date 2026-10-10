@@ -1078,8 +1078,17 @@ def test_the_tip_sample_is_one_tip_said_to_camera(tip):
     assert pkg["format"] == "tip" and pkg["version"] == 2
     assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "presenter"]
     words = sum(len(b["vo"].split()) for b in pkg["beats"])
-    assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS
+    assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS["es"]
     assert pkg["beats"][1]["before"] and pkg["beats"][1]["after"]
+
+
+def test_the_longest_tip_take_fits_one_shorts_budget():
+    # Each presenter's pace decides how many words a $1 take holds.
+    from plugins.shorts.studio import presenter
+
+    for lang, words in pkg_mod.TIP_MAX_TOTAL_WORDS.items():
+        cost = presenter.estimate_seconds(" ".join(["palabra"] * words), lang) * 0.05
+        assert cost <= 1.0, (lang, cost)
 
 
 @pytest.mark.parametrize("change,problem", [

@@ -280,7 +280,8 @@ pasted on, and switched voices mid-short. Owner's rules: real new videos, one
 valuable tip, worth saving or sharing, and **the same presenter with the same
 voice in every video**.
 
-- **One take, one voice.** The whole script (40–55 words, ~15–20 s) goes to
+- **One take, one voice.** The whole script (40–48 words in Spanish, 40–55 in
+  English, ~15–20 s) goes to
   Avatar IV in one request (`presenter.render`, `take_script`). The voice is
   fixed per presenter (`presenter.VOICES`: Amelia for Lucía, Andrew for
   Martín). If the take is not made, the short is still rendered (cards over the
@@ -300,8 +301,11 @@ voice in every video**.
 - **Made to be kept.** The CTA must ask to save or share it (checked in
   `package.py`), and its overlay shows the save and share chips. The cover is
   the presenter's photo with the promise over their chest.
-- **Cost.** ~55 words is ~19 s, ~$0.95 at $0.05/s, inside the $1 per short;
-  two shorts a day fit the $2 cap. No generated scenes and no stock footage in
+- **Cost.** Charged on 2026-10-10: Martín speaks ~3.1 words/s, Lucía ~2.6
+  (55 Spanish words cost $1.05). So the word limit is per language
+  (`package.TIP_MAX_TOTAL_WORDS`) and the estimate uses each pace
+  (`presenter.WORDS_PER_SECOND`): a take stays under $1 and two a day fit the
+  $2 cap. No generated scenes and no stock footage in
   this format: the take and the cards are the picture.
 
 Framing: `presenter.FACE_Y` says where each photo's face is (fraction of the

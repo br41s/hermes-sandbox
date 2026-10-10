@@ -15,7 +15,7 @@
    "show": "presenter",
    "kicker": "Guía 2026",
    "onscreen": "Automatiza primero lo *aburrido*",
-   "vo": "Automatiza primero lo más aburrido. Te cuento por qué."
+   "vo": "Automatiza primero lo aburrido. Te cuento por qué."
   },
   {
    "kind": "compare",
@@ -23,7 +23,7 @@
    "onscreen": "Cómo empezar",
    "before": "Comprar una herramienta y probar",
    "after": "Elegir una tarea y medir sus horas",
-   "vo": "No compres una herramienta primero. Elige una tarea semanal y apunta cuántas horas te come."
+   "vo": "Antes de comprar nada, elige una tarea semanal y apunta sus horas."
   },
   {
    "kind": "list",
@@ -34,21 +34,21 @@
     "Con reglas claras",
     "Fácil de medir"
    ],
-   "vo": "Que sea repetitiva, con reglas claras y fácil de medir."
+   "vo": "Repetitiva, con reglas claras y fácil de medir."
   },
   {
    "kind": "stat",
    "show": "card",
    "value": "73%",
    "label": "de las pymes ahorró *tiempo* en 3 meses",
-   "vo": "Así, el setenta y tres por ciento ahorró tiempo en tres meses."
+   "vo": "El setenta y tres por ciento ahorró tiempo en tres meses."
   },
   {
    "kind": "cta",
    "show": "presenter",
    "onscreen": "Guárdalo para tu próxima *semana*",
    "url": "https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
-   "vo": "Guárdalo, y compártelo con quien siempre va con prisa."
+   "vo": "Guárdalo y pásaselo a quien siempre va con prisa."
   }
  ],
  "covers": {

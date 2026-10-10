@@ -121,7 +121,9 @@ MAX_SCENE_CHARS = 400
 TIP_MIDDLE_KINDS = ("point", "stat", "list", "compare", "quote")
 TIP_MAX_BEATS = 7
 TIP_MIN_TOTAL_WORDS = 40
-TIP_MAX_TOTAL_WORDS = 55       # ~19 s: one take fits $1 at $0.05/s
+# Fits $1 a take at $0.05/s with each presenter's pace (presenter.WORDS_PER_SECOND):
+# Martín ~3 words/s, Lucía ~2.6.
+TIP_MAX_TOTAL_WORDS = {"en": 55, "es": 48}
 TIP_MIN_CARDS = 2
 SHOWS = ("presenter", "card")
 MAX_COMPARE_WORDS = 8
@@ -420,7 +422,8 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         problems.append(f"beats: {scenes} generated scenes, max {MAX_SCENES} per short "
                         "(the hook and the most visual beats; the rest uses broll)")
 
-    lo, hi = (TIP_MIN_TOTAL_WORDS, TIP_MAX_TOTAL_WORDS) if tip else (MIN_TOTAL_WORDS, MAX_TOTAL_WORDS)
+    lo, hi = ((TIP_MIN_TOTAL_WORDS, TIP_MAX_TOTAL_WORDS.get(lang, 48)) if tip
+              else (MIN_TOTAL_WORDS, MAX_TOTAL_WORDS))
     if beats_raw and not (lo <= total_words <= hi):
         problems.append(
             f"beats: {total_words} spoken words in total, need {lo}-{hi} "
