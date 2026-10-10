@@ -28,7 +28,11 @@ FLUJO
        la próxima ejecución lo termina.
      • Si falla, NO reintentes en esta ejecución: anótalo con el error exacto.
      Después: action:"handoff", request_id → pega su `message` TAL CUAL en tu
-     respuesta final (es el post de X, que se publica a mano, con el vídeo).
+     respuesta final. Si Buzz está configurado, la herramienta ya entregó el
+     short a SocialBot (Facebook, Instagram y X son suyos) y el mensaje solo lo
+     cuenta; si no, es el post de X, que se publica a mano, con el vídeo. Si
+     `handoff` falla al entregarlo a Buzz, informa del error en una línea: la
+     próxima ejecución lo reintenta.
 
    - `ready` y publish_mode "shadow" → NO publiques nada. action:"handoff",
      request_id → pega su `message` TAL CUAL en tu respuesta final: lleva el

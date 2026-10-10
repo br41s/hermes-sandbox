@@ -86,6 +86,7 @@ MAX_STAT_VALUE_CHARS = 8
 MAX_LIST_ITEMS = 4
 MAX_LIST_ITEM_WORDS = 5
 MAX_COVER_TITLE_WORDS = 7
+MAX_HOOK_LEAD_WORDS = 8     # the hook's first sentence: ~3 s at the voices' pace
 MAX_SCENES = 3              # generated backgrounds per short; the rest is stock footage
 SCENE_KINDS = ("hook", "point", "stat", "list", "quote")
 MIN_SCENE_WORDS = 6
@@ -101,6 +102,18 @@ MAX_YT_TAGS = 15
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _WORD = re.compile(r"\S+")
+# The first three seconds decide whether anyone keeps watching, so the hook
+# opens on the promise itself: never a greeting, a self-introduction or talk
+# about the video.
+_HOOK_FILLER = re.compile(
+    r"^\W*(hi|hey|hello|welcome|today|in this (video|short)|this video|let'?s talk|"
+    r"i'?m |my name|we'?re |at biglobster|"
+    r"hola|buenas|bienvenid[oa]s?|hoy |en este (v[ií]deo|short)|este v[ií]deo|vamos a hablar|"
+    r"soy |me llamo|somos |en biglobster)",
+    re.IGNORECASE,
+)
+_SENTENCE_END = re.compile(r"[.!?…]+")
+
 # What a generated background must never be asked for: rendered lettering,
 # figures or marks (the model garbles them, and they would bypass the
 # grounding check), or someone else's brand.
@@ -143,6 +156,21 @@ def _check_text(problems: List[str], where: str, text: str, *,
         problems.append(f"{where}: {_words(text)} words, max {max_words}: {text!r}")
     if max_chars and len(text) > max_chars:
         problems.append(f"{where}: {len(text)} chars, max {max_chars}: {text!r}")
+
+
+def _check_hook_lead(problems: List[str], where: str, vo: str) -> None:
+    """The hook's first ~3 seconds: the promise or the pain, said at once."""
+    if _HOOK_FILLER.match(vo):
+        problems.append(
+            f"{where}.vo: the hook must open on the hook itself — a pain, a figure or the "
+            f"benefit for the viewer — never a greeting, an introduction or talk about the video: {vo!r}"
+        )
+    lead = _SENTENCE_END.split(vo.lstrip("¿¡ "), maxsplit=1)[0]
+    if _words(lead) > MAX_HOOK_LEAD_WORDS:
+        problems.append(
+            f"{where}.vo: the hook's first sentence has {_words(lead)} words, max "
+            f"{MAX_HOOK_LEAD_WORDS} (~3 s): land the promise first, explain after: {lead!r}"
+        )
 
 
 def _host(url: str) -> str:
@@ -226,6 +254,8 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
 
         beat: Dict[str, Any] = {"kind": kind, "vo": _text(b.get("vo"))}
         _check_text(problems, f"{where}.vo", beat["vo"], max_words=MAX_VO_WORDS)
+        if i == 0 and kind == "hook" and beat["vo"]:
+            _check_hook_lead(problems, where, beat["vo"])
         total_words += _words(beat["vo"])
 
         broll = _text(b.get("broll"))

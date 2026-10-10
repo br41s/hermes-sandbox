@@ -42,10 +42,21 @@ traduzcas el otro short: cada guion se escribe desde su artículo.
 Duración: 55–65 s → 130–160 palabras habladas en total. La voz no se acelera.
 
 Estructura (`beats`, en orden):
-  1. `hook` — 1 beat. Los primeros 3 segundos deciden todo. Entra por el
-     conflicto: el error, la cifra inesperada, la pregunta incómoda. Sin saludos,
-     sin "en este vídeo", sin presentar la marca. `kicker` opcional (≤28
+  1. `hook` — 1 beat. LOS PRIMEROS 3 SEGUNDOS DECIDEN TODO: quien no está
+     enganchado al tercer segundo se ha ido. La PRIMERA FRASE de `vo` es esos
+     3 segundos: ≤8 palabras (la herramienta lo rechaza si pasa) y dice, sin
+     preámbulo, una de estas cosas a nuestro cliente (freelancer o pyme):
+       • el beneficio concreto: "Recupera 5 horas a la semana sin contratar a nadie."
+       • el dolor que reconoce: "¿Sigues escribiendo cada factura a mano?"
+       • la cifra que sorprende, del artículo: "El 73% de las pymes ya lo hace."
+       • la afirmación que contradice lo que cree: "Contratar ya no es la primera opción."
+     Lo que no: saludos, "en este vídeo", "hoy hablamos de", presentar la marca o
+     a nadie ("Soy Martín…"), contexto antes de la promesa. La herramienta
+     rechaza esos arranques. `onscreen` del hook = esa misma promesa en ≤8
+     palabras, y la portada y la miniatura la repiten. `kicker` opcional (≤28
      caracteres, p. ej. "2026 guide" / "Guía 2026").
+     Antes de enviar, léela en voz alta: si en 3 segundos no sabes qué ganas
+     viendo el resto, reescríbela.
   2. 4–6 beats centrales, UNA idea cada uno, mezclando tipos:
      - `point`  — una idea accionable. `onscreen` la resume.
      - `stat`   — una cifra del artículo. `value` (≤8 caracteres, p. ej. "73%")

@@ -609,8 +609,14 @@ it writes from. Sold to a client without one it goes quiet on every run.
   an Actions secret with a $1 daily limit on the key), never the agents' shared
   one. $0.50 per short and $1 a day are enforced before any request; anything
   refused or failed falls back to stock footage. Text and figures stay Remotion's.
+- **Hermes publishes YouTube; SocialBot (Buzz) publishes Facebook, Instagram and X.**
+  Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
+  (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image); with
+  `SHORTS_BUZZ_CHANNEL` set the tool drops the Meta targets, so the two systems can
+  never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
-  and rejects unsourced figures, repeated palettes and malformed packages. `publish`
+  and rejects unsourced figures, repeated palettes, malformed packages and a hook
+  whose first sentence will not land in ~3 s (≤8 words, no greeting or intro). `publish`
   refuses QA failures and does nothing unless `SHORTS_PUBLISH_MODE=live`. A rule
   that matters goes in `plugins/shorts/studio_tool.py` or `studio/package.py`.
 - `package.py` is shared by Hermes and the renderer, and `PALETTES`/`MOTIFS` are
