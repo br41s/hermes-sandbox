@@ -67,7 +67,7 @@ RUN git init -q . \
     && test "$(git rev-parse HEAD)" = "${BUZZ_CLI_COMMIT}" \
     && cargo build --release --locked -p buzz-cli --bin buzz \
     && strip target/release/buzz \
-    && ./target/release/buzz --version
+    && ./target/release/buzz messages send --help >/dev/null
 
 FROM debian:13.4
 
