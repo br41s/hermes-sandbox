@@ -151,7 +151,9 @@ def _submit(client, cfg: Dict[str, Any], job: Dict[str, Any], seed: int) -> None
     if resp.status_code == 402:
         raise RuntimeError("OpenRouter refused: no credit or the key's limit is reached (402)")
     if resp.status_code >= 400:
-        raise RuntimeError(f"submit: HTTP {resp.status_code} {resp.text[:200]}")
+        # The whole reason: OpenRouter's 404 lists why every endpoint was excluded
+        # (privacy policy, guardrails), and a cut message hid it once.
+        raise RuntimeError(f"submit: HTTP {resp.status_code} {resp.text[:800]}")
     data = resp.json()
     job["id"] = str(data.get("id") or data.get("job_id") or "")
     if not job["id"]:
@@ -267,7 +269,7 @@ def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Pat
             if job.get("reason"):
                 entry["reason"] = job["reason"]
             report["scenes"].append(entry)
-        if observed_price > cfg["price_per_s"]:
+        if observed_price > cfg["price_per_s"] * 1.01:   # 1% slack: float rounding is not a price rise
             _log(f"observed ${observed_price:.4f}/s, above the configured "
                  f"${cfg['price_per_s']:.4f}/s — raise SHORTS_AI_PRICE_PER_SECOND")
             report["observed_price_per_s"] = round(observed_price, 4)
