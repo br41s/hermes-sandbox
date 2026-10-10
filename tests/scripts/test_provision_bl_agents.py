@@ -205,8 +205,34 @@ def test_product_guides_prompt_asks_for_the_sections_good_guides_have():
     # Sources are cited, and a competing shop is never one of them.
     assert "## Fuentes" in text
     assert "Nunca otra tienda" in text
-    # Length band set by the CEO (2026-10-09).
-    assert "1500–2500 palabras" in text
+    # Length band set by the CEO (2026-10-09, widened 2026-10-10 for five
+    # products and the opinions section).
+    assert "1500–3000 palabras" in text
+
+
+def test_product_guides_prompt_photos_picks_and_opinions():
+    text = (REPO_ROOT / AGENT_SOURCES["product-articles"][0]).read_text(encoding="utf-8")
+    # Two fixed picks in a "how to choose" guide, on different products.
+    assert "**La mejor (gama alta):**" in text
+    assert "**La mejor calidad-precio:**" in text
+    assert "**4 o 5 productos**" in text
+    # Real catalogue photos, linked by their exact catalogue URL (the site keeps
+    # an <img> only for /uploads/ or an exact catalogue image, bl-site-package
+    # >= 1.19.0), never downloaded (the distributor's CDN refuses non-browser
+    # fetches), sized to fit a phone, and never AI-generated.
+    assert 'width="320"' in text
+    assert "tal cual, sin cambiar ni un carácter" in text
+    assert "No la subas con `upload_image`" in text
+    assert "Nunca generes una foto de producto con `image_generate`" in text
+    # Opinions are summarised in words only: no scores (CEO, 2026-10-10), the
+    # exact model, negatives included, and the provenance line.
+    assert "**Sin notas, sin estrellas, sin porcentajes.**" in text
+    # The article names the kind of source, never the shop (no free advertising
+    # for the client's competitors); the exact URLs go to the unpublished run
+    # report so every summary stays auditable (CEO, 2026-10-10).
+    assert "Di el **tipo** de fuente, nunca su nombre" in text
+    assert "las URL exactas de donde salen" in text
+    assert "No\n     verificamos que procedan de compradores del producto." in text
 
 
 # --- Social Shorts: the Pexels key is the client's, and it is mandatory ------
