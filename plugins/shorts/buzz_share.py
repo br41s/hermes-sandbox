@@ -46,8 +46,13 @@ def channel() -> str:
 
 
 def configured() -> bool:
-    """True when shorts are handed to SocialBot in Buzz — and Meta is then SocialBot's."""
-    return bool(channel() and env("BUZZ_RELAY_URL") and env("BUZZ_PRIVATE_KEY"))
+    """True when shorts are handed to SocialBot in Buzz — and Meta is then SocialBot's.
+
+    All three credentials, the attestation included: without it the relay
+    refuses the post, and a half-configured hand-off would take Facebook and
+    Instagram away from Hermes while giving them to nobody.
+    """
+    return bool(channel() and all(env(name) for name in _CREDENTIALS))
 
 
 def _child_env() -> Dict[str, str]:
@@ -93,7 +98,7 @@ def post(entry: Dict[str, Any], files: Dict[str, str], social: Dict[str, Any],
     if not binary:
         raise BuzzError("the buzz CLI is not installed in this image")
     if not configured():
-        raise BuzzError("Buzz is not configured (SHORTS_BUZZ_CHANNEL, BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY)")
+        raise BuzzError("Buzz is not configured (SHORTS_BUZZ_CHANNEL, BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG)")
     order = (("master", "master.mp4"), ("story", "story.mp4"), ("cover", "cover.jpg"))
     paths = [(name, files[key]) for key, name in order if files.get(key) and Path(files[key]).exists()]
     if not paths:

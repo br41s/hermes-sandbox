@@ -876,6 +876,10 @@ def buzz_env(monkeypatch):
 
 def test_buzz_takes_meta_away_from_hermes(buzz_env, monkeypatch):
     assert st._enabled_targets() == ["youtube"]
+    # Half-configured (no attestation): not a hand-off, so Meta stays Hermes's.
+    monkeypatch.delenv("BUZZ_AUTH_TAG")
+    assert "facebook" in st._enabled_targets()
+    monkeypatch.setenv("BUZZ_AUTH_TAG", "[]")
     monkeypatch.delenv("SHORTS_BUZZ_CHANNEL")
     assert "facebook" in st._enabled_targets() and "instagram_reel" in st._enabled_targets()
 
