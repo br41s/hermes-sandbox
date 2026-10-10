@@ -63,7 +63,9 @@ def who(lang: str) -> Optional[tuple]:
 
 
 def estimate_seconds(script: str) -> float:
-    return round(len(script.split()) / WORDS_PER_SECOND + 1.0, 1)
+    # +0.3 s for the breath in and out. A full second per clip over-billed the
+    # first two real clips by 25% (11.7 s estimated, 9.4 s charged).
+    return round(len(script.split()) / WORDS_PER_SECOND + 0.3, 1)
 
 
 def photo_data_url(slug: str) -> Optional[str]:
