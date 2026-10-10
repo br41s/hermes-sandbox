@@ -6,9 +6,11 @@ import {Background} from './components/Background';
 import {TopBar} from './components/TopBar';
 import {Karaoke} from './components/Karaoke';
 import {AvatarScene, CtaScene, HookScene, ListScene, PointScene, PresenterScene, QuoteScene, StatScene} from './components/Scenes';
+import {TipShort} from './Tip';
 import './fonts';
 
 export const Short: React.FC<ShortProps> = (props) => {
+  if (props.format === 'tip') return <TipShort {...props} />;
   const pal = palette(props.palette);
   const seed = `${props.palette}-${props.motif}-${props.beats.length}`;
   return (

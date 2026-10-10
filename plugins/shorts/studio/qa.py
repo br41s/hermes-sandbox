@@ -13,8 +13,9 @@ from typing import Any, Dict, List
 
 from plugins.shorts.studio import media
 
-MIN_SECONDS, MAX_SECONDS = 20.0, 90.0          # hard
+MIN_SECONDS, MAX_SECONDS = 12.0, 90.0          # hard (a tip short runs ~15-20 s)
 TARGET_MIN, TARGET_MAX = 45.0, 70.0            # warn outside
+TIP_TARGET = (14.0, 30.0)                      # the tip format: one tip, ~20 s
 STORY_MAX = 59.9
 LUFS_TOLERANCE = 1.5
 MAX_TRUE_PEAK = -0.5
@@ -68,7 +69,8 @@ def _loudness(stderr: str) -> Dict[str, float]:
     return result
 
 
-def check_master(path: Path, *, expected_seconds: float | None = None) -> Dict[str, Any]:
+def check_master(path: Path, *, expected_seconds: float | None = None,
+                 target: tuple = (TARGET_MIN, TARGET_MAX)) -> Dict[str, Any]:
     errors: List[str] = []
     warnings: List[str] = []
     info = media.probe(path)
@@ -93,8 +95,8 @@ def check_master(path: Path, *, expected_seconds: float | None = None) -> Dict[s
 
     if not MIN_SECONDS <= seconds <= MAX_SECONDS:
         errors.append(f"duration {seconds:.1f}s outside {MIN_SECONDS:.0f}-{MAX_SECONDS:.0f}s")
-    elif not TARGET_MIN <= seconds <= TARGET_MAX:
-        warnings.append(f"duration {seconds:.1f}s outside the {TARGET_MIN:.0f}-{TARGET_MAX:.0f}s target")
+    elif not target[0] <= seconds <= target[1]:
+        warnings.append(f"duration {seconds:.1f}s outside the {target[0]:.0f}-{target[1]:.0f}s target")
     if expected_seconds and abs(seconds - expected_seconds) > 0.3:
         errors.append(f"duration {seconds:.2f}s differs from the timeline's {expected_seconds:.2f}s")
 

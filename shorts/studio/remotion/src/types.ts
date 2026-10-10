@@ -1,7 +1,7 @@
 // The props contract between plugins/shorts/studio/build.py and this template.
 // build.py writes exactly this shape to props.json; keep the two in step.
 
-export type BeatKind = 'hook' | 'point' | 'stat' | 'list' | 'quote' | 'avatar' | 'cta';
+export type BeatKind = 'hook' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta';
 
 export type Beat = {
   kind: BeatKind;
@@ -25,6 +25,11 @@ export type Beat = {
   /** Path under the public dir of the presenter clip (a hook or CTA said to camera). */
   presenter?: string | null;
   presenterName?: string;
+  /** Tip format: the presenter full-frame, or an animated card with them in a bubble. */
+  show?: 'presenter' | 'card';
+  /** compare beats (tip format): the before and the after. */
+  before?: string;
+  after?: string;
 };
 
 export type Word = {
@@ -37,6 +42,15 @@ export type Word = {
 
 export type ShortProps = {
   lang: 'en' | 'es';
+  /** 'tip': one take said to camera, cut between the presenter and cards. */
+  format?: 'classic' | 'tip';
+  /** Path under the public dir of the tip format's take, or null when it was not made. */
+  take?: string | null;
+  presenterName?: string;
+  /** Where the presenter's face is, as a fraction of the frame height (framing of their photo). */
+  faceY?: number;
+  /** Path under the public dir of the presenter's photo, for the cover (tip format with a take). */
+  presenterPhoto?: string | null;
   palette: string;
   motif: string;
   brand: {name: string; site: string};

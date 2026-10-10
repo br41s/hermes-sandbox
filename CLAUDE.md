@@ -604,10 +604,14 @@ it writes from. Sold to a client without one it goes quiet on every run.
   BigLobster's publishing tokens into every profile.
 - **Rendering is Remotion in `.github/workflows/shorts-studio.yml`**, never in the
   pod: ~1,800 browser frames a minute of video would starve the fleet.
-- **The hook and the CTA are said to camera by a presenter** (`studio/presenter.py`,
-  HeyGen Avatar IV: Lucía in Spanish, Martín in English, from the fixed photos in
-  `shorts/studio/presenters/`), and **up to 3 beats get a paid generated
-  background** (`studio/genvideo.py`, HeyGen Video 1). Both go through OpenRouter
+- **Every short is one tip said to camera, in one take, by the same presenter
+  with the same voice** (the tip format, `shorts/STUDIO.md` §3.8; owner's rule
+  2026-10-10): Lucía in Spanish, Martín in English (`studio/presenter.py`,
+  HeyGen Avatar IV, fixed photos and fixed voice ids), cut between them
+  full-frame and animated cards with them in a bubble (`remotion/src/Tip.tsx`).
+  `submit` refuses any other format, and a render whose take failed fails QA
+  rather than go out in another voice. The classic format (paid generated
+  backgrounds, `studio/genvideo.py`, HeyGen Video 1) stays in the renderer. Both go through OpenRouter
   on their own key (`SHORTS_OPENROUTER_API_KEY`, an Actions secret with a $2 daily
   limit on the key), never the agents' shared one, and share one budget: $1 per
   short and $2 a day, enforced before any request, the presenter planned first.

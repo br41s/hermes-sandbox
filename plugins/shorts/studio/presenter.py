@@ -35,11 +35,15 @@ from plugins.shorts.studio import genvideo
 
 PHOTO_DIR = Path(__file__).resolve().parents[3] / "shorts" / "studio" / "presenters"
 PRESENTERS = {"es": ("lucia", "Lucía"), "en": ("martin", "Martín")}
+# Where each photo's face is, as a fraction of the frame height: Remotion
+# zooms in on it and centres it in the bubble (Avatar IV keeps the framing).
+FACE_Y = {"lucia": 0.33, "martin": 0.21}
 # Avatar IV needs a voice when it is given a script (OpenRouter answers 400
 # without one, and lists these). HeyGen stock voices: Amelia (Spanish, female)
 # for Lucía, Andrew (English, male) for Martín.
 VOICES = {"es": "246cdbf530954380a62109f3107fce0d", "en": "6be73833ef9a4eb0aeee399b8fe9d62b"}
-WORDS_PER_SECOND = 2.4       # HeyGen voices, measured loosely; only for the estimate
+# Andrew said 29 words for $0.47 at $0.05/s on 2026-10-10: ~3.1 words a second.
+WORDS_PER_SECOND = 3.0       # only for the estimate; the real cost replaces it
 MOTION = ("Speaks warmly and calmly straight to the camera with a genuine smile, small natural "
           "hand gestures, steady posture, no fast or abrupt movements.")
 
@@ -82,17 +86,28 @@ def request_body(cfg: Dict[str, Any], script: str, photo: str, lang: str) -> Dic
     }
 
 
+def take_script(pkg: Dict[str, Any]) -> str:
+    """The tip format's one take: every beat's line, in order, as one script."""
+    return " ".join(b["vo"].strip() for b in pkg["beats"])
+
+
 def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
     """Generate the presenter clips. Returns {"clips": {beat: Path}, "report": {...}}.
 
+    Classic format: one clip per beat marked ``presenter``. Tip format: one
+    take of the whole script, returned under key 0 with ``report["take"]``.
     ``budget`` is genvideo.open_budget()'s dict; what this spends is added to
     ``budget["committed"]`` so the scenes that follow plan with the rest.
     """
     cfg = config()
-    wanted = [i for i, b in enumerate(pkg["beats"]) if b.get("presenter")]
+    tip = pkg.get("format") == "tip"
+    scripts = ({0: take_script(pkg)} if tip else
+               {i: b["vo"] for i, b in enumerate(pkg["beats"]) if b.get("presenter")})
+    wanted = list(scripts)
     person = who(pkg["lang"])
     report: Dict[str, Any] = {"model": cfg["model"], "presenter": person[1] if person else None,
-                              "requested": len(wanted), "generated": 0, "spent_usd": 0.0, "beats": []}
+                              "requested": len(wanted), "generated": 0, "spent_usd": 0.0, "beats": [],
+                              "take": tip}
     clips: Dict[int, Path] = {}
     if not wanted:
         return {"clips": clips, "report": report}
@@ -111,7 +126,7 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
     gcfg = budget["cfg"]
     jobs: List[Dict[str, Any]] = []
     for i in wanted:
-        script = pkg["beats"][i]["vo"]
+        script = scripts[i]
         estimate = round(estimate_seconds(script) * cfg["price_per_s"], 4)
         why = genvideo.over_budget(budget, estimate)
         if why:
@@ -130,7 +145,8 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
                 job.update(state="failed", reason=str(exc))
                 genvideo._log(f"presenter beat {job['beat']}: {exc}")
         deadline = time.time() + cfg["timeout_s"]
-        genvideo.wait_for(client, gcfg["key"], jobs, deadline, work, prefix="presenter_src")
+        genvideo.wait_for(client, gcfg["key"], jobs, deadline, work,
+                          prefix="presenter_take" if tip else "presenter_src")
 
     for job in jobs:
         spent = genvideo.settle(job, budget)

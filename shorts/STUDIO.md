@@ -271,6 +271,43 @@ A new presenter photo: vertical, front-facing, three-quarter body with the face
 in the top third, plain background, no text on the clothes (the model redraws
 lettering badly).
 
+### 3.8 The tip format: one tip, said to camera (2026-10-10)
+
+The Producer writes every short in the tip format (`"format": "tip"`), and
+`shorts_studio submit` refuses any other. The first presenter test (hook and CTA
+only, the old template in between) looked like an old video with a presenter
+pasted on, and switched voices mid-short. Owner's rules: real new videos, one
+valuable tip, worth saving or sharing, and **the same presenter with the same
+voice in every video**.
+
+- **One take, one voice.** The whole script (40–55 words, ~15–20 s) goes to
+  Avatar IV in one request (`presenter.render`, `take_script`). The voice is
+  fixed per presenter (`presenter.VOICES`: Amelia for Lucía, Andrew for
+  Martín). If the take is not made, the short is still rendered (cards over the
+  brand background, Edge voice) but **QA fails it** so it is never published
+  in another voice: "presenter take missing".
+- **Cut where they breathe.** `build.plan_cuts` places each beat's cut by the
+  share of the script said so far, then snaps it to the nearest pause that
+  ffmpeg's `silencedetect` finds in the take. The take's audio is the voice
+  track, untouched.
+- **Two kinds of shot.** Each beat's `show` is `presenter` (full-frame, a
+  different zoom per beat like a cut between cameras, a slow push-in, the key
+  line on a card over the chest) or `card` (an animated card full-screen while
+  the take shrinks into a bubble and keeps talking): `compare` (before/after,
+  the most shareable), `list` (steps that tick), `stat` (a count-up ring),
+  `point`/`quote` (a key line with a highlighter). The hook and the CTA are
+  always `presenter`; at least two beats are cards (`Tip.tsx`).
+- **Made to be kept.** The CTA must ask to save or share it (checked in
+  `package.py`), and its overlay shows the save and share chips. The cover is
+  the presenter's photo with the promise over their chest.
+- **Cost.** ~55 words is ~19 s, ~$0.95 at $0.05/s, inside the $1 per short;
+  two shorts a day fit the $2 cap. No generated scenes and no stock footage in
+  this format: the take and the cards are the picture.
+
+Framing: `presenter.FACE_Y` says where each photo's face is (fraction of the
+frame height), so the zoom and the bubble centre on it. A new photo needs its
+own value.
+
 ## 4. Avatars (Google Flow: Martín, Lucía)
 
 Flow has no API; programmatic Veo access is pay-per-second. So a human still
