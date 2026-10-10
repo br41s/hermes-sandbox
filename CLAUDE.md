@@ -610,7 +610,8 @@ it writes from. Sold to a client without one it goes quiet on every run.
   one. $0.50 per short and $1 a day are enforced before any request; anything
   refused or failed falls back to stock footage. Text and figures stay Remotion's.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
-  and rejects unsourced figures, repeated palettes and malformed packages. `publish`
+  and rejects unsourced figures, repeated palettes, malformed packages and a hook
+  whose first sentence will not land in ~3 s (≤8 words, no greeting or intro). `publish`
   refuses QA failures and does nothing unless `SHORTS_PUBLISH_MODE=live`. A rule
   that matters goes in `plugins/shorts/studio_tool.py` or `studio/package.py`.
 - `package.py` is shared by Hermes and the renderer, and `PALETTES`/`MOTIFS` are

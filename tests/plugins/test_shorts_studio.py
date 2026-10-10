@@ -832,3 +832,29 @@ def test_a_short_with_generated_scenes_is_published_as_synthetic_media(sample, s
     monkeypatch.setattr(youtube_mod, "upload", fake_upload)
     out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid, "target": "youtube"}))
     assert out["success"] and seen["synthetic"] is True
+
+
+# ---------------------------------------------------------------------------
+# The first three seconds
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("vo,problem", [
+    ("Hi, I'm Martin from BigLobster.", "never a greeting"),
+    ("In this video: three ways to automate invoices.", "never a greeting"),
+    ("Hola, hoy hablamos de facturas.", "never a greeting"),
+    ("Soy Lucía y te explico cómo automatizar.", "never a greeting"),
+    ("Most small businesses that try automation for the first time pick the wrong process. Here is why.",
+     "first sentence has"),
+])
+def test_the_hook_opens_on_the_promise_within_three_seconds(sample, vo, problem):
+    pkg = copy.deepcopy(sample)
+    pkg["beats"][0]["vo"] = vo
+    with pytest.raises(pkg_mod.PackageError) as exc:
+        pkg_mod.validate_package(pkg)
+    assert problem in str(exc.value)
+
+
+def test_a_direct_hook_passes(sample):
+    pkg = copy.deepcopy(sample)
+    pkg["beats"][0]["vo"] = "¿Sigues escribiendo cada factura a mano? Hay una forma más rápida."
+    assert pkg_mod.validate_package(pkg)["beats"][0]["vo"].startswith("¿Sigues")
