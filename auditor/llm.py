@@ -501,8 +501,13 @@ def _build_request(
     # train on paid prompts, so routing drops DeepSeek's own API) and instead
     # put these requests in a fallback pool led by OpenInference. Mirrors
     # AUDITOR_IGNORED_PROVIDERS in hermes_cli/fork_ext/boot_reconcile.py.
+    # Every review also asks for providers that neither store the prompt nor train on it
+    # (it carries our content and diffs), whatever the model. Mirrors the
+    # provider_routing.data_collection override in boot_reconcile.py.
+    provider = {"data_collection": "deny"}
     if model.startswith("deepseek/"):
-        payload["provider"] = {"ignore": list(IGNORED_PROVIDERS)}
+        provider["ignore"] = list(IGNORED_PROVIDERS)
+    payload["provider"] = provider
     body = json.dumps(payload).encode("utf-8")
     return urllib.request.Request(
         _OPENROUTER_URL,

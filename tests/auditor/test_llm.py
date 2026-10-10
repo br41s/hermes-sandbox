@@ -84,7 +84,7 @@ def test_deepseek_ignores_openinference_and_is_not_pinned():
     req = llm._build_request("deepseek/deepseek-v4-flash", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-system")
     prov = _body(req)["provider"]
-    assert prov == {"ignore": ["open-inference"]}
+    assert prov == {"ignore": ["open-inference"], "data_collection": "deny"}
     assert "order" not in prov and "allow_fallbacks" not in prov
 
 
@@ -96,7 +96,8 @@ def test_non_deepseek_is_not_pinned():
     # about any particular vendor.
     req = llm._build_request("vendor/cheap-1", [{"role": "user", "content": "hi"}],
                              "sk-test", session_id="hermes-auditor-content")
-    assert "provider" not in _body(req)
+    # Not pinned, but never without the privacy policy.
+    assert _body(req)["provider"] == {"data_collection": "deny"}
 
 
 def test_no_session_id_omits_field():

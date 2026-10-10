@@ -364,6 +364,19 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   the boot hook did not run: look for `Synced env vars into` and `Auditor profile pinned to
   dedicated OpenRouter key` in the boot log. To check without printing a key, compare a hash
   of each profile's `OPENROUTER_API_KEY=` line with the main one (verified 2026-10-09).
+- **Privacy policy on OpenRouter calls (2026-10).** `provider_routing.data_collection: deny`
+  is forced on `main` and every profile by `boot_reconcile.py` (`OVERRIDES`, so a profile cannot
+  opt out), which asks OpenRouter to route only to providers that neither store the prompt nor
+  train on it. It replaced the account-wide Zero Data Retention switch, which left models with
+  no provider (`meta/muse-image` and `qwen3.7-flash` had none). Where it is read: the gateway
+  turn, the cron agent (`cron/scheduler.py` `_construct_cron_agent` passes it; a cron run reads
+  its own profile's `config.yaml`), delegation, the auditor judge (`auditor/llm.py` adds it for
+  every model, `ignore` only for `deepseek/*`) and the WhatsApp bot. Where it is NOT: auxiliary
+  tasks (vision via `AUXILIARY_VISION_MODEL`, summaries; `agent/auxiliary_client.py`) and the
+  image/video plugins, which send no `provider` block. A `:free` model can never be the main
+  model any more (free models train on prompts and `deny` excludes them), and a model with no
+  provider left answers 404: check one with `tasks/openrouter_deny_probe.py` from the workspace
+  before pointing a profile at it.
 - **`group_topics` belongs at top-level `telegram.extra`**, not `display.telegram.extra`,
   which is dead config the adapter never loads.
 - **Zeabur `service delete` half-completes** — UI hides it, backend record and PVC linger,
