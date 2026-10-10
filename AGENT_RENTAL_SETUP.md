@@ -97,6 +97,13 @@ it. Sheets answer "what is this product"; guides answer "which one do I need",
 a query a product page cannot rank for. It writes no prices or stock levels,
 because the sync moves both several times a day. With no catalogue it goes
 quiet (`[SILENT]`) every run, so only order it for a client that has one.
+Each guide compares 4–5 products, opens with two fixed picks (best overall
+and best value), summarises buyer opinions in words (no scores), and shows
+each product's catalogue photo by its exact `image_url`. **The photos need the
+client's site on bl-site-package >= 1.19.0**, whose sanitizer keeps an exact
+catalogue image URL in a post; on an older site the `<img>` is simply
+stripped. The photos are linked, not uploaded: the distributor's CDN refuses
+non-browser downloads.
 Until 2026-10 this key was a crawler of a distributor-hosted *old* store with
 the CTA pointing back there. It never ran: its toolsets were `None`, so it
 could not reach `bl_site_publish`.
