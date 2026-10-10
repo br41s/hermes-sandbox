@@ -218,6 +218,21 @@ def plan_cuts(lines: List[str], total: float, pauses: List[Tuple[float, float]],
     return [(edges[i], edges[i + 1]) for i in range(len(lines))]
 
 
+def one_voice_error(tip: bool, has_take: bool, real_dispatch: bool,
+                    presenter_report: Dict[str, Any]) -> Optional[str]:
+    """The QA error for a tip short without its take, or None.
+
+    The presenter is the same person with the same voice in every short, so a
+    tip short voiced by the narrator instead is never published. A render with
+    no key (the push smoke test) is not a dispatch and keeps its fallback.
+    """
+    if not tip or has_take or not real_dispatch:
+        return None
+    why = "; ".join(b.get("reason") or b.get("status") or "" for b in presenter_report.get("beats") or [])
+    return (f"presenter take missing ({why or 'not made'}): a tip short is published only in "
+            "the presenter's own voice")
+
+
 def build_take_timeline(pkg: Dict[str, Any], work: Path, public: Path, take: Path) -> Dict[str, Any]:
     """The tip format's timeline: one take, cut into the beats at its pauses.
 
@@ -494,13 +509,10 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
 
     report = qa.check_master(master, expected_seconds=total_seconds,
                              target=qa.TIP_TARGET if tip else (qa.TARGET_MIN, qa.TARGET_MAX))
-    if tip and take is None and budget["cfg"]["key"]:
-        # The presenter is the same person with the same voice in every short:
-        # a tip short in the narrator's voice instead is not published.
-        why = "; ".join(b.get("reason") or b.get("status") for b in talking["report"]["beats"]) or "not made"
+    voice_error = one_voice_error(tip, take is not None, bool(budget["cfg"]["key"]), talking["report"])
+    if voice_error:
         report["passed"] = False
-        report["errors"].append(f"presenter take missing ({why}): a tip short is published only in "
-                                "the presenter's own voice")
+        report["errors"].append(voice_error)
     report["story"] = qa.check_story(story)
     report["cover"] = qa.check_still(visuals["cover"])
     report["thumb"] = qa.check_still(visuals["thumb"])

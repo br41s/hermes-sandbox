@@ -1147,3 +1147,27 @@ def test_tip_props_carry_the_take_the_framing_and_the_cards(tip):
     assert props["presenterPhoto"] == "presenter/photo.jpg"
     assert [b["show"] for b in props["beats"]] == [b["show"] for b in pkg["beats"]]
     assert props["beats"][1]["before"] and props["beats"][1]["after"]
+
+
+def test_a_tip_short_without_its_take_never_ships_in_another_voice():
+    report = {"beats": [{"beat": 0, "status": "skipped", "reason": "daily cap $2.00 reached"}]}
+    error = build_mod.one_voice_error(True, False, True, report)
+    assert error and "presenter take missing" in error and "daily cap" in error
+    assert build_mod.one_voice_error(True, True, True, report) is None      # the take was made
+    assert build_mod.one_voice_error(True, False, False, report) is None    # no key: the smoke test
+    assert build_mod.one_voice_error(False, False, True, report) is None    # classic format
+    assert "not made" in build_mod.one_voice_error(True, False, True, {"beats": []})
+
+
+def test_cuts_stay_in_order_when_pauses_crowd_or_are_missing():
+    lines = ["a b c", "d e f", "g h i", "j k l"]
+    # One pause near every guess would pull two cuts onto it: the second must move on.
+    spans = build_mod.plan_cuts(lines, 8.0, [(0.0, 0.2), (3.0, 3.2)], snap=3.0)
+    starts = [a for a, _ in spans]
+    assert starts == sorted(starts) and len(set(starts)) == 4
+    assert all(b - a >= 0.5 for a, b in spans[1:-1])
+    # Silent from the start to the end: the whole take is the speech span.
+    spans = build_mod.plan_cuts(["x y", "z w"], 4.0, [(0.0, 4.0)])
+    assert spans[0] == (0.0, pytest.approx(2.0)) and spans[1][1] == 4.0
+    # A single line is the whole take.
+    assert build_mod.plan_cuts(["solo"], 3.0, []) == [(0.0, 3.0)]
