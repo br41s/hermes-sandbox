@@ -203,12 +203,14 @@ SETTING_PROMPT = (
     "Two fictional presenters from the reference photos: the woman in the first photo and the man "
     "in the second, both recognisable. Scene: {setting}. The woman stands in the foreground, "
     "medium shot from the chest up, face in the upper third of the frame, looking straight at the "
-    "camera, smiling. The man is further back on the right, busy with the work of this place, "
+    "camera, smiling, her hands empty and relaxed, holding nothing. The man is further back on the right, busy with the work of this place, "
     "smaller in the frame but his face visible. Vertical 9:16 photograph, natural light, realistic, "
     "sharp focus on the woman. No text, no letters, no logos, no watermarks anywhere."
 )
-TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small hand gestures, steady "
-               "posture. Everything else in the scene stays as it is.")
+# Her hands move with her words and nothing else in the picture does, so the
+# setting gives her empty hands (package._HOST_HOLDS).
+TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm hand gestures with "
+               "empty hands, steady posture.")
 HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "
                   "shoulder at the man working behind her and gestures towards him with an open hand.")
 

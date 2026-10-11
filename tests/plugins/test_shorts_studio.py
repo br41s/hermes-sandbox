@@ -1107,6 +1107,7 @@ def test_a_package_cannot_pick_another_voice_for_the_narrator(tip):
     (lambda p: p["opener"].update(setting="a bakery"), "at least"),
     (lambda p: p["opener"].update(setting="a bakery at dawn with a big logo and neon text on the wall"), "picture only"),
     (lambda p: p["opener"].update(line=" ".join(["pan"] * 19)), "opener.line"),
+    (lambda p: p["opener"].update(setting=p["opener"]["setting"].replace("leans on a counter full of", "holds a tray of")), "hands stay empty"),
     (lambda p: p["opener"].pop("handoff"), "opener.handoff: required"),
     (lambda p: p["opener"].update(handoff="Te lo cuenta mi compañero."), "names him"),
     (lambda p: p["opener"].update(handoff="Martín, " + "venga " * 8), "opener.handoff"),
