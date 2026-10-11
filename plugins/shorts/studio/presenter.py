@@ -200,16 +200,22 @@ SETTING_MODELS = ("black-forest-labs/flux.2-pro", "google/gemini-3.1-flash-image
                   "openai/gpt-5-image")
 # Image-only models answer no text and refuse a request that asks for it.
 _TEXT_AND_IMAGE = ("google/", "openai/")
+# General rules only (owner, 2026-10-11): every short is a different scene;
+# what holds for all of them is that the picture obeys physics. Avatar IV
+# moves her hands and leaves the rest of the picture still, so anything that
+# would have to move with her hands rests on a surface instead (the first
+# paid test left a tray of bread floating in the air).
 SETTING_PROMPT = (
     "Two fictional presenters from the reference photos: the woman in the first photo and the man "
-    "in the second, both recognisable. Scene: {setting}. The woman stands in the foreground, "
-    "medium shot from the chest up, face in the upper third of the frame, looking straight at the "
-    "camera, smiling, her hands empty and relaxed, holding nothing. The man is further back on the right, busy with the work of this place, "
-    "smaller in the frame but his face visible. Vertical 9:16 photograph, natural light, realistic, "
-    "sharp focus on the woman. No text, no letters, no logos, no watermarks anywhere."
+    "in the second, both recognisable. Scene: {setting}. The woman is in the foreground, medium "
+    "shot from the chest up, face in the upper third of the frame, looking straight at the camera. "
+    "The man is further back, busy with the work of this place, smaller in the frame but his face "
+    "visible. Everything obeys physics; the woman's hands are free, and anything near her rests on "
+    "a surface. Vertical 9:16 photograph, natural light, realistic, sharp focus on the woman. No "
+    "text, no letters, no logos, no watermarks anywhere."
 )
 # Her hands move with her words and nothing else in the picture does, so the
-# setting gives her empty hands (package._HOST_HOLDS).
+# setting keeps her hands free and objects on surfaces (SETTING_PROMPT).
 TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm hand gestures with "
                "empty hands, steady posture.")
 HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "

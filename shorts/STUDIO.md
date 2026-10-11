@@ -289,11 +289,11 @@ What a tip short is, in order:
    Models are tried in order until one answers: `SHORTS_SETTING_IMAGE_MODEL`
    (comma-separated) or `presenter.SETTING_MODELS`. Gemini refused both paid
    tests with a 403 "violation of provider Terms Of Service" and FLUX.2 Pro
-   answered, so FLUX goes first; a refusal costs nothing. Lucía's hands are
-   always empty (the setting prompt says so, and `package.py` refuses a
-   setting where she holds something): Avatar IV moves her hands and leaves
-   the rest of the picture still, so the first paid test's tray of bread
-   stayed floating in the air.
+   answered, so FLUX goes first; a refusal costs nothing. Rules here stay
+   general, because every short must look different (owner): the picture
+   obeys physics. Avatar IV moves her hands and leaves the rest still, so
+   the setting prompt keeps her hands free and objects on surfaces (the
+   first paid test's tray of bread stayed floating in the air).
 2. **Hook**, Lucía on camera, in the same setting.
 3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns to him.
 4. **Martín's nod** (~1.6 s, no words): an image-to-video clip from the

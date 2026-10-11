@@ -171,11 +171,6 @@ _SENTENCE_END = re.compile(r"[.!?…]+")
 # What a generated background must never be asked for: rendered lettering,
 # figures or marks (the model garbles them, and they would bypass the
 # grounding check), or someone else's brand.
-# Avatar IV animates Lucía and leaves the rest of the picture still: anything
-# in her hands stays where it was when her hands move (the first paid test
-# left a tray of bread floating). He may hold tools; she holds nothing.
-_HOST_HOLDS = re.compile(r"\bshe\b(?:(?!\bhe\b)[^;.,])*?\b(holds?|holding|carr(?:y|ies|ying)|grips?|gripping|"
-                         r"clutch(?:es|ing)?|with (?:a|an|the) \w+ in her hands?)\b", re.IGNORECASE)
 _SCENE_FORBIDDEN = re.compile(
     r"\b(text|texts|caption|captions|subtitles?|letters?|lettering|typography|fonts?|words?|"
     r"headlines?|writing|written|logos?|watermarks?|brand(?:ed|s)?|trademarks?|signage|"
@@ -247,10 +242,6 @@ def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
     if opener["setting"] and _words(opener["setting"]) < TIP_MIN_SETTING_WORDS:
         problems.append(f"opener.setting: describe the place and what Martín is busy with in at least "
                         f"{TIP_MIN_SETTING_WORDS} words: {opener['setting']!r}")
-    if _HOST_HOLDS.search(opener["setting"]):
-        problems.append("opener.setting: Lucía's hands stay empty (the animation moves them and whatever "
-                        f"she holds is left floating); give the object to him or put it on a counter: "
-                        f"{opener['setting']!r}")
     bad = sorted({m.group(0).lower() for m in _SCENE_FORBIDDEN.finditer(opener["setting"])})
     if bad:
         problems.append(f"opener.setting: a picture only, never text, figures or brands; remove {bad}")
