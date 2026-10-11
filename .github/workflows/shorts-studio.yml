@@ -151,6 +151,7 @@ jobs:
           name: short-${{ env.REQUEST_ID }}
           path: ${{ runner.temp }}/short/out
           retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload recorded presenter assets
         if: always()
@@ -160,4 +161,3 @@ jobs:
           path: ~/.cache/shorts-assets
           retention-days: 30
           if-no-files-found: ignore
-          if-no-files-found: warn
