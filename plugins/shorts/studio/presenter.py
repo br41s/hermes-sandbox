@@ -212,9 +212,11 @@ TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small hand g
 HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "
                   "shoulder at the man working behind her and gestures towards him with an open hand.")
 
-# Martín's silent clips: an image-to-video model from a still, a few cents.
-MOTION_MODELS = ("bytedance/seedance-2.0-fast", "bytedance/seedance-2.0", "google/veo-3.1-lite",
-                 "minimax/hailuo-3")
+# Martín's silent clips: an image-to-video model from a still. First paid test
+# (2026-10-11): Seedance 2.0 and 2.0 Fast refuse a photo that "may contain
+# real person", Veo 3.1 Lite answers 403 (provider Terms Of Service), and
+# Hailuo 3 made the nod. Kling is the untried fallback.
+MOTION_MODELS = ("minimax/hailuo-3", "minimax/hailuo-2.3", "kwaivgi/kling-v3.0-std")
 MOTION_CATALOG = "https://openrouter.ai/api/v1/videos/models"
 MOTION_SECONDS = 5
 REACTION_PROMPT = ("The camera slowly pushes in on the man working in the background. He looks up "
@@ -361,6 +363,7 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
             genvideo._log(f"presenter take {job['beat']}: {job['reason']}")
         if job["state"] == "generated":
             takes[job["beat"]] = job["src"]
+            genvideo._log(f"presenter take {job['beat']}: ${spent:.2f} (estimated ${job['estimate']:.2f})")
         report["takes"].append(entry)
     return takes
 
@@ -428,6 +431,7 @@ def motion_clip(client, budget: Dict[str, Any], image: Path, prompt: str, work: 
                                **({"reason": job["reason"][:300]} if job.get("reason") else {})})
         if job["state"] == "generated":
             entry.update(status="generated", model=model)
+            genvideo._log(f"presenter {name}: {model}, ${spent:.2f} (estimated ${estimate:.2f})")
             return job["src"]
         genvideo._log(f"presenter {name} ({model}): {job.get('reason')}")
     entry["status"] = "failed"
@@ -456,7 +460,9 @@ def bubble_loop(client, budget: Dict[str, Any], work: Path, report: Dict[str, An
         return None
     clip = motion_clip(client, budget, photo, LOOP_PROMPT, work, "loop", report, catalog)
     if clip is None:
-        report["loop"] = {"status": "failed"}
+        reason = report["motion"][-1].get("reason") or "every model refused"
+        report["loop"] = {"status": "failed", "reason": reason}
+        genvideo._log(f"presenter loop: not recorded ({reason}); the bubble shows his photo")
         return None
     dest = tip_config()["asset_dir"] / name
     dest.parent.mkdir(parents=True, exist_ok=True)

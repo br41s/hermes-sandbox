@@ -326,6 +326,8 @@ dispatch, QA fails the short ("Lucía's take missing"); a render without a key
 (`frame_images`, `first_frame`): `SHORTS_MOTION_VIDEO_MODEL` (comma-separated)
 or `presenter.MOTION_MODELS`, only those that `GET /api/v1/videos/models`
 lists with a first frame (the log prints that list), each refusal free.
+First paid test: Seedance refuses photos that "may contain real person" and
+Veo 3.1 Lite answers 403, so Hailuo 3 goes first.
 Estimated at `SHORTS_MOTION_PRICE_PER_SECOND` (0.04) × 5 s.
 
 **Record once, reuse.** Martín's loop is looked up in
