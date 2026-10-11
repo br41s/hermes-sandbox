@@ -241,8 +241,8 @@ def _action_submit(args: Dict[str, Any]) -> str:
     if pkg.get("format") != "tip":
         # Every short is the presenter's, in their one voice (owner's rule,
         # 2026-10-10); the classic narrator format stays for the renderer only.
-        problems.append('format: the studio makes "tip" shorts only — one tip, said to camera by '
-                        "the presenter (see the producer prompt)")
+        problems.append('format: the studio makes "tip" shorts only — one tip, opened by Lucía on '
+                        "camera and narrated by Martín (see the producer prompt)")
     data = ledger.read()
     if pkg["article"]["url"] in ledger.done_urls(data):
         return _fail(f"{pkg['article']['url']} already has a short (see ledger)")

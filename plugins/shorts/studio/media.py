@@ -107,13 +107,6 @@ def silence(dst: Path, seconds: float) -> Path:
     return dst
 
 
-def to_mp3(src: Path, dst: Path) -> Path:
-    """A voice track small enough to send inline (Avatar IV takes it as a data URL)."""
-    ffmpeg("-i", str(src), "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "128k",
-           str(dst), what=f"mp3 {src.name}")
-    return dst
-
-
 def boomerang(src: Path, dst: Path) -> Path:
     """The clip forward then backward, without audio: a loop that never jumps."""
     ffmpeg("-i", str(src), "-filter_complex",

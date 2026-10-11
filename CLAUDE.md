@@ -604,21 +604,23 @@ it writes from. Sold to a client without one it goes quiet on every run.
   BigLobster's publishing tokens into every profile.
 - **Rendering is Remotion in `.github/workflows/shorts-studio.yml`**, never in the
   pod: ~1,800 browser frames a minute of video would starve the fleet.
-- **Every short is one tip by the same presenter with the same voice** (the tip
-  format, `shorts/STUDIO.md` §3.8; owner's rules 2026-10-10/11): Lucía in Spanish
-  (Spain accent), Martín in English, each with one fixed neural voice
-  (`package.TIP_VOICES`, Edge TTS, forced by the package). The avatar (HeyGen
-  Avatar IV) is paid by the second, so it is generated only for the lines said
-  on camera (opener joke, hook, CTA), lip-synced to that voice, in a setting an
-  image model builds from the presenter's photo and the article's subject.
-  Cards run with a bubble loop recorded once per presenter (`actions/cache`,
-  then commit it); the outro is a fixed animated card. `submit` refuses any
-  other format, and a render without its on-camera clip fails QA. The classic
-  format (paid generated backgrounds, `studio/genvideo.py`) stays in the
-  renderer. All paid calls go through OpenRouter on their own key
-  (`SHORTS_OPENROUTER_API_KEY`, an Actions secret with a $2 daily limit), never
-  the agents' shared one, and share one budget: $1 per short and $2 a day,
-  enforced before any request. Text and figures stay Remotion's.
+- **Every short is one tip by two presenters, each with one fixed voice**
+  (the tip format, `shorts/STUDIO.md` §3.8; owner's design 2026-10-11).
+  Lucía opens on camera in a setting an image model builds from both photos
+  and the article (Martín at work behind her): joke, hook, a line handing
+  Martín the word. Those are the only paid seconds: HeyGen Avatar IV with her
+  HeyGen voice (`presenter.HOST_VOICES`, Spain Spanish; Avatar IV will not
+  take our TTS as a data URL). Martín nods (a cheap image-to-video clip),
+  then narrates the cards and the CTA in a free Edge voice
+  (`package.TIP_VOICES`, forced by the package) from a bubble playing a loop
+  of him recorded once (`actions/cache`, then commit it); the outro is a
+  fixed animated card. `submit` refuses any other format, and a real render
+  missing one of her takes fails QA. The classic format (paid generated
+  backgrounds, `studio/genvideo.py`) stays in the renderer. All paid calls
+  go through OpenRouter on their own key (`SHORTS_OPENROUTER_API_KEY`, an
+  Actions secret), never the agents' shared one, and share one budget: $1
+  per short and a daily cap (`SHORTS_AI_DAILY_CAP_USD`, a repo variable,
+  default $2), enforced before any request. Text and figures stay Remotion's.
 - **Hermes publishes YouTube; SocialBot (Buzz) publishes Facebook, Instagram and X.**
   Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
   (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image); with
