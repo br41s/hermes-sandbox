@@ -271,46 +271,58 @@ A new presenter photo: vertical, front-facing, three-quarter body with the face
 in the top third, plain background, no text on the clothes (the model redraws
 lettering badly).
 
-### 3.8 The tip format: one tip, said to camera (2026-10-10)
+### 3.8 The tip format: one tip, the presenter in the article's world
 
 The Producer writes every short in the tip format (`"format": "tip"`), and
-`shorts_studio submit` refuses any other. The first presenter test (hook and CTA
-only, the old template in between) looked like an old video with a presenter
-pasted on, and switched voices mid-short. Owner's rules: real new videos, one
-valuable tip, worth saving or sharing, and **the same presenter with the same
-voice in every video**.
+`shorts_studio submit` refuses any other. Owner's rules: real new videos, one
+valuable tip worth saving or sharing, **the same presenter with the same voice
+in every video**, Spain Spanish for Lucía, and pay a model only for what
+changes from short to short (second review, 2026-10-11).
 
-- **One take, one voice.** The whole script (40–48 words in Spanish, 40–55 in
-  English, ~15–20 s) goes to
-  Avatar IV in one request (`presenter.render`, `take_script`). The voice is
-  fixed per presenter (`presenter.VOICES`: Amelia for Lucía, Andrew for
-  Martín). If the take is not made, the short is still rendered (cards over the
-  brand background, Edge voice) but **QA fails it** so it is never published
-  in another voice: "presenter take missing".
-- **Cut where they breathe.** `build.plan_cuts` places each beat's cut by the
-  share of the script said so far, then snaps it to the nearest pause that
-  ffmpeg's `silencedetect` finds in the take. The take's audio is the voice
-  track, untouched.
-- **Two kinds of shot.** Each beat's `show` is `presenter` (full-frame, a
-  different zoom per beat like a cut between cameras, a slow push-in, the key
-  line on a card over the chest) or `card` (an animated card full-screen while
-  the take shrinks into a bubble and keeps talking): `compare` (before/after,
-  the most shareable), `list` (steps that tick), `stat` (a count-up ring),
-  `point`/`quote` (a key line with a highlighter). The hook and the CTA are
-  always `presenter`; at least two beats are cards (`Tip.tsx`).
-- **Made to be kept.** The CTA must ask to save or share it (checked in
-  `package.py`), and its overlay shows the save and share chips. The cover is
-  the presenter's photo with the promise over their chest.
-- **Cost.** Charged on 2026-10-10: Martín speaks ~3.1 words/s, Lucía ~2.6
-  (55 Spanish words cost $1.05). So the word limit is per language
-  (`package.TIP_MAX_TOTAL_WORDS`) and the estimate uses each pace
-  (`presenter.WORDS_PER_SECOND`): a take stays under $1 and two a day fit the
-  $2 cap. No generated scenes and no stock footage in
-  this format: the take and the cards are the picture.
+What a tip short is, in order:
 
-Framing: `presenter.FACE_Y` says where each photo's face is (fraction of the
-frame height), so the zoom and the bubble centre on it. A new photo needs its
-own value.
+1. **Opener** (`opener.line`, ≤18 words): a joke said to camera in a
+   **setting** that fits the article (`opener.setting`, English: a workshop, a
+   factory floor, a kitchen...). An image model places the presenter there
+   from their photo (`presenter.setting_image`, `SHORTS_SETTING_IMAGE_MODEL`,
+   default `google/gemini-3.1-flash-image-preview`, a few cents).
+2. **Hook**, on camera, in the same setting.
+3. **2–4 cards** (before/after, steps, a figure, a key line). The presenter
+   sits in a bubble playing **a loop recorded once per presenter** (look at
+   the card, point, look back; `presenter.bubble_loop`).
+4. **CTA**, on camera: save it or share it (checked in `package.py`).
+5. **Outro**, added by the renderer and the same in every short: the full
+   article on biglobster.top, then "follow us for more tips", as an animated
+   card (`Tip.tsx`, `OutroCard`).
+
+The voice is a fixed neural voice per presenter (`package.TIP_VOICES`:
+`es-ES-ElviraNeural` for Lucía, `en-US-AndrewMultilingualNeural` for Martín,
+Edge TTS, free), forced by the package, so no script can change it. The
+avatar (Avatar IV) is paid by the second, so it is generated **only for the
+lines said on camera** (opener + hook + CTA, ≤40 words, ~15 s): their voice
+segments are joined into one track and the avatar lip-syncs to it
+(`presenter.lipsync`), and each on-camera beat plays its stretch of that one
+clip. How Avatar IV takes an audio track through OpenRouter is not
+documented: `AUDIO_SHAPES` are tried in order, and a refused shape costs
+nothing. If the clip is not made in a real dispatch, QA fails the short
+("presenter clip missing"); a render without a key (the push smoke test)
+keeps its card-only fallback.
+
+**Record once, reuse.** The bubble loop is looked up in
+`shorts/studio/presenters/assets/<slug>-loop.mp4`, then in the asset cache
+(`~/.cache/shorts-assets`, kept between Actions runs by `actions/cache`), and
+generated (~$0.25) only when both miss. Each run uploads the cache as the
+`presenter-assets-*` artifact: commit its files to `presenters/assets/` to
+make them permanent. Use the same pattern for anything else that does not
+change between shorts.
+
+Cost per short: setting image ~$0.04 + on-camera clip ~$0.05/s (≤15 s) ≈
+$0.6–0.8, inside the $1 per short. Music sits well under the voice
+(`media.BED_VOLUME`, 0.12, with stronger ducking).
+
+Framing: `presenter.FACE_Y` is where each photo's face is (the loop), and
+`SETTING_FACE_Y` where the setting prompt puts it; the zoom and the bubble
+centre on them.
 
 ## 4. Avatars (Google Flow: Martín, Lucía)
 

@@ -42,15 +42,18 @@ top, and a scene that asks for any of them is rejected here. ``broll`` stays
 the fallback when the budget, the key or the model says no.
 
 ``"format": "tip"`` is the presenter format (``TIP_*`` below): ONE tip in
-~20 s, and the whole script said to camera in one take by the presenter
-(Lucía in Spanish, Martín in English), so one voice runs from the first
-word to the last. Each beat's ``show`` picks the picture while that line is
-said: ``presenter`` (them, full-frame) or ``card`` (an animated card — steps,
-a before/after, a figure, a checklist, a key line — with the presenter in a
-bubble). The hook and the CTA are always ``presenter``; at least two beats
-are cards; the CTA asks the viewer to save or share it, because a tip worth
-keeping is the point. No ``scene`` and no per-beat ``presenter`` flag here:
-the take is the picture. ``compare`` (tip only) is a before/after:
+~20-25 s by the presenter (Lucía in Spanish, Martín in English), in their
+one fixed voice (``TIP_VOICES``, forced here). It opens with ``opener``: a
+joke ``line`` said to camera in a ``setting`` that matches the article (a
+workshop, a factory floor...), described in English for the image model;
+then the hook. Each beat's ``show`` picks the picture while that line is
+said: ``presenter`` (them, in the setting) or ``card`` (an animated card —
+steps, a before/after, a figure, a checklist, a key line — with the
+presenter's recorded loop in a bubble). The hook and the CTA are
+``presenter``, every middle beat a card (the avatar is paid by the second);
+the CTA asks the viewer to save or share it. The renderer adds the outro
+(full article on the site, follow us) itself. No ``scene`` and no per-beat
+``presenter`` flag here. ``compare`` (tip only) is a before/after:
 ``before`` and ``after``, ≤8 words each.
 
 ``presenter: true`` (hook and CTA only) has the brand's presenter say that
@@ -116,15 +119,20 @@ MAX_PRESENTER_WORDS = 24    # ~11 s said to camera; the presenter is paid by the
 MAX_SCENE_WORDS = 60
 MAX_SCENE_CHARS = 400
 
-# The tip format: one take said to camera, paid by the second (~$0.05/s at
-# ~3 words/s), so the script is short — one tip, ~15-20 s.
+# The tip format. The voice is free (neural TTS), the avatar is not
+# (~$0.05/s), so only the lines said on camera are bounded tightly:
+# opener + hook + CTA ≤ TIP_MAX_ON_CAMERA_WORDS (~15 s, ~$0.75).
 TIP_MIDDLE_KINDS = ("point", "stat", "list", "compare", "quote")
 TIP_MAX_BEATS = 7
-TIP_MIN_TOTAL_WORDS = 40
-# Fits $1 a take at $0.05/s with each presenter's pace (presenter.WORDS_PER_SECOND):
-# Martín ~3 words/s, Lucía ~2.6.
-TIP_MAX_TOTAL_WORDS = {"en": 55, "es": 48}
+TIP_MIN_TOTAL_WORDS = 35
+TIP_MAX_TOTAL_WORDS = 60
+TIP_MAX_OPENER_WORDS = 18
+TIP_MAX_ON_CAMERA_WORDS = 40
+TIP_MIN_SETTING_WORDS = 8
 TIP_MIN_CARDS = 2
+# One voice per presenter, in every short (owner's rule, 2026-10-11): Spain
+# Spanish for Lucía, never a Latin American accent.
+TIP_VOICES = {"es": "es-ES-ElviraNeural", "en": "en-US-AndrewMultilingualNeural"}
 SHOWS = ("presenter", "card")
 MAX_COMPARE_WORDS = 8
 # The CTA asks for the save or the share: a tip people keep is the goal.
@@ -214,6 +222,22 @@ def _check_hook_lead(problems: List[str], where: str, vo: str) -> None:
         )
 
 
+def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
+    """Tip format: the joke said in the setting before the hook."""
+    raw = raw if isinstance(raw, dict) else {}
+    opener = {"line": _text(raw.get("line")), "setting": _text(raw.get("setting"))}
+    _check_text(problems, "opener.line", opener["line"], max_words=TIP_MAX_OPENER_WORDS)
+    _check_text(problems, "opener.setting", opener["setting"],
+                max_words=MAX_SCENE_WORDS, max_chars=MAX_SCENE_CHARS)
+    if opener["setting"] and _words(opener["setting"]) < TIP_MIN_SETTING_WORDS:
+        problems.append(f"opener.setting: describe the place and what they wear or do in at least "
+                        f"{TIP_MIN_SETTING_WORDS} words: {opener['setting']!r}")
+    bad = sorted({m.group(0).lower() for m in _SCENE_FORBIDDEN.finditer(opener["setting"])})
+    if bad:
+        problems.append(f"opener.setting: a picture only, never text, figures or brands; remove {bad}")
+    return opener
+
+
 def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Dict[str, Any],
                     kind: str, i: int, n: int) -> None:
     """Tip format: what is on screen while this line is said, and the before/after."""
@@ -222,6 +246,8 @@ def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Di
         problems.append(f"{where}.show: one of {list(SHOWS)}, got {show!r}")
     elif kind in ("hook", "cta") and show != "presenter":
         problems.append(f"{where}.show: the hook and the CTA are said to camera ('presenter')")
+    elif kind not in ("hook", "cta") and show != "card":
+        problems.append(f"{where}.show: middle beats are cards (the avatar is paid by the second)")
     beat["show"] = show
     if kind == "compare":
         for side in ("before", "after"):
@@ -298,7 +324,9 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
     tip = fmt == "tip"
     pkg["format"] = fmt
     if tip:
-        pkg["version"] = 2
+        pkg["version"] = 3
+        pkg["voice"] = TIP_VOICES.get(lang, pkg["voice"])
+        pkg["opener"] = _check_opener(problems, raw.get("opener"))
 
     beats_raw = raw.get("beats")
     beats: List[Dict[str, Any]] = []
@@ -422,14 +450,19 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         problems.append(f"beats: {scenes} generated scenes, max {MAX_SCENES} per short "
                         "(the hook and the most visual beats; the rest uses broll)")
 
-    lo, hi = ((TIP_MIN_TOTAL_WORDS, TIP_MAX_TOTAL_WORDS.get(lang, 48)) if tip
+    lo, hi = ((TIP_MIN_TOTAL_WORDS, TIP_MAX_TOTAL_WORDS) if tip
               else (MIN_TOTAL_WORDS, MAX_TOTAL_WORDS))
     if beats_raw and not (lo <= total_words <= hi):
         problems.append(
             f"beats: {total_words} spoken words in total, need {lo}-{hi} "
-            + ("(one tip, ~20 s said to camera)" if tip else "(~150 words is a 60s short)")
+            + ("(one tip, ~20 s)" if tip else "(~150 words is a 60s short)")
         )
     if tip and beats:
+        on_camera = _words(pkg.get("opener", {}).get("line", "")) + sum(
+            _words(b.get("vo", "")) for b in beats if b.get("show") == "presenter")
+        if on_camera > TIP_MAX_ON_CAMERA_WORDS:
+            problems.append(f"opener + hook + CTA: {on_camera} words said on camera, max "
+                            f"{TIP_MAX_ON_CAMERA_WORDS} (~15 s; the avatar is paid by the second)")
         cards = sum(1 for b in beats if b.get("show") == "card")
         if cards < TIP_MIN_CARDS:
             problems.append(f"beats: {cards} card beats, need at least {TIP_MIN_CARDS}: show the tip, "
@@ -577,6 +610,9 @@ def check_grounding(pkg: Dict[str, Any], article_text: str) -> List[str]:
                     problems.append(
                         f"beats[{i}].{name}: the figure {fig!r} does not appear in the article"
                     )
+    for fig in figures((pkg.get("opener") or {}).get("line") or ""):
+        if fig not in known:
+            problems.append(f"opener.line: the figure {fig!r} does not appear in the article")
     covers = pkg.get("covers") or {}
     for name in ("cover_title", "thumb_title"):
         for fig in figures(covers.get(name) or ""):

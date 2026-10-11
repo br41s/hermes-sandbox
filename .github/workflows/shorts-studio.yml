@@ -68,6 +68,8 @@ jobs:
       SHORTS_PRESENTER_PRICE_PER_SECOND: ${{ vars.SHORTS_PRESENTER_PRICE_PER_SECOND || '0.05' }}
       SHORTS_PRESENTER_VOICE_ES: ${{ vars.SHORTS_PRESENTER_VOICE_ES || '' }}
       SHORTS_PRESENTER_VOICE_EN: ${{ vars.SHORTS_PRESENTER_VOICE_EN || '' }}
+      # Tip format: the image model that puts the presenter in the article's setting.
+      SHORTS_SETTING_IMAGE_MODEL: ${{ vars.SHORTS_SETTING_IMAGE_MODEL || '' }}
       # Lets build.py download avatar clips stored as release assets of this repo.
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -102,6 +104,17 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx remotion browser ensure
+
+      # Assets recorded once and reused by every short (presenter.bubble_loop):
+      # restored before the render, saved after it under a new key whenever a
+      # run added one. Committing them to shorts/studio/presenters/assets/
+      # (the "presenter-assets" artifact) makes them permanent.
+      - name: Restore recorded presenter assets
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/shorts-assets
+          key: shorts-assets-v1-${{ github.run_id }}
+          restore-keys: shorts-assets-v1-
 
       - name: Decode package
         run: |
@@ -139,3 +152,12 @@ jobs:
           path: ${{ runner.temp }}/short/out
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Upload recorded presenter assets
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: presenter-assets-${{ env.REQUEST_ID }}
+          path: ~/.cache/shorts-assets
+          retention-days: 30
+          if-no-files-found: ignore

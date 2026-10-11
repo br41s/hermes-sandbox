@@ -39,35 +39,48 @@ Idioma: el short en inglés sale del blog inglés y se escribe en inglés; el
 español sale del blog español y se escribe en español de España, tuteando. No
 traduzcas el otro short: cada guion se escribe desde su artículo.
 
-QUIÉN LO DICE. Todo el guion lo dice a cámara, de una sola toma, nuestra
-presentadora en español, Lucía, o nuestro presentador en inglés, Martín. Siempre
-son las mismas personas con la misma voz: así se les reconoce de un vídeo a
-otro. Son cercanos, honestos y sin prisa, como quien aconseja a un amigo:
-tutean, dicen "vamos a" mejor que "debes", sin jerga corporativa ni
-exageraciones. Nunca se presentan ni saludan ("Soy Lucía…", "Hola"): su nombre
-ya sale en pantalla.
+QUIÉN LO DICE. Nuestra presentadora en español, Lucía, o nuestro presentador
+en inglés, Martín. Siempre las mismas personas con la misma voz (la pone el
+estudio, no la eliges): así se les reconoce de un vídeo a otro. Son cercanos,
+honestos y sin prisa, como quien aconseja a un amigo: tutean, dicen "vamos a"
+mejor que "debes", sin jerga corporativa ni exageraciones. Nunca se presentan
+ni saludan ("Soy Lucía…", "Hola"): su nombre ya sale en pantalla.
 
 QUÉ ES UN BUEN SHORT. UN solo consejo: lo mejor del artículo, lo que alguien
 aplicaría esta semana. No resumas el artículo. El listón: que quien lo vea
 piense "esto me sirve, me lo guardo" o "esto se lo mando a mi socio". Si el
 consejo no pasa ese listón, busca otro en el artículo.
 
-Duración: 40–48 palabras habladas en total en español, 40–55 en inglés (~15–20
-s; Lucía habla algo más despacio). La herramienta rechaza fuera de ese rango: el
-presentador se paga por segundo.
+LA ENTRADA (`opener`) — va antes del gancho y es lo primero que se ve:
+  - `setting`: DÓNDE está la persona y qué hace, en INGLÉS, 8–40 palabras, como
+    una foto: el mundo del lector del artículo, nunca una oficina genérica ni una
+    pared lisa. Si el artículo habla de talleres: "a car repair workshop, she is
+    sliding out from under a car on a mechanic's creeper, grease on her hands,
+    work overalls". De fábricas: "a factory floor next to a large industrial
+    machine, he wears a hard hat, safety glasses and work gloves". De
+    restaurantes: una cocina en plena hora punta. Solo imagen: nada de texto,
+    letras, cifras, logos ni marcas (la herramienta lo rechaza).
+  - `line`: una broma corta (≤18 palabras) que nace de ese sitio y lleva al
+    consejo, dicha a cámara. Del estilo: "Si ya tengo que mancharme arreglando
+    el coche, deja que BigLobster te arregle el resto." / "Para riesgos ya me
+    llega con esta máquina; lo demás, mejor automatizarlo." Que haga sonreír,
+    nunca a costa del cliente.
 
-Estructura (`beats`, en orden, 4–6). Cada beat lleva `show`: lo que se ve
-mientras se dice esa frase. "presenter" = la persona a pantalla completa;
-"card" = una tarjeta animada que ENSEÑA el consejo, con la persona en una
-burbuja que sigue hablando.
-  1. `hook`, show "presenter" — LOS PRIMEROS 3 SEGUNDOS DECIDEN TODO. La PRIMERA
-     FRASE de `vo` tiene ≤8 palabras (la herramienta lo rechaza si pasa) y dice,
-     sin preámbulo, el beneficio concreto, el dolor que reconoce, la cifra que
+Duración: los `beats` suman 35–60 palabras habladas. Lo que se dice A CÁMARA
+(opener + hook + CTA) suma como mucho 40 palabras: la persona se paga por
+segundo, la voz no. La herramienta rechaza fuera de esos límites.
+
+Estructura (`beats`, en orden, 4–6). Cada beat lleva `show`: "presenter" = la
+persona en su escenario, hablando a cámara; "card" = una tarjeta animada que
+ENSEÑA el consejo, con la persona en una burbuja señalándola.
+  1. `hook`, show "presenter" — justo después de la broma. La PRIMERA FRASE de
+     `vo` tiene ≤8 palabras (la herramienta lo rechaza si pasa) y dice, sin
+     preámbulo, el beneficio concreto, el dolor que reconoce, la cifra que
      sorprende o la creencia que el consejo desmiente. Nada de saludos, "en este
      vídeo", "hoy hablamos de". `onscreen` = esa promesa en ≤8 palabras; la
      portada la repite. `kicker` opcional (≤28 caracteres).
-  2. 2–4 beats que ENSEÑAN el consejo, show "card" (al menos dos tarjetas).
-     Elige la tarjeta que mejor lo muestre:
+  2. 2–4 beats que ENSEÑAN el consejo, TODOS show "card". Elige la tarjeta que
+     mejor lo muestre:
      - `compare` — el antes y el después: `before` (lo que hace casi todo el
        mundo) y `after` (lo que propones), ≤8 palabras cada uno. Es la más
        compartible: úsala siempre que el consejo cambie una costumbre.
@@ -77,23 +90,19 @@ burbuja que sigue hablando.
        caracteres) y `label` (qué mide).
      - `point` — la frase clave del consejo, para leer de un vistazo.
      - `quote` — la frase del artículo que lo resume.
-     Un beat central también puede ir con show "presenter" cuando la frase es
-     personal ("A mí me pasó…" no; "Pruébalo con una sola tarea" sí): se ve a la
-     persona con la frase clave sobreimpresa.
   3. `cta`, show "presenter" — pide que lo GUARDEN o lo COMPARTAN, con una
      razón: "Guárdalo para tu próximo cierre de mes", "Mándaselo a quien lleva
      las facturas". La herramienta lo rechaza si no lo pide. `onscreen` = el
-     porqué de guardarlo en ≤8 palabras. `url` = la URL del artículo; no hace
-     falta decirla: sale en pantalla y en la descripción.
+     porqué de guardarlo en ≤8 palabras. `url` = la URL del artículo.
+  Después el estudio añade solo el cierre (el artículo completo en
+  biglobster.top y "síguenos para más consejos"): no lo escribas tú.
 
 Cada beat lleva:
-  - `vo`: lo que dice. Frases cortas, habladas, segunda persona. Cada beat
-    termina en punto: la pausa entre frases es donde se corta la imagen.
+  - `vo`: lo que dice. Frases cortas, habladas, segunda persona.
   - `onscreen`: lo que se lee (no en `stat` ni `compare`, que tienen sus
     campos). ≤8 palabras. Marca UNA palabra clave con asteriscos: "Empieza por
     *una* tarea".
-  - Nada de `broll`, `scene` ni `presenter`: la imagen es la persona y las
-    tarjetas.
+  - Nada de `broll`, `scene`, `voice` ni `presenter`.
 
 REGLAS DURAS
 - Nada que el artículo no diga. Cada cifra, tal como la escribe el artículo. La
@@ -140,6 +149,7 @@ FORMATO DEL PAQUETE
 {
   "lang": "en",
   "format": "tip",
+  "opener": {"line": "…", "setting": "…"},
   "article": {"url": "<url>", "title": "<título>", "slug": "<slug del post>"},
   "style": {"palette": "teal-amber", "motif": "rings"},
   "beats": [
