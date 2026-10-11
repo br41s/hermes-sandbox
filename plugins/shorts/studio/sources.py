@@ -34,6 +34,14 @@ _MIXKIT_ID = re.compile(r"/(?:videos|music)/(?:preview/[a-z0-9-]*?-)?(\d+)")
 # Known-good beds, used when the tag page cannot be read. 516 is the bed the
 # manual workflow shipped with. Extend as tracks prove themselves.
 FALLBACK_MUSIC = ["516"]
+# The tip format's bed: jazz and lounge, never stock "corporate" (owner's
+# review, 2026-10-11: "algo más elegante, como jazz clásico"). Every page's
+# tracks are pooled and one is picked by the short's seed.
+ELEGANT_MUSIC_PAGES = (
+    "https://mixkit.co/free-stock-music/jazz/",
+    "https://mixkit.co/free-stock-music/lounge/",
+    "https://mixkit.co/free-stock-music/tag/cocktail-lounge/",
+)
 
 
 class SourceError(RuntimeError):
@@ -149,13 +157,17 @@ def find_broll(query: str, avoid: Iterable[str], seed: str) -> Optional[Dict]:
     return None
 
 
-def find_music(mood: str, avoid: Iterable[str], seed: str) -> Optional[Dict]:
+def find_music(mood: str, avoid: Iterable[str], seed: str,
+               pages: Optional[Iterable[str]] = None) -> Optional[Dict]:
+    """A Mixkit track for ``mood`` (its tag page), or from ``pages`` when given."""
     candidates: List[Dict] = []
-    try:
-        with _client() as client:
-            resp = client.get(MIXKIT_MUSIC_PAGE.format(slug=_slug(mood)))
-        if resp.status_code == 200:
-            seen = set()
+    seen: set = set()
+    for page in (list(pages) if pages else [MIXKIT_MUSIC_PAGE.format(slug=_slug(mood))]):
+        try:
+            with _client() as client:
+                resp = client.get(page)
+            if resp.status_code != 200:
+                continue
             for url in _MIXKIT_MUSIC.findall(resp.text):
                 m = _MIXKIT_ID.search(url)
                 if m and m.group(1) not in seen:
@@ -163,8 +175,8 @@ def find_music(mood: str, avoid: Iterable[str], seed: str) -> Optional[Dict]:
                     candidates.append({"id": m.group(1), "source": "mixkit",
                                        "url": f"https://assets.mixkit.co/music/{m.group(1)}/{m.group(1)}.mp3",
                                        "fallback_url": url})
-    except Exception:
-        pass
+        except Exception:
+            continue
     if not candidates:
         candidates = [{"id": i, "source": "mixkit",
                        "url": f"https://assets.mixkit.co/music/{i}/{i}.mp3"} for i in FALLBACK_MUSIC]

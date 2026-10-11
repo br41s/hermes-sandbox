@@ -48,6 +48,9 @@ from plugins.shorts.studio.package import PackageError, validate_package
 FPS = media.FPS
 LEAD_IN = 0.20        # silence before the first word
 GAP = 0.28            # breath between beats
+TAKE_GAP = 0.06       # between a take and the next beat: a cut, not a pause
+TAKE_LEAD = 0.05      # kept before the first word of a take
+TAKE_TAIL = 0.12      # kept after its last word
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
 PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
@@ -132,9 +135,14 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
         if talking is not None and not media.has_audio(talking):
             _log(f"presenter beat {i}: the clip has no audio track; using the voice-over")
             talking = None
+        take_start = 0.0
         if talking is not None:
-            wav = media.extract_audio(talking, work / f"vo_{i:02d}.wav")
-            speech = min(media.duration(talking), PRESENTER_MAX)
+            # Cut the take at its speech: its still, silent edges read as a frozen face.
+            begin, finish = media.speech_bounds(talking)
+            take_start = max(0.0, begin - TAKE_LEAD)
+            take_end = min(media.duration(talking), finish + TAKE_TAIL, take_start + PRESENTER_MAX)
+            wav = media.extract_audio(talking, work / f"vo_{i:02d}.wav", start=take_start, end=take_end)
+            speech = take_end - take_start
             beat_words = voice.spread_words(beat["vo"], speech)
         elif beat.get("silent"):
             # A beat with no words (Martín's nod): its picture runs on silence.
@@ -162,14 +170,14 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
 
         voice.attach_raw(beat_words, beat["vo"])
         lead = LEAD_IN if i == 0 and talking is None and not beat.get("silent") else 0.0
-        tail = CTA_TAIL if i == len(beats) - 1 else GAP
+        tail = CTA_TAIL if i == len(beats) - 1 else TAKE_GAP if talking is not None else GAP
         frames = _frames(lead + speech + tail)
         seconds = frames / FPS
         presenter_rel: Optional[str] = None
         if talking is not None:
             (public / "presenter").mkdir(parents=True, exist_ok=True)
             presenter_rel = f"presenter/p{i:02d}.mp4"
-            media.normalize_clip(talking, public / presenter_rel, seconds, hold=True)
+            media.normalize_clip(talking, public / presenter_rel, seconds, start=take_start, hold=True)
         segments.append(media.pad_segment(wav, work / f"seg_{i:02d}.wav", lead, seconds))
 
         start_ms = cursor_frames / FPS * 1000 + lead * 1000
@@ -383,7 +391,8 @@ def gather_music(pkg: Dict[str, Any], work: Path, seed: str, *, offline: bool) -
     if offline:
         return None
     music = pkg.get("music") or {}
-    choice = sources.find_music(music.get("mood") or "corporate", music.get("avoid_ids") or [], seed)
+    pages = sources.ELEGANT_MUSIC_PAGES if pkg.get("format") == "tip" else None
+    choice = sources.find_music(music.get("mood") or "corporate", music.get("avoid_ids") or [], seed, pages)
     if not choice:
         return None
     try:

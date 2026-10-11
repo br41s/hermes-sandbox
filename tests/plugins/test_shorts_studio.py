@@ -1313,3 +1313,34 @@ def test_tip_props_carry_her_takes_his_nod_his_loop_and_the_cards(tip):
     assert [b["number"] for b in props["beats"][:4]] == [0, 0, 0, 0]
     assert props["beats"][-1]["kind"] == "outro" and props["beats"][-1]["url"]
     assert props["cover"]["kicker"] == pkg["beats"][1].get("kicker", "")
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_a_take_is_cut_at_its_speech_so_the_face_never_freezes(tmp_path):
+    import subprocess
+
+    from plugins.shorts.studio import media
+
+    take = tmp_path / "take.wav"
+    # 0.8 s still, 2 s of "speech", 1.2 s still: what an Avatar IV take sounds like.
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=0.8",
+                    "-f", "lavfi", "-i", "sine=frequency=300:duration=2:sample_rate=48000",
+                    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1.2",
+                    "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", str(take)], check=True)
+    begin, end = media.speech_bounds(take)
+    assert 0.7 <= begin <= 0.9 and 2.7 <= end <= 2.9
+
+
+def test_tip_shorts_play_jazz_or_lounge(tip, tmp_path, monkeypatch):
+    from plugins.shorts.studio import sources
+
+    seen = {}
+
+    def find(mood, avoid, seed, pages=None):
+        seen["pages"] = pages
+        return None
+
+    monkeypatch.setattr(sources, "find_music", find)
+    build_mod.gather_music(pkg_mod.validate_package(tip), tmp_path, "seed", offline=False)
+    assert seen["pages"] == sources.ELEGANT_MUSIC_PAGES
+    assert all("jazz" in p or "lounge" in p for p in seen["pages"])

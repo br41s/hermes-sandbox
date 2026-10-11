@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 SAMPLE_RATE = 48000
@@ -151,10 +151,34 @@ def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0,
     return dst
 
 
-def extract_audio(src: Path, dst: Path) -> Path:
-    ffmpeg("-i", str(src), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
+def extract_audio(src: Path, dst: Path, *, start: float = 0.0, end: Optional[float] = None) -> Path:
+    span = ["-ss", f"{start:.3f}"] + (["-to", f"{end:.3f}"] if end is not None else [])
+    ffmpeg(*span, "-i", str(src), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
            str(dst), what=f"extract audio {src.name}")
     return dst
+
+
+def speech_bounds(src: Path, *, floor_db: float = -38.0, min_gap: float = 0.12) -> Tuple[float, float]:
+    """Where the speech in ``src`` starts and ends, in seconds.
+
+    An avatar take opens and closes with a still, silent second or so; cut at
+    the speech, the takes follow each other like one conversation instead of
+    a face that freezes between lines (owner's review, 2026-10-11).
+    """
+    total = duration(src)
+    out = run([binary("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(src), "-vn",
+               "-af", f"silencedetect=n={floor_db}dB:d={min_gap}", "-f", "null", "-"],
+              f"silences {src.name}")
+    starts = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", out.stderr or "")]
+    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", out.stderr or "")]
+    begin, finish = 0.0, total
+    if starts and starts[0] <= 0.05 and ends:
+        begin = ends[0]
+    if starts and (len(starts) > len(ends) or ends[-1] >= total - 0.05) and starts[-1] > begin:
+        finish = starts[-1]
+    if finish - begin < 0.3:          # all silence, or a parse we do not trust: keep it whole
+        return 0.0, total
+    return begin, finish
 
 
 def _loudnorm_measure(src: Path) -> Dict[str, str]:
@@ -167,7 +191,8 @@ def _loudnorm_measure(src: Path) -> Dict[str, str]:
     return json.loads(match.group(0))
 
 
-BED_VOLUME = 0.12   # 0.35 buried the presenter (owner's review, 2026-10-11)
+# 0.35 buried the presenter, 0.12 was still too loud (owner's reviews, 2026-10-11).
+BED_VOLUME = 0.06
 
 
 def master_audio(voice: Path, bed: Optional[Path], dst: Path, *, bed_volume: float = BED_VOLUME) -> Path:

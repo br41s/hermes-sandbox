@@ -310,7 +310,8 @@ What a tip short is, in order:
    card (`Tip.tsx`, `OutroCard`).
 
 **Voices.** Lucía speaks with her HeyGen voice (`presenter.HOST_VOICES`,
-chosen by the owner: es `a78e0a4d…`, en `47aff89a…`; override with
+chosen by the owner: es `ec971490…` (the first, `a78e0a4d…`, sounded too
+young on the avatar), en `47aff89a…`; override with
 `SHORTS_HOST_VOICE_ES`/`_EN`). Avatar IV takes a script and a `voice_id`;
 it does NOT take a voice track as a data URL (it wants a public HTTPS URL),
 which is why her lines are voiced by HeyGen and not by our TTS. Martín
@@ -342,9 +343,16 @@ generated only when both miss. Each run uploads the cache as the
 make them permanent. Use the same pattern for anything else that does not
 change between shorts.
 
+**Cuts.** Each take opens and closes with a still, silent second; the
+timeline cuts it at its speech (`media.speech_bounds`) and runs the next beat
+after 0.06 s, so the takes follow each other like one conversation instead
+of a face that freezes between lines.
+
+**Music.** Jazz and lounge only (`sources.ELEGANT_MUSIC_PAGES`, Mixkit), at
+`media.BED_VOLUME` 0.06 under the voices, ducked further while anyone speaks.
+
 Cost per short: setting ~$0.09 + Lucía ~$0.5–0.65 + nod ~$0.1–0.2 ≈ $0.7–0.95,
-inside the $1 per short (the loop once, ever). Music sits well under the
-voices (`media.BED_VOLUME`, 0.12, with stronger ducking). QA accepts the
+inside the $1 per short (the loop once, ever). QA accepts the
 silence of the nod (`qa.check_master(quiet=...)`).
 
 Framing: `presenter.FACE_Y` is where each photo's face is (Martín's loop),

@@ -187,7 +187,8 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
 HOST = ("lucia", "Lucía")
 PARTNER = ("martin", "Martín")
 # Lucía's HeyGen voices, chosen by the owner: Spain Spanish and English.
-HOST_VOICES = {"es": "a78e0a4dbbe247d0a704b91175e6d987", "en": "47aff89a92ce42edb3301f74e5aa7f6b"}
+# The first Spanish one (a78e0a4d…) sounded too young on the avatar (owner, 2026-10-11).
+HOST_VOICES = {"es": "ec971490059245d3953fd895ee37ab09", "en": "47aff89a92ce42edb3301f74e5aa7f6b"}
 # Her lines in a render with no key (the push smoke test): a free voice of the same kind.
 HOST_FALLBACK_VOICES = {"es": "es-ES-ElviraNeural", "en": "en-US-AvaMultilingualNeural"}
 
