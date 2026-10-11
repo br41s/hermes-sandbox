@@ -179,12 +179,19 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
 # ---------------------------------------------------------------------------
 # Tip format: a setting, a lip-synced clip of the on-camera lines, the loop
 
-SETTING_MODEL = "google/gemini-3.1-flash-image-preview"
+# Tried in order until one answers with an image. Gemini refused the first
+# paid test with a 403 "violation of provider Terms Of Service" and no
+# provider named, so one refusal must not cost the short its setting: a
+# refused request costs nothing, and the next model is asked.
+SETTING_MODELS = ("google/gemini-3.1-flash-image-preview", "black-forest-labs/flux.2-pro",
+                  "openai/gpt-5-image")
+# Image-only models answer no text and refuse a request that asks for it.
+_TEXT_AND_IMAGE = ("google/", "openai/")
 SETTING_PROMPT = (
-    "Place the person in this photo in a new scene, keeping the same face, hair, build and age "
-    "exactly. Scene: {setting}. Vertical 9:16 photograph, medium shot from the chest up with "
-    "the face in the upper third, looking straight at the camera, natural light, realistic, "
-    "sharp focus on the face. No text, no letters, no logos, no watermarks anywhere."
+    "Edit this photo of our presenter, a fictional character. Change the scene around them to: "
+    "{setting}. Keep the character recognisable. Vertical 9:16 photograph, medium shot from the "
+    "chest up with the face in the upper third, looking straight at the camera, natural light, "
+    "realistic, sharp focus on the face. No text, no letters, no logos, no watermarks anywhere."
 )
 LIPSYNC_MOTION = ("Talks naturally to the camera, warm and relaxed, small hand gestures, "
                   "keeps the scene and clothing exactly as in the photo.")
@@ -198,7 +205,8 @@ SETTING_FACE_Y = 0.3
 
 def tip_config() -> Dict[str, Any]:
     return {
-        "setting_model": (os.environ.get("SHORTS_SETTING_IMAGE_MODEL") or SETTING_MODEL).strip(),
+        "setting_models": [m.strip() for m in (os.environ.get("SHORTS_SETTING_IMAGE_MODEL") or "").split(",")
+                           if m.strip()] or list(SETTING_MODELS),
         "setting_estimate": genvideo._env_float("SHORTS_SETTING_IMAGE_ESTIMATE_USD", 0.08),
         "asset_dir": Path(os.environ.get("SHORTS_ASSET_DIR")
                           or Path.home() / ".cache" / "shorts-assets"),
@@ -214,23 +222,47 @@ def setting_image(client, budget: Dict[str, Any], slug: str, setting: str, dest:
     """The presenter's photo placed in the article's world, or None (then the plain photo).
 
     One image request through OpenRouter's chat API with the photo as the
-    reference. Cheap (cents), but still counted against the short's budget.
+    reference, per model in ``setting_models`` until one answers. Cheap
+    (cents), but still counted against the short's budget.
     """
     tcfg = tip_config()
     photo = photo_data_url(slug)
-    estimate = tcfg["setting_estimate"]
-    why = genvideo.over_budget(budget, estimate)
-    if not photo or why:
-        report["setting"] = {"status": "skipped", "reason": why or "no photo"}
+    if not photo:
+        report["setting"] = {"status": "skipped", "reason": "no photo"}
         return None
+    prompt = SETTING_PROMPT.format(setting=setting.rstrip(". "))
+    tried = []
+    for model in tcfg["setting_models"]:
+        why = genvideo.over_budget(budget, tcfg["setting_estimate"])
+        if why:
+            report["setting"] = {"status": "skipped", "reason": why, "tried": tried}
+            return None
+        image, outcome = _setting_attempt(client, budget, model, prompt, photo, tcfg["setting_estimate"])
+        tried.append({"model": model, **outcome})
+        if image:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(image)
+            report["setting"] = {"status": "generated", "model": model,
+                                 "cost_usd": outcome["cost_usd"], "tried": tried}
+            report["spent_usd"] = round(report.get("spent_usd", 0.0) + outcome["cost_usd"], 4)
+            return dest
+        report["spent_usd"] = round(report.get("spent_usd", 0.0) + outcome["cost_usd"], 4)
+        genvideo._log(f"presenter setting ({model}): {outcome['reason']}")
+    report["setting"] = {"status": "failed", "tried": tried}
+    return None
+
+
+def _setting_attempt(client, budget: Dict[str, Any], model: str, prompt: str, photo: str,
+                     estimate: float):
+    """One model's try: (image bytes, outcome) or (None, outcome with the reason)."""
     budget["committed"] += estimate
     body = {
-        "model": tcfg["setting_model"],
+        "model": model,
         "messages": [{"role": "user", "content": [
-            {"type": "text", "text": SETTING_PROMPT.format(setting=setting.rstrip(". "))},
+            {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": photo}},
         ]}],
-        "modalities": ["image", "text"],
+        "modalities": ["image", "text"] if model.startswith(_TEXT_AND_IMAGE) else ["image"],
         "image_config": {"aspect_ratio": "9:16"},
         "usage": {"include": True},
     }
@@ -238,25 +270,18 @@ def setting_image(client, budget: Dict[str, Any], slug: str, setting: str, dest:
     try:
         resp = client.post(CHAT_API, headers=genvideo._headers(CHAT_API, budget["cfg"]["key"]), json=body)
         if resp.status_code >= 400:
-            raise RuntimeError(f"HTTP {resp.status_code} {resp.text[:800]}")
+            raise RuntimeError(f"HTTP {resp.status_code} {resp.text[:500]}")
         data = resp.json()
         spent = float((data.get("usage") or {}).get("cost") or estimate)
         images = ((data.get("choices") or [{}])[0].get("message") or {}).get("images") or []
         url = ((images[0] if images else {}).get("image_url") or {}).get("url") or ""
         if not url.startswith("data:image/"):
             raise RuntimeError("no image in the answer")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(base64.b64decode(url.split(",", 1)[1]))
-        report["setting"] = {"status": "generated", "model": tcfg["setting_model"],
-                             "cost_usd": round(spent, 4)}
-        return dest
+        return base64.b64decode(url.split(",", 1)[1]), {"status": "generated", "cost_usd": round(spent, 4)}
     except Exception as exc:
-        report["setting"] = {"status": "failed", "reason": str(exc)[:800], "cost_usd": round(spent, 4)}
-        genvideo._log(f"presenter setting: {exc}")
-        return None
+        return None, {"status": "failed", "reason": str(exc)[:500], "cost_usd": round(spent, 4)}
     finally:
         budget["committed"] += spent - estimate
-        report["spent_usd"] = round(report.get("spent_usd", 0.0) + spent, 4)
 
 
 # How Avatar IV is handed a voice track instead of a script. OpenRouter's 400

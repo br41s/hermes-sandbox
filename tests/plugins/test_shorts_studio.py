@@ -1132,13 +1132,15 @@ def test_the_tip_short_is_rendered_with_its_opener_first_and_the_outro_last(tip)
 class _FakeImageAPI(_FakeOpenRouter):
     """OpenRouter for the tip path: an image answer on chat, Avatar IV that wants an audio shape."""
 
-    def __init__(self, *, refuse_shape=0, **kw):
+    def __init__(self, *, refuse_shape=0, refuse_models=(), **kw):
         super().__init__(**kw)
-        self.refuse_shape, self.chat = refuse_shape, []
+        self.refuse_shape, self.refuse_models, self.chat = refuse_shape, refuse_models, []
 
     def post(self, url, headers=None, json=None):
         if url == presenter_mod.CHAT_API:
             self.chat.append(json)
+            if json["model"] in self.refuse_models:
+                return _ORResp(403, {"error": {"message": "violation of provider Terms Of Service"}})
             png = base64.b64encode(b"\x89PNG fake").decode()
             return _ORResp(data={"usage": {"cost": 0.04}, "choices": [{"message": {"images": [
                 {"image_url": {"url": "data:image/png;base64," + png}}]}}]})
@@ -1201,6 +1203,32 @@ def test_the_presenter_is_paid_only_on_camera_in_the_articles_setting(tip, tmp_p
     build_mod.tip_presenter(pkg, tl, tmp_path, tmp_path / "public", genvideo.open_budget(offline=False),
                             offline=False)
     assert len(fake2.posts) == 1
+
+
+def test_a_refused_setting_falls_through_to_the_next_model_for_free(tmp_path, monkeypatch):
+    first, second, third = presenter_mod.SETTING_MODELS
+    fake = _FakeImageAPI(refuse_models=(first,))
+    _tip_env(monkeypatch, tmp_path, fake)
+    report = {}
+    with fake() as client:
+        out = presenter_mod.setting_image(client, genvideo.open_budget(offline=False), "lucia",
+                                          "a small bakery at dawn with fresh bread", tmp_path / "s.png", report)
+    assert out and out.exists()
+    assert [c["model"] for c in fake.chat] == [first, second]
+    assert fake.chat[0]["modalities"] == ["image", "text"] and fake.chat[1]["modalities"] == ["image"]
+    assert report["setting"]["model"] == second and report["spent_usd"] == 0.04
+    assert report["setting"]["tried"][0]["status"] == "failed"
+
+    # Every model refuses: no image, nothing spent, the plain photo is used.
+    fake = _FakeImageAPI(refuse_models=(first, second, third))
+    _tip_env(monkeypatch, tmp_path, fake)
+    report = {}
+    with fake() as client:
+        assert presenter_mod.setting_image(client, genvideo.open_budget(offline=False), "lucia",
+                                           "a small bakery at dawn with fresh bread", tmp_path / "t.png",
+                                           report) is None
+    assert report["setting"]["status"] == "failed" and len(report["setting"]["tried"]) == 3
+    assert report.get("spent_usd", 0) == 0
 
 
 def test_an_unknown_audio_shape_is_retried_for_free(tip, tmp_path, monkeypatch):

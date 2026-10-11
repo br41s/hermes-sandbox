@@ -284,8 +284,12 @@ What a tip short is, in order:
 1. **Opener** (`opener.line`, ≤18 words): a joke said to camera in a
    **setting** that fits the article (`opener.setting`, English: a workshop, a
    factory floor, a kitchen...). An image model places the presenter there
-   from their photo (`presenter.setting_image`, `SHORTS_SETTING_IMAGE_MODEL`,
-   default `google/gemini-3.1-flash-image-preview`, a few cents).
+   from their photo (`presenter.setting_image`, a few cents). Models are tried
+   in order until one answers: `SHORTS_SETTING_IMAGE_MODEL` (comma-separated)
+   or `presenter.SETTING_MODELS`. Gemini refused the first paid test with a
+   403 "violation of provider Terms Of Service", so one refusal (which costs
+   nothing) moves on to the next model; only if all refuse is the plain
+   photo used.
 2. **Hook**, on camera, in the same setting.
 3. **2–4 cards** (before/after, steps, a figure, a key line). The presenter
    sits in a bubble playing **a loop recorded once per presenter** (look at
