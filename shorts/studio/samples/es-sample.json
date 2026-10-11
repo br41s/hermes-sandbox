@@ -72,5 +72,9 @@
  "music": {
   "mood": "corporate"
  },
- "format": "tip"
+ "format": "tip",
+ "opener": {
+  "line": "Si ya madrugo para hacer el pan, que al menos las facturas se hagan solas.",
+  "setting": "a small family bakery at dawn, warm light from the ovens, she wears a flour-dusted apron and holds a tray of fresh bread"
+ }
 }

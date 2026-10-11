@@ -8,6 +8,7 @@ itself is proven by the workflow's smoke render, not here.
 
 from __future__ import annotations
 
+import base64
 import copy
 import io
 import json
@@ -23,6 +24,7 @@ from plugins.shorts import studio_tool as st
 from plugins.shorts.studio import article as article_mod
 from plugins.shorts.studio import build as build_mod
 from plugins.shorts.studio import genvideo
+from plugins.shorts.studio import presenter as presenter_mod
 from plugins.shorts.studio import package as pkg_mod
 from plugins.shorts.studio import voice as voice_mod
 
@@ -1070,36 +1072,39 @@ def test_shadow_mode_never_posts_to_buzz(tip, submit_env, buzz_env, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
-# The tip format: one take said to camera, cut between the presenter and cards
+# The tip format: the presenter on camera in a setting, cards with a recorded loop
 
 
-def test_the_tip_sample_is_one_tip_said_to_camera(tip):
+def test_the_tip_sample_is_one_tip_with_an_opener_in_a_setting(tip):
     pkg = pkg_mod.validate_package(tip)
-    assert pkg["format"] == "tip" and pkg["version"] == 2
+    assert pkg["format"] == "tip" and pkg["version"] == 3
+    assert pkg["voice"] == pkg_mod.TIP_VOICES["es"] == "es-ES-ElviraNeural"   # Spain, in every short
+    assert pkg["opener"]["line"] and len(pkg["opener"]["setting"].split()) >= pkg_mod.TIP_MIN_SETTING_WORDS
     assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "presenter"]
     words = sum(len(b["vo"].split()) for b in pkg["beats"])
-    assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS["es"]
+    assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS
     assert pkg["beats"][1]["before"] and pkg["beats"][1]["after"]
 
 
-def test_the_longest_tip_take_fits_one_shorts_budget():
-    # Each presenter's pace decides how many words a $1 take holds.
-    from plugins.shorts.studio import presenter
-
-    for lang, words in pkg_mod.TIP_MAX_TOTAL_WORDS.items():
-        cost = presenter.estimate_seconds(" ".join(["palabra"] * words), lang) * 0.05
-        assert cost <= 1.0, (lang, cost)
+def test_a_package_cannot_pick_another_voice_for_the_presenter(tip):
+    tip["voice"] = "es-MX-DaliaNeural"
+    assert pkg_mod.validate_package(tip)["voice"] == "es-ES-ElviraNeural"
 
 
 @pytest.mark.parametrize("change,problem", [
     (lambda p: p["beats"][0].update(show="card"), "said to camera"),
-    (lambda p: [b.update(show="presenter") for b in p["beats"][1:3]], "card beats"),
+    (lambda p: p["beats"][2].update(show="presenter"), "middle beats are cards"),
     (lambda p: p["beats"][-1].update(vo="La guía completa está en biglobster punto top, enlace abajo."), "save the tip"),
     (lambda p: p["beats"][0].update(scene="Slow push-in on a bakery counter at dawn, warm light"), "no generated scenes"),
     (lambda p: p["beats"][0].update(presenter=True), "use show"),
     (lambda p: p["beats"][1].update(after=""), "after: required"),
     (lambda p: p["beats"][2].update(vo=p["beats"][2]["vo"] + " " + "muy " * 20), "one tip"),
     (lambda p: p["beats"].insert(1, {"kind": "avatar", "vo": "Hola.", "clip_url": "https://x/c.mp4", "avatar": "lucia"}), "middle beats"),
+    (lambda p: p.pop("opener"), "opener.line: required"),
+    (lambda p: p["opener"].update(setting="a bakery"), "at least"),
+    (lambda p: p["opener"].update(setting="a bakery at dawn with a big logo and neon text on the wall"), "picture only"),
+    (lambda p: p["opener"].update(line=" ".join(["pan"] * 19)), "opener.line"),
+    (lambda p: p["beats"][-1].update(vo="Guárdalo " + "y compártelo con quien más lo necesite hoy mismo " * 2), "said on camera"),
 ])
 def test_the_tip_format_keeps_its_rules(tip, change, problem):
     change(tip)
@@ -1107,76 +1112,133 @@ def test_the_tip_format_keeps_its_rules(tip, change, problem):
         pkg_mod.validate_package(tip)
 
 
-def test_a_figure_in_a_before_or_after_must_be_in_the_article(tip):
+def test_a_figure_in_the_opener_or_a_before_after_must_be_in_the_article(tip):
     pkg = pkg_mod.validate_package(tip)
     pkg["beats"][1]["after"] = "Ahorrar 40% de horas"
-    assert any("beats[1].after" in p for p in pkg_mod.check_grounding(pkg, ARTICLE_TEXT))
+    pkg["opener"]["line"] = "Con un 91% de pan quemado, mejor automatiza."
+    problems = " ".join(pkg_mod.check_grounding(pkg, ARTICLE_TEXT))
+    assert "beats[1].after" in problems and "opener.line" in problems
 
 
-def test_cuts_land_in_the_pauses_between_lines():
-    lines = ["one two three four", "five six seven eight nine ten", "eleven twelve"]
-    # speech 0.3-9.5 s with breaths at 3.1-3.5 and 7.6-8.0, plus a short pause mid-line
-    pauses = [(0.0, 0.3), (3.1, 3.5), (5.0, 5.2), (7.6, 8.0), (9.5, 10.0)]
-    spans = build_mod.plan_cuts(lines, 10.0, pauses)
-    assert spans[0][0] == 0.0 and spans[-1][1] == 10.0
-    assert spans[0][1] == pytest.approx(3.3) and spans[1][1] == pytest.approx(7.8)
-    assert all(a < b for a, b in spans) and spans[0][1] == spans[1][0]
-
-    # No pauses at all: cuts by the share of the script, still in order.
-    spans = build_mod.plan_cuts(lines, 9.0, [])
-    assert [round(b, 2) for _, b in spans][:2] == sorted(round(b, 2) for _, b in spans[:2])
-    assert spans[-1][1] == 9.0
+def test_the_tip_short_is_rendered_with_its_opener_first_and_the_outro_last(tip):
+    pkg = pkg_mod.validate_package(tip)
+    beats = build_mod.tip_beats(pkg)
+    assert beats[0]["kind"] == "opener" and beats[0]["vo"] == pkg["opener"]["line"]
+    assert beats[1]["kind"] == "hook" and beats[-1]["kind"] == "outro"
+    assert "biglobster" in beats[-1]["vo"] and "síguenos" in beats[-1]["vo"].lower()
+    assert build_mod.on_camera(beats) == [0, 1, len(beats) - 2]       # opener, hook, CTA
 
 
-def test_the_tip_take_is_one_request_with_the_whole_script(tip, tmp_path, monkeypatch):
+class _FakeImageAPI(_FakeOpenRouter):
+    """OpenRouter for the tip path: an image answer on chat, Avatar IV that wants an audio shape."""
+
+    def __init__(self, *, refuse_shape=0, **kw):
+        super().__init__(**kw)
+        self.refuse_shape, self.chat = refuse_shape, []
+
+    def post(self, url, headers=None, json=None):
+        if url == presenter_mod.CHAT_API:
+            self.chat.append(json)
+            png = base64.b64encode(b"\x89PNG fake").decode()
+            return _ORResp(data={"usage": {"cost": 0.04}, "choices": [{"message": {"images": [
+                {"image_url": {"url": "data:image/png;base64," + png}}]}}]})
+        self.posts.append(json)
+        refs = json.get("input_references") or []
+        if self.refuse_shape and refs[-1].get("type") == "audio_url":
+            return _ORResp(400, {"error": "unknown reference type audio_url"})
+        return _ORResp(data={"id": f"job{len(self.posts)}"})
+
+
+def _tip_env(monkeypatch, tmp_path, fake):
     import httpx
 
-    from plugins.shorts.studio import presenter
+    from plugins.shorts.studio import media
 
-    fake = _FakeOpenRouter()
     monkeypatch.setattr(httpx, "Client", fake)
     monkeypatch.setattr(genvideo, "POLL_EVERY_S", 0)
     monkeypatch.setenv("SHORTS_OPENROUTER_API_KEY", "sk-test")
-    pkg = pkg_mod.validate_package(tip)
-    got = presenter.render(pkg, tmp_path, genvideo.open_budget(offline=False), offline=False)
-    assert len(fake.posts) == 1 and list(got["clips"]) == [0] and got["report"]["take"] is True
-    body = fake.posts[0]
-    assert body["prompt"] == " ".join(b["vo"] for b in pkg["beats"])
-    # Lucía speaks Spanish with her one fixed voice, in every short.
-    assert body["provider"]["options"]["heygen"]["voice_id"] == presenter.VOICES["es"]
+    monkeypatch.setenv("SHORTS_ASSET_DIR", str(tmp_path / "assets"))
+    for name in ("concat_wavs", "to_mp3"):
+        monkeypatch.setattr(media, name, lambda src, dst: _touch(dst))
+    monkeypatch.setattr(media, "silence", lambda dst, seconds: _touch(dst))
+    monkeypatch.setattr(media, "boomerang", lambda src, dst: _touch(dst))
 
 
-def test_tip_props_carry_the_take_the_framing_and_the_cards(tip):
-    pkg = pkg_mod.validate_package(tip)
+def _touch(path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+    return path
+
+
+def test_the_presenter_is_paid_only_on_camera_in_the_articles_setting(tip, tmp_path, monkeypatch):
+    fake = _FakeImageAPI()
+    _tip_env(monkeypatch, tmp_path, fake)
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
+    tl = {"timeline": [{"from": i * 60, "duration": 60, "show": b["show"]} for i, b in enumerate(pkg["beats"])],
+          "segments": [_touch(tmp_path / f"seg_{i}.wav") for i in range(len(pkg["beats"]))]}
+    from plugins.shorts.studio import media
+    monkeypatch.setattr(media, "normalize_clip", lambda src, dst, seconds, start=0.0, hold=False: _touch(dst))
+    monkeypatch.setattr(media, "duration", lambda path: 5.0)
+    cast = build_mod.tip_presenter(pkg, tl, tmp_path, tmp_path / "public", genvideo.open_budget(offline=False),
+                                   offline=False)
+    # The setting: one image request, the photo as the reference, the article's scene in the prompt.
+    assert len(fake.chat) == 1 and "bakery" in fake.chat[0]["messages"][0]["content"][0]["text"]
+    # Avatar IV twice: the on-camera clip (3 beats x 2 s = 6 s) and, once, the bubble's loop.
+    oncam, loop = fake.posts
+    assert oncam["input_references"][0]["image_url"]["url"].startswith("data:image/png")      # the setting
+    assert oncam["input_references"][1]["type"] == "audio_url"                                 # its voice
+    assert "voice_id" not in oncam["provider"]["options"]["heygen"]
+    assert cast["clip"] == "presenter/clip.mp4" and cast["report"]["used"] == [0, 1, len(pkg["beats"]) - 2]
+    assert [tl["timeline"][i].get("clipFrom") for i in (0, 1, len(pkg["beats"]) - 2)] == [0, 60, 120]
+    assert cast["loop"] == "presenter/loop.mp4" and cast["photo"] == "presenter/photo.png"
+    assert (tmp_path / "assets" / "lucia-loop.mp4").exists()
+
+    # The next short reuses the loop: no third Avatar IV request.
+    fake2 = _FakeImageAPI()
+    _tip_env(monkeypatch, tmp_path, fake2)
+    build_mod.tip_presenter(pkg, tl, tmp_path, tmp_path / "public", genvideo.open_budget(offline=False),
+                            offline=False)
+    assert len(fake2.posts) == 1
+
+
+def test_an_unknown_audio_shape_is_retried_for_free(tip, tmp_path, monkeypatch):
+    fake = _FakeImageAPI(refuse_shape=1)
+    _tip_env(monkeypatch, tmp_path, fake)
+    from plugins.shorts.studio import presenter as p
+
+    report = {}
+    image = _touch(tmp_path / "setting.png")
+    mp3 = _touch(tmp_path / "a.mp3")
+    clip = p.lipsync(fake(), genvideo.open_budget(offline=False), image, mp3, 4.0, tmp_path, "oncam",
+                     p.LIPSYNC_MOTION, report)
+    assert clip is not None
+    assert [r["input_references"][1]["type"] for r in fake.posts] == ["audio_url", "input_audio"]
+
+
+def test_a_tip_short_without_its_presenter_is_not_published():
+    report = {"clips": [{"part": "oncam", "status": "skipped", "reason": "daily cap $2.00 reached"}]}
+    error = build_mod.presenter_missing_error(True, False, True, report)
+    assert error and "presenter clip missing" in error and "daily cap" in error
+    assert build_mod.presenter_missing_error(True, True, True, report) is None      # the clip was made
+    assert build_mod.presenter_missing_error(True, False, False, report) is None    # no key: smoke test
+    assert build_mod.presenter_missing_error(False, False, True, report) is None    # classic format
+    assert "not made" in build_mod.presenter_missing_error(True, False, True, {})
+
+
+def test_tip_props_carry_the_clip_the_loop_and_the_cards(tip):
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
     timeline = [{"from": i * 90, "duration": 90, "show": b["show"]} for i, b in enumerate(pkg["beats"])]
-    props = build_mod.remotion_props(pkg, {"timeline": timeline, "words": [], "frames": 450,
-                                           "take": "presenter/take.mp4", "photo": "presenter/photo.jpg"})
-    assert props["format"] == "tip" and props["take"] == "presenter/take.mp4"
-    assert props["presenterName"] == "Lucía" and 0 < props["faceY"] < 1
-    assert props["presenterPhoto"] == "presenter/photo.jpg"
-    assert [b["show"] for b in props["beats"]] == [b["show"] for b in pkg["beats"]]
-    assert props["beats"][1]["before"] and props["beats"][1]["after"]
-
-
-def test_a_tip_short_without_its_take_never_ships_in_another_voice():
-    report = {"beats": [{"beat": 0, "status": "skipped", "reason": "daily cap $2.00 reached"}]}
-    error = build_mod.one_voice_error(True, False, True, report)
-    assert error and "presenter take missing" in error and "daily cap" in error
-    assert build_mod.one_voice_error(True, True, True, report) is None      # the take was made
-    assert build_mod.one_voice_error(True, False, False, report) is None    # no key: the smoke test
-    assert build_mod.one_voice_error(False, False, True, report) is None    # classic format
-    assert "not made" in build_mod.one_voice_error(True, False, True, {"beats": []})
-
-
-def test_cuts_stay_in_order_when_pauses_crowd_or_are_missing():
-    lines = ["a b c", "d e f", "g h i", "j k l"]
-    # One pause near every guess would pull two cuts onto it: the second must move on.
-    spans = build_mod.plan_cuts(lines, 8.0, [(0.0, 0.2), (3.0, 3.2)], snap=3.0)
-    starts = [a for a, _ in spans]
-    assert starts == sorted(starts) and len(set(starts)) == 4
-    assert all(b - a >= 0.5 for a, b in spans[1:-1])
-    # Silent from the start to the end: the whole take is the speech span.
-    spans = build_mod.plan_cuts(["x y", "z w"], 4.0, [(0.0, 4.0)])
-    assert spans[0] == (0.0, pytest.approx(2.0)) and spans[1][1] == 4.0
-    # A single line is the whole take.
-    assert build_mod.plan_cuts(["solo"], 3.0, []) == [(0.0, 3.0)]
+    timeline[0].update(presenter="presenter/clip.mp4", clipFrom=0)
+    props = build_mod.remotion_props(pkg, {"timeline": timeline, "words": [], "frames": 90 * len(timeline),
+                                           "clip": "presenter/clip.mp4", "loop": "presenter/loop.mp4",
+                                           "loop_frames": 300, "photo": "presenter/photo.png",
+                                           "face_y": 0.3, "loop_face_y": 0.33})
+    assert props["format"] == "tip" and props["presenterClip"] == "presenter/clip.mp4"
+    assert props["bubbleLoop"] == "presenter/loop.mp4" and props["bubbleLoopFrames"] == 300
+    assert props["presenterName"] == "Lucía" and props["faceY"] == 0.3 and props["loopFaceY"] == 0.33
+    assert props["beats"][0]["kind"] == "opener" and props["beats"][0]["clipFrom"] == 0
+    assert props["beats"][-1]["kind"] == "outro" and props["beats"][-1]["url"]
+    assert props["cover"]["kicker"] == pkg["beats"][1].get("kicker", "")

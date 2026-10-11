@@ -1,5 +1,5 @@
 import React from 'react';
-import {AbsoluteFill, Easing, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Easing, Img, Loop, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {Beat, ShortProps} from './types';
 import {FONT, SAFE, palette, type Palette} from './theme';
 import {MotifField} from './components/Background';
@@ -8,25 +8,28 @@ import {Karaoke} from './components/Karaoke';
 import {CtaScene, HookScene} from './components/Scenes';
 import './fonts';
 
-// The tip format (package.py, "format": "tip"). One take of the presenter
-// runs under the whole short, so one voice and one face carry it; each beat
-// only decides how it is seen: full-frame ("presenter", with a cut-in zoom
-// like an edit) or shrunk into a bubble while an animated card shows the tip
-// ("card"). Without a take the same cards run over the brand background,
-// voiced by Edge.
+// The tip format (package.py, "format": "tip"). The voice track is the
+// presenter's one neural voice from the first word to the last. On camera
+// (opener joke, hook, CTA) the presenter is full-frame in a setting built for
+// the article, each beat a stretch of one lip-synced clip (clipFrom) with its
+// own zoom, like a cut between cameras. During the cards the presenter sits in
+// a bubble playing a loop recorded once (look, point at the card, look back).
+// The outro is an animated card: the full article on the site, follow us.
+// Without the clip (no key, budget, failure) the same beats run as cards.
 
 const W = 1080;
 const H = 1920;
 const CARD_TOP = SAFE.top + 150;
 const CARD_BOTTOM = 1000;
 const BUBBLE = {size: 300, right: 56, top: 1010};
-const BUBBLE_VIDEO = 0.55;     // the take's scale inside the bubble
-const MORPH = 10;              // frames to shrink into / grow out of the bubble
+const BUBBLE_VIDEO = 0.55;     // the loop's scale inside the bubble
 const ZOOMS = [1.0, 1.16, 1.07];
 
 const COPY = {
-  es: {before: 'Antes', after: 'Ahora', save: 'Guárdalo', share: 'Compártelo'},
-  en: {before: 'Before', after: 'Now', save: 'Save it', share: 'Share it'},
+  es: {before: 'Antes', after: 'Ahora', save: 'Guárdalo', share: 'Compártelo',
+       full: 'El artículo completo, en', follow: 'Síguenos para más consejos', followBtn: 'Seguir'},
+  en: {before: 'Before', after: 'Now', save: 'Save it', share: 'Share it',
+       full: 'The full article is on', follow: 'Follow us for more tips', followBtn: 'Follow'},
 };
 
 const ease = Easing.bezier(0.33, 0, 0.2, 1);
@@ -245,8 +248,6 @@ const SaveShareOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number; lang:
   const copy = COPY[lang];
   const enter = useEnter(3);
   const chips: Array<['save' | 'share', string]> = [['save', copy.save], ['share', copy.share]];
-  const bare = (beat.url ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const host = bare.split('/')[0] || brand;
   return (
     <div style={{position: 'absolute', top: overTop(faceY), left: SAFE.left, right: W - SAFE.right, fontFamily: FONT, opacity: enter}}>
       <div style={{background: `${pal.bg}E0`, borderRadius: 30, padding: '28px 34px 32px', transform: `translateY(${(1 - enter) * 40}px)`}}>
@@ -261,63 +262,98 @@ const SaveShareOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number; lang:
             );
           })}
         </div>
-        <div style={{marginTop: 22, fontSize: 38, fontWeight: 800, color: pal.muted}}>{host} →</div>
       </div>
     </div>
   );
 };
 
 // ---------------------------------------------------------------------------
-// The take: one video under the whole short, full-frame or in its bubble
+// The presenter: full-frame on camera, a recorded loop in the bubble
 
-const TakeLayer: React.FC<{src: string; beats: Beat[]; pal: Palette; faceY: number; name?: string}> = ({src, beats, pal, faceY, name}) => {
+const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palette; faceY: number}> = ({src, beat, nth, pal, faceY}) => {
   const frame = useCurrentFrame();
-  let idx = beats.findIndex((b) => frame >= b.from && frame < b.from + b.duration);
-  if (idx < 0) idx = beats.length - 1;
-  const beat = beats[idx];
-  const full = (b?: Beat) => (b?.show === 'card' ? 0 : 1);
-  const prev = idx > 0 ? full(beats[idx - 1]) : full(beat);
-  const w = interpolate(frame - beat.from, [0, MORPH], [prev, full(beat)], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: ease});
+  // A different framing per on-camera beat, like a cut between two cameras, and a slow push-in.
+  const zoom = ZOOMS[nth % ZOOMS.length] + 0.035 * Math.min(1, frame / Math.max(beat.duration, 1));
+  return (
+    <AbsoluteFill>
+      <AbsoluteFill style={{transform: `scale(${zoom})`, transformOrigin: `50% ${faceY * 100}%`}}>
+        <OffthreadVideo src={staticFile(src)} startFrom={beat.clipFrom ?? 0} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+      </AbsoluteFill>
+      <AbsoluteFill style={{background: `linear-gradient(180deg, ${pal.bg}99 0%, transparent 16%, transparent 46%, ${pal.bg}40 62%, ${pal.bg}D9 100%)`}} />
+    </AbsoluteFill>
+  );
+};
 
-  // Each full-frame beat gets its own framing, like a cut between two cameras, and drifts in slowly.
-  const nth = beats.slice(0, idx + 1).filter((b) => b.show !== 'card').length - 1;
-  const zoom = ZOOMS[Math.max(nth, 0) % ZOOMS.length] + 0.035 * Math.min(1, (frame - beat.from) / Math.max(beat.duration, 1));
+const NameTag: React.FC<{name: string; brand: string; pal: Palette; faceY: number}> = ({name, brand, pal, faceY}) => {
+  const enter = useEnter(8);
+  return (
+    <div style={{position: 'absolute', left: SAFE.left, top: overTop(faceY) + 40, fontFamily: FONT, opacity: enter, transform: `translateX(${(1 - enter) * -40}px)`}}>
+      <div style={{display: 'inline-block', background: `${pal.bg}D9`, color: pal.text, fontWeight: 800, fontSize: 34,
+                   padding: '8px 20px', borderRadius: 12, borderLeft: `6px solid ${pal.accent}`}}>{name} · {brand}</div>
+    </div>
+  );
+};
 
-  const bx = W - BUBBLE.right - BUBBLE.size;
-  const box = {
-    left: interpolate(w, [0, 1], [bx, 0]),
-    top: interpolate(w, [0, 1], [BUBBLE.top, 0]),
-    width: interpolate(w, [0, 1], [BUBBLE.size, W]),
-    height: interpolate(w, [0, 1], [BUBBLE.size, H]),
-    radius: interpolate(w, [0, 1], [BUBBLE.size / 2, 0]),
-  };
+/** The presenter during a card: the loop recorded once per presenter, or their photo. */
+const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string | null; pal: Palette; faceY: number; name?: string}> = ({loop, loopFrames, photo, pal, faceY, name}) => {
+  const frame = useCurrentFrame();
+  const pop = useEnter(2);
   const vw = W * BUBBLE_VIDEO;
   const vh = H * BUBBLE_VIDEO;
-  const video = {
-    left: interpolate(w, [0, 1], [BUBBLE.size / 2 - vw / 2, 0]),
-    top: interpolate(w, [0, 1], [BUBBLE.size / 2 - faceY * vh, 0]),
-    width: interpolate(w, [0, 1], [vw, W]),
-    height: interpolate(w, [0, 1], [vh, H]),
-  };
+  const media = {position: 'absolute' as const, left: BUBBLE.size / 2 - vw / 2, top: BUBBLE.size / 2 - faceY * vh, width: vw, height: vh};
+  const bob = loop ? 0 : Math.sin(frame / 12) * 4;
   return (
     <>
-      <div style={{position: 'absolute', left: box.left, top: box.top, width: box.width, height: box.height, borderRadius: box.radius, overflow: 'hidden',
-                   boxShadow: w < 1 ? `0 0 0 ${8 * (1 - w)}px ${pal.accent}, 0 24px 60px rgba(0,0,0,${0.45 * (1 - w)})` : 'none'}}>
-        <div style={{position: 'absolute', left: video.left, top: video.top, width: video.width, height: video.height,
-                     transform: `scale(${1 + (zoom - 1) * w})`, transformOrigin: `50% ${faceY * 100}%`}}>
-          <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-        </div>
-        {w > 0.5 ? (
-          <AbsoluteFill style={{background: `linear-gradient(180deg, ${pal.bg}99 0%, transparent 16%, transparent 46%, ${pal.bg}40 62%, ${pal.bg}D9 100%)`, opacity: (w - 0.5) * 2}} />
+      <div style={{position: 'absolute', left: W - BUBBLE.right - BUBBLE.size, top: BUBBLE.top + bob, width: BUBBLE.size, height: BUBBLE.size,
+                   borderRadius: BUBBLE.size / 2, overflow: 'hidden', transform: `scale(${pop})`,
+                   boxShadow: `0 0 0 8px ${pal.accent}, 0 24px 60px rgba(0,0,0,0.45)`, background: pal.bg2}}>
+        {loop && loopFrames > 0 ? (
+          <Loop durationInFrames={loopFrames}>
+            <OffthreadVideo src={staticFile(loop)} muted style={{...media, objectFit: 'cover'}} />
+          </Loop>
+        ) : photo ? (
+          <Img src={staticFile(photo)} style={{...media, objectFit: 'cover'}} />
         ) : null}
       </div>
-      {name && w < 0.05 ? (
-        <div style={{position: 'absolute', left: bx - 10, top: BUBBLE.top + BUBBLE.size - 30, transform: 'translateX(-100%)', fontFamily: FONT,
-                     background: `${pal.bg}D9`, color: pal.text, fontWeight: 800, fontSize: 30, padding: '6px 16px', borderRadius: 10, borderRight: `5px solid ${pal.accent}`}}>
+      {name ? (
+        <div style={{position: 'absolute', left: W - BUBBLE.right - BUBBLE.size - 10, top: BUBBLE.top + BUBBLE.size - 30, transform: 'translateX(-100%)', fontFamily: FONT,
+                     background: `${pal.bg}D9`, color: pal.text, fontWeight: 800, fontSize: 30, padding: '6px 16px', borderRadius: 10, borderRight: `5px solid ${pal.accent}`, opacity: pop}}>
           {name}
         </div>
       ) : null}
     </>
+  );
+};
+
+/** The close, the same in every short: the full article on the site, then follow us. */
+const OutroCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'; brand: {name: string; site: string}}> = ({beat, pal, lang, brand}) => {
+  const frame = useCurrentFrame();
+  const copy = COPY[lang];
+  const bare = (beat.url ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const host = bare.split('/')[0] || brand.site;
+  const logo = useEnter(0);
+  const site = useEnter(8);
+  const followAt = Math.round(beat.duration * 0.45);
+  const follow = spring({frame: frame - followAt, fps: 30, config: {damping: 11, stiffness: 170, mass: 0.6}});
+  const tap = interpolate(frame - followAt - 14, [0, 6, 12], [1, 0.9, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const tapped = frame > followAt + 20;
+  return (
+    <AbsoluteFill style={{fontFamily: FONT, alignItems: 'center', justifyContent: 'center', padding: `0 ${SAFE.left}px`}}>
+      <div style={{display: 'flex', alignItems: 'center', gap: 18, opacity: logo, transform: `scale(${0.8 + logo * 0.2})`, marginBottom: 60}}>
+        <div style={{width: 34, height: 34, background: pal.accent2, transform: 'rotate(45deg)', borderRadius: 6}} />
+        <div style={{fontWeight: 900, fontSize: 68, letterSpacing: 10, color: pal.text, textTransform: 'uppercase'}}>{brand.name}</div>
+      </div>
+      <div style={{fontSize: 52, fontWeight: 750, color: pal.muted, opacity: site, transform: `translateY(${(1 - site) * 30}px)`}}>{copy.full}</div>
+      <div style={{marginTop: 22, background: pal.accent, color: pal.bg, borderRadius: 999, padding: '20px 48px', fontSize: 64, fontWeight: 900,
+                   opacity: site, transform: `scale(${0.85 + site * 0.15 + Math.sin(frame / 8) * 0.012})`}}>{host}</div>
+      <div style={{marginTop: 90, display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: follow, transform: `translateY(${(1 - follow) * 50}px)`}}>
+        <div style={{fontSize: 58, fontWeight: 850, color: pal.text, textAlign: 'center', lineHeight: 1.1}}>{copy.follow}</div>
+        <div style={{marginTop: 28, display: 'flex', alignItems: 'center', gap: 14, borderRadius: 999, padding: '16px 40px', fontSize: 46, fontWeight: 900,
+                     background: tapped ? pal.text : pal.accent2, color: pal.bg, transform: `scale(${tap})`}}>
+          {tapped ? '✓' : '+'} {copy.followBtn}
+        </div>
+      </div>
+    </AbsoluteFill>
   );
 };
 
@@ -331,30 +367,49 @@ export const TipShort: React.FC<ShortProps> = (props) => {
   const pal = palette(props.palette);
   const seed = `${props.palette}-${props.motif}-tip`;
   const faceY = props.faceY ?? 0.25;
-  const take = props.take ?? null;
+  const clip = props.presenterClip ?? null;
   const lang = props.lang;
+  let onCamera = -1;
   return (
     <AbsoluteFill style={{backgroundColor: pal.bg}}>
       <Backdrop pal={pal} motif={props.motif} seed={seed} />
       {props.beats.map((beat, i) => {
-        // Without the take nobody is on camera: every middle beat is a card,
-        // and the hook and CTA fall back to the classic template scenes.
-        const card = beat.show === 'card' || (!take && beat.kind !== 'hook' && beat.kind !== 'cta');
-        if (!card && take) return null;
+        let scene: React.ReactNode;
+        if (beat.kind === 'outro') {
+          scene = <OutroCard beat={beat} pal={pal} lang={lang} brand={props.brand} />;
+        } else if (beat.show === 'presenter' && clip && beat.presenter) {
+          onCamera += 1;
+          scene = (
+            <>
+              <PresenterShot src={clip} beat={beat} nth={onCamera} pal={pal} faceY={faceY} />
+              {beat.kind === 'hook' ? <HookOverlay beat={beat} pal={pal} faceY={faceY} />
+                : beat.kind === 'cta' ? <SaveShareOverlay beat={beat} pal={pal} faceY={faceY} lang={lang} brand={props.brand.site} />
+                : beat.kind === 'opener' ? <NameTag name={props.presenterName ?? ''} brand={props.brand.site} pal={pal} faceY={faceY} />
+                : <LowerThird beat={beat} pal={pal} faceY={faceY} />}
+            </>
+          );
+        } else if (beat.kind === 'hook') {
+          scene = <HookScene beat={beat} pal={pal} />;
+        } else if (beat.kind === 'cta') {
+          scene = <CtaScene beat={beat} pal={pal} brand={props.brand.site} />;
+        } else {
+          // Cards, and the opener's joke when nobody is on camera.
+          const card = beat.kind === 'opener' ? {...beat, kind: 'point' as const, onscreen: beat.onscreen ?? ''} : beat;
+          scene = (
+            <>
+              <Card beat={card} pal={pal} lang={lang} />
+              {beat.kind !== 'opener' ? (
+                <Bubble loop={props.bubbleLoop} loopFrames={props.bubbleLoopFrames ?? 0} photo={props.presenterPhoto} pal={pal} faceY={props.loopFaceY ?? faceY} name={props.presenterName} />
+              ) : null}
+            </>
+          );
+        }
         return (
-          <Sequence key={`c${i}`} from={beat.from} durationInFrames={beat.duration} name={`${i}-${beat.kind}-card`}>
-            {card ? <Card beat={beat} pal={pal} lang={lang} /> : beat.kind === 'cta' ? <CtaScene beat={beat} pal={pal} brand={props.brand.site} /> : <HookScene beat={beat} pal={pal} />}
+          <Sequence key={i} from={beat.from} durationInFrames={beat.duration} name={`${i}-${beat.kind}`}>
+            {scene}
           </Sequence>
         );
       })}
-      {take ? <TakeLayer src={take} beats={props.beats} pal={pal} faceY={faceY} name={props.presenterName} /> : null}
-      {take ? props.beats.map((beat, i) => beat.show === 'card' ? null : (
-        <Sequence key={`o${i}`} from={beat.from} durationInFrames={beat.duration} name={`${i}-${beat.kind}-over`}>
-          {beat.kind === 'hook' ? <HookOverlay beat={beat} pal={pal} faceY={faceY} />
-            : beat.kind === 'cta' ? <SaveShareOverlay beat={beat} pal={pal} faceY={faceY} lang={lang} brand={props.brand.site} />
-            : <LowerThird beat={beat} pal={pal} faceY={faceY} />}
-        </Sequence>
-      )) : null}
       <TopBar beats={props.beats} pal={pal} brand={props.brand.name} />
       <Karaoke words={props.words} pal={pal} />
     </AbsoluteFill>

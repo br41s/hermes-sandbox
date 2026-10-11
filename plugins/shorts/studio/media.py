@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 SAMPLE_RATE = 48000
@@ -107,6 +107,22 @@ def silence(dst: Path, seconds: float) -> Path:
     return dst
 
 
+def to_mp3(src: Path, dst: Path) -> Path:
+    """A voice track small enough to send inline (Avatar IV takes it as a data URL)."""
+    ffmpeg("-i", str(src), "-ac", "1", "-ar", "44100", "-c:a", "libmp3lame", "-b:a", "128k",
+           str(dst), what=f"mp3 {src.name}")
+    return dst
+
+
+def boomerang(src: Path, dst: Path) -> Path:
+    """The clip forward then backward, without audio: a loop that never jumps."""
+    ffmpeg("-i", str(src), "-filter_complex",
+           "[0:v]split[a][b];[b]reverse[r];[a][r]concat=n=2:v=1:a=0[v]",
+           "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+           "-pix_fmt", "yuv420p", str(dst), what=f"boomerang {src.name}")
+    return dst
+
+
 def concat_wavs(parts: List[Path], dst: Path) -> Path:
     """Sample-exact concatenation of same-format WAVs (re-encoded, never -c copy)."""
     listing = dst.with_suffix(".txt")
@@ -142,26 +158,6 @@ def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0,
     return dst
 
 
-def silences(src: Path, *, noise_db: int = -35, min_s: float = 0.15) -> List[Tuple[float, float]]:
-    """The pauses in a voice track, as (start, end) seconds, from ffmpeg's silencedetect."""
-    out = run([binary("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(src), "-af",
-               f"silencedetect=noise={noise_db}dB:d={min_s}", "-f", "null", "-"], "silence detect")
-    found: List[Tuple[float, float]] = []
-    start: Optional[float] = None
-    for line in (out.stderr or "").splitlines():
-        m = re.search(r"silence_start: (-?[\d.]+)", line)
-        if m:
-            start = max(0.0, float(m.group(1)))
-            continue
-        m = re.search(r"silence_end: ([\d.]+)", line)
-        if m and start is not None:
-            found.append((start, float(m.group(1))))
-            start = None
-    if start is not None:   # silent to the end
-        found.append((start, duration(src)))
-    return found
-
-
 def extract_audio(src: Path, dst: Path) -> Path:
     ffmpeg("-i", str(src), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
            str(dst), what=f"extract audio {src.name}")
@@ -178,8 +174,11 @@ def _loudnorm_measure(src: Path) -> Dict[str, str]:
     return json.loads(match.group(0))
 
 
-def master_audio(voice: Path, bed: Optional[Path], dst: Path, *, bed_volume: float = 0.35) -> Path:
-    """Duck the bed under the voice, then two-pass loudnorm to -14 LUFS.
+BED_VOLUME = 0.12   # 0.35 buried the presenter (owner's review, 2026-10-11)
+
+
+def master_audio(voice: Path, bed: Optional[Path], dst: Path, *, bed_volume: float = BED_VOLUME) -> Path:
+    """Duck the bed well under the voice, then two-pass loudnorm to -14 LUFS.
 
     Single-pass loudnorm runs in dynamic mode and audibly pumps on speech;
     measuring first and applying linearly does not.
@@ -189,7 +188,7 @@ def master_audio(voice: Path, bed: Optional[Path], dst: Path, *, bed_volume: flo
         ffmpeg("-i", str(voice), "-stream_loop", "-1", "-i", str(bed), "-filter_complex",
                ("[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,asplit=2[v][sc];"
                 f"[1:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,volume={bed_volume}[bed];"
-                "[bed][sc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300[duck];"
+                "[bed][sc]sidechaincompress=threshold=0.02:ratio=12:attack=15:release=400[duck];"
                 "[v][duck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]"),
                "-map", "[out]", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", str(mix),
                what="duck music bed")

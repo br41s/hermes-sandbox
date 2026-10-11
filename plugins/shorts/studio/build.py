@@ -40,7 +40,7 @@ import sys
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from plugins.shorts.studio import genvideo, media, presenter, qa, sources, voice
 from plugins.shorts.studio.package import PackageError, validate_package
@@ -51,7 +51,6 @@ GAP = 0.28            # breath between beats
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
 PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
-TAKE_MAX = 40.0       # the tip take is <=55 words (~19 s); anything past this is a model fault
 STORY_LIMIT = 59.5
 
 BRANDS = {
@@ -182,98 +181,123 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
     voice_raw = media.concat_wavs(segments, work / "voice_raw.wav")
     voice_polished = media.polish_voice(voice_raw, work / "voice.wav")
     voice.paginate(words)
-    return {"timeline": timeline, "words": words, "frames": cursor_frames, "voice": voice_polished}
+    return {"timeline": timeline, "words": words, "frames": cursor_frames, "voice": voice_polished,
+            "segments": segments}
 
 
-def _weight(text: str) -> int:
-    return sum(max(2, len(t)) for t in text.split())
+# ---------------------------------------------------------------------------
+# 1b. The tip format: opener, outro and the presenter on camera
+# ---------------------------------------------------------------------------
+
+# The close, the same in every short and never paid for: the voice is the
+# presenter's neural voice, the picture an animated card (Tip.tsx, OutroCard).
+OUTRO_VO = {
+    "es": "Tienes el artículo completo en biglobster punto top. ¡Y síguenos para más consejos!",
+    "en": "The full article is on biglobster dot top. And follow us for more tips!",
+}
 
 
-def plan_cuts(lines: List[str], total: float, pauses: List[Tuple[float, float]],
-              *, snap: float = 1.2) -> List[Tuple[float, float]]:
-    """Where each line starts and ends inside one take: (start, end) seconds.
+def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The tip short as rendered: the opener joke, the package's beats, the outro."""
+    beats: List[Dict[str, Any]] = []
+    opener = pkg.get("opener") or {}
+    if opener.get("line"):
+        # onscreen only shows when nobody is on camera (then the joke is a card)
+        beats.append({"kind": "opener", "vo": opener["line"], "onscreen": opener["line"], "show": "presenter"})
+    beats += pkg["beats"]
+    beats.append({"kind": "outro", "vo": OUTRO_VO.get(pkg["lang"], OUTRO_VO["en"]), "show": "outro",
+                  "url": pkg["beats"][-1].get("url", "")})
+    return beats
 
-    The take is one recording of every line in order, so where one line ends
-    has to be found. Each cut is first placed by the share of the script said
-    so far, then moved to the middle of the nearest pause within ``snap``
-    seconds (a sentence ends in a breath). Pure, so it is tested directly.
+
+def on_camera(beats: List[Dict[str, Any]]) -> List[int]:
+    return [i for i, b in enumerate(beats) if b.get("show") == "presenter"]
+
+
+def presenter_missing_error(tip: bool, has_clip: bool, real_dispatch: bool,
+                            presenter_report: Dict[str, Any]) -> Optional[str]:
+    """The QA error for a tip short whose presenter clip was not made, or None.
+
+    The presenter is the face of every tip short, so one without them is not
+    published. A render with no key (the push smoke test) keeps its fallback.
     """
-    speech_start = next((e for s0, e in pauses if s0 <= 0.05), 0.0)
-    speech_end = next((s0 for s0, e in reversed(pauses) if e >= total - 0.05), total)
-    if speech_end <= speech_start:
-        speech_start, speech_end = 0.0, total
-    weights = [_weight(t) for t in lines]
-    whole = float(sum(weights)) or 1.0
-    mids = [(a + b) / 2 for a, b in pauses if a > speech_start + 0.1 and b < speech_end - 0.1]
-    cuts: List[float] = []
-    done = 0.0
-    for w in weights[:-1]:
-        done += w
-        guess = speech_start + (speech_end - speech_start) * done / whole
-        floor = (cuts[-1] if cuts else speech_start) + 0.5
-        near = [m for m in mids if abs(m - guess) <= snap and m > floor]
-        cut = min(near, key=lambda m: abs(m - guess)) if near else max(guess, floor)
-        cuts.append(cut)
-    edges = [0.0] + cuts + [total]
-    return [(edges[i], edges[i + 1]) for i in range(len(lines))]
-
-
-def one_voice_error(tip: bool, has_take: bool, real_dispatch: bool,
-                    presenter_report: Dict[str, Any]) -> Optional[str]:
-    """The QA error for a tip short without its take, or None.
-
-    The presenter is the same person with the same voice in every short, so a
-    tip short voiced by the narrator instead is never published. A render with
-    no key (the push smoke test) is not a dispatch and keeps its fallback.
-    """
-    if not tip or has_take or not real_dispatch:
+    if not tip or has_clip or not real_dispatch:
         return None
-    why = "; ".join(b.get("reason") or b.get("status") or "" for b in presenter_report.get("beats") or [])
-    return (f"presenter take missing ({why or 'not made'}): a tip short is published only in "
-            "the presenter's own voice")
+    reasons = [c.get("reason") or c.get("status") for c in presenter_report.get("clips") or []
+               if c.get("part") == "oncam"]
+    why = "; ".join(r for r in reasons if r) or presenter_report.get("reason") or "not made"
+    return f"presenter clip missing ({why}): a tip short is published only with its presenter on camera"
 
 
-def build_take_timeline(pkg: Dict[str, Any], work: Path, public: Path, take: Path) -> Dict[str, Any]:
-    """The tip format's timeline: one take, cut into the beats at its pauses.
+def tip_presenter(pkg: Dict[str, Any], tl: Dict[str, Any], work: Path, public: Path,
+                  budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
+    """Put the presenter in the short: setting, lip-synced on-camera clip, bubble loop.
 
-    The take's own audio is the whole voice track, untouched: beats only say
-    which picture shows while each line is said. The video holds its last
-    frame through the CTA's tail.
+    The on-camera lines (opener, hook, CTA) already have their voice in
+    ``tl``; their padded segments are joined into one track, the avatar says
+    it in the setting, and each beat plays its stretch of that one clip
+    (``clipFrom``). Sets the slots and returns what Remotion and the manifest need.
     """
     beats = pkg["beats"]
-    wav = media.extract_audio(take, work / "take.wav")
-    speech_total = min(media.duration(wav), TAKE_MAX)
-    spans = plan_cuts([b["vo"] for b in beats], speech_total, media.silences(wav))
-    timeline: List[Dict[str, Any]] = []
-    words: List[Dict[str, Any]] = []
-    cursor = 0
-    for i, (beat, (start, end)) in enumerate(zip(beats, spans)):
-        stop = end + (CTA_TAIL if i == len(beats) - 1 else 0.0)
-        frames = max(_frames(stop) - cursor, FPS // 2)
-        beat_words = voice.spread_words(beat["vo"], end - start)
-        voice.attach_raw(beat_words, beat["vo"])
-        for w in beat_words:
-            text = voice.clean_word(str(w["text"]))
-            if text:
-                words.append({"text": text, "raw": str(w.get("raw") or text),
-                              "startMs": round((start + w["start"]) * 1000),
-                              "endMs": round((start + w["end"]) * 1000), "beat": i})
-        timeline.append({"from": cursor, "duration": frames, "avatar": None, "presenter": None,
-                         "show": beat.get("show")})
-        cursor += frames
-    seconds = cursor / FPS
-    (public / "presenter").mkdir(parents=True, exist_ok=True)
-    media.normalize_clip(take, public / "presenter" / "take.mp4", seconds, hold=True)
-    padded = media.pad_segment(wav, work / "voice_raw.wav", 0.0, seconds)
-    voice_polished = media.polish_voice(padded, work / "voice.wav")
-    voice.paginate(words)
-    out = {"timeline": timeline, "words": words, "frames": cursor, "voice": voice_polished,
-           "take": "presenter/take.mp4", "photo": None}
     person = presenter.who(pkg["lang"])
-    photo = presenter.PHOTO_DIR / f"{person[0]}.jpg" if person else None
-    if photo and photo.exists():     # the cover shows who the viewer will hear
-        shutil.copyfile(photo, public / "presenter" / "photo.jpg")
-        out["photo"] = "presenter/photo.jpg"
+    report: Dict[str, Any] = {"model": presenter.config()["model"], "presenter": person[1] if person else None,
+                              "voice": pkg.get("voice"), "spent_usd": 0.0, "used": [], "clips": []}
+    out: Dict[str, Any] = {"report": report, "clip": None, "loop": None, "loop_frames": 0,
+                           "photo": None, "face_y": None, "loop_face_y": None}
+    if not person:
+        report["reason"] = f"no presenter for language {pkg['lang']!r}"
+        return out
+    slug = person[0]
+    (public / "presenter").mkdir(parents=True, exist_ok=True)
+    live = not offline and bool(budget["cfg"]["key"])
+    if not live:
+        report["reason"] = "offline render" if offline else "SHORTS_OPENROUTER_API_KEY is not set"
+
+    image: Optional[Path] = None
+    clip: Optional[Path] = None
+    loop: Optional[Path] = None
+    idx = on_camera(beats)
+    seconds = sum(tl["timeline"][i]["duration"] for i in idx) / FPS
+    if live:
+        import httpx
+
+        with httpx.Client(timeout=180.0, follow_redirects=True) as client:
+            setting = (pkg.get("opener") or {}).get("setting")
+            if setting:
+                image = presenter.setting_image(client, budget, slug, setting, work / "setting.png", report)
+            if idx:
+                track = media.concat_wavs([tl["segments"][i] for i in idx], work / "oncam.wav")
+                mp3 = media.to_mp3(track, work / "oncam.mp3")
+                clip = presenter.lipsync(client, budget, image or presenter.PHOTO_DIR / f"{slug}.jpg",
+                                         mp3, seconds, work, "oncam", presenter.LIPSYNC_MOTION, report)
+            loop = presenter.bubble_loop(client, budget, slug, work, report)
+    else:
+        loop = presenter.bubble_loop(None, budget, slug, work, report)
+
+    if clip is not None:
+        media.normalize_clip(clip, public / "presenter" / "clip.mp4", seconds, hold=True)
+        cursor = 0
+        for i in idx:
+            tl["timeline"][i]["presenter"] = "presenter/clip.mp4"
+            tl["timeline"][i]["clipFrom"] = cursor
+            cursor += tl["timeline"][i]["duration"]
+        out["clip"] = "presenter/clip.mp4"
+        report["used"] = idx
+    if loop is not None:
+        shutil.copyfile(loop, public / "presenter" / "loop.mp4")
+        out["loop"] = "presenter/loop.mp4"
+        out["loop_frames"] = max(1, int(round(media.duration(loop) * FPS)))
+    photo = image or presenter.PHOTO_DIR / f"{slug}.jpg"
+    if photo.exists():           # the cover shows who the viewer will hear, where they are
+        rel = f"presenter/photo{photo.suffix}"
+        shutil.copyfile(photo, public / rel)
+        out["photo"] = rel
+    out["face_y"] = presenter.SETTING_FACE_Y if image else presenter.FACE_Y.get(slug, 0.25)
+    # the loop is recorded from the plain photo, whose framing differs from a setting's
+    out["loop_face_y"] = presenter.FACE_Y.get(slug, 0.25) if loop is not None else out["face_y"]
+    genvideo._log(f"presenter: {person[1]} on camera {'yes' if clip else 'no'}"
+                  f"{' in a generated setting' if image else ''}, loop {'yes' if loop else 'no'}, "
+                  f"${report['spent_usd']:.2f} spent")
     return out
 
 
@@ -355,7 +379,7 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
     beats = []
     number = 0
     for beat, slot in zip(pkg["beats"], tl["timeline"]):
-        middle = beat["kind"] not in ("hook", "cta")
+        middle = beat["kind"] not in ("hook", "cta", "opener", "outro")
         number += 1 if middle else 0
         entry = {
             "kind": beat["kind"], "from": slot["from"], "duration": slot["duration"],
@@ -367,20 +391,26 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
             entry["presenterName"] = (presenter.who(pkg["lang"]) or ("", ""))[1]
         if slot.get("show"):
             entry["show"] = slot["show"]
+        if slot.get("clipFrom") is not None:
+            entry["clipFrom"] = slot["clipFrom"]
         for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
             if beat.get(key):
                 entry[key] = beat[key]
         if beat["kind"] == "avatar":
             entry["avatarName"] = beat["avatar"].capitalize()
         beats.append(entry)
-    hook = pkg["beats"][0]
+    hook = next((b for b in pkg["beats"] if b["kind"] == "hook"), pkg["beats"][0])
+    person = presenter.who(pkg["lang"]) or ("", "")
     return {
         "lang": pkg["lang"],
         "format": pkg.get("format", "classic"),
-        "take": tl.get("take"),
+        "presenterClip": tl.get("clip"),
+        "bubbleLoop": tl.get("loop"),
+        "bubbleLoopFrames": tl.get("loop_frames") or 0,
         "presenterPhoto": tl.get("photo"),
-        "presenterName": (presenter.who(pkg["lang"]) or ("", ""))[1],
-        "faceY": presenter.FACE_Y.get((presenter.who(pkg["lang"]) or ("", ""))[0], 0.25),
+        "presenterName": person[1],
+        "faceY": tl.get("face_y") or presenter.FACE_Y.get(person[0], 0.25),
+        "loopFaceY": tl.get("loop_face_y"),
         "palette": pkg["style"]["palette"],
         "motif": pkg["style"]["motif"],
         "brand": BRANDS["biglobster"],
@@ -466,33 +496,33 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
 
     t0 = time.time()
     budget = genvideo.open_budget(offline=offline)
-    talking = presenter.render(pkg, work, budget, offline=offline)
     tip = pkg.get("format") == "tip"
-    take = talking["clips"].get(0) if tip else None
-    if take is not None and not media.has_audio(take):
-        _log("presenter take has no audio track; the script goes to the voice-over")
-        take = None
-    if take is not None:
-        tl = build_take_timeline(pkg, work, public, take)
-        talking["report"]["used"] = list(range(len(pkg["beats"])))
-    else:
-        # The tip format without its take: the same beats and cards, voiced by Edge.
-        tl = build_timeline(pkg, work, public, fake_voice=fake_voice,
-                            presenter_clips={} if tip else talking["clips"])
-        for slot, beat in zip(tl["timeline"], pkg["beats"]):
+    if tip:
+        # Voice first (the presenter's neural voice, free), then the presenter
+        # is fitted to the lines said on camera.
+        render_pkg = dict(pkg, beats=tip_beats(pkg))
+        tl = build_timeline(render_pkg, work, public, fake_voice=fake_voice)
+        for slot, beat in zip(tl["timeline"], render_pkg["beats"]):
             slot["show"] = beat.get("show")
+        cast = tip_presenter(render_pkg, tl, work, public, budget, offline=offline)
+        tl.update({k: cast[k] for k in ("clip", "loop", "loop_frames", "photo", "face_y", "loop_face_y")})
+        talking = {"report": cast["report"]}
+    else:
+        render_pkg = pkg
+        talking = presenter.render(pkg, work, budget, offline=offline)
+        tl = build_timeline(pkg, work, public, fake_voice=fake_voice, presenter_clips=talking["clips"])
         talking["report"]["used"] = [i for i, s in enumerate(tl["timeline"]) if s.get("presenter")]
     total_seconds = tl["frames"] / FPS
-    _log(f"voice: {len(pkg['beats'])} beats, {total_seconds:.2f}s, {len(tl['words'])} words")
+    _log(f"voice: {len(render_pkg['beats'])} beats, {total_seconds:.2f}s, {len(tl['words'])} words")
 
-    ai_video = genvideo.render_scenes(pkg, tl["timeline"], work, public, seed, fps=FPS,
+    ai_video = genvideo.render_scenes(render_pkg, tl["timeline"], work, public, seed, fps=FPS,
                                       offline=offline, budget=budget)
-    # The take fills every frame (full or in its bubble over a card): no stock footage.
-    broll = [] if take is not None else gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
+    # Tip cards and the presenter fill every frame: no stock footage.
+    broll = [] if tip else gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
     music = gather_music(pkg, work, seed, offline=offline)
     _log(f"sources: {len(broll)} clips, music={'none' if not music else music['id']}")
 
-    props = remotion_props(pkg, tl)
+    props = remotion_props(render_pkg, tl)
     props_path = work / "props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False, indent=1), encoding="utf-8")
     visuals = render_visuals(remotion_dir, props_path, public, out)
@@ -509,10 +539,11 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
 
     report = qa.check_master(master, expected_seconds=total_seconds,
                              target=qa.TIP_TARGET if tip else (qa.TARGET_MIN, qa.TARGET_MAX))
-    voice_error = one_voice_error(tip, take is not None, bool(budget["cfg"]["key"]), talking["report"])
-    if voice_error:
+    cast_error = presenter_missing_error(tip, bool(tl.get("clip")), bool(budget["cfg"]["key"]) and not offline,
+                                         talking["report"])
+    if cast_error:
         report["passed"] = False
-        report["errors"].append(voice_error)
+        report["errors"].append(cast_error)
     report["story"] = qa.check_story(story)
     report["cover"] = qa.check_still(visuals["cover"])
     report["thumb"] = qa.check_still(visuals["thumb"])

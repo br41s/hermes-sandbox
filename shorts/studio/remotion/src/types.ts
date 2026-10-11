@@ -1,7 +1,7 @@
 // The props contract between plugins/shorts/studio/build.py and this template.
 // build.py writes exactly this shape to props.json; keep the two in step.
 
-export type BeatKind = 'hook' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta';
+export type BeatKind = 'opener' | 'hook' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta' | 'outro';
 
 export type Beat = {
   kind: BeatKind;
@@ -26,7 +26,9 @@ export type Beat = {
   presenter?: string | null;
   presenterName?: string;
   /** Tip format: the presenter full-frame, or an animated card with them in a bubble. */
-  show?: 'presenter' | 'card';
+  show?: 'presenter' | 'card' | 'outro';
+  /** Tip format, on camera: first frame of this beat inside the presenter clip. */
+  clipFrom?: number;
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;
@@ -42,10 +44,15 @@ export type Word = {
 
 export type ShortProps = {
   lang: 'en' | 'es';
-  /** 'tip': one take said to camera, cut between the presenter and cards. */
+  /** 'tip': one tip, the presenter on camera between animated cards. */
   format?: 'classic' | 'tip';
-  /** Path under the public dir of the tip format's take, or null when it was not made. */
-  take?: string | null;
+  /** Tip format: the lip-synced clip of every on-camera line, or null when it was not made. */
+  presenterClip?: string | null;
+  /** Tip format: the presenter's loop recorded once, for the bubble; null uses their photo. */
+  bubbleLoop?: string | null;
+  bubbleLoopFrames?: number;
+  /** Where the face is in the loop (the plain photo's framing), when the clip has another. */
+  loopFaceY?: number;
   presenterName?: string;
   /** Where the presenter's face is, as a fraction of the frame height (framing of their photo). */
   faceY?: number;

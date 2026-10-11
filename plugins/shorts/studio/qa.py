@@ -15,7 +15,7 @@ from plugins.shorts.studio import media
 
 MIN_SECONDS, MAX_SECONDS = 12.0, 90.0          # hard (a tip short runs ~15-20 s)
 TARGET_MIN, TARGET_MAX = 45.0, 70.0            # warn outside
-TIP_TARGET = (14.0, 30.0)                      # the tip format: one tip, ~20 s
+TIP_TARGET = (18.0, 40.0)                      # the tip format: opener, one tip, outro
 STORY_MAX = 59.9
 LUFS_TOLERANCE = 1.5
 MAX_TRUE_PEAK = -0.5
