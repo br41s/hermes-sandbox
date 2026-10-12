@@ -36,6 +36,19 @@ Two scripts, two homes:
   script deleted that zip, so 7 of the 10 nights before the fix had no backup at all.
   It now keeps a zip that exists, says `Archive kept` in the log and passes
   `zipfile.testzip()`. Previous version saved as `backup-full.sh.bak-20261006`.
+  **rclone: always via PATH (the shim), never as root by full path
+  `/opt/data/scripts/bin/rclone`.** 2026-10-08..11: rclone, run as root, rewrote
+  `/opt/data/.config/rclone/rclone.conf` on a token refresh and left it root:hermes 0600;
+  `backup-full.sh` (user hermes) failed with `Failed to load config file ... permission
+  denied` and four nightly Drive syncs were lost. Three layers now guard it:
+  `docker/rclone-exec-shim.sh` (installed at `/opt/hermes/bin/rclone`, first on PATH) drops
+  root to hermes before running the real binary; `docker/stage2-hook.sh` re-chowns
+  `/opt/data/.config/rclone` to hermes at every boot; and `backup-full.sh` writes an
+  unreadable config, with owner/mode and the fix (`chown hermes:hermes
+  /opt/data/.config/rclone/rclone.conf` as root), into `last-drive-sync.log` so the
+  `DRIVE SYNC FAILED` alert carries it. Known gap: calling the real binary by full path as
+  root bypasses the shim; the nightly pre-check catches that. The volume copy of
+  `backup-full.sh` must be updated by hand (see above) for the pre-check to take effect.
 - **`backup-volumes.sh` (this directory) runs as root on the host.** It dumps the
   other services' volumes (three Postgres via `pg_dumpall`, the chatwoot Redis RDB, the
   BigLobster sentinel SQLite via the online backup API, the idle Chrome/CDP volumes as
