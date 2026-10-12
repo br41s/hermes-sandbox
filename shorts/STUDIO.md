@@ -296,10 +296,11 @@ What a tip short is, in order:
    first paid test's tray of bread stayed floating in the air).
 2. **Hook**, Lucía on camera, in the same setting.
 3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns to him.
-4. **Martín's turn** (~1.6 s, no words): the camera pushes in on the still
-   setting, with his name tag. Free: a generated nod (Hailuo 3) cost $0.65 on
-   2026-10-12, more than all of Lucía's lines, and Seedance and Veo refuse a
-   realistic face outright.
+4. **Martín's turn** (0.8 s, no words): Lucía's last frame (turned towards
+   him) pushes in quickly with his name tag. Martín stays in the setting
+   behind her the whole time; what is not generated is a clip of him nodding
+   (Hailuo 3 charged $0.65 for it on 2026-10-12, more than all of Lucía's
+   lines). At 1.6 s, and from the setting still, it read as Lucía frozen.
 5. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`).
@@ -307,7 +308,8 @@ What a tip short is, in order:
    `package.py`).
 7. **Outro**, added by the renderer and the same in every short: the full
    article on biglobster.top, then "follow us for more tips", as an animated
-   card (`Tip.tsx`, `OutroCard`).
+   card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
+   reads them as a jump in pitch, and it sounded overexcited.
 
 **Voices.** Lucía speaks with her HeyGen voice (`presenter.HOST_VOICES`,
 chosen by the owner: es `ec971490…` (the first, `a78e0a4d…`, sounded too
@@ -327,14 +329,15 @@ dispatch, QA fails the short ("Lucía's take missing"); a render without a key
 (the push smoke test) keeps its card-only fallback, her lines in a free voice
 (`presenter.HOST_FALLBACK_VOICES`).
 
-**Martín's loop is recorded by the owner, once** (Google Flow, from
-`presenters/martin.jpg`), and committed as
-`shorts/studio/presenters/assets/martin-loop.mp4`: vertical 9:16, same framing
-as the photo (his face at `FACE_Y["martin"]` of the height), silent, 6–8 s,
-first and last frame the same pose so it loops without a jump. The renderer
-never generates it (`presenter.bubble_loop` only looks it up); without it the
-bubble shows his photo. Use the same pattern for anything else that does not
-change between shorts.
+**The narrator's loop is recorded by the owner, once** (Google Flow, frames
+to video with the presenter's photo as first and last frame), and committed as
+`shorts/studio/presenters/assets/<slug>-loop.mp4`, without audio. Martín's is
+in (2026-10-12; 8 s, he looks up to the left at the cards and points up).
+`presenter.LOOP_FRAMING` says how it sits in the bubble (scale, and the point
+centred, left of his face so the pointing hand stays in). The renderer never
+generates a loop (`presenter.bubble_loop` only looks it up); without one the
+bubble shows the photo. A loop for Lucía is for when she narrates; the roles
+are fixed (she opens, he narrates) until the owner says otherwise.
 
 **Cuts.** Each take opens and closes with a still, silent second; the
 timeline cuts it at its speech (`media.speech_bounds`) and runs the next beat

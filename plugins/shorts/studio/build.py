@@ -205,10 +205,14 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
 # The close, the same in every short and never paid for: Martín's voice over
 # an animated card (Tip.tsx, OutroCard).
 OUTRO_VO = {
-    "es": "Tienes el artículo completo en biglobster punto top. ¡Y síguenos para más consejos!",
-    "en": "The full article is on biglobster dot top. And follow us for more tips!",
+    # No exclamation marks: Edge reads them as a jump in pitch, and the last
+    # line sounded overexcited (owner, 2026-10-12). The card does the emphasis.
+    "es": "Tienes el artículo completo en biglobster punto top. Y síguenos para más consejos.",
+    "en": "The full article is on biglobster dot top. And follow us for more tips.",
 }
-REACTION_SECONDS = 1.6   # the camera pushes in on Martín; then his cards
+# The camera pushes in on Martín, from Lucía's last frame; then his cards.
+# 1.6 s read as Lucía frozen (owner, 2026-10-12): kept short.
+REACTION_SECONDS = 0.8
 
 
 def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -297,8 +301,15 @@ def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], pu
     """Mark what each beat shows and copy the loop and stills; returns the props' presenter fields."""
     beats = pkg["beats"]
     (public / "presenter").mkdir(parents=True, exist_ok=True)
-    for slot, beat in zip(tl["timeline"], beats):
+    for i, (slot, beat) in enumerate(zip(tl["timeline"], beats)):
         slot["show"] = beat.get("show")
+        # Martín's turn starts from the frame Lucía ends on, turned towards
+        # him, not from the setting still, where she faces the camera again.
+        prev = tl["timeline"][i - 1].get("presenter") if i else None
+        if beat["kind"] == "reaction" and prev:
+            rel = "presenter/handoff.jpg"
+            media.last_frame(public / prev, public / rel)
+            slot["still"] = rel
     fields: Dict[str, Any] = {"loop": None, "loop_frames": 0, "photo": None, "partner_photo": None}
     loop = cast.get("loop")
     if loop is not None:
@@ -316,7 +327,10 @@ def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], pu
         shutil.copyfile(partner, public / "presenter" / "partner.jpg")
         fields["partner_photo"] = "presenter/partner.jpg"
     fields["face_y"] = presenter.SETTING_FACE_Y if image else presenter.FACE_Y.get(presenter.HOST[0], 0.25)
-    fields["loop_face_y"] = presenter.FACE_Y.get(presenter.PARTNER[0], 0.25)
+    framing = presenter.LOOP_FRAMING.get(presenter.PARTNER[0], {})
+    fields["loop_face_y"] = framing.get("y", presenter.FACE_Y.get(presenter.PARTNER[0], 0.25))
+    fields["loop_scale"] = framing.get("scale")
+    fields["loop_x"] = framing.get("x")
     report = cast["report"]
     genvideo._log(f"presenter: Lucía on camera {len(cast['takes'])}/{len(on_camera(beats))} lines"
                   f"{' in a generated setting' if image else ''}, Martín's loop "
@@ -418,6 +432,8 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
                                       else (presenter.who(pkg["lang"]) or ("", ""))[1])
         if slot.get("show"):
             entry["show"] = slot["show"]
+        if slot.get("still"):
+            entry["still"] = slot["still"]
         for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
             if beat.get(key):
                 entry[key] = beat[key]
@@ -438,6 +454,8 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
         "partnerPhoto": tl.get("partner_photo"),
         "faceY": tl.get("face_y") or presenter.FACE_Y.get(person[0], 0.25),
         "loopFaceY": tl.get("loop_face_y"),
+        "loopScale": tl.get("loop_scale"),
+        "loopX": tl.get("loop_x"),
         "palette": pkg["style"]["palette"],
         "motif": pkg["style"]["motif"],
         "brand": BRANDS["biglobster"],

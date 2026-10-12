@@ -23,7 +23,7 @@ const H = 1920;
 const CARD_TOP = SAFE.top + 150;
 const CARD_BOTTOM = 1000;
 const BUBBLE = {size: 300, right: 56, top: 1010};
-const BUBBLE_VIDEO = 0.55;     // the loop's scale inside the bubble
+const BUBBLE_VIDEO = 0.55;     // the loop's default scale inside the bubble (presenter.LOOP_FRAMING overrides)
 const ZOOMS = [1.0, 1.16, 1.07];
 
 const COPY = {
@@ -285,12 +285,12 @@ const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palett
   );
 };
 
-/** Martín's turn: the still setting, pushing in towards him. */
+/** Martín's turn: Lucía's last frame, a quick push-in towards him behind her. */
 const StillPush: React.FC<{src: string; beat: Beat}> = ({src, beat}) => {
   const frame = useCurrentFrame();
   const t = interpolate(frame, [0, Math.max(beat.duration, 1)], [0, 1], {extrapolateRight: 'clamp', easing: ease});
   return (
-    <AbsoluteFill style={{transform: `scale(${1 + 0.18 * t})`, transformOrigin: '50% 45%'}}>
+    <AbsoluteFill style={{transform: `scale(${1 + 0.3 * t})`, transformOrigin: '50% 40%', filter: `blur(${2.5 * t}px)`}}>
       <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
     </AbsoluteFill>
   );
@@ -306,13 +306,15 @@ const NameTag: React.FC<{name: string; brand: string; pal: Palette; faceY: numbe
   );
 };
 
-/** The presenter during a card: the loop recorded once per presenter, or their photo. */
-const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string | null; pal: Palette; faceY: number; name?: string}> = ({loop, loopFrames, photo, pal, faceY, name}) => {
+/** The narrator during a card: the loop recorded once per presenter, or their photo. */
+const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string | null; pal: Palette; faceY: number; name?: string; scale?: number | null; centerX?: number | null}> = ({loop, loopFrames, photo, pal, faceY, name, scale, centerX}) => {
   const frame = useCurrentFrame();
   const pop = useEnter(2);
-  const vw = W * BUBBLE_VIDEO;
-  const vh = H * BUBBLE_VIDEO;
-  const media = {position: 'absolute' as const, left: BUBBLE.size / 2 - vw / 2, top: BUBBLE.size / 2 - faceY * vh, width: vw, height: vh};
+  const k = loop && scale ? scale : BUBBLE_VIDEO;
+  const vw = W * k;
+  const vh = H * k;
+  const cx = loop && centerX ? centerX : 0.5;
+  const media = {position: 'absolute' as const, left: BUBBLE.size / 2 - cx * vw, top: BUBBLE.size / 2 - faceY * vh, width: vw, height: vh};
   const bob = loop ? 0 : Math.sin(frame / 12) * 4;
   return (
     <>
@@ -384,7 +386,7 @@ export const TipShort: React.FC<ShortProps> = (props) => {
   const partner = props.partnerName ?? host;
   const bubble = (
     <Bubble loop={props.bubbleLoop} loopFrames={props.bubbleLoopFrames ?? 0} photo={props.partnerPhoto ?? props.presenterPhoto}
-            pal={pal} faceY={props.loopFaceY ?? faceY} name={partner} />
+            pal={pal} faceY={props.loopFaceY ?? faceY} name={partner} scale={props.loopScale} centerX={props.loopX} />
   );
   let onCamera = -1;
   return (
@@ -400,9 +402,9 @@ export const TipShort: React.FC<ShortProps> = (props) => {
               <PresenterShot src={beat.presenter} beat={beat} nth={0} pal={pal} faceY={0.4} />
               <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
             </>
-          ) : props.presenterPhoto ? (
+          ) : (beat.still ?? props.presenterPhoto) ? (
             <>
-              <StillPush src={props.presenterPhoto} beat={beat} />
+              <StillPush src={(beat.still ?? props.presenterPhoto) as string} beat={beat} />
               <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
             </>
           ) : null;

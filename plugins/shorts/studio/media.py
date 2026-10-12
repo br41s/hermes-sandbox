@@ -107,6 +107,13 @@ def silence(dst: Path, seconds: float) -> Path:
     return dst
 
 
+def last_frame(src: Path, dst: Path) -> Path:
+    """The clip's final frame as a still."""
+    ffmpeg("-sseof", "-0.1", "-i", str(src), "-frames:v", "1", "-q:v", "2", "-update", "1", str(dst),
+           what=f"last frame {src.name}")
+    return dst
+
+
 def concat_wavs(parts: List[Path], dst: Path) -> Path:
     """Sample-exact concatenation of same-format WAVs (re-encoded, never -c copy)."""
     listing = dst.with_suffix(".txt")

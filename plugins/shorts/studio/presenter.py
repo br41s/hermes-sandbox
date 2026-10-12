@@ -221,6 +221,14 @@ TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm 
 HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "
                   "shoulder at the man working behind her and gestures towards him with an open hand.")
 
+# How each presenter's recorded loop sits in the bubble: its scale against a
+# 1080x1920 frame and where to centre (fractions of the loop's width and
+# height). Martín's (owner's recording, Google Flow, 2026-10-12) is
+# framed like his photo; he looks up to the left, towards the cards, and
+# points up with his hand on the left, so the crop sits left of his face to
+# keep the hand in.
+LOOP_FRAMING = {"martin": {"scale": 0.34, "x": 0.40, "y": 0.24}}
+
 # Fraction of the frame height where the woman's face sits in a generated
 # setting (the prompt asks for the upper third).
 SETTING_FACE_Y = 0.3
@@ -360,15 +368,15 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
     return takes
 
 
-def bubble_loop(report: Dict[str, Any]) -> Optional[Path]:
-    """Martín's loop for the bubble, recorded once by the owner and committed.
+def bubble_loop(report: Dict[str, Any], slug: str = PARTNER[0]) -> Optional[Path]:
+    """The narrator's loop for the bubble, recorded once by the owner and committed.
 
     Never generated here (owner, 2026-10-12): the image-to-video models that
     accept a realistic face cost more than the rest of the short, and the loop
-    is the same in every short. ``presenters/assets/martin-loop.mp4`` first,
-    then the asset cache; without either, the bubble shows his photo.
+    is the same in every short. ``presenters/assets/<slug>-loop.mp4`` first,
+    then the asset cache; without either, the bubble shows the photo.
     """
-    name = f"{PARTNER[0]}-loop.mp4"
+    name = f"{slug}-loop.mp4"
     for path in (PHOTO_DIR / "assets" / name, tip_config()["asset_dir"] / name):
         if path.exists() and path.stat().st_size > 0:
             report["loop"] = {"status": "reused", "path": str(path)}

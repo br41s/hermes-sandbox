@@ -27,6 +27,8 @@ export type Beat = {
   presenterName?: string;
   /** Tip format: Lucía full-frame, Martín's nod, or an animated card with him in a bubble. */
   show?: 'presenter' | 'reaction' | 'card' | 'outro';
+  /** Tip format, Martín's turn: the still it pushes in on (Lucía's last frame). */
+  still?: string;
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;
@@ -49,6 +51,9 @@ export type ShortProps = {
   bubbleLoopFrames?: number;
   /** Where the face is in the loop (the plain photo's framing), when the clip has another. */
   loopFaceY?: number;
+  /** How the loop sits in the bubble: its scale, and the point centred (fraction of its width). */
+  loopScale?: number | null;
+  loopX?: number | null;
   presenterName?: string;
   /** Tip format: who narrates the cards from the bubble, and his photo. */
   partnerName?: string | null;

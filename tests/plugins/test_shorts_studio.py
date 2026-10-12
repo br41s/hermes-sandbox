@@ -1135,6 +1135,7 @@ def test_the_tip_short_runs_lucia_then_martins_nod_then_his_cards(tip):
     assert beats[3]["silent"] and not beats[3]["vo"]
     assert beats[-2]["kind"] == "cta" and beats[-1]["kind"] == "outro"
     assert "biglobster" in beats[-1]["vo"] and "síguenos" in beats[-1]["vo"].lower()
+    assert "!" not in beats[-1]["vo"] and "¡" not in beats[-1]["vo"]      # calm, not overexcited
     assert build_mod.on_camera(beats) == [0, 1, 2]                    # only Lucía's lines are paid
     # Her lines fall back to her free voice; Martín's take the package's (his).
     assert {beats[i]["voice"] for i in (0, 1, 2)} == {presenter_mod.HOST_FALLBACK_VOICES["es"]}
@@ -1198,10 +1199,11 @@ def test_lucia_is_paid_only_for_her_lines_and_martin_costs_nothing(tip, tmp_path
     assert fake.posts[0]["input_references"][0]["image_url"]["url"].startswith("data:image/png")
     assert fake.posts[2]["provider"]["options"]["heygen"]["motion_prompt"] == presenter_mod.HANDOFF_MOTION
     assert sorted(cast["takes"]) == [0, 1, 2]
-    # His loop is the owner's recording: never generated, only looked up.
-    assert cast["loop"] is None and cast["report"]["loop"]["status"] == "missing"
-    loop = _touch(tmp_path / "assets" / "martin-loop.mp4")
-    assert presenter_mod.bubble_loop({}) == loop
+    # His loop is the owner's recording, committed: never generated, only looked up.
+    assert cast["loop"] == presenter_mod.PHOTO_DIR / "assets" / "martin-loop.mp4"
+    assert cast["report"]["loop"]["status"] == "reused"
+    report = {}
+    assert presenter_mod.bubble_loop(report, "nobody") is None and report["loop"]["status"] == "missing"
 
 
 def test_lucias_takes_are_all_or_nothing_under_the_budget(tip, tmp_path, monkeypatch):
