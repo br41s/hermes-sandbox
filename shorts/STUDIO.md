@@ -326,9 +326,12 @@ young on the avatar), en `47aff89a…`; override with
 `SHORTS_HOST_VOICE_ES`/`_EN`). Avatar IV takes a script and a `voice_id`;
 it does NOT take a voice track as a data URL (it wants a public HTTPS URL),
 which is why her lines are voiced by HeyGen and not by our TTS. Martín
-narrates with a free neural voice (`package.TIP_VOICES`: `es-ES-AlvaroNeural`,
-`en-US-AndrewMultilingualNeural`), forced by the package. Two characters, two
-voices, each the same in every short.
+narrates with an Azure voice (`package.TIP_VOICES`: the HD
+`es-ES-Tristan:DragonHDLatestNeural`, the owner's pick over Álvaro, and
+`en-US-AndrewMultilingualNeural`), forced by the package. HD voices keep
+their own pace (no prosody rate) and exist on Azure only; if Azure fails,
+Edge reads the line with `voice.EDGE_FALLBACK`. Two characters, two voices,
+each the same in every short.
 
 **What is paid.** Only Lucía's lines (opener + hook + handoff ≤32 words,
 ~12 s at $0.05/s), one take per line so each beat gets its exact length and

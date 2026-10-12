@@ -1078,7 +1078,7 @@ def test_shadow_mode_never_posts_to_buzz(tip, submit_env, buzz_env, monkeypatch)
 def test_the_tip_sample_is_one_tip_opened_by_lucia_and_narrated_by_martin(tip):
     pkg = pkg_mod.validate_package(tip)
     assert pkg["format"] == "tip" and pkg["version"] == 4
-    assert pkg["voice"] == pkg_mod.TIP_VOICES["es"] == "es-ES-AlvaroNeural"   # Martín, Spain, in every short
+    assert pkg["voice"] == pkg_mod.TIP_VOICES["es"] == "es-ES-Tristan:DragonHDLatestNeural"   # Martín, in every short
     opener = pkg["opener"]
     assert opener["line"] and len(opener["setting"].split()) >= pkg_mod.TIP_MIN_SETTING_WORDS
     assert pkg_mod.TIP_PARTNER.search(opener["handoff"])
@@ -1090,7 +1090,7 @@ def test_the_tip_sample_is_one_tip_opened_by_lucia_and_narrated_by_martin(tip):
 
 def test_a_package_cannot_pick_another_voice_for_the_narrator(tip):
     tip["voice"] = "es-MX-JorgeNeural"
-    assert pkg_mod.validate_package(tip)["voice"] == "es-ES-AlvaroNeural"
+    assert pkg_mod.validate_package(tip)["voice"] == "es-ES-Tristan:DragonHDLatestNeural"
 
 
 @pytest.mark.parametrize("change,problem", [
@@ -1359,6 +1359,8 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
     url, ssml, headers = sent[0]
     assert url == "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
     assert b"es-ES-AlvaroNeural" in ssml and b"&amp; mide" in ssml and b"rate='+5%'" in ssml
+    voice_mod.synthesize("Hola", "es-ES-Tristan:DragonHDLatestNeural", "+5%", tmp_path / "hd.mp3")
+    assert b"name='es-ES-Tristan:DragonHDLatestNeural'" in sent[1][1] and b"prosody" not in sent[1][1]
     assert headers["Ocp-Apim-Subscription-Key"] == "az-key" and len(words) == 5
 
     # Azure refuses: Edge is asked.
@@ -1371,5 +1373,5 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
         return [{"text": "hola", "start": 0.0, "end": 0.5}]
 
     monkeypatch.setattr(voice_mod, "_edge_stream", fake_edge)
-    assert voice_mod.synthesize("hola", "es-ES-AlvaroNeural", "+0%", tmp_path / "b.mp3")[0]["text"] == "hola"
-    assert edge == ["es-ES-AlvaroNeural"]
+    assert voice_mod.synthesize("hola", "es-ES-Tristan:DragonHDLatestNeural", "+0%", tmp_path / "b.mp3")[0]["text"] == "hola"
+    assert edge == ["es-ES-AlvaroNeural"]                 # Edge has no HD voices

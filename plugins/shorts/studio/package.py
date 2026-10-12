@@ -134,8 +134,11 @@ TIP_MIN_SETTING_WORDS = 8
 TIP_MIN_CARDS = 2
 # Martín's voice, the narrator of every card, the same in every short
 # (owner's rule, 2026-10-11): Spain Spanish, never a Latin American accent.
-# Lucía speaks with her HeyGen voice (presenter.HOST_VOICES).
-TIP_VOICES = {"es": "es-ES-AlvaroNeural", "en": "en-US-AndrewMultilingualNeural"}
+# Lucía speaks with her HeyGen voice (presenter.HOST_VOICES). Spanish is an
+# Azure HD voice, chosen by the owner (2026-10-12; Álvaro sounded basic);
+# HD voices exist on Azure Speech only, so Edge falls back to
+# voice.EDGE_FALLBACK.
+TIP_VOICES = {"es": "es-ES-Tristan:DragonHDLatestNeural", "en": "en-US-AndrewMultilingualNeural"}
 # The handoff names the partner it passes the word to.
 TIP_PARTNER = re.compile(r"\bmart[ií]n\b", re.IGNORECASE)
 SHOWS = ("presenter", "card")

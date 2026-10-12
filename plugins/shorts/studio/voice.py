@@ -40,6 +40,13 @@ class VoiceError(RuntimeError):
 
 
 AZURE_TTS = "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+# Azure HD voices ("…:DragonHDLatestNeural") do not exist on Edge; when Azure
+# fails, Edge reads the line with the standard voice of the same language.
+EDGE_FALLBACK = {"es-ES": "es-ES-AlvaroNeural", "en-US": "en-US-AndrewMultilingualNeural"}
+
+
+def _lang(voice: str) -> str:
+    return "-".join(voice.split("-")[:2])
 
 
 def _azure_config():
@@ -52,9 +59,13 @@ def _azure(text: str, voice: str, rate: str, mp3: Path, key: str, region: str) -
     """One request to Azure Speech; the key goes to its own host only."""
     import httpx
 
-    lang = "-".join(voice.split("-")[:2])
+    lang = _lang(voice)
+    body = escape(text)
+    # HD voices keep their own pace; only a standard voice gets a prosody rate.
+    if rate and rate != "+0%" and ":" not in voice:
+        body = f"<prosody rate='{escape(rate)}'>{body}</prosody>"
     ssml = (f"<speak version='1.0' xml:lang='{escape(lang)}'><voice name='{escape(voice)}'>"
-            f"<prosody rate='{escape(rate or '+0%')}'>{escape(text)}</prosody></voice></speak>")
+            f"{body}</voice></speak>")
     resp = httpx.post(AZURE_TTS.format(region=region), content=ssml.encode("utf-8"), timeout=60.0, headers={
         "Ocp-Apim-Subscription-Key": key,
         "Content-Type": "application/ssml+xml",
@@ -99,6 +110,8 @@ def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = l
             return spread_words(text, media.duration(mp3))
         except Exception as exc:  # Edge may still answer
             print(f"[studio] voice: Azure failed ({exc}); trying Edge", flush=True)
+    if ":" in voice:
+        voice = EDGE_FALLBACK.get(_lang(voice), voice)
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
