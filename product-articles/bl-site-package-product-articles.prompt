@@ -24,7 +24,7 @@ su configuración).
   `cta_url` (sin el cuerpo). Es tu fuente para no repetir producto ni tema.
 - `get_post` — un artículo concreto CON su `content`.
 - `upload_image` — sube la portada (ver PORTADA). Las fotos de los productos
-  NO se suben (ver FOTOS DE LOS PRODUCTOS).
+  NO se suben (ver FOTOS Y BOTÓN DE COMPRA).
 - `create_blog_post` (`title`, `content`, `excerpt`, `badges`, `cta_url`,
   `cta_label`, `image_url`, `image_alt`) — el artículo queda **PUBLICADO
   inmediatamente**, en directo en el blog del cliente. No hay borrador ni
@@ -111,8 +111,9 @@ obligatorias:
    protagonista y 1–2 alternativas. Tabla Markdown si compara 3 o más
    atributos (máximo 2 tablas en todo el artículo, y nunca una columna de
    precio). Después de la tabla, **un `###` por producto comparado** con su
-   nombre y, en este orden: su **foto** (ver FOTOS DE LOS PRODUCTOS), y dos
-   líneas `**Lo mejor:**` y `**A tener en cuenta:**`. Las dos salen de hechos
+   nombre **en texto, sin enlace**, y debajo, en este orden: su **foto
+   enlazada a su ficha** y su **botón de compra** (ver FOTOS Y BOTÓN DE
+   COMPRA), y dos líneas `**Lo mejor:**` y `**A tener en cuenta:**`. Las dos salen de hechos
    de su ficha (p. ej. «papelera de 19 L: hay que vaciarla a menudo»), nunca
    de una experiencia de uso que no tienes. Todo producto tiene un «a tener
    en cuenta» real; si no encuentras ninguno en la ficha, vuelve a mirarla
@@ -171,10 +172,13 @@ obligatorias:
 12. **Cierre** con una idea concreta + CTA suave hacia el producto
     protagonista (no "No dudes en contactarnos").
 13. **`## Fuentes`**, al final: lista de 2–5 fuentes que hayas usado para el
-    contexto, cada una como enlace Markdown con el nombre del sitio y de qué
-    trata (`- [Fabricante: manual de la gama X](https://…)`). Solo
-    fabricantes, organismos, normas y medios especializados, nunca otra
-    tienda. Si no usaste ninguna fuente externa, omite la sección.
+    contexto (fabricantes, organismos, normas y medios especializados; nunca
+    otra tienda). **Solo se enlazan normas, organismos públicos y
+    asociaciones de consumidores**: `- [Norma UNE-EN XXXX: de qué
+    trata](https://…)`. Fabricantes, marcas y medios se
+    citan **como texto, sin enlace**: `- Fabricante X: manual de uso de la
+    gama Y (web del fabricante)`. Si no usaste ninguna fuente externa, omite la
+    sección.
 
 ## ENLAZADO INTERNO — OBLIGATORIO
 
@@ -198,6 +202,13 @@ final, salvo los de «Si tienes prisa» y accesorios): **cada producto
 comparado enlaza a su ficha**, al menos uno a su categoría, y como mucho 1 a
 `/contacto`. Las URLs de otro dominio solo van en `## Fuentes`; en el resto
 del texto, nunca.
+
+**Los productos solo se enlazan a la tienda.** Un producto, una marca o un
+modelo se enlaza únicamente a su ficha en `/productos/{slug}`, o no se
+enlaza. Nunca enlaces la ficha de un producto en otra web, ni la de la
+marca, ni la del fabricante, ni la de otra tienda, en ninguna parte del
+artículo, tampoco en `## Fuentes`: el lector que quiere ese producto tiene
+que acabar en la tienda del cliente.
 
 ## CTA DEL ARTÍCULO (`cta_url` / `cta_label`) — OBLIGATORIO
 
@@ -231,21 +242,40 @@ Si `image_generate` falla, reinténtalo UNA vez. Si vuelve a fallar (o falla
 `upload_image`), publica sin portada y anótalo en el informe. Nunca bloquees
 la publicación por la imagen.
 
-## FOTOS DE LOS PRODUCTOS
+## FOTOS Y BOTÓN DE COMPRA
 
-Cada producto comparado lleva su **foto real del catálogo** al principio de
-su `###`. Nunca generes una foto de producto con `image_generate`: una
-imagen inventada de un producto real enseña algo que no es lo que el
-cliente vende.
+Cada producto comparado lleva, bajo su `###`, su **foto real del catálogo**
+enlazada a su ficha y debajo un **botón de compra**.
 
-1. Toma el `image_url` que devuelve `GET {BL_SITE_URL}/api/products` para ese
-   producto, **tal cual, sin cambiar ni un carácter**. Es la foto del
-   catálogo. Si viene vacío, ese producto va sin foto.
-2. Ponla como primera línea del `###` del producto, exactamente con este
-   formato (el ancho fijo hace que quepa en el móvil):
-   `<img src="IMAGE_URL" alt="Nombre del producto" width="320" loading="lazy">`
+Nunca generes una foto de producto con `image_generate`: una imagen
+inventada de un producto real enseña algo que no es lo que el cliente vende.
 
-No la subas con `upload_image` ni la descargues: el servidor del distribuidor
+1. Toma el `image_url` y el `slug` que devuelve `GET {BL_SITE_URL}/api/products`
+   para ese producto, **tal cual, sin cambiar ni un carácter**.
+2. Escribe el bloque del producto exactamente así, con una línea en blanco
+   entre cada pieza (el ancho fijo hace que la foto quepa en el móvil):
+
+       ### Nombre del producto
+
+       <a href="/productos/SLUG"><img src="IMAGE_URL" alt="Nombre del producto" width="320" loading="lazy"></a>
+
+       <a href="/productos/SLUG" class="guide-buy">Ver precio y comprar</a>
+
+       **Lo mejor:** …
+
+       **A tener en cuenta:** …
+
+   Si `image_url` viene vacío, omite solo la línea de la foto; el botón va
+   siempre.
+3. **El botón lo completa el sitio:** al publicar, la tienda lo convierte en
+   «Comprar · <precio actual>» o, si el producto se agota o se retira, en
+   «Agotado · ver alternativas» hacia su categoría. Por eso tú nunca
+   escribes un precio, y el texto del botón es siempre exactamente «Ver
+   precio y comprar».
+4. `class="guide-buy"` va **solo** en ese botón y solo con un enlace
+   `/productos/{slug}`. El título `###` no lleva enlace.
+
+No subas la foto con `upload_image` ni la descargues: el servidor del distribuidor
 rechaza cualquier descarga que no venga de un navegador. El sitio muestra la
 foto porque reconoce esa URL exacta como una imagen de su propio catálogo;
 cualquier otra URL de imagen (de una tienda, del fabricante, una versión
@@ -328,7 +358,7 @@ bloquea la publicación.
    cuántas opiniones has leído, la URL exacta de cada página (va a tu
    informe, no al artículo) y qué se repite a favor y en contra.
 5. Fotos: apunta el `image_url` del catálogo de cada producto comparado
-   (sección FOTOS DE LOS PRODUCTOS).
+   (sección FOTOS Y BOTÓN DE COMPRA).
 
 ### FASE 4: Redacción y publicación
 1. Escribe la guía siguiendo FORMATO, ENLAZADO, CTA y HUMANIZAR.
@@ -339,8 +369,15 @@ bloquea la publicación.
      alta)» y «La mejor calidad-precio» en productos distintos), el «Lo mejor
      / A tener en cuenta» de cada producto comparado y «Cómo hemos elegido»,
      y en ningún sitio se dice o insinúa que los productos se han probado.
-   - Cada producto comparado lleva su foto con el `image_url` exacto del
-     catálogo y `width="320"`, salvo los que no tenían `image_url`.
+   - Cada producto comparado: título `###` sin enlace; su foto con el
+     `image_url` exacto del catálogo, `width="320"` y enlazada a su ficha
+     (salvo los que no tenían `image_url`); y su botón
+     `<a href="/productos/SLUG" class="guide-buy">Ver precio y comprar</a>`.
+     Ningún precio escrito por ti.
+   - Ningún enlace a la ficha de un producto en otra web (marca, fabricante,
+     tienda), en ninguna sección. Ningún enlace externo fuera de
+     `## Fuentes`, y dentro de `## Fuentes` solo normas, organismos públicos
+     y asociaciones de consumidores; el resto, como texto.
    - «Qué opinan los compradores» no tiene ni una nota, estrella o
      porcentaje, solo habla del modelo exacto, cuenta también lo negativo y
      termina con la línea de aviso con la fecha.
@@ -369,6 +406,7 @@ bloquea la publicación.
 - Opiniones: [por producto: nº de opiniones leídas y las URL exactas de donde salen, o "insuficientes"]
 - Secciones opcionales: cuidado [✅ / omitida — motivo] · accesorios [✅ productos enlazados / omitida — motivo] · errores [✅ / omitida] · opiniones [✅ / omitida — motivo]
 - Fuentes: [dominios citados en `## Fuentes`, o "ninguna externa"]
+- Enlaces externos: [cada URL externa del artículo con su sección; deberían ser solo normas u organismos dentro de `## Fuentes`]
 - Enlaces internos: [RUTAS usadas]
 - ✅ Datos técnicos solo de fichas del catálogo · sin precios ni stock · FAQ con formato exacto
 - ✅ Publicada directamente — ya está en directo en el blog del cliente

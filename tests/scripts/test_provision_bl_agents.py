@@ -222,7 +222,7 @@ def test_product_guides_prompt_photos_picks_and_opinions():
     # fetches), sized to fit a phone, and never AI-generated.
     assert 'width="320"' in text
     assert "tal cual, sin cambiar ni un carácter" in text
-    assert "No la subas con `upload_image`" in text
+    assert "No subas la foto con `upload_image`" in text
     assert "Nunca generes una foto de producto con `image_generate`" in text
     # Opinions are summarised in words only: no scores (CEO, 2026-10-10), the
     # exact model, negatives included, and the provenance line.
@@ -232,6 +232,21 @@ def test_product_guides_prompt_photos_picks_and_opinions():
     # report so every summary stays auditable (CEO, 2026-10-10).
     assert "Di el **tipo** de fuente, nunca su nombre" in text
     assert "las URL exactas de donde salen" in text
+
+
+def test_product_guides_prompt_buy_button_and_shop_only_links():
+    text = (REPO_ROOT / AGENT_SOURCES["product-articles"][0]).read_text(encoding="utf-8")
+    # The photo links to the product page and a buy button sits under it; the
+    # site (bl-site-package >= 1.20.0) turns the button into the current price
+    # or "Agotado · ver alternativas", so the agent never writes a price.
+    assert '<a href="/productos/SLUG"><img src="IMAGE_URL"' in text
+    assert '<a href="/productos/SLUG" class="guide-buy">Ver precio y comprar</a>' in text
+    assert "nombre **en texto, sin enlace**" in text
+    # Product links only ever lead to the client's shop (CEO, 2026-10-12): no
+    # manufacturer, brand or other shop product pages, not even in Fuentes,
+    # where only standards, public bodies and consumer associations are linked.
+    assert "**Los productos solo se enlazan a la tienda.**" in text
+    assert "**Solo se enlazan normas, organismos públicos y\n    asociaciones de consumidores**" in text
     assert "No\n     verificamos que procedan de compradores del producto." in text
 
 

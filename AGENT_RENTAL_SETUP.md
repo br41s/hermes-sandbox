@@ -103,7 +103,13 @@ each product's catalogue photo by its exact `image_url`. **The photos need the
 client's site on bl-site-package >= 1.19.0**, whose sanitizer keeps an exact
 catalogue image URL in a post; on an older site the `<img>` is simply
 stripped. The photos are linked, not uploaded: the distributor's CDN refuses
-non-browser downloads.
+non-browser downloads. Each photo links to its product page and carries a
+`guide-buy` buy button under it, which **bl-site-package >= 1.20.0** renders
+at build time as «Comprar · <current price>» or «Agotado · ver alternativas»
+(on an older site it stays a plain «Ver precio y comprar» link). Product
+links only ever go to the client's shop: no manufacturer, brand or other-shop
+product pages, and in «Fuentes» only standards, public bodies and consumer
+associations are linked.
 Until 2026-10 this key was a crawler of a distributor-hosted *old* store with
 the CTA pointing back there. It never ran: its toolsets were `None`, so it
 could not reach `bl_site_publish`.
