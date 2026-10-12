@@ -15,7 +15,7 @@
    "show": "presenter",
    "kicker": "Guía 2026",
    "onscreen": "Automatiza primero lo *aburrido*",
-   "vo": "Automatiza primero lo aburrido. Te cuento por qué."
+   "vo": "Automatiza primero lo aburrido."
   },
   {
    "kind": "compare",
@@ -45,7 +45,7 @@
   },
   {
    "kind": "cta",
-   "show": "presenter",
+   "show": "card",
    "onscreen": "Guárdalo para tu próxima *semana*",
    "url": "https://biglobster.top/es/blog/when-to-adopt-ai-sme-2026.html",
    "vo": "Guárdalo y pásaselo a quien siempre va con prisa."
@@ -75,6 +75,7 @@
  "format": "tip",
  "opener": {
   "line": "Si ya madrugo para hacer el pan, que al menos las facturas se hagan solas.",
-  "setting": "a small family bakery at dawn, warm light from the ovens, she wears a flour-dusted apron and holds a tray of fresh bread"
+  "setting": "a small family bakery at dawn, warm light from the ovens; she wears a flour-dusted apron and leans on a counter full of fresh bread, he is behind her taking loaves out of the oven",
+  "handoff": "Martín, cuéntales tú por dónde empezar."
  }
 }

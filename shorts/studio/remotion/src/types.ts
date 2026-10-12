@@ -1,7 +1,7 @@
 // The props contract between plugins/shorts/studio/build.py and this template.
 // build.py writes exactly this shape to props.json; keep the two in step.
 
-export type BeatKind = 'opener' | 'hook' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta' | 'outro';
+export type BeatKind = 'opener' | 'hook' | 'handoff' | 'reaction' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta' | 'outro';
 
 export type Beat = {
   kind: BeatKind;
@@ -22,13 +22,13 @@ export type Beat = {
   /** Path under the public dir of the avatar clip (avatar beats only). */
   avatar?: string | null;
   avatarName?: string;
-  /** Path under the public dir of the presenter clip (a hook or CTA said to camera). */
+  /** Path under the public dir of the presenter clip: a line said to camera, or (tip) Martín's nod. */
   presenter?: string | null;
   presenterName?: string;
-  /** Tip format: the presenter full-frame, or an animated card with them in a bubble. */
-  show?: 'presenter' | 'card' | 'outro';
-  /** Tip format, on camera: first frame of this beat inside the presenter clip. */
-  clipFrom?: number;
+  /** Tip format: Lucía full-frame, Martín's nod, or an animated card with him in a bubble. */
+  show?: 'presenter' | 'reaction' | 'card' | 'outro';
+  /** Tip format, Martín's turn: the still it pushes in on (Lucía's last frame). */
+  still?: string;
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;
@@ -44,16 +44,20 @@ export type Word = {
 
 export type ShortProps = {
   lang: 'en' | 'es';
-  /** 'tip': one tip, the presenter on camera between animated cards. */
+  /** 'tip': one tip, Lucía on camera, then Martín's animated cards. */
   format?: 'classic' | 'tip';
-  /** Tip format: the lip-synced clip of every on-camera line, or null when it was not made. */
-  presenterClip?: string | null;
-  /** Tip format: the presenter's loop recorded once, for the bubble; null uses their photo. */
+  /** Tip format: Martín's loop recorded once, for the bubble; null uses his photo. */
   bubbleLoop?: string | null;
   bubbleLoopFrames?: number;
   /** Where the face is in the loop (the plain photo's framing), when the clip has another. */
   loopFaceY?: number;
+  /** How the loop sits in the bubble: its scale, and the point centred (fraction of its width). */
+  loopScale?: number | null;
+  loopX?: number | null;
   presenterName?: string;
+  /** Tip format: who narrates the cards from the bubble, and his photo. */
+  partnerName?: string | null;
+  partnerPhoto?: string | null;
   /** Where the presenter's face is, as a fraction of the frame height (framing of their photo). */
   faceY?: number;
   /** Path under the public dir of the presenter's photo, for the cover (tip format with a take). */

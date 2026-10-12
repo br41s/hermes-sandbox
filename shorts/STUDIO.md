@@ -271,58 +271,102 @@ A new presenter photo: vertical, front-facing, three-quarter body with the face
 in the top third, plain background, no text on the clothes (the model redraws
 lettering badly).
 
-### 3.8 The tip format: one tip, the presenter in the article's world
+### 3.8 The tip format: Lucía opens, Martín narrates
 
 The Producer writes every short in the tip format (`"format": "tip"`), and
 `shorts_studio submit` refuses any other. Owner's rules: real new videos, one
-valuable tip worth saving or sharing, **the same presenter with the same voice
-in every video**, Spain Spanish for Lucía, and pay a model only for what
-changes from short to short (second review, 2026-10-11).
+valuable tip worth saving or sharing, **each presenter with the same voice in
+every video**, Spain Spanish, never a Latin American accent, and pay a model
+only for what changes from short to short (reviews of 2026-10-11). The
+two-presenter design is the owner's.
 
 What a tip short is, in order:
 
-1. **Opener** (`opener.line`, ≤18 words): a joke said to camera in a
-   **setting** that fits the article (`opener.setting`, English: a workshop, a
-   factory floor, a kitchen...). An image model places the presenter there
-   from their photo (`presenter.setting_image`, `SHORTS_SETTING_IMAGE_MODEL`,
-   default `google/gemini-3.1-flash-image-preview`, a few cents).
-2. **Hook**, on camera, in the same setting.
-3. **2–4 cards** (before/after, steps, a figure, a key line). The presenter
-   sits in a bubble playing **a loop recorded once per presenter** (look at
-   the card, point, look back; `presenter.bubble_loop`).
-4. **CTA**, on camera: save it or share it (checked in `package.py`).
-5. **Outro**, added by the renderer and the same in every short: the full
+1. **Opener** (`opener.line`, ≤18 words): Lucía's joke, to camera, in a
+   **setting** that fits the article (`opener.setting`, English: she in front,
+   he at work behind her: a workshop, a factory floor, a kitchen...). An
+   image model builds it from both photos (`presenter.setting_image`, ~$0.09).
+   Models are tried in order until one answers: `SHORTS_SETTING_IMAGE_MODEL`
+   (comma-separated) or `presenter.SETTING_MODELS`. Gemini refused both paid
+   tests with a 403 "violation of provider Terms Of Service" and FLUX.2 Pro
+   answered, so FLUX goes first; a refusal costs nothing. Rules here stay
+   general, because every short must look different (owner): the picture
+   obeys physics. Avatar IV moves her hands and leaves the rest still, so
+   the setting prompt keeps her hands free and objects on surfaces (the
+   first paid test's tray of bread stayed floating in the air).
+2. **Hook**, Lucía on camera, in the same setting.
+3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns to him.
+4. **Martín's turn** (0.8 s, no words): Lucía's last frame (turned towards
+   him) pushes in quickly with his name tag. Martín stays in the setting
+   behind her the whole time; what is not generated is a clip of him nodding
+   (Hailuo 3 charged $0.65 for it on 2026-10-12, more than all of Lucía's
+   lines). At 1.6 s, and from the setting still, it read as Lucía frozen.
+5. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
+   Martín from a bubble playing **his loop, recorded once** (look up, point,
+   look back; `presenter.bubble_loop`).
+6. **CTA**, a card too, in Martín's voice: save it or share it (checked in
+   `package.py`).
+7. **Outro**, added by the renderer and the same in every short: the full
    article on biglobster.top, then "follow us for more tips", as an animated
-   card (`Tip.tsx`, `OutroCard`).
+   card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
+   reads them as a jump in pitch, and it sounded overexcited.
 
-The voice is a fixed neural voice per presenter (`package.TIP_VOICES`:
-`es-ES-ElviraNeural` for Lucía, `en-US-AndrewMultilingualNeural` for Martín,
-Edge TTS, free), forced by the package, so no script can change it. The
-avatar (Avatar IV) is paid by the second, so it is generated **only for the
-lines said on camera** (opener + hook + CTA, ≤40 words, ~15 s): their voice
-segments are joined into one track and the avatar lip-syncs to it
-(`presenter.lipsync`), and each on-camera beat plays its stretch of that one
-clip. How Avatar IV takes an audio track through OpenRouter is not
-documented: `AUDIO_SHAPES` are tried in order, and a refused shape costs
-nothing. If the clip is not made in a real dispatch, QA fails the short
-("presenter clip missing"); a render without a key (the push smoke test)
-keeps its card-only fallback.
+**Martín's voice goes through Azure Speech** (official REST, the same neural
+voices) when `SHORTS_AZURE_SPEECH_KEY` (Actions secret) and
+`SHORTS_AZURE_SPEECH_REGION` (repo variable, e.g. `westeurope`) are set;
+the free F0 tier gives 500k characters a month, about 300 per short. Edge TTS
+stays as the fallback: Microsoft changed the Edge endpoint's anti-abuse
+token on 2026-10-10/12 and edge-tts 7.2.8 got a 403 on nearly every call
+(edge-tts issue #490). Every free line is voiced before anything is paid
+(`build.prevoice`), so a voice outage costs nothing.
 
-**Record once, reuse.** The bubble loop is looked up in
-`shorts/studio/presenters/assets/<slug>-loop.mp4`, then in the asset cache
-(`~/.cache/shorts-assets`, kept between Actions runs by `actions/cache`), and
-generated (~$0.25) only when both miss. Each run uploads the cache as the
-`presenter-assets-*` artifact: commit its files to `presenters/assets/` to
-make them permanent. Use the same pattern for anything else that does not
-change between shorts.
+**Voices.** Lucía speaks with her HeyGen voice (`presenter.HOST_VOICES`,
+chosen by the owner: es `ec971490…` (the first, `a78e0a4d…`, sounded too
+young on the avatar), en `47aff89a…`; override with
+`SHORTS_HOST_VOICE_ES`/`_EN`). Avatar IV takes a script and a `voice_id`;
+it does NOT take a voice track as a data URL (it wants a public HTTPS URL),
+which is why her lines are voiced by HeyGen and not by our TTS. Martín
+narrates with an Azure voice (`package.TIP_VOICES`: the HD
+`es-ES-Tristan:DragonHDLatestNeural`, the owner's pick over Álvaro, and
+`en-US-AndrewMultilingualNeural`), forced by the package. HD voices keep
+their own pace (no prosody rate) and exist on Azure only; if Azure fails,
+Edge reads the line with `voice.EDGE_FALLBACK`. Two characters, two voices,
+each the same in every short.
 
-Cost per short: setting image ~$0.04 + on-camera clip ~$0.05/s (≤15 s) ≈
-$0.6–0.8, inside the $1 per short. Music sits well under the voice
-(`media.BED_VOLUME`, 0.12, with stronger ducking).
+**What is paid.** Only Lucía's lines (opener + hook + handoff ≤32 words,
+~12 s at $0.05/s), one take per line so each beat gets its exact length and
+audio (`presenter.host_takes`); all of them are budgeted before any is sent,
+so a short is never left with half her lines. If a take is missing in a real
+dispatch, QA fails the short ("Lucía's take missing"); a render without a key
+(the push smoke test) keeps its card-only fallback, her lines in a free voice
+(`presenter.HOST_FALLBACK_VOICES`).
 
-Framing: `presenter.FACE_Y` is where each photo's face is (the loop), and
-`SETTING_FACE_Y` where the setting prompt puts it; the zoom and the bubble
-centre on them.
+**The narrator's loop is recorded by the owner, once** (Google Flow, frames
+to video with the presenter's photo as first and last frame), and committed as
+`shorts/studio/presenters/assets/<slug>-loop.mp4`, without audio. Martín's is
+in (2026-10-12; 8 s, he looks up to the left at the cards and points up), and
+so is Lucía's (`lucia-loop.mp4`, same gesture, for when she narrates).
+`presenter.LOOP_FRAMING` says how it sits in the bubble (scale, and the point
+centred, left of his face so the pointing hand stays in). The renderer never
+generates a loop (`presenter.bubble_loop` only looks it up); without one the
+bubble shows the photo. A loop for Lucía is for when she narrates; the roles
+are fixed (she opens, he narrates) until the owner says otherwise.
+
+**Cuts.** Each take opens and closes with a still, silent second; the
+timeline cuts it at its speech (`media.speech_bounds`) and runs the next beat
+after 0.06 s, so the takes follow each other like one conversation instead
+of a face that freezes between lines.
+
+**Music.** Jazz and lounge only (`sources.ELEGANT_MUSIC_PAGES`, Mixkit), at
+`media.BED_VOLUME` 0.06 under the voices, ducked further while anyone speaks.
+
+Cost per short: setting ~$0.07 + Lucía ~$0.55 (her three takes on
+2026-10-12: $0.24, $0.14, $0.17) ≈ $0.6, inside the $1 per short. QA accepts the
+silence of Martín's turn (`qa.check_master(quiet=...)`).
+
+Framing: `presenter.FACE_Y` is where each photo's face is (Martín's loop),
+and `SETTING_FACE_Y` where the setting prompt puts Lucía's; the zoom and the
+bubble centre on them.
 
 ## 4. Avatars (Google Flow: Martín, Lucía)
 

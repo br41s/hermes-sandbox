@@ -8,21 +8,22 @@ import {Karaoke} from './components/Karaoke';
 import {CtaScene, HookScene} from './components/Scenes';
 import './fonts';
 
-// The tip format (package.py, "format": "tip"). The voice track is the
-// presenter's one neural voice from the first word to the last. On camera
-// (opener joke, hook, CTA) the presenter is full-frame in a setting built for
-// the article, each beat a stretch of one lip-synced clip (clipFrom) with its
-// own zoom, like a cut between cameras. During the cards the presenter sits in
-// a bubble playing a loop recorded once (look, point at the card, look back).
-// The outro is an animated card: the full article on the site, follow us.
-// Without the clip (no key, budget, failure) the same beats run as cards.
+// The tip format (package.py, "format": "tip"), two presenters. Lucía opens
+// full-frame in a setting built for the article, Martín at work behind her:
+// the joke, the hook and the line that hands him the word, one take each with
+// its own zoom, like a cut between cameras. The camera pushes in on Martín
+// in the still setting (reaction), then he narrates the cards and the CTA
+// from a bubble that plays a loop of him recorded once by the owner (look,
+// point at the card, look back). The outro is an
+// animated card: the full article on the site, follow us. Without a take (no
+// key, budget, failure) the same beats run as cards.
 
 const W = 1080;
 const H = 1920;
 const CARD_TOP = SAFE.top + 150;
 const CARD_BOTTOM = 1000;
 const BUBBLE = {size: 300, right: 56, top: 1010};
-const BUBBLE_VIDEO = 0.55;     // the loop's scale inside the bubble
+const BUBBLE_VIDEO = 0.55;     // the loop's default scale inside the bubble (presenter.LOOP_FRAMING overrides)
 const ZOOMS = [1.0, 1.16, 1.07];
 
 const COPY = {
@@ -243,13 +244,13 @@ const Icon: React.FC<{kind: 'save' | 'share'; color: string}> = ({kind, color}) 
 );
 
 /** The CTA: save it, share it, where the full guide is. */
-const SaveShareOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number; lang: 'en' | 'es'; brand: string}> = ({beat, pal, faceY, lang, brand}) => {
+const SaveShareOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number; lang: 'en' | 'es'; brand: string; top?: number}> = ({beat, pal, faceY, lang, brand, top}) => {
   const frame = useCurrentFrame();
   const copy = COPY[lang];
   const enter = useEnter(3);
   const chips: Array<['save' | 'share', string]> = [['save', copy.save], ['share', copy.share]];
   return (
-    <div style={{position: 'absolute', top: overTop(faceY), left: SAFE.left, right: W - SAFE.right, fontFamily: FONT, opacity: enter}}>
+    <div style={{position: 'absolute', top: top ?? overTop(faceY), left: SAFE.left, right: W - SAFE.right, fontFamily: FONT, opacity: enter}}>
       <div style={{background: `${pal.bg}E0`, borderRadius: 30, padding: '28px 34px 32px', transform: `translateY(${(1 - enter) * 40}px)`}}>
         <KeyText text={beat.onscreen ?? ''} pal={pal} size={fit(beat.onscreen ?? '', 62)} delay={4} sweepAt={14} />
         <div style={{display: 'flex', gap: 18, marginTop: 26}}>
@@ -277,9 +278,20 @@ const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palett
   return (
     <AbsoluteFill>
       <AbsoluteFill style={{transform: `scale(${zoom})`, transformOrigin: `50% ${faceY * 100}%`}}>
-        <OffthreadVideo src={staticFile(src)} startFrom={beat.clipFrom ?? 0} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+        <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
       </AbsoluteFill>
       <AbsoluteFill style={{background: `linear-gradient(180deg, ${pal.bg}99 0%, transparent 16%, transparent 46%, ${pal.bg}40 62%, ${pal.bg}D9 100%)`}} />
+    </AbsoluteFill>
+  );
+};
+
+/** Martín's turn: Lucía's last frame, a quick push-in towards him behind her. */
+const StillPush: React.FC<{src: string; beat: Beat}> = ({src, beat}) => {
+  const frame = useCurrentFrame();
+  const t = interpolate(frame, [0, Math.max(beat.duration, 1)], [0, 1], {extrapolateRight: 'clamp', easing: ease});
+  return (
+    <AbsoluteFill style={{transform: `scale(${1 + 0.3 * t})`, transformOrigin: '50% 40%', filter: `blur(${2.5 * t}px)`}}>
+      <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
     </AbsoluteFill>
   );
 };
@@ -294,13 +306,15 @@ const NameTag: React.FC<{name: string; brand: string; pal: Palette; faceY: numbe
   );
 };
 
-/** The presenter during a card: the loop recorded once per presenter, or their photo. */
-const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string | null; pal: Palette; faceY: number; name?: string}> = ({loop, loopFrames, photo, pal, faceY, name}) => {
+/** The narrator during a card: the loop recorded once per presenter, or their photo. */
+const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string | null; pal: Palette; faceY: number; name?: string; scale?: number | null; centerX?: number | null}> = ({loop, loopFrames, photo, pal, faceY, name, scale, centerX}) => {
   const frame = useCurrentFrame();
   const pop = useEnter(2);
-  const vw = W * BUBBLE_VIDEO;
-  const vh = H * BUBBLE_VIDEO;
-  const media = {position: 'absolute' as const, left: BUBBLE.size / 2 - vw / 2, top: BUBBLE.size / 2 - faceY * vh, width: vw, height: vh};
+  const k = loop && scale ? scale : BUBBLE_VIDEO;
+  const vw = W * k;
+  const vh = H * k;
+  const cx = loop && centerX ? centerX : 0.5;
+  const media = {position: 'absolute' as const, left: BUBBLE.size / 2 - cx * vw, top: BUBBLE.size / 2 - faceY * vh, width: vw, height: vh};
   const bob = loop ? 0 : Math.sin(frame / 12) * 4;
   return (
     <>
@@ -367,8 +381,13 @@ export const TipShort: React.FC<ShortProps> = (props) => {
   const pal = palette(props.palette);
   const seed = `${props.palette}-${props.motif}-tip`;
   const faceY = props.faceY ?? 0.25;
-  const clip = props.presenterClip ?? null;
   const lang = props.lang;
+  const host = props.presenterName ?? '';
+  const partner = props.partnerName ?? host;
+  const bubble = (
+    <Bubble loop={props.bubbleLoop} loopFrames={props.bubbleLoopFrames ?? 0} photo={props.partnerPhoto ?? props.presenterPhoto}
+            pal={pal} faceY={props.loopFaceY ?? faceY} name={partner} scale={props.loopScale} centerX={props.loopX} />
+  );
   let onCamera = -1;
   return (
     <AbsoluteFill style={{backgroundColor: pal.bg}}>
@@ -377,30 +396,47 @@ export const TipShort: React.FC<ShortProps> = (props) => {
         let scene: React.ReactNode;
         if (beat.kind === 'outro') {
           scene = <OutroCard beat={beat} pal={pal} lang={lang} brand={props.brand} />;
-        } else if (beat.show === 'presenter' && clip && beat.presenter) {
+        } else if (beat.kind === 'reaction') {
+          scene = beat.presenter ? (
+            <>
+              <PresenterShot src={beat.presenter} beat={beat} nth={0} pal={pal} faceY={0.4} />
+              <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
+            </>
+          ) : (beat.still ?? props.presenterPhoto) ? (
+            <>
+              <StillPush src={(beat.still ?? props.presenterPhoto) as string} beat={beat} />
+              <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
+            </>
+          ) : null;
+        } else if (beat.show === 'presenter' && beat.presenter) {
           onCamera += 1;
           scene = (
             <>
-              <PresenterShot src={clip} beat={beat} nth={onCamera} pal={pal} faceY={faceY} />
+              <PresenterShot src={beat.presenter} beat={beat} nth={onCamera} pal={pal} faceY={faceY} />
               {beat.kind === 'hook' ? <HookOverlay beat={beat} pal={pal} faceY={faceY} />
-                : beat.kind === 'cta' ? <SaveShareOverlay beat={beat} pal={pal} faceY={faceY} lang={lang} brand={props.brand.site} />
-                : beat.kind === 'opener' ? <NameTag name={props.presenterName ?? ''} brand={props.brand.site} pal={pal} faceY={faceY} />
+                : beat.kind === 'opener' ? <NameTag name={host} brand={props.brand.site} pal={pal} faceY={faceY} />
+                : beat.kind === 'handoff' ? null
                 : <LowerThird beat={beat} pal={pal} faceY={faceY} />}
             </>
           );
         } else if (beat.kind === 'hook') {
           scene = <HookScene beat={beat} pal={pal} />;
         } else if (beat.kind === 'cta') {
-          scene = <CtaScene beat={beat} pal={pal} brand={props.brand.site} />;
+          // Martín asks for the save or the share, from his bubble.
+          scene = (
+            <>
+              <SaveShareOverlay beat={beat} pal={pal} faceY={faceY} lang={lang} brand={props.brand.site} top={CARD_TOP + 120} />
+              {bubble}
+            </>
+          );
         } else {
-          // Cards, and the opener's joke when nobody is on camera.
-          const card = beat.kind === 'opener' ? {...beat, kind: 'point' as const, onscreen: beat.onscreen ?? ''} : beat;
+          // Martín's cards; Lucía's lines become cards when her take is missing.
+          const hers = beat.kind === 'opener' || beat.kind === 'handoff';
+          const card = hers ? {...beat, kind: 'point' as const, onscreen: beat.onscreen ?? ''} : beat;
           scene = (
             <>
               <Card beat={card} pal={pal} lang={lang} />
-              {beat.kind !== 'opener' ? (
-                <Bubble loop={props.bubbleLoop} loopFrames={props.bubbleLoopFrames ?? 0} photo={props.presenterPhoto} pal={pal} faceY={props.loopFaceY ?? faceY} name={props.presenterName} />
-              ) : null}
+              {hers ? null : bubble}
             </>
           );
         }

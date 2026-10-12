@@ -22,6 +22,7 @@ MAX_TRUE_PEAK = -0.5
 FREEZE_MAX = 2.0         # seconds of identical frames that count as a freeze
 BLACK_MAX = 0.4
 SILENCE_MAX = 1.6        # a longer gap reads as a dropout
+QUIET_MARGIN = 1.0       # the takes' own pauses around a quiet beat
 
 
 def _intervals(stderr: str, start_key: str, end_key: str,
@@ -70,7 +71,11 @@ def _loudness(stderr: str) -> Dict[str, float]:
 
 
 def check_master(path: Path, *, expected_seconds: float | None = None,
-                 target: tuple = (TARGET_MIN, TARGET_MAX)) -> Dict[str, Any]:
+                 target: tuple = (TARGET_MIN, TARGET_MAX),
+                 quiet: List[tuple] = ()) -> Dict[str, Any]:
+    """QA of the master. ``quiet`` lists (start, end) seconds meant to have no
+    words (the tip format's nod); a silence inside one, give or take a breath
+    on each side, is not an error."""
     errors: List[str] = []
     warnings: List[str] = []
     info = media.probe(path)
@@ -124,8 +129,9 @@ def check_master(path: Path, *, expected_seconds: float | None = None,
         if b["length"] > BLACK_MAX:
             errors.append(f"black frames for {b['length']:.1f}s at {b['start']:.1f}s")
     for s in silences:
-        # The CTA's closing tail is allowed to breathe.
-        if s["length"] > SILENCE_MAX and s["end"] < seconds - 0.3:
+        # The CTA's closing tail is allowed to breathe, and so is a quiet beat.
+        planned = any(s["start"] >= a - QUIET_MARGIN and s["end"] <= b + QUIET_MARGIN for a, b in quiet)
+        if s["length"] > SILENCE_MAX and s["end"] < seconds - 0.3 and not planned:
             errors.append(f"{s['length']:.1f}s of silence at {s['start']:.1f}s")
 
     return {
