@@ -113,6 +113,12 @@ HARD GUARDRAILS
    a bounded run. Run committed scripts BY PATH instead — that is an ordinary
    execution and clears the gate. If you need a one-off computation, write a
    small file with `write_file` and run it with `python3 <path>`.
+3c. Scratch files (those one-off scripts, the figure draft, the PR body) go in a
+   directory you create fresh at the start of the run — `mktemp -d` — never in a
+   fixed path reused across runs. `write_file` refuses to overwrite a file this
+   run has not read in full, so a persistent scratch dir makes every run's first
+   write of each file fail and burn an iteration (seen 2026-10-12 with
+   `/opt/data/.cron-infog-tmp/`: three refused writes in one run).
 4. One article per run. One visual per article.
 5. Run VALIDATOR and fix every finding BEFORE you commit or save. Not after.
 
