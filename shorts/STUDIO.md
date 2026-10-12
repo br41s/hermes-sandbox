@@ -311,6 +311,15 @@ What a tip short is, in order:
    card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
    reads them as a jump in pitch, and it sounded overexcited.
 
+**Martín's voice goes through Azure Speech** (official REST, the same neural
+voices) when `SHORTS_AZURE_SPEECH_KEY` (Actions secret) and
+`SHORTS_AZURE_SPEECH_REGION` (repo variable, e.g. `westeurope`) are set;
+the free F0 tier gives 500k characters a month, about 300 per short. Edge TTS
+stays as the fallback: Microsoft changed the Edge endpoint's anti-abuse
+token on 2026-10-10/12 and edge-tts 7.2.8 got a 403 on nearly every call
+(edge-tts issue #490). Every free line is voiced before anything is paid
+(`build.prevoice`), so a voice outage costs nothing.
+
 **Voices.** Lucía speaks with her HeyGen voice (`presenter.HOST_VOICES`,
 chosen by the owner: es `ec971490…` (the first, `a78e0a4d…`, sounded too
 young on the avatar), en `47aff89a…`; override with

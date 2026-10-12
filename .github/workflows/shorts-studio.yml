@@ -57,6 +57,10 @@ jobs:
       REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}', matrix.sample) }}
       PACKAGE_B64: ${{ inputs.package }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      # Official Azure Speech for the narrator's neural voice; Edge is the
+      # fallback (its endpoint has answered 403 since 2026-10-12).
+      SHORTS_AZURE_SPEECH_KEY: ${{ secrets.SHORTS_AZURE_SPEECH_KEY }}
+      SHORTS_AZURE_SPEECH_REGION: ${{ vars.SHORTS_AZURE_SPEECH_REGION || '' }}
       # Paid generated scenes and presenter clips (plugins/shorts/studio/genvideo.py,
       # presenter.py), one budget per short and per day. A dedicated key
       # with its own daily limit on openrouter.ai, and only on a real dispatch:

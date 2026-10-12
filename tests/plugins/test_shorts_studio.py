@@ -1337,3 +1337,39 @@ def test_edge_is_retried_for_over_a_minute(monkeypatch, tmp_path):
     with pytest.raises(voice_mod.VoiceError, match="403"):
         voice_mod.synthesize("hola", "es-ES-AlvaroNeural", "+0%", tmp_path / "a.mp3")
     assert len(calls) == len(voice_mod.BACKOFF_S) + 1 and sum(waits) >= 60
+
+
+def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(monkeypatch, tmp_path):
+    import httpx
+
+    from plugins.shorts.studio import media
+    from plugins.shorts.studio import voice as voice_mod
+
+    sent = []
+
+    class Resp:
+        def __init__(self, code, content=b"ID3 mp3"):
+            self.status_code, self.content, self.text = code, content, "denied"
+
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
+    monkeypatch.setattr(media, "duration", lambda p: 2.0)
+    monkeypatch.setattr(httpx, "post", lambda url, content, timeout, headers: sent.append((url, content, headers)) or Resp(200))
+    words = voice_mod.synthesize("Elige una tarea & mide", "es-ES-AlvaroNeural", "+5%", tmp_path / "a.mp3")
+    url, ssml, headers = sent[0]
+    assert url == "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
+    assert b"es-ES-AlvaroNeural" in ssml and b"&amp; mide" in ssml and b"rate='+5%'" in ssml
+    assert headers["Ocp-Apim-Subscription-Key"] == "az-key" and len(words) == 5
+
+    # Azure refuses: Edge is asked.
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: Resp(401, b""))
+    edge = []
+
+    async def fake_edge(text, v, rate, mp3):
+        edge.append(v)
+        mp3.write_bytes(b"x")
+        return [{"text": "hola", "start": 0.0, "end": 0.5}]
+
+    monkeypatch.setattr(voice_mod, "_edge_stream", fake_edge)
+    assert voice_mod.synthesize("hola", "es-ES-AlvaroNeural", "+0%", tmp_path / "b.mp3")[0]["text"] == "hola"
+    assert edge == ["es-ES-AlvaroNeural"]

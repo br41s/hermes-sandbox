@@ -6,16 +6,25 @@ checklist read word timings back out of ``--write-subtitles`` .vtt files;
 edge-tts 7.x writes sentence-level cues there by default, so that path
 silently degraded to one highlight per sentence.)
 
-Beats with no TTS timing — avatar clips, or the offline ``fake`` voice used
-in tests — get their words spread evenly across the speech, which is close
-enough for a line of a few seconds.
+Since 2026-10-12 the official Azure Speech REST API comes first when
+``SHORTS_AZURE_SPEECH_KEY`` and ``SHORTS_AZURE_SPEECH_REGION`` are set: the
+same neural voices (Álvaro, Elvira...) with a key, because Microsoft changed
+the Edge endpoint's anti-abuse token that weekend and edge-tts 7.2.8, the
+latest, got a 403 on nearly every request. Edge stays as the fallback. The
+REST call returns no word timings, so its words are spread evenly.
+
+Beats with no TTS timing — avatar clips, Azure, or the offline ``fake``
+voice used in tests — get their words spread evenly across the speech,
+which is close enough for a line of a few seconds.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
+from xml.sax.saxutils import escape
 from pathlib import Path
 from typing import Dict, List
 
@@ -28,6 +37,33 @@ Word = Dict[str, float | str]  # {"text", "start", "end"} in seconds, beat-relat
 
 class VoiceError(RuntimeError):
     pass
+
+
+AZURE_TTS = "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+
+
+def _azure_config():
+    key = (os.environ.get("SHORTS_AZURE_SPEECH_KEY") or "").strip()
+    region = (os.environ.get("SHORTS_AZURE_SPEECH_REGION") or "").strip()
+    return (key, region) if key and re.fullmatch(r"[a-z0-9]{3,30}", region) else None
+
+
+def _azure(text: str, voice: str, rate: str, mp3: Path, key: str, region: str) -> None:
+    """One request to Azure Speech; the key goes to its own host only."""
+    import httpx
+
+    lang = "-".join(voice.split("-")[:2])
+    ssml = (f"<speak version='1.0' xml:lang='{escape(lang)}'><voice name='{escape(voice)}'>"
+            f"<prosody rate='{escape(rate or '+0%')}'>{escape(text)}</prosody></voice></speak>")
+    resp = httpx.post(AZURE_TTS.format(region=region), content=ssml.encode("utf-8"), timeout=60.0, headers={
+        "Ocp-Apim-Subscription-Key": key,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-24khz-96kbitrate-mono-mp3",
+        "User-Agent": "biglobster-shorts-studio",
+    })
+    if resp.status_code != 200 or not resp.content:
+        raise VoiceError(f"Azure Speech: HTTP {resp.status_code} {resp.text[:200]}")
+    mp3.write_bytes(resp.content)
 
 
 async def _edge_stream(text: str, voice: str, rate: str, mp3: Path) -> List[Word]:
@@ -56,6 +92,13 @@ BACKOFF_S = (3, 6, 12, 20, 30)
 
 def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = len(BACKOFF_S) + 1) -> List[Word]:
     """Speak ``text`` into ``mp3``; return its words with beat-relative times."""
+    azure = _azure_config()
+    if azure:
+        try:
+            _azure(text, voice, rate, mp3, *azure)
+            return spread_words(text, media.duration(mp3))
+        except Exception as exc:  # Edge may still answer
+            print(f"[studio] voice: Azure failed ({exc}); trying Edge", flush=True)
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
