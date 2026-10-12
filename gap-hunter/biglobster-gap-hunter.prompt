@@ -152,16 +152,51 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
   la persona la mira a ella, no a nosotros. Una pantalla encarada al espectador
   como si posara para la foto es la señal más obvia de imagen generada por IA y
   se rechaza.
-- **Cada cover debe ser visiblemente distinta de las anteriores.** Antes de
-  generar, mira 2-3 artículos recientes (`ls web/assets/blog/covers/`) y elige
-  una combinación que NO se repita: entorno (oficina ↔ almacén ↔ tienda ↔
-  exterior ↔ sala de reuniones ↔ mesa de coworking), actividad concreta
-  (mirando una tablet, en videollamada, revisando papeles, de pie ante una
-  pizarra, caminando por un pasillo), encuadre de cámara (plano medio, plano
-  general, ángulo alto/bajo) y luz (natural de día, interior de oficina,
-  atardecer). La escena sale del CONTENIDO del artículo (qué proceso o sector
-  describe), no de una fórmula genérica repetida artículo tras artículo.
-- **Prompt de ejemplo para image_generate**: "Photorealistic photo of [escena y actividad específica inspirada en el tema del artículo], [entorno concreto], [hora/luz], camera angle: [encuadre], people looking at their own [device] not at camera, screen turned away from viewer, subtle blue-cyan holographic AI interface elements floating in the air, 16:9 landscape, high quality, web-optimized"
+- **La escena sale de los rasgos diferenciadores DEL ARTÍCULO, no de una fórmula.**
+  Antes de escribir el prompt de la cover, extrae del artículo y anota tres cosas:
+  1. **Objeto o lugar propio del tema**, que tiene que verse en el encuadre: la
+     caja de Amazon con su etiqueta, el móvil con una conversación de WhatsApp de
+     espaldas, la factura impresa de Atlassian, el nombre `.com` rotulado en el
+     escaparate, la furgoneta de reparto, la cocina del restaurante, el banco del
+     taller. Si el objeto vale para cualquier otro artículo (portátil, tablet,
+     papeles genéricos), no vale.
+  2. **El momento concreto que cuenta el artículo**: descubrir una subida de
+     precio, decidir entre contratar o automatizar, migrar antes de un cierre,
+     revisar un pedido devuelto. La escena muestra ESE momento, con la tensión o
+     el alivio que conlleva, no "gente trabajando".
+  3. **Quién lo vive**: sector y rol de la pyme protagonista (dueña de una
+     floristería, jefe de obra, gestora de una clínica dental), con su ropa, su
+     local y su edad reales. Varía edad y aspecto entre artículos: no siempre dos
+     profesionales de 35-45 con camisa; también 25 o 60 años, mono de trabajo,
+     delantal, chaleco reflectante.
+  El prompt se escribe a partir de esas tres notas. Prueba: si la frase que
+  describe la escena sirve para otro artículo del blog, no está lista.
+- **Rompe los invariantes que hacen que todas las covers parezcan la misma:**
+  - Hologramas azul-cian: **opcionales y excepcionales**. Como máximo 1 de cada
+    3 covers, y solo cuando la IA es el protagonista del artículo. Por defecto,
+    ninguno: la foto es una foto.
+  - Composición: no siempre dos personas de medio cuerpo, una junto a otra,
+    mirando un papel. Alterna plano general con el local entero y las personas
+    pequeñas en él, primer plano de manos y objeto con las personas desenfocadas
+    detrás, vista desde la puerta o a través de un cristal, desde atrás por
+    encima del hombro, ángulo alto desde una estantería.
+  - Luz y lugar: exterior y calle también cuentan (puerta de la tienda, muelle
+    de carga, terraza, furgoneta, obra); amanecer, fluorescente de almacén, luz
+    de escaparate de noche, no solo oficina de día.
+- **Registro de covers** (append-only, una línea por cover generada):
+  `/opt/data/profiles/biglobster/gaphunter/cover-ledger.md`, formato
+  `YYYY-MM-DD | slug | entorno | objeto-clave | momento | encuadre | luz | hologramas:sí/no`.
+  Léelo antes de generar: ni el entorno, ni el encuadre, ni el objeto-clave
+  pueden repetir ninguno de los últimos 8. Si no existe, créalo tú (mismo motivo
+  que el libro de registro: con tu usuario, nunca root).
+- **Prompt de ejemplo para image_generate** (el de un artículo sobre la subida
+  del `.com`; el tuyo sale de TUS tres notas, no de este): "Photorealistic photo:
+  a 58-year-old florist in a green apron and her twenty-something nephew at the
+  counter of a small flower shop at closing time, shop window lettering
+  'floresmarta.com' visible in reverse, she holds a printed domain renewal
+  notice, he looks at a phone turned away from camera; wide shot from the
+  doorway, evening street light coming in, no holograms, no screens facing
+  camera, 16:9 landscape, high quality"
 
 #### Infografía del artículo
 - Genera con image_generate (datos visuales del tema, estilo oscuro con acentos #B8391C y #D4622A)
@@ -211,7 +246,7 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía)
 - [ ] La cover tiene mínimo 2 personas de ambos géneros
 - [ ] Ninguna pantalla de dispositivo mira directamente a cámara (de perfil/ángulo/espaldas)
-- [ ] La escena de la cover (entorno, actividad, encuadre) es distinta a la de los últimos artículos y está inspirada en el contenido de este artículo
+- [ ] La cover muestra un objeto o lugar propio de ESTE artículo y el momento que cuenta; su línea está en cover-ledger.md y no repite entorno, encuadre ni objeto-clave de las últimas 8
 - [ ] article-body container (no max-width custom)
 - [ ] No hay CSS inline en style (solo referencias a archivos)
 - [ ] article-cta con link a contact.html
