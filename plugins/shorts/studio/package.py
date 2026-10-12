@@ -298,8 +298,12 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         problems.append(f"lang: must be one of {sorted(DEFAULT_VOICES)}, got {lang!r}")
     pkg["lang"] = lang
     voice = _text(raw.get("voice")) or DEFAULT_VOICES.get(lang, "")
-    if voice and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z]+Neural", voice):
-        problems.append(f"voice: not an Edge neural voice name: {voice!r}")
+    # A neural voice name, standard ("es-ES-AlvaroNeural") or Azure HD
+    # ("es-ES-Tristan:DragonHDLatestNeural", what TIP_VOICES forces for
+    # Spanish). The renderer validates the package Hermes already normalised,
+    # forced voice included, so whatever this function writes it must accept.
+    if voice and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}-[A-Za-z]+(:[A-Za-z]+)?Neural", voice):
+        problems.append(f"voice: not a neural voice name: {voice!r}")
     if voice and lang and not voice.lower().startswith(lang + "-"):
         problems.append(f"voice: {voice!r} does not speak lang {lang!r}")
     pkg["voice"] = voice

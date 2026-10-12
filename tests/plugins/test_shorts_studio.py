@@ -1375,3 +1375,16 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
     monkeypatch.setattr(voice_mod, "_edge_stream", fake_edge)
     assert voice_mod.synthesize("hola", "es-ES-Tristan:DragonHDLatestNeural", "+0%", tmp_path / "b.mp3")[0]["text"] == "hola"
     assert edge == ["es-ES-AlvaroNeural"]                 # Edge has no HD voices
+
+
+def test_a_normalised_tip_package_validates_again_in_the_renderer(tip):
+    # Hermes submits the package validate_package returned, forced voice
+    # included; the renderer validates it again. The first production run with
+    # the HD voice died there (2026-10-12): the check only knew "…Neural".
+    once = pkg_mod.validate_package(tip)
+    assert ":" in once["voice"]
+    twice = pkg_mod.validate_package(json.loads(json.dumps(once)))
+    assert twice["voice"] == once["voice"] and twice["opener"] == once["opener"]
+    tip["voice"] = "es-ES-Bad Voice"
+    with pytest.raises(pkg_mod.PackageError, match="not a neural voice name"):
+        pkg_mod.validate_package(tip)
