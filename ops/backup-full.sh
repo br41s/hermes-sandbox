@@ -10,10 +10,11 @@
 # Run by Hermes cron (no_agent). Silent on full success; emits ALERT on failure.
 set -uo pipefail
 export HERMES_HOME=/opt/data
-HERMES=/opt/hermes/bin/hermes
-OUTDIR=/opt/data/backups
-RCLONE=/opt/data/scripts/bin/rclone
-RCLONE_CONF=/opt/data/.config/rclone/rclone.conf
+# Paths default to the production ones; BACKUP_* overrides exist for tests only.
+HERMES="${BACKUP_HERMES:-/opt/hermes/bin/hermes}"
+OUTDIR="${BACKUP_OUTDIR:-/opt/data/backups}"
+RCLONE="${BACKUP_RCLONE:-/opt/data/scripts/bin/rclone}"
+RCLONE_CONF="${BACKUP_RCLONE_CONF:-/opt/data/.config/rclone/rclone.conf}"
 DRIVE_REMOTE=hermesdrive:/HermesBackups
 KEEP=7
 mkdir -p "$OUTDIR"
@@ -55,7 +56,21 @@ fi
 DRIVE_STATUS=OK
 if [ -x "$RCLONE" ] && [ -f "$RCLONE_CONF" ]; then
   NEWEST="${ALL[0]:-}"   # ls -1t => newest first
-  if [ -n "$NEWEST" ]; then
+  if [ ! -r "$RCLONE_CONF" ]; then
+    # rclone rewrites its config on every OAuth token refresh, so one run as root
+    # leaves it root:hermes 0600 and this script (user hermes) cannot read it.
+    # 2026-10-08..11: 4 nights lost to "Failed to load config file ... permission
+    # denied". Say so in the log the DRIVE SYNC FAILED alert tails, with the fix.
+    {
+      echo "rclone config is not readable by $(id -un): $RCLONE_CONF"
+      echo "current owner/mode: $(ls -l "$RCLONE_CONF")"
+      echo "Fix (run as root): chown hermes:hermes $RCLONE_CONF"
+      echo "Cause: rclone was run as root and rewrote the file on a token refresh."
+      echo "Run rclone via PATH (the /opt/hermes/bin/rclone shim drops root to hermes),"
+      echo "never as root by full path /opt/data/scripts/bin/rclone."
+    } >"$OUTDIR/last-drive-sync.log" 2>&1
+    DRIVE_STATUS=FAIL
+  elif [ -n "$NEWEST" ]; then
     if ! "$RCLONE" --config "$RCLONE_CONF" copy "$NEWEST" "$DRIVE_REMOTE/" \
          --immutable --drive-chunk-size 64M --transfers 1 \
          >"$OUTDIR/last-drive-sync.log" 2>&1; then
