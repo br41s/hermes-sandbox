@@ -542,11 +542,15 @@ class TestImageApiSurface:
         assert "messages" not in payload and "modalities" not in payload
         assert result["endpoint"] == "images/generations"
 
-    def test_image_api_404_keeps_openrouter_reason(self):
+    def test_image_api_404_keeps_openrouter_reason(self, monkeypatch):
         """A 404 is not always a missing id: with ZDR on, meta/muse-image existed and
         still 404ed ("0 endpoints ... ZDR violation (guardrail)"). Dropping the upstream
-        text sent the Gap Hunter after a modality bug that was not there (2026-10-12)."""
+        text sent the Gap Hunter after a modality bug that was not there (2026-10-12).
+        The id is not curated, so pin the surface: offline, the catalog probe fails and
+        the call would fall back to chat-completions instead."""
         import requests as req_lib
+
+        monkeypatch.setenv("OPENROUTER_IMAGE_API_SURFACE", "images")
 
         reason = ("0 endpoints out of 1 requested are available matching your guardrail "
                   "restrictions and data policy. ZDR violation (guardrail): 1 endpoint excluded")
@@ -557,6 +561,7 @@ class TestImageApiSurface:
         resp.raise_for_status.side_effect = req_lib.HTTPError(response=resp)
 
         with patch(_RUNTIME, return_value=_runtime_ok()), \
+             patch("requests.get", side_effect=AssertionError("must not probe")), \
              patch("requests.post", return_value=resp):
             result = _openrouter_image_api().generate(
                 prompt="a cover", aspect_ratio="square", model="meta/muse-image"
