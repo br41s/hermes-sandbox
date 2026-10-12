@@ -11,9 +11,10 @@ import './fonts';
 // The tip format (package.py, "format": "tip"), two presenters. Lucía opens
 // full-frame in a setting built for the article, Martín at work behind her:
 // the joke, the hook and the line that hands him the word, one take each with
-// its own zoom, like a cut between cameras. Martín nods (reaction), then
-// narrates the cards and the CTA from a bubble that plays a loop of him
-// recorded once (look, point at the card, look back). The outro is an
+// its own zoom, like a cut between cameras. The camera pushes in on Martín
+// in the still setting (reaction), then he narrates the cards and the CTA
+// from a bubble that plays a loop of him recorded once by the owner (look,
+// point at the card, look back). The outro is an
 // animated card: the full article on the site, follow us. Without a take (no
 // key, budget, failure) the same beats run as cards.
 
@@ -284,12 +285,12 @@ const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palett
   );
 };
 
-/** Martín's nod without its clip: the setting, pushing in on him. */
+/** Martín's turn: the still setting, pushing in towards him. */
 const StillPush: React.FC<{src: string; beat: Beat}> = ({src, beat}) => {
   const frame = useCurrentFrame();
   const t = interpolate(frame, [0, Math.max(beat.duration, 1)], [0, 1], {extrapolateRight: 'clamp', easing: ease});
   return (
-    <AbsoluteFill style={{transform: `scale(${1 + 0.35 * t})`, transformOrigin: '75% 40%'}}>
+    <AbsoluteFill style={{transform: `scale(${1 + 0.18 * t})`, transformOrigin: '50% 45%'}}>
       <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} />
     </AbsoluteFill>
   );
@@ -399,7 +400,12 @@ export const TipShort: React.FC<ShortProps> = (props) => {
               <PresenterShot src={beat.presenter} beat={beat} nth={0} pal={pal} faceY={0.4} />
               <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
             </>
-          ) : props.presenterPhoto ? <StillPush src={props.presenterPhoto} beat={beat} /> : null;
+          ) : props.presenterPhoto ? (
+            <>
+              <StillPush src={props.presenterPhoto} beat={beat} />
+              <NameTag name={partner} brand={props.brand.site} pal={pal} faceY={0.4} />
+            </>
+          ) : null;
         } else if (beat.show === 'presenter' && beat.presenter) {
           onCamera += 1;
           scene = (

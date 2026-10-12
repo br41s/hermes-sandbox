@@ -208,15 +208,15 @@ OUTRO_VO = {
     "es": "Tienes el artículo completo en biglobster punto top. ¡Y síguenos para más consejos!",
     "en": "The full article is on biglobster dot top. And follow us for more tips!",
 }
-REACTION_SECONDS = 1.6   # Martín looks up, smiles and nods; then the cards
+REACTION_SECONDS = 1.6   # the camera pushes in on Martín; then his cards
 
 
 def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The tip short as rendered.
 
     Lucía on camera (``show`` "presenter"): the opener joke, the hook, the
-    handoff. Then Martín's nod (``show`` "reaction", no words), his cards and
-    CTA, and the outro. Lucía's beats carry her fallback voice, used only when
+    handoff. Then the camera pushes in on Martín (``show`` "reaction", no
+    words), his cards and CTA, and the outro. Lucía's beats carry her fallback voice, used only when
     her take was not made (a render with no key).
     """
     opener = pkg.get("opener") or {}
@@ -258,22 +258,23 @@ def presenter_missing_error(tip: bool, missing: List[int], real_dispatch: bool,
 
 
 def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
-    """Make what the tip short shows: the setting, Lucía's takes, Martín's nod and loop.
+    """Make what the tip short shows: the setting and Lucía's takes; find Martín's loop.
 
     Runs before the timeline: each take carries its own voice, so its length
-    sets its beat's length. Spending order follows what matters: the setting
-    (cents), her takes, the nod, the loop (once per presenter, ever).
+    sets its beat's length. Only the setting (cents) and her takes are paid.
     """
     beats = pkg["beats"]
     tcfg = presenter.tip_config()
     report: Dict[str, Any] = {"model": presenter.config()["model"], "presenter": presenter.HOST[1],
                               "partner": presenter.PARTNER[1], "voice": pkg.get("voice"),
                               "host_voice": tcfg["host_voice"].get(pkg["lang"]), "spent_usd": 0.0, "used": []}
-    out: Dict[str, Any] = {"report": report, "takes": {}, "image": None, "reaction": None, "loop": None}
+    # Martín's turn is free: the still setting pushes in on him (Tip.tsx,
+    # StillPush), and his loop is the owner's recording. A paid nod cost $0.65
+    # (Hailuo 3, 2026-10-12), more than all of Lucía's lines.
+    out: Dict[str, Any] = {"report": report, "takes": {}, "image": None, "loop": presenter.bubble_loop(report)}
     live = not offline and bool(budget["cfg"]["key"])
     if not live:
         report["reason"] = "offline render" if offline else "SHORTS_OPENROUTER_API_KEY is not set"
-        out["loop"] = presenter.bubble_loop(None, budget, work, report)
         return out
 
     import httpx
@@ -288,25 +289,16 @@ def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline
         take_image = image or presenter.PHOTO_DIR / f"{presenter.HOST[0]}.jpg"
         out["takes"] = presenter.host_takes(client, budget, take_image, lines, pkg["lang"],
                                             handoff if image else None, work, report)
-        catalog = presenter.motion_catalog(client, budget["cfg"]["key"])
-        if image is not None and any(b["kind"] == "reaction" for b in beats):
-            out["reaction"] = presenter.motion_clip(client, budget, image, presenter.REACTION_PROMPT,
-                                                    work, "reaction", report, catalog)
-        out["loop"] = presenter.bubble_loop(client, budget, work, report, catalog)
     report["used"] = sorted(out["takes"])
     return out
 
 
 def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], public: Path) -> Dict[str, Any]:
-    """Point the timeline at the nod and copy the stills; returns the props' presenter fields."""
+    """Mark what each beat shows and copy the loop and stills; returns the props' presenter fields."""
     beats = pkg["beats"]
     (public / "presenter").mkdir(parents=True, exist_ok=True)
-    for i, (slot, beat) in enumerate(zip(tl["timeline"], beats)):
+    for slot, beat in zip(tl["timeline"], beats):
         slot["show"] = beat.get("show")
-        if beat["kind"] == "reaction" and cast.get("reaction") is not None:
-            rel = "presenter/reaction.mp4"
-            media.normalize_clip(cast["reaction"], public / rel, slot["duration"] / FPS)
-            slot["presenter"] = rel
     fields: Dict[str, Any] = {"loop": None, "loop_frames": 0, "photo": None, "partner_photo": None}
     loop = cast.get("loop")
     if loop is not None:
@@ -327,8 +319,8 @@ def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], pu
     fields["loop_face_y"] = presenter.FACE_Y.get(presenter.PARTNER[0], 0.25)
     report = cast["report"]
     genvideo._log(f"presenter: Lucía on camera {len(cast['takes'])}/{len(on_camera(beats))} lines"
-                  f"{' in a generated setting' if image else ''}, Martín's nod "
-                  f"{'yes' if cast.get('reaction') else 'no'}, loop {'yes' if loop else 'no'}, "
+                  f"{' in a generated setting' if image else ''}, Martín's loop "
+                  f"{'yes' if loop else 'no (add presenters/assets/martin-loop.mp4)'}, "
                   f"${report['spent_usd']:.2f} spent")
     return fields
 

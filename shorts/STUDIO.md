@@ -296,10 +296,10 @@ What a tip short is, in order:
    first paid test's tray of bread stayed floating in the air).
 2. **Hook**, Lucía on camera, in the same setting.
 3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns to him.
-4. **Martín's nod** (~1.6 s, no words): an image-to-video clip from the
-   setting, pushing in on him as he looks up, smiles and nods
-   (`presenter.motion_clip`, ~$0.10–0.20). Without it the setting still
-   pushes in on him.
+4. **Martín's turn** (~1.6 s, no words): the camera pushes in on the still
+   setting, with his name tag. Free: a generated nod (Hailuo 3) cost $0.65 on
+   2026-10-12, more than all of Lucía's lines, and Seedance and Veo refuse a
+   realistic face outright.
 5. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`).
@@ -327,20 +327,13 @@ dispatch, QA fails the short ("Lucía's take missing"); a render without a key
 (the push smoke test) keeps its card-only fallback, her lines in a free voice
 (`presenter.HOST_FALLBACK_VOICES`).
 
-**Martín's clips** use an image-to-video model on OpenRouter's video API
-(`frame_images`, `first_frame`): `SHORTS_MOTION_VIDEO_MODEL` (comma-separated)
-or `presenter.MOTION_MODELS`, only those that `GET /api/v1/videos/models`
-lists with a first frame (the log prints that list), each refusal free.
-First paid test: Seedance refuses photos that "may contain real person" and
-Veo 3.1 Lite answers 403, so Hailuo 3 goes first.
-Estimated at `SHORTS_MOTION_PRICE_PER_SECOND` (0.04) × 5 s.
-
-**Record once, reuse.** Martín's loop is looked up in
-`shorts/studio/presenters/assets/martin-loop.mp4`, then in the asset cache
-(`~/.cache/shorts-assets`, kept between Actions runs by `actions/cache`), and
-generated only when both miss. Each run uploads the cache as the
-`presenter-assets-*` artifact: commit its files to `presenters/assets/` to
-make them permanent. Use the same pattern for anything else that does not
+**Martín's loop is recorded by the owner, once** (Google Flow, from
+`presenters/martin.jpg`), and committed as
+`shorts/studio/presenters/assets/martin-loop.mp4`: vertical 9:16, same framing
+as the photo (his face at `FACE_Y["martin"]` of the height), silent, 6–8 s,
+first and last frame the same pose so it loops without a jump. The renderer
+never generates it (`presenter.bubble_loop` only looks it up); without it the
+bubble shows his photo. Use the same pattern for anything else that does not
 change between shorts.
 
 **Cuts.** Each take opens and closes with a still, silent second; the
@@ -351,9 +344,9 @@ of a face that freezes between lines.
 **Music.** Jazz and lounge only (`sources.ELEGANT_MUSIC_PAGES`, Mixkit), at
 `media.BED_VOLUME` 0.06 under the voices, ducked further while anyone speaks.
 
-Cost per short: setting ~$0.09 + Lucía ~$0.5–0.65 + nod ~$0.1–0.2 ≈ $0.7–0.95,
-inside the $1 per short (the loop once, ever). QA accepts the
-silence of the nod (`qa.check_master(quiet=...)`).
+Cost per short: setting ~$0.07 + Lucía ~$0.55 (her three takes on
+2026-10-12: $0.24, $0.14, $0.17) ≈ $0.6, inside the $1 per short. QA accepts the
+silence of Martín's turn (`qa.check_master(quiet=...)`).
 
 Framing: `presenter.FACE_Y` is where each photo's face is (Martín's loop),
 and `SETTING_FACE_Y` where the setting prompt puts Lucía's; the zoom and the

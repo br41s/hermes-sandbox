@@ -107,15 +107,6 @@ def silence(dst: Path, seconds: float) -> Path:
     return dst
 
 
-def boomerang(src: Path, dst: Path) -> Path:
-    """The clip forward then backward, without audio: a loop that never jumps."""
-    ffmpeg("-i", str(src), "-filter_complex",
-           "[0:v]split[a][b];[b]reverse[r];[a][r]concat=n=2:v=1:a=0[v]",
-           "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-           "-pix_fmt", "yuv420p", str(dst), what=f"boomerang {src.name}")
-    return dst
-
-
 def concat_wavs(parts: List[Path], dst: Path) -> Path:
     """Sample-exact concatenation of same-format WAVs (re-encoded, never -c copy)."""
     listing = dst.with_suffix(".txt")

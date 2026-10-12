@@ -180,9 +180,9 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
 # Lucía opens on camera in a setting built for the article, with Martín busy
 # in the background: the joke, the hook, and the line that hands him the word.
 # Those takes are Avatar IV with her HeyGen voice, the only part paid by the
-# second. Martín answers with a short nod (a cheap image-to-video clip), then
+# second. The camera then pushes in on Martín in the still setting, and he
 # narrates the cards and the CTA in his free neural voice while a loop of him,
-# recorded once and reused by every short, plays in the bubble.
+# recorded once by the owner, plays in the bubble.
 
 HOST = ("lucia", "Lucía")
 PARTNER = ("martin", "Martín")
@@ -221,20 +221,6 @@ TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm 
 HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "
                   "shoulder at the man working behind her and gestures towards him with an open hand.")
 
-# Martín's silent clips: an image-to-video model from a still. First paid test
-# (2026-10-11): Seedance 2.0 and 2.0 Fast refuse a photo that "may contain
-# real person", Veo 3.1 Lite answers 403 (provider Terms Of Service), and
-# Hailuo 3 made the nod. Kling is the untried fallback.
-MOTION_MODELS = ("minimax/hailuo-3", "minimax/hailuo-2.3", "kwaivgi/kling-v3.0-std")
-MOTION_CATALOG = "https://openrouter.ai/api/v1/videos/models"
-MOTION_SECONDS = 5
-REACTION_PROMPT = ("The camera slowly pushes in on the man working in the background. He looks up "
-                   "from his work towards the woman, smiles warmly and nods twice, as if to say "
-                   "'sure, I will take it from here'. Nobody speaks. Realistic, natural light.")
-LOOP_PROMPT = ("Head and shoulders of this man, silent, mouth closed, friendly smile. He turns his "
-               "head to look up to the left of the frame, points there with his index finger, then "
-               "looks back at the camera and nods slightly. Steady camera, plain background as in "
-               "the photo.")
 # Fraction of the frame height where the woman's face sits in a generated
 # setting (the prompt asks for the upper third).
 SETTING_FACE_Y = 0.3
@@ -245,9 +231,6 @@ def tip_config() -> Dict[str, Any]:
         "setting_models": [m.strip() for m in (os.environ.get("SHORTS_SETTING_IMAGE_MODEL") or "").split(",")
                            if m.strip()] or list(SETTING_MODELS),
         "setting_estimate": genvideo._env_float("SHORTS_SETTING_IMAGE_ESTIMATE_USD", 0.10),
-        "motion_models": [m.strip() for m in (os.environ.get("SHORTS_MOTION_VIDEO_MODEL") or "").split(",")
-                          if m.strip()] or list(MOTION_MODELS),
-        "motion_price_per_s": genvideo._env_float("SHORTS_MOTION_PRICE_PER_SECOND", 0.04),
         "host_voice": {lang: (os.environ.get(f"SHORTS_HOST_VOICE_{lang.upper()}") or v).strip()
                        for lang, v in HOST_VOICES.items()},
         "asset_dir": Path(os.environ.get("SHORTS_ASSET_DIR")
@@ -377,104 +360,18 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
     return takes
 
 
-def motion_catalog(client, key: str) -> Optional[set]:
-    """The video models that animate a first frame, per OpenRouter; None when it does not say."""
-    try:
-        resp = client.get(MOTION_CATALOG, headers=genvideo._headers(MOTION_CATALOG, key))
-        if resp.status_code != 200:
-            genvideo._log(f"video models: HTTP {resp.status_code}")
-            return None
-        data = resp.json()
-        items = data.get("data") if isinstance(data, dict) else data
-        found = set()
-        for item in items or []:
-            if not isinstance(item, dict):
-                continue
-            frames = (item.get("supported_frame_images")
-                      or (item.get("capabilities") or {}).get("supported_frame_images") or [])
-            if "first_frame" in frames:
-                found.add(str(item.get("id") or item.get("slug") or ""))
-        found.discard("")
-        genvideo._log(f"video models with a first frame: {sorted(found)}")
-        return found or None
-    except Exception as exc:
-        genvideo._log(f"video models: {exc}")
-        return None
+def bubble_loop(report: Dict[str, Any]) -> Optional[Path]:
+    """Martín's loop for the bubble, recorded once by the owner and committed.
 
-
-def motion_clip(client, budget: Dict[str, Any], image: Path, prompt: str, work: Path, name: str,
-                report: Dict[str, Any], catalog: Optional[set]) -> Optional[Path]:
-    """A silent clip that starts on ``image`` and does what ``prompt`` says, or None.
-
-    Tries ``motion_models`` in order (only those the catalog lists, when it
-    lists any); a refused request costs nothing and moves on.
+    Never generated here (owner, 2026-10-12): the image-to-video models that
+    accept a realistic face cost more than the rest of the short, and the loop
+    is the same in every short. ``presenters/assets/martin-loop.mp4`` first,
+    then the asset cache; without either, the bubble shows his photo.
     """
-    tcfg = tip_config()
-    models = [m for m in tcfg["motion_models"] if catalog is None or m in catalog]
-    entry: Dict[str, Any] = {"part": name, "tried": []}
-    report.setdefault("motion", []).append(entry)
-    if not models:
-        entry.update(status="skipped", reason=f"none of {tcfg['motion_models']} animates a first frame")
-        return None
-    estimate = round(MOTION_SECONDS * tcfg["motion_price_per_s"], 4)
-    image_ref = {"type": "image_url", "image_url": {"url": _file_data_url(image)}, "frame_type": "first_frame"}
-    for model in models:
-        why = genvideo.over_budget(budget, estimate)
-        if why:
-            entry.update(status="skipped", reason=why)
-            return None
-        budget["committed"] += estimate
-        job: Dict[str, Any] = {"beat": 0, "estimate": estimate, "seconds": MOTION_SECONDS}
-        body = {"model": model, "prompt": prompt, "duration": MOTION_SECONDS, "aspect_ratio": "9:16",
-                "frame_images": [image_ref]}
-        try:
-            genvideo.submit_body(client, budget["cfg"]["key"], job, body)
-            job["state"] = "pending"
-            genvideo.wait_for(client, budget["cfg"]["key"], [job], time.time() + config()["timeout_s"], work,
-                              prefix=f"motion_{name}")
-        except Exception as exc:
-            job.update(state="failed", reason=str(exc))
-        spent = genvideo.settle(job, budget)
-        report["spent_usd"] = round(report.get("spent_usd", 0.0) + spent, 4)
-        entry["tried"].append({"model": model, "status": job["state"], "cost_usd": round(spent, 4),
-                               **({"reason": job["reason"][:300]} if job.get("reason") else {})})
-        if job["state"] == "generated":
-            entry.update(status="generated", model=model)
-            genvideo._log(f"presenter {name}: {model}, ${spent:.2f} (estimated ${estimate:.2f})")
-            return job["src"]
-        genvideo._log(f"presenter {name} ({model}): {job.get('reason')}")
-    entry["status"] = "failed"
-    return None
-
-
-def bubble_loop(client, budget: Dict[str, Any], work: Path, report: Dict[str, Any],
-                catalog: Optional[set] = None) -> Optional[Path]:
-    """Martín's loop for the bubble: recorded once, then reused by every short.
-
-    Looked up in the repo (``presenters/assets/martin-loop.mp4``), then the
-    asset cache (kept between Actions runs), and generated only when both
-    miss: an image-to-video clip of his photo, played forward then back.
-    """
-    from plugins.shorts.studio import media
-
-    slug = PARTNER[0]
-    name = f"{slug}-loop.mp4"
+    name = f"{PARTNER[0]}-loop.mp4"
     for path in (PHOTO_DIR / "assets" / name, tip_config()["asset_dir"] / name):
         if path.exists() and path.stat().st_size > 0:
             report["loop"] = {"status": "reused", "path": str(path)}
             return path
-    photo = PHOTO_DIR / f"{slug}.jpg"
-    if client is None or not photo.exists():
-        report["loop"] = {"status": "skipped", "reason": "offline or no photo"}
-        return None
-    clip = motion_clip(client, budget, photo, LOOP_PROMPT, work, "loop", report, catalog)
-    if clip is None:
-        reason = report["motion"][-1].get("reason") or "every model refused"
-        report["loop"] = {"status": "failed", "reason": reason}
-        genvideo._log(f"presenter loop: not recorded ({reason}); the bubble shows his photo")
-        return None
-    dest = tip_config()["asset_dir"] / name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    media.boomerang(clip, dest)       # forward then back: loops without a jump
-    report["loop"] = {"status": "generated", "path": str(dest)}
-    return dest
+    report["loop"] = {"status": "missing", "reason": f"add presenters/assets/{name}"}
+    return None
