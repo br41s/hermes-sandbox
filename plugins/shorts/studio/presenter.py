@@ -226,8 +226,9 @@ HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head t
 # height). Martín's (owner's recording, Google Flow, 2026-10-12) is
 # framed like his photo; he looks up to the left, towards the cards, and
 # points up with his hand on the left, so the crop sits left of his face to
-# keep the hand in.
-LOOP_FRAMING = {"martin": {"scale": 0.34, "x": 0.40, "y": 0.24}}
+# keep the hand in. Lucía's (same day) is framed tighter, for when she narrates.
+LOOP_FRAMING = {"martin": {"scale": 0.34, "x": 0.40, "y": 0.24},
+                "lucia": {"scale": 0.30, "x": 0.34, "y": 0.30}}
 
 # Fraction of the frame height where the woman's face sits in a generated
 # setting (the prompt asks for the upper third).

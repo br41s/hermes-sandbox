@@ -332,7 +332,8 @@ dispatch, QA fails the short ("Lucía's take missing"); a render without a key
 **The narrator's loop is recorded by the owner, once** (Google Flow, frames
 to video with the presenter's photo as first and last frame), and committed as
 `shorts/studio/presenters/assets/<slug>-loop.mp4`, without audio. Martín's is
-in (2026-10-12; 8 s, he looks up to the left at the cards and points up).
+in (2026-10-12; 8 s, he looks up to the left at the cards and points up), and
+so is Lucía's (`lucia-loop.mp4`, same gesture, for when she narrates).
 `presenter.LOOP_FRAMING` says how it sits in the bubble (scale, and the point
 centred, left of his face so the pointing hand stays in). The renderer never
 generates a loop (`presenter.bubble_loop` only looks it up); without one the
