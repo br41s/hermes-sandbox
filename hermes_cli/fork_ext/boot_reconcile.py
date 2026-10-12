@@ -181,7 +181,11 @@ PIN_IF_MISSING = {
 # blocker holds.
 ROUTE_NAME_PREFIX = "fork-topic:"
 
-CURATED_OPENROUTER_IMAGE_MODEL = "x-ai/grok-imagine-image-quality"
+# Must keep a Zero-Data-Retention provider: the LLC account enforces ZDR (2026-10-10), and
+# OpenRouter answers 404 "ZDR violation (guardrail)" for any model without one. Seedream 4.5
+# (provider Seed) has it; x-ai/grok-imagine-image-quality and meta/muse-image do not. Check
+# a candidate against GET https://openrouter.ai/api/v1/endpoints/zdr before changing this.
+CURATED_OPENROUTER_IMAGE_MODEL = "bytedance-seed/seedream-4.5"
 AUDITOR_ORCHESTRATOR_DEFAULT = "deepseek/deepseek-v4-flash-0731"
 FALLBACK_MODEL_DEFAULT = "deepseek/deepseek-v4-flash"
 OPENROUTER_REQUEST_TIMEOUT = 600
