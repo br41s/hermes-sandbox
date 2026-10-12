@@ -693,10 +693,15 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
             if status in (401, 403):
                 return _fail(f"{self._display} rejected the API key ({status}): {message}", "auth_error")
             if status == 404:
+                # Keep OpenRouter's own text: a 404 here is as often "0 endpoints ... ZDR
+                # violation (guardrail)" (model exists, no provider passes the account's
+                # data policy) as a missing id, and the two have different fixes.
                 return _fail(
-                    f"Model '{model_id}' does not exist on the OpenRouter Image API "
-                    f"(its catalog is separate from chat-completions — check "
-                    f"GET {base_url}/images/models).",
+                    f"OpenRouter Image API returned 404 for '{model_id}': {message} "
+                    f"(if the id is unknown, its catalog is separate from chat-completions — "
+                    f"check GET {base_url}/images/models; if no endpoint passes the data policy, "
+                    f"pick a model listed at GET {base_url}/endpoints/zdr or change the account "
+                    f"guardrails).",
                     "model_access", retryable=True)
             return _fail(failure.error, "api_error", retryable=status in _IMAGE_API_FALLBACK_STATUSES)
 

@@ -542,6 +542,34 @@ class TestImageApiSurface:
         assert "messages" not in payload and "modalities" not in payload
         assert result["endpoint"] == "images/generations"
 
+    def test_image_api_404_keeps_openrouter_reason(self):
+        """A 404 is not always a missing id: with ZDR on, meta/muse-image existed and
+        still 404ed ("0 endpoints ... ZDR violation (guardrail)"). Dropping the upstream
+        text sent the Gap Hunter after a modality bug that was not there (2026-10-12)."""
+        import requests as req_lib
+
+        reason = ("0 endpoints out of 1 requested are available matching your guardrail "
+                  "restrictions and data policy. ZDR violation (guardrail): 1 endpoint excluded")
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.text = reason
+        resp.json.return_value = {"error": {"message": reason, "code": 404}}
+        resp.raise_for_status.side_effect = req_lib.HTTPError(response=resp)
+
+        with patch(_RUNTIME, return_value=_runtime_ok()), \
+             patch("requests.post", return_value=resp):
+            result = _openrouter_image_api().generate(
+                prompt="a cover", aspect_ratio="square", model="meta/muse-image"
+            )
+
+        assert result["success"] is False
+        assert result["error_type"] == "model_access"
+        assert "ZDR violation" in result["error"]
+        assert "meta/muse-image" in result["error"]
+        assert "endpoints/zdr" in result["error"]
+        assert "does not exist" not in result["error"]
+        assert "_retryable" not in result
+
     def test_chat_model_still_uses_chat_completions(self):
         """The new surface must not capture the existing default chain."""
         with patch(_RUNTIME, return_value=_runtime_ok()), \
