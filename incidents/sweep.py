@@ -616,9 +616,31 @@ def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
 JUDGE_LIVENESS_HOURS = 48
 
 
-def _judge_liveness_path() -> Path:
+def _judge_liveness_paths() -> List[Path]:
+    """The stamp in the main home and in every profile home.
+
+    The judge stamps whichever home its run is in. ``auditor-review`` lives in
+    the auditor profile's store since 2026-10-04, so its runs stamp
+    ``profiles/auditor/`` while this watcher runs in main: reading main alone
+    raised "judge has not run" on 2026-10-12 while the judge was approving PRs.
+    """
     from hermes_constants import get_hermes_home
-    return get_hermes_home() / "incidents" / "judge-liveness.json"
+    home = get_hermes_home()
+    paths = [home / "incidents" / "judge-liveness.json"]
+    try:
+        paths += [p / "incidents" / "judge-liveness.json"
+                  for p in sorted((home / "profiles").iterdir()) if p.is_dir()]
+    except OSError:
+        pass
+    return paths
+
+
+def _read_judge_stamp(path: Path) -> Optional[datetime]:
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        return _parse_iso(str(rec.get("last_success_at") or ""))
+    except Exception:
+        return None
 
 
 def judge_liveness_incidents(
@@ -638,28 +660,24 @@ def judge_liveness_incidents(
     exactly the condition that went unnoticed — so it alerts rather than
     staying quiet.
 
+    The newest stamp across the main and profile homes wins: one home is
+    enough to prove the judge ran.
+
     The dedup id carries the last-success stamp, so a NEW stall after a
     recovery is a new incident rather than being swallowed as already-seen.
     """
-    path = path or _judge_liveness_path()
+    paths = [path] if path else _judge_liveness_paths()
     now = now or datetime.now(timezone.utc)
 
-    last_raw = "never"
-    try:
-        rec = json.loads(path.read_text(encoding="utf-8"))
-        last_raw = str(rec.get("last_success_at") or "never")
-    except Exception:
-        pass
+    stamps = [s for s in map(_read_judge_stamp, paths) if s is not None]
+    last = max(stamps) if stamps else None
+    last_raw = last.isoformat() if last else "never"
 
-    if last_raw != "never":
-        last = _parse_iso(last_raw)
-        if last is None:
-            last_raw = "never"
-        else:
-            age_h = (now - last).total_seconds() / 3600.0
-            if age_h < JUDGE_LIVENESS_HOURS:
-                return []
-            detail_age = f"{age_h:.0f}h ago ({last_raw})"
+    if last is not None:
+        age_h = (now - last).total_seconds() / 3600.0
+        if age_h < JUDGE_LIVENESS_HOURS:
+            return []
+        detail_age = f"{age_h:.0f}h ago ({last_raw})"
     if last_raw == "never":
         detail_age = "never — no successful judge run has ever been recorded"
 
