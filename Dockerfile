@@ -554,6 +554,12 @@ ENV XDG_RUNTIME_DIR=/tmp/hermes-runtime
 # absolute path (/opt/hermes/.venv/bin/hermes). See the shim source for
 # the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
 COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/hermes
+# Same shim pattern for rclone (2026-10-08 incident: a root-run rclone rewrote
+# /opt/data/.config/rclone/rclone.conf as root:hermes 0600 and broke the nightly
+# Drive sync). The real binary stays on the data volume
+# (/opt/data/scripts/bin/rclone); the shim only drops root to hermes and execs it
+# by absolute path. See docker/rclone-exec-shim.sh.
+COPY --chmod=0755 docker/rclone-exec-shim.sh /opt/hermes/bin/rclone
 COPY --chmod=0755 docker/entrypoint-dispatch.sh /opt/hermes/docker/entrypoint-dispatch.sh
 
 # Pre-s6 entrypoint.sh did `source .venv/bin/activate` which exported

@@ -295,6 +295,17 @@ if [ -d "$HERMES_HOME/cron" ] && tree_has_non_hermes_owner "$HERMES_HOME/cron"; 
     chown_hermes_tree "$HERMES_HOME/cron"
 fi
 
+# Always reset ownership of the rclone config dir on every boot. rclone
+# rewrites rclone.conf on each Drive OAuth token refresh, so a run as root (a
+# `docker exec` / `zeabur service exec` session) leaves it root-owned 0600 and
+# the nightly ops/backup-full.sh, which runs as hermes, fails with "permission
+# denied" (2026-10-08, 4 nights lost). Not covered by the data-volume chown
+# above (.config is not in its subdir list). Same warm-boot gate as profiles/
+# and cron/; chown_hermes_tree refuses symlinked paths.
+if [ -d "$HERMES_HOME/.config/rclone" ] && tree_has_non_hermes_owner "$HERMES_HOME/.config/rclone"; then
+    chown_hermes_tree "$HERMES_HOME/.config/rclone"
+fi
+
 # Always ensure logs/gateways is hermes-owned (#45258). Formerly healed by
 # restartable gateway log/run chown — removed due to symlink TOCTOU
 # (CWE-59/367). The targeted data-volume chown above only runs when the

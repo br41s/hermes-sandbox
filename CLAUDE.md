@@ -384,6 +384,9 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 - **Bulk data cannot move via `service exec`** (fails past ~5MB). Host-to-host root SSH
   rsync of `/opt/data` works. `project clone --region` carries services and volumes, but
   not volumes large enough to exceed the S3 backup limit.
+- **rclone: always via PATH (the shim), never as root by full path
+  `/opt/data/scripts/bin/rclone`.** A root-run rclone rewrote `rclone.conf` as root:hermes
+  0600 and cost four nightly Drive syncs (2026-10-08..11). Details in `ops/README.md`.
 
 ## Diagnosing an agent run — Langfuse first, logs second
 
