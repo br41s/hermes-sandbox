@@ -69,6 +69,40 @@ def test_a_new_stall_after_recovery_is_a_new_incident(tmp_path):
     assert first.id != later.id
 
 
+def _home_stamp(dir_, ago_hours):
+    dir_.mkdir(parents=True, exist_ok=True)
+    (dir_ / "judge-liveness.json").write_text(json.dumps(
+        {"last_success_at": (NOW - timedelta(hours=ago_hours)).isoformat()}
+    ), encoding="utf-8")
+
+
+def test_a_profile_home_stamp_counts(tmp_path, monkeypatch):
+    # 2026-10-12: auditor-review runs in the auditor profile, so its judge
+    # stamps profiles/auditor/ while the watcher runs in main. Main held only a
+    # 2-day-old hand-run stamp and the watcher cried "judge has not run".
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _home_stamp(tmp_path / "incidents", 50)
+    _home_stamp(tmp_path / "profiles" / "auditor" / "incidents", 2)
+    assert judge_liveness_incidents(now=NOW) == []
+
+
+def test_the_newest_stamp_across_homes_is_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    _home_stamp(tmp_path / "incidents", 100)
+    _home_stamp(tmp_path / "profiles" / "auditor" / "incidents", 60)
+    (tmp_path / "profiles" / "empty").mkdir()
+    out = judge_liveness_incidents(now=NOW)
+    assert len(out) == 1
+    assert "60h ago" in out[0].detail
+
+
+def test_no_stamp_in_any_home_alerts(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "profiles" / "auditor").mkdir(parents=True)
+    out = judge_liveness_incidents(now=NOW)
+    assert [i.id for i in out] == ["judge_liveness:never"]
+
+
 def test_record_judge_success_round_trips(tmp_path, monkeypatch):
     import auditor.llm as llm
 
