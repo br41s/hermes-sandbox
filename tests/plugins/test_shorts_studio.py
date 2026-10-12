@@ -1308,3 +1308,32 @@ def test_tip_shorts_play_jazz_or_lounge(tip, tmp_path, monkeypatch):
     build_mod.gather_music(pkg_mod.validate_package(tip), tmp_path, "seed", offline=False)
     assert seen["pages"] == sources.ELEGANT_MUSIC_PAGES
     assert all("jazz" in p or "lounge" in p for p in seen["pages"])
+
+
+def test_martins_free_voice_is_made_before_anything_is_paid(tip, tmp_path, monkeypatch):
+    from plugins.shorts.studio import voice as voice_mod
+
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
+    said = []
+    monkeypatch.setattr(voice_mod, "synthesize", lambda text, v, rate, mp3: said.append((text, v)) or [])
+    voiced = build_mod.prevoice(pkg, tmp_path, fake_voice=False, skip=build_mod.on_camera(pkg["beats"]))
+    # Every line of Martín's (cards, CTA, outro) in his voice; none of Lucía's, nothing for the silent turn.
+    assert sorted(voiced) == list(range(4, len(pkg["beats"])))
+    assert {v for _, v in said} == {pkg["voice"]}
+
+
+def test_edge_is_retried_for_over_a_minute(monkeypatch, tmp_path):
+    from plugins.shorts.studio import voice as voice_mod
+
+    calls, waits = [], []
+
+    async def refuse(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("403, message='Invalid response status'")
+
+    monkeypatch.setattr(voice_mod, "_edge_stream", refuse)
+    monkeypatch.setattr(voice_mod.time, "sleep", waits.append)
+    with pytest.raises(voice_mod.VoiceError, match="403"):
+        voice_mod.synthesize("hola", "es-ES-AlvaroNeural", "+0%", tmp_path / "a.mp3")
+    assert len(calls) == len(voice_mod.BACKOFF_S) + 1 and sum(waits) >= 60

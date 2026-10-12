@@ -49,7 +49,12 @@ async def _edge_stream(text: str, voice: str, rate: str, mp3: Path) -> List[Word
     return words
 
 
-def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = 3) -> List[Word]:
+# Edge answers 403 in bursts (2026-10-12: three in a row within 12 s, a run
+# that had already paid for its presenter takes), so back off for over a minute.
+BACKOFF_S = (3, 6, 12, 20, 30)
+
+
+def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = len(BACKOFF_S) + 1) -> List[Word]:
     """Speak ``text`` into ``mp3``; return its words with beat-relative times."""
     last: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -60,7 +65,8 @@ def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = 3
             last = VoiceError("Edge TTS returned no audio")
         except Exception as exc:  # network hiccups are the common case
             last = exc
-        time.sleep(2 * attempt)
+        if attempt < attempts:
+            time.sleep(BACKOFF_S[min(attempt, len(BACKOFF_S)) - 1])
     raise VoiceError(f"Edge TTS failed after {attempts} attempts for {text[:40]!r}: {last}")
 
 

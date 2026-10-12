@@ -113,8 +113,26 @@ def _download_avatar(url: str, dest: Path) -> Path:
 # 1. Voice and timeline
 # ---------------------------------------------------------------------------
 
+def prevoice(pkg: Dict[str, Any], work: Path, *, fake_voice: bool, skip: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    """Synthesize the free voice-over of every beat not in ``skip``, ahead of the timeline.
+
+    The tip format calls it before paying for Lucía's takes: if Edge is down,
+    the render stops having spent nothing. Returns {beat: words}; the audio
+    is left at ``work/vo_NN.mp3`` for ``build_timeline``.
+    """
+    voiced: Dict[int, List[Dict[str, Any]]] = {}
+    for i, beat in enumerate(pkg["beats"]):
+        if i in skip or beat.get("silent") or beat["kind"] == "avatar":
+            continue
+        raw = work / f"vo_{i:02d}.mp3"
+        voiced[i] = (voice.fake_synthesize(beat["vo"], raw) if fake_voice
+                     else voice.synthesize(beat["vo"], beat.get("voice") or pkg["voice"], pkg["rate"], raw))
+    return voiced
+
+
 def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice: bool,
-                   presenter_clips: Optional[Dict[int, Path]] = None) -> Dict[str, Any]:
+                   presenter_clips: Optional[Dict[int, Path]] = None,
+                   voiced: Optional[Dict[int, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     """Synthesize every beat and lay them end to end on frame boundaries.
 
     A beat in ``presenter_clips`` is voiced by its clip; its video runs from
@@ -161,7 +179,9 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
             speech = clip_len
             beat_words = voice.spread_words(beat["vo"], speech)
         else:
-            if fake_voice:
+            if voiced and i in voiced:
+                beat_words = voiced[i]
+            elif fake_voice:
                 beat_words = voice.fake_synthesize(beat["vo"], raw)
             else:
                 beat_words = voice.synthesize(beat["vo"], beat.get("voice") or pkg["voice"], pkg["rate"], raw)
@@ -546,8 +566,10 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
         # Lucía's takes first: each carries her voice and sets its beat's
         # length. Martín's lines are voiced by the timeline (free).
         render_pkg = dict(pkg, beats=tip_beats(pkg))
+        voiced = prevoice(render_pkg, work, fake_voice=fake_voice, skip=on_camera(render_pkg["beats"]))
         cast = tip_cast(render_pkg, work, budget, offline=offline)
-        tl = build_timeline(render_pkg, work, public, fake_voice=fake_voice, presenter_clips=cast["takes"])
+        tl = build_timeline(render_pkg, work, public, fake_voice=fake_voice, presenter_clips=cast["takes"],
+                            voiced=voiced)
         tl.update(place_cast(render_pkg, tl, cast, public))
         talking = {"report": cast["report"]}
     else:
