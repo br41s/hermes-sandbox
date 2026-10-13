@@ -35,8 +35,14 @@ on:
       - "shorts/studio/**"
       - ".github/workflows/shorts-studio.yml"
 
+# Paid renders run one at a time: the second waits for the first. On
+# 2026-10-13 two ran together, six Avatar IV takes were pending at once, and
+# OpenRouter refused the third take of each (402) while the account had
+# credit. GitHub keeps one run pending per group and cancels an older pending
+# one, which is fine at two shorts a day; a cancelled run is a render_failed
+# Hermes retries. Smoke renders are free and keep their own group.
 concurrency:
-  group: shorts-studio-${{ inputs.request_id || github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && 'shorts-studio-paid' || format('shorts-studio-{0}', github.ref) }}
   cancel-in-progress: false
 
 permissions:

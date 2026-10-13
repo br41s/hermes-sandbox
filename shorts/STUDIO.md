@@ -186,10 +186,14 @@ stock footage. Text and figures are always Remotion's, drawn on top.
    the real price then, or fewer scenes fit than the budget allows).
 
 How the cap holds: each short plans its presenter clips and then its scenes
-against its own budget ($1.00, so the two daily shorts, which render in
-parallel and cannot see each other, stay within $2 together), then against the
-day's cap using what OpenRouter
-reports the key has spent today (UTC). A scene that does not fit, a 402, a model
+against its own budget ($1.00, so the two daily shorts stay within $2
+together), then against the day's cap using what OpenRouter
+reports the key has spent today (UTC). Paid renders queue in one concurrency
+group, so the second short starts after the first and reads its spend. They
+used to run together: on 2026-10-13 six Avatar IV takes were pending at once
+and OpenRouter refused the third take of each with a 402 while the account
+had credit. The render log now prints the key's limit and remaining balance
+at start, and a 402 carries OpenRouter's own reason. A scene that does not fit, a 402, a model
 error or a 10-minute timeout leaves that beat on its `broll`: a short never
 fails for a paid clip. The manifest records each scene's id, status, real cost
 and reason; the ledger keeps `ai_scenes` and `ai_spend_usd`, and the publisher's
