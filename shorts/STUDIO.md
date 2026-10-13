@@ -193,7 +193,11 @@ group, so the second short starts after the first and reads its spend. They
 used to run together: on 2026-10-13 six Avatar IV takes were pending at once
 and OpenRouter refused the third take of each with a 402 while the account
 had credit. The render log now prints the key's limit and remaining balance
-at start, and a 402 carries OpenRouter's own reason. A scene that does not fit, a 402, a model
+at start, and a 402 carries OpenRouter's own reason; the next test, alone,
+showed it: "Insufficient credits" (`limit_source: openrouter_credits`) on the
+third take, the key $1.91 from its limit. OpenRouter holds credit for every
+video in progress, so Lucía's takes now go one at a time, and the first one
+refused stops the rest (the short cannot pass QA without her). A scene that does not fit, a 402, a model
 error or a 10-minute timeout leaves that beat on its `broll`: a short never
 fails for a paid clip. The manifest records each scene's id, status, real cost
 and reason; the ledger keeps `ai_scenes` and `ai_spend_usd`, and the publisher's

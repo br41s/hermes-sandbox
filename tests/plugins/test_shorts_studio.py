@@ -1223,6 +1223,34 @@ def test_lucias_takes_are_all_or_nothing_under_the_budget(tip, tmp_path, monkeyp
     assert {t["status"] for t in report["takes"]} == {"skipped"} and "short budget" in report["takes"][0]["reason"]
 
 
+def test_lucias_takes_go_one_at_a_time_and_stop_at_the_first_refusal(tip, tmp_path, monkeypatch):
+    class Refuses2nd(_FakeImageAPI):
+        def post(self, url, headers=None, json=None):
+            if url != presenter_mod.CHAT_API and len(self.posts) == 1:
+                self.posts.append(json)
+                return _ORResp(402, {"error": {"message": "Insufficient credits"}})
+            return super().post(url, headers, json)
+
+    fake = Refuses2nd()
+    _tip_env(monkeypatch, tmp_path, fake)
+    order = []
+    real_wait = genvideo.wait_for
+    monkeypatch.setattr(genvideo, "wait_for", lambda client, key, jobs, *a, **kw: order.append(
+        ("wait", [j["beat"] for j in jobs], len(fake.posts))) or real_wait(client, key, jobs, *a, **kw))
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
+    report = {}
+    lines = {i: pkg["beats"][i]["vo"] for i in (0, 1, 2)}
+    with fake() as client:
+        takes = presenter_mod.host_takes(client, genvideo.open_budget(offline=False), _touch(tmp_path / "s.png"),
+                                         lines, "es", 2, tmp_path, report)
+    assert order == [("wait", [0], 1)]          # take 0 finished before take 1 was sent
+    assert len(fake.posts) == 2 and list(takes) == [0]   # take 2 never sent, never paid
+    status = {t["beat"]: (t["status"], t.get("reason", "")) for t in report["takes"]}
+    assert status[1][0] == "failed" and "Insufficient credits" in status[1][1]
+    assert status[2][0] == "skipped" and report["spent_usd"] == 0.12
+
+
 def test_a_refused_setting_falls_through_to_the_next_model_for_free(tmp_path, monkeypatch):
     first, second, third = presenter_mod.SETTING_MODELS
     fake = _FakeImageAPI(refuse_models=(first,))

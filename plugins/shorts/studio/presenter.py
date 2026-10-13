@@ -348,7 +348,14 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
         genvideo._log(f"presenter takes: {why}")
         return {}
     budget["committed"] += total
-    for job in jobs:
+    # One take at a time: OpenRouter holds credit for every video in progress,
+    # and with all three sent at once it refused the third "Insufficient
+    # credits" (402) on three shorts in a row on 2026-10-13, the account in credit.
+    for n, job in enumerate(jobs):
+        if n and jobs[n - 1].get("state") != "generated":
+            # The short cannot pass QA without every line of hers: stop paying.
+            job.update(state="skipped", reason=f"take {jobs[n - 1]['beat']} was not made")
+            continue
         heygen = {"voice_id": voice, "motion_prompt": HANDOFF_MOTION if job["beat"] == handoff else TAKE_MOTION,
                   "expressiveness": "medium"}
         body = {"model": cfg["model"], "prompt": job.pop("line"), "aspect_ratio": "9:16",
@@ -359,7 +366,8 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
             job["state"] = "pending"
         except Exception as exc:
             job.update(state="failed", reason=str(exc))
-    genvideo.wait_for(client, budget["cfg"]["key"], jobs, time.time() + cfg["timeout_s"], work, prefix="take")
+            continue
+        genvideo.wait_for(client, budget["cfg"]["key"], [job], time.time() + cfg["timeout_s"], work, prefix="take")
     takes: Dict[int, Path] = {}
     report["takes"] = []
     for job in jobs:
