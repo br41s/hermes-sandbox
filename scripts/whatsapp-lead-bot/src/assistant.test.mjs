@@ -98,6 +98,10 @@ test("every OpenRouter request asks for providers that neither store nor train o
     if (env.model === undefined) delete process.env.VISITOR_AGENT_MODEL; else process.env.VISITOR_AGENT_MODEL = env.model;
   }
   assert.deepEqual(sent.provider, { data_collection: "deny" });
+  // Reasoning tokens count against max_tokens on gpt-oss; a cap that only fits
+  // the answer gets eaten by reasoning and truncates the JSON (seen live).
+  assert.deepEqual(sent.reasoning, { effort: "low" });
+  assert.ok(sent.max_tokens >= 1000, `max_tokens ${sent.max_tokens} leaves no room for reasoning + answer`);
   assert.deepEqual(PROVIDER_POLICY, { data_collection: "deny" });
   assert.equal(sent.model, "some/model");
 });
