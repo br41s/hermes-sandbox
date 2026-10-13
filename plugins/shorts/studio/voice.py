@@ -43,6 +43,9 @@ AZURE_TTS = "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
 # Azure HD voices ("…:DragonHDLatestNeural") do not exist on Edge; when Azure
 # fails, Edge reads the line with the standard voice of the same language.
 EDGE_FALLBACK = {"es-ES": "es-ES-AlvaroNeural", "en-US": "en-US-AndrewMultilingualNeural"}
+# An HD voice takes no prosody rate, so its line is sped up after synthesis:
+# Martín read slowly to the owner at 1.0 (2026-10-13).
+HD_TEMPO = 1.12
 
 
 def _lang(voice: str) -> str:
@@ -107,6 +110,10 @@ def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = l
     if azure:
         try:
             _azure(text, voice, rate, mp3, *azure)
+            if ":" in voice:
+                fast = mp3.with_name(mp3.stem + "_fast.mp3")
+                media.tempo(mp3, fast, HD_TEMPO)
+                fast.replace(mp3)
             return spread_words(text, media.duration(mp3))
         except Exception as exc:  # Edge may still answer
             print(f"[studio] voice: Azure failed ({exc}); trying Edge", flush=True)

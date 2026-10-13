@@ -225,7 +225,8 @@ def test_ledger_tracks_done_style_and_assets(home):
     ledger.update("en-a-1", state="ready", broll_ids=["pexels-1"], music_id="516")
     ledger.add(_entry("en-b-1", palette="violet-lime"))
     ledger.update("en-b-1", state="render_failed")
-    assert ledger.done_urls() == {"https://b.top/en-a-1", "https://b.top/es-a-1"}
+    # a failed post counts as taken too: the producer moves on to another
+    assert ledger.done_urls() == {"https://b.top/en-a-1", "https://b.top/es-a-1", "https://b.top/en-b-1"}
     assert ledger.recent_style()["palettes"] == ["indigo-coral", "teal-amber"]
     assert ledger.used_assets() == {"broll": ["pexels-1"], "music": ["516"]}
     with pytest.raises(ValueError):
@@ -492,14 +493,12 @@ def test_master_audio_lands_on_minus_14_lufs_and_qa_reads_it(tmp_path):
     assert abs(media.duration(story) - 10.0) < 0.2
 
 
-def test_a_post_that_keeps_failing_stops_being_retried(home):
+def test_a_post_that_failed_is_not_tried_again(home):
     url = "https://b.top/post"
     ledger.add(_entry("en-post-1", article_url=url))
+    assert url in ledger.done_urls()              # rendering: taken
     ledger.update("en-post-1", state="qa_failed")
-    assert url not in ledger.done_urls()  # one failure: retry tomorrow
-    ledger.add(_entry("en-post-2", article_url=url))
-    ledger.update("en-post-2", state="render_failed")
-    assert url in ledger.done_urls()  # two: leave it for a human
+    assert url in ledger.done_urls()              # failed once: the producer picks another post
 
 
 def test_failures_are_reported_once(home, monkeypatch):
@@ -1128,12 +1127,13 @@ def test_a_figure_in_the_opener_or_a_before_after_must_be_in_the_article(tip):
     assert "beats[1].after" in problems and "opener.line" in problems and "opener.handoff" in problems
 
 
-def test_the_tip_short_runs_lucia_then_martins_nod_then_his_cards(tip):
+def test_the_tip_short_runs_lucia_handing_over_then_martins_cards(tip):
     pkg = pkg_mod.validate_package(tip)
     beats = build_mod.tip_beats(pkg)
-    assert [b["kind"] for b in beats[:4]] == ["opener", "hook", "handoff", "reaction"]
+    # no frozen frame with a zoom between them: she turns to him on the handoff
+    assert [b["kind"] for b in beats[:3]] == ["opener", "hook", "handoff"]
+    assert beats[3]["kind"] != "reaction" and not any(b.get("silent") for b in beats)
     assert beats[0]["vo"] == pkg["opener"]["line"] and beats[2]["vo"] == pkg["opener"]["handoff"]
-    assert beats[3]["silent"] and not beats[3]["vo"]
     assert beats[-2]["kind"] == "cta" and beats[-1]["kind"] == "outro"
     assert "biglobster" in beats[-1]["vo"] and "síguenos" in beats[-1]["vo"].lower()
     assert "!" not in beats[-1]["vo"] and "¡" not in beats[-1]["vo"]      # calm, not overexcited
@@ -1274,8 +1274,7 @@ def test_tip_props_carry_her_takes_his_nod_his_loop_and_the_cards(tip):
     assert props["presenterName"] == "Lucía" and props["partnerName"] == "Martín"
     assert props["partnerPhoto"] == "presenter/partner.jpg" and props["faceY"] == 0.3 and props["loopFaceY"] == 0.21
     assert props["beats"][0]["presenter"] == "presenter/p00.mp4" and props["beats"][0]["presenterName"] == "Lucía"
-    assert props["beats"][3]["kind"] == "reaction" and props["beats"][3]["show"] == "reaction"
-    assert [b["number"] for b in props["beats"][:4]] == [0, 0, 0, 0]
+    assert [b["number"] for b in props["beats"][:3]] == [0, 0, 0] and props["beats"][3]["number"] == 1
     assert props["beats"][-1]["kind"] == "outro" and props["beats"][-1]["url"]
     assert props["cover"]["kicker"] == pkg["beats"][1].get("kicker", "")
 
@@ -1294,6 +1293,22 @@ def test_a_take_is_cut_at_its_speech_so_the_face_never_freezes(tmp_path):
                     "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", str(take)], check=True)
     begin, end = media.speech_bounds(take)
     assert 0.7 <= begin <= 0.9 and 2.7 <= end <= 2.9
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_a_take_plays_faster_with_lips_and_voice_together(tmp_path):
+    import subprocess
+
+    from plugins.shorts.studio import media
+
+    take = tmp_path / "take.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x568:rate=30:duration=3.36",
+                    "-f", "lavfi", "-i", "sine=frequency=300:duration=3.36:sample_rate=48000",
+                    "-shortest", "-c:v", "libx264", "-c:a", "aac", str(take)], check=True)
+    fast = media.tempo(take, tmp_path / "fast.mp4", 1.12)
+    assert abs(media.duration(fast) - 3.0) < 0.1
+    assert media.has_audio(fast) and media.has_video(fast)
+    assert media.tempo(take, tmp_path / "same.mp4", 1.0) == take          # nothing to do at 1.0
 
 
 def test_tip_shorts_play_jazz_or_lounge(tip, tmp_path, monkeypatch):
@@ -1319,8 +1334,8 @@ def test_martins_free_voice_is_made_before_anything_is_paid(tip, tmp_path, monke
     said = []
     monkeypatch.setattr(voice_mod, "synthesize", lambda text, v, rate, mp3: said.append((text, v)) or [])
     voiced = build_mod.prevoice(pkg, tmp_path, fake_voice=False, skip=build_mod.on_camera(pkg["beats"]))
-    # Every line of Martín's (cards, CTA, outro) in his voice; none of Lucía's, nothing for the silent turn.
-    assert sorted(voiced) == list(range(4, len(pkg["beats"])))
+    # Every line of Martín's (cards, CTA, outro) in his voice; none of Lucía's.
+    assert sorted(voiced) == list(range(3, len(pkg["beats"])))
     assert {v for _, v in said} == {pkg["voice"]}
 
 
@@ -1355,6 +1370,8 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
     monkeypatch.setattr(media, "duration", lambda p: 2.0)
+    sped = []
+    monkeypatch.setattr(media, "tempo", lambda src, dst, factor: sped.append(factor) or dst.write_bytes(src.read_bytes()))
     monkeypatch.setattr(httpx, "post", lambda url, content, timeout, headers: sent.append((url, content, headers)) or Resp(200))
     words = voice_mod.synthesize("Elige una tarea & mide", "es-ES-AlvaroNeural", "+5%", tmp_path / "a.mp3")
     url, ssml, headers = sent[0]
@@ -1362,6 +1379,7 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
     assert b"es-ES-AlvaroNeural" in ssml and b"&amp; mide" in ssml and b"rate='+5%'" in ssml
     voice_mod.synthesize("Hola", "es-ES-Tristan:DragonHDLatestNeural", "+5%", tmp_path / "hd.mp3")
     assert b"name='es-ES-Tristan:DragonHDLatestNeural'" in sent[1][1] and b"prosody" not in sent[1][1]
+    assert sped == [voice_mod.HD_TEMPO]                   # only the HD voice, which takes no rate, is sped up
     assert headers["Ocp-Apim-Subscription-Key"] == "az-key" and len(words) == 5
 
     # Azure refuses: Edge is asked.

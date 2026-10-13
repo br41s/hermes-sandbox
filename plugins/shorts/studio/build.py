@@ -51,6 +51,7 @@ GAP = 0.28            # breath between beats
 TAKE_GAP = 0.06       # between a take and the next beat: a cut, not a pause
 TAKE_LEAD = 0.05      # kept before the first word of a take
 TAKE_TAIL = 0.12      # kept after its last word
+HANDOFF_TAIL = 0.6    # the handoff keeps her turn towards Martín after the words
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
 PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
@@ -155,10 +156,12 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
             talking = None
         take_start = 0.0
         if talking is not None:
+            talking = media.tempo(talking, work / f"take_{i:02d}_tempo.mp4", presenter.TAKE_TEMPO)
             # Cut the take at its speech: its still, silent edges read as a frozen face.
             begin, finish = media.speech_bounds(talking)
             take_start = max(0.0, begin - TAKE_LEAD)
-            take_end = min(media.duration(talking), finish + TAKE_TAIL, take_start + PRESENTER_MAX)
+            tail = HANDOFF_TAIL if beat["kind"] == "handoff" else TAKE_TAIL
+            take_end = min(media.duration(talking), finish + tail, take_start + PRESENTER_MAX)
             wav = media.extract_audio(talking, work / f"vo_{i:02d}.wav", start=take_start, end=take_end)
             speech = take_end - take_start
             beat_words = voice.spread_words(beat["vo"], speech)
@@ -230,17 +233,13 @@ OUTRO_VO = {
     "es": "Tienes el artículo completo en biglobster punto top. Y síguenos para más consejos.",
     "en": "The full article is on biglobster dot top. And follow us for more tips.",
 }
-# The camera pushes in on Martín, from Lucía's last frame; then his cards.
-# 1.6 s read as Lucía frozen (owner, 2026-10-12): kept short.
-REACTION_SECONDS = 0.8
 
 
 def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The tip short as rendered.
 
     Lucía on camera (``show`` "presenter"): the opener joke, the hook, the
-    handoff. Then the camera pushes in on Martín (``show`` "reaction", no
-    words), his cards and CTA, and the outro. Lucía's beats carry her fallback voice, used only when
+    handoff, said turned towards Martín. Then his cards and CTA, and the outro. Lucía's beats carry her fallback voice, used only when
     her take was not made (a render with no key).
     """
     opener = pkg.get("opener") or {}
@@ -254,7 +253,6 @@ def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
     beats.append({**hook, **host})
     if opener.get("handoff"):
         beats.append({"kind": "handoff", "vo": opener["handoff"], "onscreen": opener["handoff"], **host})
-        beats.append({"kind": "reaction", "vo": "", "show": "reaction", "silent": REACTION_SECONDS})
     beats += rest
     beats.append({"kind": "outro", "vo": OUTRO_VO.get(pkg["lang"], OUTRO_VO["en"]), "show": "outro",
                   "url": pkg["beats"][-1].get("url", "")})
@@ -292,9 +290,9 @@ def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline
     report: Dict[str, Any] = {"model": presenter.config()["model"], "presenter": presenter.HOST[1],
                               "partner": presenter.PARTNER[1], "voice": pkg.get("voice"),
                               "host_voice": tcfg["host_voice"].get(pkg["lang"]), "spent_usd": 0.0, "used": []}
-    # Martín's turn is free: the still setting pushes in on him (Tip.tsx,
-    # StillPush), and his loop is the owner's recording. A paid nod cost $0.65
-    # (Hailuo 3, 2026-10-12), more than all of Lucía's lines.
+    # Martín's turn is free: Lucía turns to him in her handoff take, and his
+    # loop is the owner's recording. A paid nod cost $0.65 (Hailuo 3,
+    # 2026-10-12), more than all of Lucía's lines.
     out: Dict[str, Any] = {"report": report, "takes": {}, "image": None, "loop": presenter.bubble_loop(report)}
     live = not offline and bool(budget["cfg"]["key"])
     if not live:
@@ -321,15 +319,8 @@ def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], pu
     """Mark what each beat shows and copy the loop and stills; returns the props' presenter fields."""
     beats = pkg["beats"]
     (public / "presenter").mkdir(parents=True, exist_ok=True)
-    for i, (slot, beat) in enumerate(zip(tl["timeline"], beats)):
+    for slot, beat in zip(tl["timeline"], beats):
         slot["show"] = beat.get("show")
-        # Martín's turn starts from the frame Lucía ends on, turned towards
-        # him, not from the setting still, where she faces the camera again.
-        prev = tl["timeline"][i - 1].get("presenter") if i else None
-        if beat["kind"] == "reaction" and prev:
-            rel = "presenter/handoff.jpg"
-            media.last_frame(public / prev, public / rel)
-            slot["still"] = rel
     fields: Dict[str, Any] = {"loop": None, "loop_frames": 0, "photo": None, "partner_photo": None}
     loop = cast.get("loop")
     if loop is not None:
@@ -438,7 +429,7 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
     beats = []
     number = 0
     for beat, slot in zip(pkg["beats"], tl["timeline"]):
-        middle = beat["kind"] not in ("hook", "cta", "opener", "outro", "handoff", "reaction")
+        middle = beat["kind"] not in ("hook", "cta", "opener", "outro", "handoff")
         number += 1 if middle else 0
         entry = {
             "kind": beat["kind"], "from": slot["from"], "duration": slot["duration"],
@@ -447,13 +438,10 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
         }
         if slot.get("presenter"):
             entry["presenter"] = slot["presenter"]
-            entry["presenterName"] = (presenter.PARTNER[1] if beat["kind"] == "reaction"
-                                      else presenter.HOST[1] if pkg.get("format") == "tip"
+            entry["presenterName"] = (presenter.HOST[1] if pkg.get("format") == "tip"
                                       else (presenter.who(pkg["lang"]) or ("", ""))[1])
         if slot.get("show"):
             entry["show"] = slot["show"]
-        if slot.get("still"):
-            entry["still"] = slot["still"]
         for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
             if beat.get(key):
                 entry[key] = beat[key]

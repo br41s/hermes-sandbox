@@ -613,9 +613,10 @@ it writes from. Sold to a client without one it goes quiet on every run.
   and the article (Martín at work behind her): joke, hook, a line handing
   Martín the word. Those are the only paid seconds: HeyGen Avatar IV with her
   HeyGen voice (`presenter.HOST_VOICES`, Spain Spanish; Avatar IV will not
-  take our TTS as a data URL). The camera pushes in on Martín in the still
-  setting (free: a generated nod cost $0.65), then he narrates the cards and
-  the CTA in a free Edge voice (`package.TIP_VOICES`, forced by the package)
+  take our TTS as a data URL). On the handoff she turns to Martín and says it
+  to him (no freeze, no zoom; a generated nod cost $0.65), then he narrates
+  the cards and the CTA in an Azure HD voice (`package.TIP_VOICES`, forced by
+  the package; both voices play 1.12x, `TAKE_TEMPO`/`HD_TEMPO`)
   from a bubble playing a loop of him the owner recorded once
   (`presenters/assets/martin-loop.mp4`; never generated); the outro is a
   fixed animated card. ~$0.6 per short. `submit` refuses any other format, and a real render

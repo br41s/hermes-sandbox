@@ -79,6 +79,10 @@ def has_audio(path: Path) -> bool:
     return any(s.get("codec_type") == "audio" for s in probe(path).get("streams", []))
 
 
+def has_video(path: Path) -> bool:
+    return any(s.get("codec_type") == "video" for s in probe(path).get("streams", []))
+
+
 def to_wav(src: Path, dst: Path) -> Path:
     """Decode anything to 48 kHz mono PCM — the voiceover working format."""
     ffmpeg("-i", str(src), "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
@@ -104,13 +108,6 @@ def pad_segment(src: Path, dst: Path, lead: float, total: float) -> Path:
 def silence(dst: Path, seconds: float) -> Path:
     ffmpeg("-f", "lavfi", "-i", f"anullsrc=r={SAMPLE_RATE}:cl=mono", "-t", f"{seconds:.6f}",
            "-c:a", "pcm_s16le", str(dst), what="silence")
-    return dst
-
-
-def last_frame(src: Path, dst: Path) -> Path:
-    """The clip's final frame as a still."""
-    ffmpeg("-sseof", "-0.1", "-i", str(src), "-frames:v", "1", "-q:v", "2", "-update", "1", str(dst),
-           what=f"last frame {src.name}")
     return dst
 
 
@@ -146,6 +143,24 @@ def normalize_clip(src: Path, dst: Path, seconds: float, *, start: float = 0.0,
                    f"crop={WIDTH}:{HEIGHT},fps={FPS},setsar=1{pad},format=yuv420p"),
            "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
            str(dst), what=f"normalise {src.name}")
+    return dst
+
+
+def tempo(src: Path, dst: Path, factor: float) -> Path:
+    """``src`` played ``factor`` times faster, pitch kept; picture and voice stay in sync.
+
+    Both voices read slowly to the owner (2026-10-13); neither HeyGen's voice
+    in an Avatar IV take nor an Azure HD voice takes a speaking rate.
+    """
+    if abs(factor - 1.0) < 1e-3:
+        return src
+    if has_video(src):
+        ffmpeg("-i", str(src), "-filter_complex",
+               f"[0:v]setpts=PTS/{factor:.4f}[v];[0:a]atempo={factor:.4f}[a]",
+               "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(dst), what=f"tempo {src.name}")
+    else:
+        ffmpeg("-i", str(src), "-af", f"atempo={factor:.4f}", str(dst), what=f"tempo {src.name}")
     return dst
 
 
