@@ -93,9 +93,10 @@ def entries(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     return sorted(data["entries"].values(), key=lambda e: e.get("created_at", ""))
 
 
-# A post whose short failed this many times is left alone: a template or
-# source problem would otherwise burn a render every day on the same post.
-MAX_FAILED_ATTEMPTS = 2
+# A post whose short failed is left alone and the producer moves on to
+# another (owner, 2026-10-13): a retry pays for the same takes again, and a
+# template or source problem would burn a render every day on the same post.
+MAX_FAILED_ATTEMPTS = 1
 
 
 def done_urls(data: Optional[Dict[str, Any]] = None) -> set:
