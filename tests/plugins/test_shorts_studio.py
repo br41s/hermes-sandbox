@@ -404,6 +404,26 @@ def test_youtube_metadata_marks_shorts_and_synthetic_media(monkeypatch):
                               "containsSyntheticMedia": True}
 
 
+def test_youtube_description_links_the_article_with_utm(monkeypatch):
+    from plugins.shorts.social import youtube
+
+    article = {"url": "https://biglobster.top/blog/invoices.html", "slug": "invoices"}
+    meta = youtube.build_metadata({"youtube": {"title": "T", "description": "Three ways."}}, "en",
+                                  synthetic=False, article=article)
+    assert meta["snippet"]["description"] == (
+        "Three ways.\n\nhttps://biglobster.top/blog/invoices.html"
+        "?utm_source=youtube&utm_medium=short&utm_campaign=short-invoices")
+    # Already tagged by the writer: not added twice. No article: nothing added.
+    tagged = {"youtube": {"title": "T", "description": "see https://biglobster.top/x?utm_source=youtube"}}
+    assert meta_desc(youtube, tagged, article) == tagged["youtube"]["description"]
+    assert meta_desc(youtube, {"youtube": {"title": "T", "description": "plain"}}, None) == "plain"
+    assert youtube.article_link({"url": "http://insecure", "slug": "x"}) == ""
+
+
+def meta_desc(youtube, social, article):
+    return youtube.build_metadata(social, "en", synthetic=False, article=article)["snippet"]["description"]
+
+
 class _Resp:
     def __init__(self, status=200, body=None):
         self.status_code = status
@@ -940,8 +960,9 @@ def test_a_short_with_generated_scenes_is_published_as_synthetic_media(tip, subm
 
     seen = {}
 
-    def fake_upload(video, thumb, srt, social, lang, *, synthetic=False):
+    def fake_upload(video, thumb, srt, social, lang, *, synthetic=False, article=None):
         seen["synthetic"] = synthetic
+        seen["article"] = article
         return {"id": "yt1", "url": "u", "privacy": "public", "warnings": []}
 
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
@@ -951,6 +972,7 @@ def test_a_short_with_generated_scenes_is_published_as_synthetic_media(tip, subm
     monkeypatch.setattr(youtube_mod, "upload", fake_upload)
     out = json.loads(st.handle_shorts_studio({"action": "publish", "request_id": rid, "target": "youtube"}))
     assert out["success"] and seen["synthetic"] is True
+    assert seen["article"]["url"].startswith("https://") and seen["article"]["slug"]
 
 
 # ---------------------------------------------------------------------------

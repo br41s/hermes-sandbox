@@ -71,15 +71,34 @@ def _error(resp, what: str) -> YouTubeError:
     return YouTubeError(f"{what}: HTTP {resp.status_code} {reason} {resp.text[:300]}".strip())
 
 
-def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool) -> Dict[str, Any]:
+def article_link(article: Optional[Dict[str, Any]]) -> str:
+    """The article URL tagged for Umami, so visits from YouTube stop counting as "direct".
+
+    Campaign ``short-<slug>`` tells which Short sent the visit (retro 2026-10-12 experiment).
+    """
+    url = str((article or {}).get("url") or "").strip()
+    slug = str((article or {}).get("slug") or "").strip()
+    if not url.startswith("https://"):
+        return ""
+    sep = "&" if "?" in url else "?"
+    campaign = f"short-{slug}" if slug else "short"
+    return f"{url}{sep}utm_source=youtube&utm_medium=short&utm_campaign={campaign}"
+
+
+def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
+                   article: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     yt = social.get("youtube") or {}
     title = (yt.get("title") or "").strip()
     if "#shorts" not in title.lower() and len(title) <= 92:
         title = f"{title} #Shorts"
+    description = (yt.get("description") or "").strip()
+    link = article_link(article)
+    if link and "utm_source=" not in description:
+        description = f"{description}\n\n{link}".strip()
     return {
         "snippet": {
             "title": title[:100],
-            "description": (yt.get("description") or "")[:4900],
+            "description": description[:4900],
             "tags": [t for t in (yt.get("tags") or [])][:15],
             "categoryId": env("SHORTS_YOUTUBE_CATEGORY", "27") or "27",
             "defaultLanguage": lang,
@@ -96,10 +115,11 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool) -> Dic
 
 
 def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict[str, Any],
-           lang: str, *, synthetic: bool = False) -> Dict[str, Any]:
+           lang: str, *, synthetic: bool = False,
+           article: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
-    meta = build_metadata(social, lang, synthetic=synthetic)
+    meta = build_metadata(social, lang, synthetic=synthetic, article=article)
     size = video.stat().st_size
     warnings: List[str] = []
     with _client() as client:
