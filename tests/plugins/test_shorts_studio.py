@@ -808,6 +808,7 @@ def test_a_refused_or_unkeyed_scene_falls_back_to_stock_footage(sample, tmp_path
     _, timeline, report = _run_scenes(sample, tmp_path, monkeypatch, _FakeOpenRouter(refuse=True))
     assert report["generated"] == 0 and report["spent_usd"] == 0
     assert all(not s.get("broll") for s in timeline) and "402" in report["scenes"][0]["reason"]
+    assert "no credit" in report["scenes"][0]["reason"]                 # OpenRouter's own words kept
 
     monkeypatch.delenv("SHORTS_OPENROUTER_API_KEY")
     pkg, timeline = _scene_pkg(sample, n=1)
