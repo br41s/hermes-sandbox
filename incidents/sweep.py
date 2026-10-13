@@ -19,9 +19,12 @@ Signals:
     observations grouped by trace). Degrades to nothing if the API/keys are absent.
   * Blocked agent commits — the git-guard pre-commit hook appends a JSON line to
     ``blocked-commits.jsonl`` when it blocks a mass-deletion commit.
-  * Runaway agent runs — an agent cron run that burned its whole iteration
-    budget. These report ``last_status: ok`` (the loop exits cleanly at the cap),
-    so every failure-shaped signal above stays silent while the job does no work.
+  * Runaway agent runs — an agent cron run that hit its iteration cap: the
+    session holds run_agent's forced "maximum number of tool-calling
+    iterations" request. These report ``last_status: ok`` (the loop exits
+    cleanly at the cap), so every failure-shaped signal above stays silent
+    while the job does no work. A run that closes near the cap with a real
+    reply and no forced request chose to stop and is not reported.
   * New dependency advisories — open critical/high osv-scanner alerts from the
     repo's code-scanning API, grouped by package. The existing backlog is
     adopted as a baseline on first run and never reported; only packages whose
@@ -77,7 +80,7 @@ STALE_GRACE_HOURS = 1  # slack past the expected next run before a job counts as
 LANGFUSE_WINDOW_HOURS = 2
 RUNAWAY_WINDOW_HOURS = 26  # one daily cycle + slack, matching CRON_FAILURE_WINDOW_HOURS
 RUNAWAY_DEFAULT_MAX_TURNS = 90  # run_agent's hard stop; see AIAgent(max_iterations=...)
-RUNAWAY_FRACTION = 0.95  # a run this close to the cap did not choose to stop
+RUNAWAY_FRACTION = 0.95  # near-cap fallback when the session shows no chosen stop; a cap hit pages at any count
 UNCLEAN_EXIT_WINDOW_HOURS = 26  # older records are history, not news (the log is never pruned)
 _SEEN_CAP = 2000
 _BLOCKED_CAP = 500  # cap on retained blocked-commit signal lines
@@ -465,7 +468,17 @@ def _session_dbs(home: Optional[Path] = None) -> List[Path]:
 
 
 def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
-    """((session_id, started_at, api_call_count, model) rows, unreadable_dbs).
+    """((session_id, started_at, api_call_count, model, end_reason, cap_hit) rows,
+    unreadable_dbs).
+
+    ``cap_hit`` is 1 when the session holds the ``user`` row run_agent appends
+    when the iteration cap cuts a run short (``handle_max_iterations`` in
+    ``agent/chat_completion_helpers.py``), 0 otherwise. The marker is that
+    message's content, ``MAX_ITERATIONS_SUMMARY_REQUEST``: SessionDB drops the
+    message metadata, so the shared constant is the only durable trace of the
+    forced stop. ``end_reason`` is ``cron_complete`` only when the scheduler
+    found a real assistant reply as the session's last row (``cron/scheduler.py``,
+    #93820); anything else means the run did not close with a reply.
 
     Read-only and best-effort: a missing table, a locked DB or a schema change
     degrades to nothing rather than breaking the whole sweep. The watcher must
@@ -485,12 +498,16 @@ def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
     for db in dbs:
         try:
             import sqlite3
+            from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
             try:
                 rows.extend(con.execute(
-                    "SELECT id, started_at, api_call_count, model FROM sessions"
-                    " WHERE id LIKE 'cron_%' AND started_at > ? AND ended_at IS NOT NULL",
-                    (since_epoch,),
+                    "SELECT s.id, s.started_at, s.api_call_count, s.model, s.end_reason,"
+                    " EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id"
+                    "         AND m.role = 'user' AND instr(m.content, ?) = 1)"
+                    " FROM sessions s"
+                    " WHERE s.id LIKE 'cron_%' AND s.started_at > ? AND s.ended_at IS NOT NULL",
+                    (MAX_ITERATIONS_SUMMARY_REQUEST, since_epoch),
                 ).fetchall())
             finally:
                 con.close()
@@ -516,9 +533,24 @@ def runaway_incidents(*, now: Optional[datetime] = None,
     the prompt never changed, so ``prompt_drift_incidents`` saw nothing. The
     review gate was simply gone, and the only symptom was the absence of work.
 
-    Hitting the cap is the signal: an agent that finishes chooses to stop, and
-    across ~200 healthy auditor runs the maximum was 60 calls against a cap of
-    90. A run at the ceiling has stopped making progress by definition.
+    Hitting the cap is the signal, and the session DB records whether it was
+    hit: run_agent appends a ``user`` row whose content is
+    ``MAX_ITERATIONS_SUMMARY_REQUEST`` ("You've reached the maximum number of
+    tool-calling iterations allowed…") just before the final assistant message,
+    and nothing else writes that text. A run carrying it is a cap hit at any
+    count, so it pages at whatever ``api_call_count`` the cap landed on.
+
+    The count alone cannot tell. The premise "an agent that finishes chooses to
+    stop" held for the auditor (~200 healthy runs, maximum 60 of 90) and failed
+    for the Shoroban Product Sheet Writer (``cron_b2f774557766_*``): between
+    2026-09-29 and 2026-10-13 this signal paged it 12 times, and 5 of those runs
+    closed at 85–86 with a full report and ``finish_reason=stop``. The agent
+    chose to stop, 10 products at ~8.5 iterations each; the other 7 hit 90
+    mid-product and were real. So a run at or above ``RUNAWAY_FRACTION`` of
+    the cap without the marker pages only when the session does not show a
+    chosen stop: ``end_reason`` is ``cron_complete`` only when the last row is a
+    real assistant reply (``cron/scheduler.py``), so that value with no marker
+    means the run finished on its own terms.
 
     ``rows`` and ``home`` are injectable so this is testable without a database.
     """
@@ -545,29 +577,52 @@ def runaway_incidents(*, now: Optional[datetime] = None,
                          "$HERMES_HOME/profiles/*/state.db for the sweep user."),
             ))
 
-    for sid, _started, calls, model in rows:
-        if not isinstance(calls, int) or calls < threshold:
-            continue
+    for sid, _started, calls, model, end_reason, cap_hit in rows:
+        hit = bool(cap_hit)
+        if not hit:
+            if not isinstance(calls, int) or calls < threshold:
+                continue
+            if end_reason == "cron_complete":
+                # Near the cap, no forced summary request, and the scheduler saw
+                # a real reply as the last row: it chose to stop (Shoroban 85/90).
+                continue
         job_id = ""
         parts = str(sid).split("_")
         if len(parts) >= 2:
             job_id = parts[1]
+        shown = calls if isinstance(calls, int) else "?"
+        if hit:
+            title = f"Agent run burned its full iteration budget ({shown}/{max_turns})"
+            why = (
+                "The run was cut at the iteration cap: the session holds run_agent's "
+                "forced summary request before its final message. It reports success "
+                "while having done little or no work, or lost the work in flight. Check "
+                "whether it repeated the same tool calls, whether the model or provider "
+                "routing changed, and whether its per-run workload fits the cap."
+            )
+        else:
+            title = f"Agent run ended near its iteration cap without a reply ({shown}/{max_turns})"
+            why = (
+                f"end_reason: {end_reason or 'unknown'}\n"
+                "No forced summary request in the session, but the run got within "
+                "reach of the cap and did not close with an assistant reply. Check "
+                "what it was doing when it stopped, and whether it repeated the same "
+                "tool calls."
+            )
         out.append(Incident(
             id=f"runaway:{sid}",
             kind="cron",
-            title=f"Agent run burned its full iteration budget ({calls}/{max_turns})",
+            title=title,
             detail=(
                 f"session: {sid}\n"
                 f"job: {job_id or 'unknown'}\n"
                 f"model: {model or 'unknown'}\n"
-                "The run exited at the iteration cap rather than finishing, so it "
-                "reports success while having done little or no work. Check whether "
-                "it repeated the same tool calls, and whether the model or provider "
-                "routing changed."
+                + why
             ),
             handoff=(
-                f"Hermes cron run {sid} hit the {max_turns}-iteration cap. Pull its "
-                "tool-call sequence from the session DB and find what it looped on."
+                f"Hermes cron run {sid} {'hit' if hit else 'ran up against'} the "
+                f"{max_turns}-iteration cap. Pull its tool-call sequence from the "
+                "session DB and find what it looped on."
             ),
         ))
     return out
