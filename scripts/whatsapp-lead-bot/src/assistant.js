@@ -136,7 +136,13 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
   const raw = data?.choices?.[0]?.message?.content;
   if (typeof raw !== "string") {
     recordOpenRouterOutcome(false);
-    throw new Error("OpenRouter returned no message content");
+    // Seen live (2026-10-13) with nothing to go on: say what did come back,
+    // so the conversation's escalation_detail explains itself next time.
+    const choice = data?.choices?.[0];
+    const shape = choice
+      ? `finish_reason=${choice.finish_reason} message_keys=${Object.keys(choice.message || {}).join(",")}`
+      : `no choices (keys=${Object.keys(data || {}).join(",")})`;
+    throw new Error(`OpenRouter returned no message content (${shape})`);
   }
 
   // "ok" means the call itself succeeded; validation failures are the

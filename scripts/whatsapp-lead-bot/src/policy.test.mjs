@@ -155,3 +155,13 @@ test("messageRequestsHuman matches Spanish and English phrasing", () => {
   assert.equal(messageRequestsHuman("Can I speak with a representative?"), true);
   assert.equal(messageRequestsHuman("¿Tenéis servicio de reformas?"), false);
 });
+
+test("messageRequestsHuman tolerates loose phrasing (seen live: 'talk with an human')", () => {
+  assert.equal(messageRequestsHuman("talk with an human"), true);
+  assert.equal(messageRequestsHuman("can I chat with someone?"), true);
+  assert.equal(messageRequestsHuman("I want a real person"), true);
+  assert.equal(messageRequestsHuman("quiero hablar con alguien"), true);
+  assert.equal(messageRequestsHuman("¿puedo hablar con un comercial?"), true);
+  assert.equal(messageRequestsHuman("I talk to my team about automation"), false);
+  assert.equal(messageRequestsHuman("hablar con vosotros es fácil"), false);
+});

@@ -55,9 +55,14 @@ export function messageTouchesSensitiveTopic(text) {
 }
 
 // Same bilingual-backstop reasoning as SENSITIVE_TOPIC_PATTERNS above.
+// Loose on purpose: "talk with an human" (seen live, 2026-10-13) slipped past
+// the first version, the model was called instead and happened to fail, so
+// the visitor reached a person by accident rather than by rule.
 const HUMAN_REQUEST_PATTERNS = [
-  /\b(hablar con (una )?persona|agente humano|operador)\b/i,
-  /\b(talk to (a )?(person|human)|human agent|speak (to|with) (a )?(person|representative))\b/i,
+  /\b(hablar|habla|chatear|contactar)\s+con\s+(una?\s+|el\s+|la\s+|alg[uú]n\s+)?(persona|humano|agente|operador|alguien|comercial|responsable)\b/i,
+  /\b(agente humano|persona real|operador|asesor humano)\b/i,
+  /\b(talk|speak|chat)\s+(to|with)\s+(an?\s+|the\s+)?(person|human|agent|someone|representative|rep|support|sales)\b/i,
+  /\b(human agent|real person|real human|live agent|customer service)\b/i,
 ];
 
 export function messageRequestsHuman(text) {
