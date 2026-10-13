@@ -193,7 +193,11 @@ group, so the second short starts after the first and reads its spend. They
 used to run together: on 2026-10-13 six Avatar IV takes were pending at once
 and OpenRouter refused the third take of each with a 402 while the account
 had credit. The render log now prints the key's limit and remaining balance
-at start, and a 402 carries OpenRouter's own reason. A scene that does not fit, a 402, a model
+at start, and a 402 carries OpenRouter's own reason; the next test, alone,
+showed it: "Insufficient credits" (`limit_source: openrouter_credits`) on the
+third take, the key $1.91 from its limit. OpenRouter holds credit for every
+video in progress, so Lucía's takes now go one at a time, and the first one
+refused stops the rest (the short cannot pass QA without her). A scene that does not fit, a 402, a model
 error or a 10-minute timeout leaves that beat on its `broll`: a short never
 fails for a paid clip. The manifest records each scene's id, status, real cost
 and reason; the ledger keeps `ai_scenes` and `ai_spend_usd`, and the publisher's
@@ -299,18 +303,18 @@ What a tip short is, in order:
    the setting prompt keeps her hands free and objects on surfaces (the
    first paid test's tray of bread stayed floating in the air).
 2. **Hook**, Lucía on camera, in the same setting.
-3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns to him.
-4. **Martín's turn** (0.8 s, no words): Lucía's last frame (turned towards
-   him) pushes in quickly with his name tag. Martín stays in the setting
-   behind her the whole time; what is not generated is a clip of him nodding
-   (Hailuo 3 charged $0.65 for it on 2026-10-12, more than all of Lucía's
-   lines). At 1.6 s, and from the setting still, it read as Lucía frozen.
-5. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
+3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns her
+   head and shoulders to him and says the line to him (`HANDOFF_MOTION`);
+   the take keeps 0.6 s after the words so the turn is seen, then it cuts to
+   his first card. There is no shot of Martín reacting: a frozen last frame
+   with a push-in read as a stall (owner, 2026-10-12 and 10-13), and a
+   generated nod cost $0.65 (Hailuo 3), more than all of Lucía's lines.
+4. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`).
-6. **CTA**, a card too, in Martín's voice: save it or share it (checked in
+5. **CTA**, a card too, in Martín's voice: save it or share it (checked in
    `package.py`).
-7. **Outro**, added by the renderer and the same in every short: the full
+6. **Outro**, added by the renderer and the same in every short: the full
    article on biglobster.top, then "follow us for more tips", as an animated
    card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
    reads them as a jump in pitch, and it sounded overexcited.
@@ -332,10 +336,13 @@ it does NOT take a voice track as a data URL (it wants a public HTTPS URL),
 which is why her lines are voiced by HeyGen and not by our TTS. Martín
 narrates with an Azure voice (`package.TIP_VOICES`: the HD
 `es-ES-Tristan:DragonHDLatestNeural`, the owner's pick over Álvaro, and
-`en-US-AndrewMultilingualNeural`), forced by the package. HD voices keep
-their own pace (no prosody rate) and exist on Azure only; if Azure fails,
-Edge reads the line with `voice.EDGE_FALLBACK`. Two characters, two voices,
-each the same in every short.
+`en-US-AndrewMultilingualNeural`), forced by the package. HD voices take
+no prosody rate and exist on Azure only; if Azure fails, Edge reads the
+line with `voice.EDGE_FALLBACK`. Both read slowly to the owner at their own
+pace (2026-10-13), so Martín's HD lines are sped up after synthesis
+(`voice.HD_TEMPO`) and each of Lucía's takes plays faster, lips and voice
+together (`presenter.TAKE_TEMPO`), both 1.12x with the pitch kept. Two
+characters, two voices, each the same in every short.
 
 **What is paid.** Only Lucía's lines (opener + hook + handoff ≤32 words,
 ~12 s at $0.05/s), one take per line so each beat gets its exact length and
@@ -435,8 +442,10 @@ been rendered yet. The first dispatch with the key set is the test; its log's
 
 - `shorts_studio ledger` (from chat) shows the last shorts, their state and URLs.
 - A short stuck in `rendering`: open its `run_url`. After an hour with no run it
-  becomes `render_failed`, and the producer retries the post the next day.
-- `qa_failed`: `qa.errors` says why. The post is retried with a fresh script.
+  becomes `render_failed`.
+- `qa_failed`: `qa.errors` says why.
+- A failed post is not tried again (`ledger.MAX_FAILED_ATTEMPTS`, owner
+  2026-10-13): the producer takes another post the next day.
 - Instagram `pending`: Instagram was still processing. The second publisher run finishes it.
 - The render farm alone: Actions → *Shorts Studio* → Run workflow, with a
   `request_id` and a package (JSON → gzip → base64).

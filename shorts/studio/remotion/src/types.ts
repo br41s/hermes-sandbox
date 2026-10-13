@@ -1,7 +1,7 @@
 // The props contract between plugins/shorts/studio/build.py and this template.
 // build.py writes exactly this shape to props.json; keep the two in step.
 
-export type BeatKind = 'opener' | 'hook' | 'handoff' | 'reaction' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta' | 'outro';
+export type BeatKind = 'opener' | 'hook' | 'handoff' | 'point' | 'stat' | 'list' | 'quote' | 'compare' | 'avatar' | 'cta' | 'outro';
 
 export type Beat = {
   kind: BeatKind;
@@ -22,13 +22,11 @@ export type Beat = {
   /** Path under the public dir of the avatar clip (avatar beats only). */
   avatar?: string | null;
   avatarName?: string;
-  /** Path under the public dir of the presenter clip: a line said to camera, or (tip) Martín's nod. */
+  /** Path under the public dir of the presenter clip: a line said to camera. */
   presenter?: string | null;
   presenterName?: string;
-  /** Tip format: Lucía full-frame, Martín's nod, or an animated card with him in a bubble. */
-  show?: 'presenter' | 'reaction' | 'card' | 'outro';
-  /** Tip format, Martín's turn: the still it pushes in on (Lucía's last frame). */
-  still?: string;
+  /** Tip format: Lucía full-frame, or an animated card with Martín in a bubble. */
+  show?: 'presenter' | 'card' | 'outro';
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;

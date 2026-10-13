@@ -218,8 +218,15 @@ SETTING_PROMPT = (
 # setting keeps her hands free and objects on surfaces (SETTING_PROMPT).
 TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm hand gestures with "
                "empty hands, steady posture.")
-HANDOFF_MOTION = ("Speaks to the camera, then on the last words turns her head to look over her "
-                  "shoulder at the man working behind her and gestures towards him with an open hand.")
+# She hands over by turning to Martín and saying the line to him, the way
+# a presenter turns to a colleague; a frozen last frame with a zoom read as
+# a stall (owner's review, 2026-10-13). Her face stays visible for the lips.
+HANDOFF_MOTION = ("Turns her head and shoulders partway towards the man working behind her and says "
+                  "the line to him, with a relaxed open-hand gesture in his direction, her face still "
+                  "visible to the camera; she stays turned towards him at the end.")
+# Her takes play this much faster, picture and voice together: at 1.0 she
+# read slowly to the owner (2026-10-13). HeyGen's voice takes no rate.
+TAKE_TEMPO = 1.12
 
 # How each presenter's recorded loop sits in the bubble: its scale against a
 # 1080x1920 frame and where to centre (fractions of the loop's width and
@@ -341,7 +348,14 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
         genvideo._log(f"presenter takes: {why}")
         return {}
     budget["committed"] += total
-    for job in jobs:
+    # One take at a time: OpenRouter holds credit for every video in progress,
+    # and with all three sent at once it refused the third "Insufficient
+    # credits" (402) on three shorts in a row on 2026-10-13, the account in credit.
+    for n, job in enumerate(jobs):
+        if n and jobs[n - 1].get("state") != "generated":
+            # The short cannot pass QA without every line of hers: stop paying.
+            job.update(state="skipped", reason=f"take {jobs[n - 1]['beat']} was not made")
+            continue
         heygen = {"voice_id": voice, "motion_prompt": HANDOFF_MOTION if job["beat"] == handoff else TAKE_MOTION,
                   "expressiveness": "medium"}
         body = {"model": cfg["model"], "prompt": job.pop("line"), "aspect_ratio": "9:16",
@@ -352,7 +366,8 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
             job["state"] = "pending"
         except Exception as exc:
             job.update(state="failed", reason=str(exc))
-    genvideo.wait_for(client, budget["cfg"]["key"], jobs, time.time() + cfg["timeout_s"], work, prefix="take")
+            continue
+        genvideo.wait_for(client, budget["cfg"]["key"], [job], time.time() + cfg["timeout_s"], work, prefix="take")
     takes: Dict[int, Path] = {}
     report["takes"] = []
     for job in jobs:
