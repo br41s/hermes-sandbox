@@ -147,7 +147,12 @@ def daily_spend(client, key: str) -> Optional[float]:
         if resp.status_code != 200:
             _log(f"key info: HTTP {resp.status_code}")
             return None
-        value = (resp.json().get("data") or {}).get("usage_daily")
+        data = resp.json().get("data") or {}
+        # The key's own limit is separate from the account's credit, and it is
+        # what a 402 usually means; log it so a refusal can be read, not guessed.
+        _log(f"key: limit {data.get('limit')}, remaining {data.get('limit_remaining')}, "
+             f"reset {data.get('limit_reset')}, used today {data.get('usage_daily')}")
+        value = data.get("usage_daily")
         return float(value) if value is not None else None
     except Exception as exc:  # spend info is advisory; the key's own limit is the hard stop
         _log(f"key info: {exc}")
@@ -191,7 +196,9 @@ def _submit(client, cfg: Dict[str, Any], job: Dict[str, Any], seed: int) -> None
 def submit_body(client, key: str, job: Dict[str, Any], body: Dict[str, Any]) -> None:
     resp = client.post(API, headers=_headers(API, key), json=body)
     if resp.status_code == 402:
-        raise RuntimeError("OpenRouter refused: no credit or the key's limit is reached (402)")
+        # Keep OpenRouter's own words: "no credit" was assumed once while the
+        # account had credit, and the reason was in the body we threw away.
+        raise RuntimeError(f"OpenRouter refused (402): {resp.text[:800]}")
     if resp.status_code >= 400:
         # The whole reason: OpenRouter's 404 lists why every endpoint was excluded
         # (privacy policy, guardrails), and a cut message hid it once.
