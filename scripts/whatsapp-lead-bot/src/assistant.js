@@ -107,7 +107,16 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
       model,
       messages,
       response_format: { type: "json_object" },
-      max_tokens: 500,
+      // gpt-oss is a reasoning model and its reasoning tokens count against
+      // max_tokens. Measured on the live service (2026-10-13): a short Spanish
+      // question spent 303 of 386 completion tokens on reasoning, and a longer
+      // prompt overran the old cap of 500, cutting the JSON off mid-object --
+      // which the validator then rejected as "not valid JSON". Low effort keeps
+      // reasoning small (a short qualification reply needs none), and 1200
+      // leaves room for the answer regardless. The visitor-facing length is
+      // still bounded by MAX_REPLY_CHARS in validateAssistantOutput, not here.
+      reasoning: { effort: "low" },
+      max_tokens: 1200,
       // Visitors' messages carry names and contact details: only providers that neither
       // store the prompt nor train on it (replaces the account-wide ZDR switch).
       provider: PROVIDER_POLICY,
