@@ -85,7 +85,7 @@ Si el producto trae `documents`, **el sitio ya los pinta solo** en la ficha. No 
 
 No hay lista que recorrer ni lote que repartir. **Pides un producto, lo terminas, pides el siguiente.** La herramienta te da uno cada vez, a propósito: cada ficha necesita su propia búsqueda y su propio criterio, y eso no se hace en bloque.
 
-Repite el ciclo de abajo hasta completar **10 productos** en esta pasada, o hasta que `next_product` te diga que no queda nada.
+Repite el ciclo de abajo hasta completar **7 productos** en esta pasada, o hasta que `next_product` te diga que no queda nada. Siete es lo que cabe en el presupuesto de herramientas de una pasada cuando la investigación se complica (fuentes que devuelven 403, referencias que no coinciden); con diez, la pasada se cortaba a mitad de un producto y ese trabajo se perdía. La siguiente pasada llega en dos horas.
 
 ## El ciclo, para cada producto
 
