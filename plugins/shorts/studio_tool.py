@@ -478,7 +478,7 @@ def _action_publish(args: Dict[str, Any]) -> str:
     try:
         if target == "youtube":
             result = youtube.upload(files["master"], files.get("thumb"), files.get("srt"), social,
-                                    entry["lang"], synthetic=synthetic)
+                                    entry["lang"], synthetic=synthetic, article=pkg.get("article"))
         elif target == "facebook":
             result = meta.facebook_reel(files["master"], social.get("facebook") or social.get("instagram") or "")
         elif target == "instagram_reel":
