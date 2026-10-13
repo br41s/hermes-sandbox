@@ -5,6 +5,7 @@ import {
   resolvePresentedSecret,
   languageFromBrowser,
   escalationMessage,
+  dedupeKey,
 } from "./webhook.js";
 
 const basePayload = {
@@ -93,6 +94,13 @@ test("every other escalation reason sends only the fixed safe reply", () => {
 test("escalationMessage falls back to Spanish for an unknown language", () => {
   const msg = escalationMessage({ reason: "lead_qualified", modelOutput: { reply: "Oui" }, lang: "fr" });
   assert.ok(msg.includes("Te paso con una persona"));
+});
+
+test("only message_created events take part in delivery dedupe (ids of other events are conversation ids)", () => {
+  assert.equal(dedupeKey({ ...basePayload, id: 2 }), 2);
+  assert.equal(dedupeKey({ event: "conversation_updated", id: 2 }), null);
+  assert.equal(dedupeKey({ event: "webwidget_triggered", id: 3 }), null);
+  assert.equal(dedupeKey({ ...basePayload }), null); // no id at all
 });
 
 test("languageFromBrowser reduces a browser locale to a 2-letter code", () => {

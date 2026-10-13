@@ -160,8 +160,20 @@ router.post("/", json(), async (req, res) => {
   }
 });
 
+// Pure, exported for testing. `payload.id` is only a message id on
+// message_created; on conversation_updated / webwidget_triggered it is the
+// conversation's. Deduping every event by bare id let a conversation's own
+// updates poison the seen-set, so a visitor message whose id happened to
+// equal a conversation id was dropped as a "duplicate" and never answered
+// (the likeliest cause of the unanswered first live widget turn on
+// 2026-10-13: the logs of that build did not record drops yet).
+export function dedupeKey(payload) {
+  if (payload?.event !== "message_created" || payload?.id == null) return null;
+  return payload.id;
+}
+
 async function handleWebhookEvent(payload) {
-  const messageId = payload?.id;
+  const messageId = dedupeKey(payload);
   if (messageId != null && alreadyProcessed(messageId)) {
     console.log(`webhook ignored: duplicate delivery of message ${messageId}`);
     return;
@@ -172,7 +184,7 @@ async function handleWebhookEvent(payload) {
     // One line per drop with the fields the decision was made on -- enough to
     // see a payload-shape mismatch from the logs alone, without any content.
     console.log(
-      `webhook ignored: ${reason} (event=${payload?.event} message_type=${payload?.message_type} content_type=${payload?.content_type} conversation=${payload?.conversation?.id} status=${payload?.conversation?.status} message=${messageId})`,
+      `webhook ignored: ${reason} (event=${payload?.event} message_type=${payload?.message_type} content_type=${payload?.content_type} conversation=${payload?.conversation?.id} status=${payload?.conversation?.status} id=${payload?.id})`,
     );
     if (reason === "unsupported_media") {
       await handleUnsupportedMedia(payload).catch((err) =>
