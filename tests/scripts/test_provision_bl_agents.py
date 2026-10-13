@@ -79,10 +79,30 @@ def test_product_sheets_is_a_recurring_daily_agent():
     source, display_name, schedule_kind, _toolsets = AGENT_SOURCES["product-sheets"]
     assert source == "product-sheets/bl-site-package-product-sheets.prompt"
     assert display_name == "Product Sheet Writer"
-    # The queue is thousands of products long and a run takes ten, so this is
+    # The queue is thousands of products long and a run takes seven, so this is
     # open-ended work: it stops on its own once every sellable product has a
     # sheet or a recorded reason for not having one.
     assert schedule_kind == "daily"
+
+
+def test_product_sheets_per_run_count_fits_the_iteration_budget():
+    # The prompt names how many products a run takes, and the agent follows it
+    # exactly: on 2026-10-13 it closed 10 sheets in 85 of 90 iterations and the
+    # incident watcher paged (its threshold is 95% of the cap). Over the prior
+    # 20 days, 7 of 165 runs hit the 90 cap mid-product and lost that research.
+    # Worst observed cost was ~11 iterations per product (403s, mismatches),
+    # plus tool_describe and the final report. The count must leave a run that
+    # finishes by choice, under the watcher's threshold, in the bad case.
+    import re
+    source = AGENT_SOURCES["product-sheets"][0]
+    text = (REPO_ROOT / source).read_text(encoding="utf-8")
+    match = re.search(r"completar \*\*(\d+) productos\*\*", text)
+    assert match, "the prompt must state the per-run product count"
+    per_run = int(match.group(1))
+    worst_iterations_per_product = 11
+    overhead = 2  # tool_describe at the start, the report at the end
+    watcher_threshold = int(90 * 0.95)  # incidents.sweep RUNAWAY_FRACTION
+    assert per_run * worst_iterations_per_product + overhead < watcher_threshold
 
 
 def test_product_sheets_needs_no_old_site_url_and_no_extra_key():
