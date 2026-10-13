@@ -5,6 +5,8 @@
  * handoff, it only reports what the model said.
  */
 
+import { recordOpenRouterOutcome } from "./health.js";
+
 const MAX_REPLY_CHARS = 700; // WhatsApp-appropriate: short, not an essay
 const MAX_KNOWLEDGE_ARTICLES = 5;
 const MAX_KNOWLEDGE_PRODUCTS = 5;
@@ -124,14 +126,21 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
   });
 
   if (!res.ok) {
+    recordOpenRouterOutcome(false);
     const text = await res.text().catch(() => "");
     throw new Error(`OpenRouter request failed: ${res.status} ${text.slice(0, 200)}`);
   }
 
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content;
-  if (typeof raw !== "string") throw new Error("OpenRouter returned no message content");
+  if (typeof raw !== "string") {
+    recordOpenRouterOutcome(false);
+    throw new Error("OpenRouter returned no message content");
+  }
 
+  // "ok" means the call itself succeeded; validation failures are the
+  // model's problem, not OpenRouter's, and show up as escalations instead.
+  recordOpenRouterOutcome(true);
   return validateAssistantOutput(raw);
 }
 
