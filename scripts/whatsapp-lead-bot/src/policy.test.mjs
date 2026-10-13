@@ -5,6 +5,7 @@ import {
   isLeadQualified,
   messageTouchesSensitiveTopic,
   messageRequestsHuman,
+  requestedHumanLanguage,
 } from "./policy.js";
 
 const baseInput = {
@@ -164,4 +165,11 @@ test("messageRequestsHuman tolerates loose phrasing (seen live: 'talk with an hu
   assert.equal(messageRequestsHuman("¿puedo hablar con un comercial?"), true);
   assert.equal(messageRequestsHuman("I talk to my team about automation"), false);
   assert.equal(messageRequestsHuman("hablar con vosotros es fácil"), false);
+});
+
+test("requestedHumanLanguage says which language asked (the reply's only clue on WhatsApp)", () => {
+  assert.equal(requestedHumanLanguage("talk with an human"), "en");
+  assert.equal(requestedHumanLanguage("quiero hablar con alguien"), "es");
+  assert.equal(requestedHumanLanguage("¿Tenéis servicio de reformas?"), null);
+  assert.equal(requestedHumanLanguage(""), null);
 });

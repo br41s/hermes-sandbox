@@ -19,7 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getRegistryEntry } from "./registry.js";
 import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
-import { decideHandoff, messageRequestsHuman } from "./policy.js";
+import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
@@ -47,6 +47,11 @@ const LEAD_HANDOFF_NOTICE = {
   en: "I'm passing you to a person on the team to continue with you here.",
 };
 
+const HUMAN_REQUEST_REPLY = {
+  es: "Claro. Te paso con una persona del equipo para que siga contigo aquí.",
+  en: "Of course. I'm passing you to a person on the team to continue with you here.",
+};
+
 // Pure, exported for testing: the single outbound message for an
 // escalation. A qualified lead with a valid model reply gets that reply
 // plus the handoff notice; every other reason (cannot answer, invalid
@@ -57,6 +62,11 @@ export function escalationMessage({ reason, modelOutput, lang }) {
   const code = SAFE_ESCALATION_REPLY[lang] ? lang : "es";
   if (reason === "lead_qualified" && modelOutput?.reply) {
     return `${modelOutput.reply}\n\n${LEAD_HANDOFF_NOTICE[code]}`;
+  }
+  if (reason === "visitor_requested_human") {
+    // They asked for a person: "I don't have enough information" is the
+    // wrong sentence to answer that with.
+    return HUMAN_REQUEST_REPLY[code];
   }
   return SAFE_ESCALATION_REPLY[code];
 }
@@ -233,9 +243,14 @@ async function processTurn(payload) {
   const turnCount = Number(existingAttributes.bot_turn_count || 0);
   const turnCap = Number(process.env.BOT_TURN_CAP || 6);
 
+  // "Talk to a person" is decided before the model is consulted (see the
+  // order in decideHandoff), so calling it would only add ~10 s and a paid
+  // request whose answer is thrown away -- measured 13 s vs 2 s live.
+  const visitorRequestedHuman = messageRequestsHuman(visitorMessage);
+
   let modelOutput = null;
   let modelError = null;
-  if (knowledge) {
+  if (knowledge && !visitorRequestedHuman) {
     try {
       const chatwootMessages = await chatwoot.getMessages(accountId, conversationId);
       modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage });
@@ -254,7 +269,7 @@ async function processTurn(payload) {
     turnCap,
     knowledgeAvailable: Boolean(knowledge),
     hasUnsupportedMedia: false, // already filtered out in shouldProcess
-    visitorRequestedHuman: messageRequestsHuman(visitorMessage),
+    visitorRequestedHuman,
     repeatedUnresolvedQuestion: false, // requires history diffing -- left conservative for MVP, see report
   });
 
@@ -283,9 +298,12 @@ async function processTurn(payload) {
     // No model output (e.g. OpenRouter down) means no detected language; the
     // website channel still tells us the visitor's browser language, which
     // beats defaulting an English visitor to Spanish (seen live 2026-10-13).
+    // On the human-request path there is no model output, and WhatsApp
+    // carries no browser language: the request's own wording is the last clue.
     const lang =
       modelOutput?.detected_language ||
-      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
+      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language) ||
+      requestedHumanLanguage(visitorMessage);
     const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
     await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");

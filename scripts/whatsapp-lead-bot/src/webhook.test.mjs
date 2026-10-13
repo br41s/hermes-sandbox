@@ -91,6 +91,13 @@ test("every other escalation reason sends only the fixed safe reply", () => {
   }
 });
 
+test("a visitor who asked for a person is told so, not that the bot lacks information", () => {
+  const msg = escalationMessage({ reason: "visitor_requested_human", modelOutput: null, lang: "en" });
+  assert.ok(msg.startsWith("Of course."));
+  assert.ok(!msg.includes("don't have enough information"));
+  assert.ok(escalationMessage({ reason: "visitor_requested_human", modelOutput: null, lang: "es" }).startsWith("Claro."));
+});
+
 test("escalationMessage falls back to Spanish for an unknown language", () => {
   const msg = escalationMessage({ reason: "lead_qualified", modelOutput: { reply: "Oui" }, lang: "fr" });
   assert.ok(msg.includes("Te paso con una persona"));

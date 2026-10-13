@@ -58,16 +58,30 @@ export function messageTouchesSensitiveTopic(text) {
 // Loose on purpose: "talk with an human" (seen live, 2026-10-13) slipped past
 // the first version, the model was called instead and happened to fail, so
 // the visitor reached a person by accident rather than by rule.
-const HUMAN_REQUEST_PATTERNS = [
-  /\b(hablar|habla|chatear|contactar)\s+con\s+(una?\s+|el\s+|la\s+|alg[uú]n\s+)?(persona|humano|agente|operador|alguien|comercial|responsable)\b/i,
-  /\b(agente humano|persona real|operador|asesor humano)\b/i,
-  /\b(talk|speak|chat)\s+(to|with)\s+(an?\s+|the\s+)?(person|human|agent|someone|representative|rep|support|sales)\b/i,
-  /\b(human agent|real person|real human|live agent|customer service)\b/i,
-];
+const HUMAN_REQUEST_PATTERNS = {
+  es: [
+    /\b(hablar|habla|chatear|contactar)\s+con\s+(una?\s+|el\s+|la\s+|alg[uú]n\s+)?(persona|humano|agente|operador|alguien|comercial|responsable)\b/i,
+    /\b(agente humano|persona real|operador|asesor humano)\b/i,
+  ],
+  en: [
+    /\b(talk|speak|chat)\s+(to|with)\s+(an?\s+|the\s+)?(person|human|agent|someone|representative|rep|support|sales)\b/i,
+    /\b(human agent|real person|real human|live agent|customer service)\b/i,
+  ],
+};
+
+// "es" | "en" | null: which language's pattern matched. The caller skips the
+// model on a human request, so this is also the only language signal left
+// for the reply when the channel carries none (WhatsApp).
+export function requestedHumanLanguage(text) {
+  if (typeof text !== "string" || !text) return null;
+  for (const [lang, patterns] of Object.entries(HUMAN_REQUEST_PATTERNS)) {
+    if (patterns.some((re) => re.test(text))) return lang;
+  }
+  return null;
+}
 
 export function messageRequestsHuman(text) {
-  if (typeof text !== "string" || !text) return false;
-  return HUMAN_REQUEST_PATTERNS.some((re) => re.test(text));
+  return requestedHumanLanguage(text) !== null;
 }
 
 /**
