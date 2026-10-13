@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldProcess, resolvePresentedSecret } from "./webhook.js";
+import { shouldProcess, resolvePresentedSecret, languageFromBrowser } from "./webhook.js";
 
 const basePayload = {
   event: "message_created",
@@ -66,4 +66,12 @@ test("resolvePresentedSecret prefers a non-Bearer header over the query param if
 
 test("resolvePresentedSecret returns empty string when neither is present", () => {
   assert.equal(resolvePresentedSecret(undefined, undefined), "");
+});
+
+test("languageFromBrowser reduces a browser locale to a 2-letter code", () => {
+  assert.equal(languageFromBrowser("en-US"), "en");
+  assert.equal(languageFromBrowser("es"), "es");
+  assert.equal(languageFromBrowser("pt_BR"), "pt");
+  assert.equal(languageFromBrowser(undefined), null);
+  assert.equal(languageFromBrowser(""), null);
 });

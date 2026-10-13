@@ -84,6 +84,15 @@ export function resolvePresentedSecret(authHeader, querySecret) {
   return header || querySecret || "";
 }
 
+// "en-US" / "es" / "pt-BR" -> "en" / "es" / "pt"; null when absent. Pure,
+// exported for testing. Only the languages SAFE_ESCALATION_REPLY knows
+// matter downstream -- anything else falls back to Spanish there.
+export function languageFromBrowser(browserLanguage) {
+  if (typeof browserLanguage !== "string") return null;
+  const code = browserLanguage.trim().toLowerCase().split(/[-_]/)[0];
+  return /^[a-z]{2}$/.test(code) ? code : null;
+}
+
 // Pure decision, exported for testing: given a webhook payload, should
 // this event be handed to the AI pipeline at all?
 export function shouldProcess(payload) {
@@ -106,6 +115,11 @@ export function shouldProcess(payload) {
 router.post("/", json(), async (req, res) => {
   const presented = resolvePresentedSecret(req.headers.authorization, req.query.secret);
   if (!secretMatches(presented)) {
+    // Logged: the first live delivery vanished without a trace because every
+    // early-exit here was silent. Keys only -- never the secret or the body.
+    console.warn(
+      `webhook rejected: bad or missing secret (auth header: ${req.headers.authorization ? "present" : "absent"}, query secret: ${req.query.secret ? "present" : "absent"})`,
+    );
     return res.status(401).json({ error: "unauthorized" });
   }
 
@@ -125,10 +139,18 @@ router.post("/", json(), async (req, res) => {
 
 async function handleWebhookEvent(payload) {
   const messageId = payload?.id;
-  if (messageId != null && alreadyProcessed(messageId)) return;
+  if (messageId != null && alreadyProcessed(messageId)) {
+    console.log(`webhook ignored: duplicate delivery of message ${messageId}`);
+    return;
+  }
 
   const { process: shouldRun, reason } = shouldProcess(payload);
   if (!shouldRun) {
+    // One line per drop with the fields the decision was made on -- enough to
+    // see a payload-shape mismatch from the logs alone, without any content.
+    console.log(
+      `webhook ignored: ${reason} (event=${payload?.event} message_type=${payload?.message_type} content_type=${payload?.content_type} conversation=${payload?.conversation?.id} status=${payload?.conversation?.status} message=${messageId})`,
+    );
     if (reason === "unsupported_media") {
       await handleUnsupportedMedia(payload).catch((err) =>
         console.error(`failed to handle unsupported media: ${err.message}`),
@@ -166,9 +188,10 @@ async function processTurn(payload) {
   const knowledge = await fetchKnowledge(entry);
 
   let existingAttributes = {};
+  let conversationSnapshot = null;
   try {
-    const conversation = await chatwoot.getConversation(accountId, conversationId);
-    existingAttributes = conversation?.custom_attributes || {};
+    conversationSnapshot = await chatwoot.getConversation(accountId, conversationId);
+    existingAttributes = conversationSnapshot?.custom_attributes || {};
   } catch (err) {
     console.error(`could not read conversation ${conversationId}: ${err.message}`);
   }
@@ -222,7 +245,12 @@ async function processTurn(payload) {
     // modelOutput can be null (e.g. OpenRouter was unavailable) -- fall
     // back to Spanish, matching this service's original default, rather
     // than guessing the visitor's language from scratch here.
-    const lang = modelOutput?.detected_language;
+    // No model output (e.g. OpenRouter down) means no detected language; the
+    // website channel still tells us the visitor's browser language, which
+    // beats defaulting an English visitor to Spanish (seen live 2026-10-13).
+    const lang =
+      modelOutput?.detected_language ||
+      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
     const safeReply = SAFE_ESCALATION_REPLY[lang] || SAFE_ESCALATION_REPLY.es;
     await chatwoot.sendMessage(accountId, conversationId, safeReply);
     await chatwoot.setStatus(accountId, conversationId, "open");
