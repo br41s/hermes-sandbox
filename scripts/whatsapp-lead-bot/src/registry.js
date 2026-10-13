@@ -1,6 +1,11 @@
 /**
  * account_id -> { chatwootAccountId, siteUrl, knowledgeToken, companyName,
- * enabled } lookup.
+ * enabled, answersPricing } lookup.
+ *
+ * `answersPricing: true` means the site publishes its prices and its
+ * /api/knowledge carries them (products with price_eur/price_usd), so the
+ * bot may quote them and a pricing question does not escalate on its own.
+ * Leave it unset for a business that quotes per job.
  *
  * MVP storage: a single JSON blob, loaded once at startup. No hot-reload,
  * no database -- restart the service to pick up a new/changed customer

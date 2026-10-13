@@ -26,10 +26,21 @@
 // biglobster.top dogfood instance) is bilingual, and this backstop must
 // not silently go blind just because the visitor happens to write in
 // English. Extend with more languages only when a real account needs it.
-const SENSITIVE_TOPIC_PATTERNS = [
+// Pricing is its own group: on a site that publishes its prices (BigLobster's
+// own, any catalogue client) the knowledge payload carries them and the model
+// may quote them, so these patterns are skipped when the registry entry says
+// `answersPricing: true`. Quotes-per-job businesses keep the backstop.
+const PRICING_PATTERNS = [
   /\bprecio\b/i,
   /\bpresupuesto\b/i,
   /\bcu[aá]nto (cuesta|vale)\b/i,
+  /\bprice\b/i,
+  /\bpricing\b/i,
+  /\bquote\b/i,
+  /\bhow much (does|is|would)\b/i,
+];
+
+const SENSITIVE_TOPIC_PATTERNS = [
   /\bdisponibilidad\b/i,
   /\bcompromiso\b/i,
   /\bqueja\b/i,
@@ -38,10 +49,6 @@ const SENSITIVE_TOPIC_PATTERNS = [
   /\bdemanda\b/i,
   /\babogad[oa]\b/i,
   /\blegal\b/i,
-  /\bprice\b/i,
-  /\bpricing\b/i,
-  /\bquote\b/i,
-  /\bhow much (does|is|would)\b/i,
   /\bavailability\b/i,
   /\bcommitment\b/i,
   /\bcomplaint\b/i,
@@ -49,9 +56,10 @@ const SENSITIVE_TOPIC_PATTERNS = [
   /\battorney\b/i,
 ];
 
-export function messageTouchesSensitiveTopic(text) {
+export function messageTouchesSensitiveTopic(text, { pricingIsPublic = false } = {}) {
   if (typeof text !== "string" || !text) return false;
-  return SENSITIVE_TOPIC_PATTERNS.some((re) => re.test(text));
+  if (SENSITIVE_TOPIC_PATTERNS.some((re) => re.test(text))) return true;
+  return !pricingIsPublic && PRICING_PATTERNS.some((re) => re.test(text));
 }
 
 // Same bilingual-backstop reasoning as SENSITIVE_TOPIC_PATTERNS above.
@@ -102,6 +110,9 @@ export function messageRequestsHuman(text) {
  *   later without touching this function's contract)
  * @param {boolean} input.repeatedUnresolvedQuestion - visitor repeated a
  *   question after a clarification attempt already failed
+ * @param {boolean} [input.pricingIsPublic] - the site publishes its prices
+ *   and the knowledge payload carries them (registry `answersPricing`), so
+ *   a pricing question is answerable and does not escalate by itself
  * @returns {{ required: boolean, reason: string|null }}
  */
 export function decideHandoff({
@@ -113,6 +124,7 @@ export function decideHandoff({
   hasUnsupportedMedia,
   visitorRequestedHuman,
   repeatedUnresolvedQuestion,
+  pricingIsPublic = false,
 }) {
   // Deterministic triggers, checked in a fixed order so the reason
   // recorded on the conversation is always the most specific one, not
@@ -138,7 +150,7 @@ export function decideHandoff({
   if (repeatedUnresolvedQuestion) {
     return { required: true, reason: "repeated_question" };
   }
-  if (messageTouchesSensitiveTopic(visitorMessage)) {
+  if (messageTouchesSensitiveTopic(visitorMessage, { pricingIsPublic })) {
     return { required: true, reason: "sensitive_topic" };
   }
   // A useful `need` alone is not enough on the first bot turn: the model
