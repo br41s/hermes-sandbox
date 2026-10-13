@@ -70,12 +70,40 @@ test("escalates on a sensitive-topic keyword even if the model didn't flag hando
   assert.equal(result.reason, "sensitive_topic");
 });
 
-test("escalates once a lead is qualified (need present)", () => {
+test("escalates once a lead is qualified (need present, not the first turn)", () => {
   const result = decideHandoff({
     ...baseInput,
+    turnCount: 1,
     modelOutput: {
       ...baseInput.modelOutput,
       lead: { name: "Marta", email: null, need: "Reformar un baño de 4m2" },
+    },
+  });
+  assert.equal(result.reason, "lead_qualified");
+});
+
+test("a need alone does not qualify on the first bot turn (paraphrased question)", () => {
+  // Seen live: "what services do you offer?" became need = "services for
+  // small business" and the real answer was replaced by the safe reply.
+  const result = decideHandoff({
+    ...baseInput,
+    turnCount: 0,
+    modelOutput: {
+      ...baseInput.modelOutput,
+      lead: { name: null, email: null, need: "services for small business" },
+    },
+  });
+  assert.equal(result.required, false);
+});
+
+test("on the first turn a need qualifies only with the model's explicit handoff signal", () => {
+  const result = decideHandoff({
+    ...baseInput,
+    turnCount: 0,
+    modelOutput: {
+      ...baseInput.modelOutput,
+      lead: { name: "Marta", email: null, need: "Quiero contratar la web para mi panadería" },
+      handoff: { required: true, reason: "ready to buy" },
     },
   });
   assert.equal(result.reason, "lead_qualified");

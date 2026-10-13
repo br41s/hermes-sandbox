@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shouldProcess, resolvePresentedSecret, languageFromBrowser } from "./webhook.js";
+import {
+  shouldProcess,
+  resolvePresentedSecret,
+  languageFromBrowser,
+  escalationMessage,
+} from "./webhook.js";
 
 const basePayload = {
   event: "message_created",
@@ -66,6 +71,28 @@ test("resolvePresentedSecret prefers a non-Bearer header over the query param if
 
 test("resolvePresentedSecret returns empty string when neither is present", () => {
   assert.equal(resolvePresentedSecret(undefined, undefined), "");
+});
+
+test("a qualified lead gets the model's real reply plus a handoff notice, in its language", () => {
+  const modelOutput = { reply: "Yes, we build websites for bakeries." };
+  const msg = escalationMessage({ reason: "lead_qualified", modelOutput, lang: "en" });
+  assert.ok(msg.startsWith("Yes, we build websites for bakeries."));
+  assert.ok(msg.includes("passing you to a person"));
+  assert.ok(!msg.includes("don't have enough information"));
+});
+
+test("every other escalation reason sends only the fixed safe reply", () => {
+  const modelOutput = { reply: "Our price is 10 €" }; // must not go out
+  for (const reason of ["sensitive_topic", "model_cannot_answer", "turn_cap_reached", "invalid_model_output"]) {
+    const msg = escalationMessage({ reason, modelOutput, lang: "en" });
+    assert.ok(msg.startsWith("I don't have enough information"), reason);
+    assert.ok(!msg.includes("10 €"), reason);
+  }
+});
+
+test("escalationMessage falls back to Spanish for an unknown language", () => {
+  const msg = escalationMessage({ reason: "lead_qualified", modelOutput: { reply: "Oui" }, lang: "fr" });
+  assert.ok(msg.includes("Te paso con una persona"));
 });
 
 test("languageFromBrowser reduces a browser locale to a 2-letter code", () => {

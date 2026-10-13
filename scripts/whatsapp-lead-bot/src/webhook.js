@@ -38,6 +38,29 @@ const SAFE_ESCALATION_REPLY = {
   en: "I don't have enough information to answer that safely. I'm handing this over to a person to continue with you here.",
 };
 
+// Appended to the model's own reply when the escalation is a *qualified
+// lead*: the visitor got a real answer and is being handed to a person --
+// the "not enough information" text would be false there. One message
+// still (cost rule): reply + blank line + this.
+const LEAD_HANDOFF_NOTICE = {
+  es: "Te paso con una persona del equipo para que siga contigo aquí.",
+  en: "I'm passing you to a person on the team to continue with you here.",
+};
+
+// Pure, exported for testing: the single outbound message for an
+// escalation. A qualified lead with a valid model reply gets that reply
+// plus the handoff notice; every other reason (cannot answer, invalid
+// output, sensitive topic, turn cap, visitor asked for a person...) gets
+// the fixed safe reply, because in those cases the model's text is exactly
+// what must not go out.
+export function escalationMessage({ reason, modelOutput, lang }) {
+  const code = SAFE_ESCALATION_REPLY[lang] ? lang : "es";
+  if (reason === "lead_qualified" && modelOutput?.reply) {
+    return `${modelOutput.reply}\n\n${LEAD_HANDOFF_NOTICE[code]}`;
+  }
+  return SAFE_ESCALATION_REPLY[code];
+}
+
 // No model call happens on this path (see handleUnsupportedMedia below),
 // so there is no detected_language to key off of -- sent bilingually in
 // one message rather than guessing, which still respects the
@@ -251,8 +274,8 @@ async function processTurn(payload) {
     const lang =
       modelOutput?.detected_language ||
       languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
-    const safeReply = SAFE_ESCALATION_REPLY[lang] || SAFE_ESCALATION_REPLY.es;
-    await chatwoot.sendMessage(accountId, conversationId, safeReply);
+    const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
+    await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");
     await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
     await chatwoot.setCustomAttributes(accountId, conversationId, {

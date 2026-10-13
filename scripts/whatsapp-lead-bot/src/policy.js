@@ -122,7 +122,14 @@ export function decideHandoff({
   if (messageTouchesSensitiveTopic(visitorMessage)) {
     return { required: true, reason: "sensitive_topic" };
   }
-  if (isLeadQualified(modelOutput.lead)) {
+  // A useful `need` alone is not enough on the first bot turn: the model
+  // fills it from a paraphrase of the visitor's question ("services for
+  // small business" from "what services do you offer?"), and qualifying on
+  // that threw the real answer away on the very first live conversation
+  // (2026-10-13). From the second turn on the bot has asked its one
+  // qualification question, so a need is the visitor's own; on the first
+  // turn only the model's explicit handoff signal counts.
+  if (isLeadQualified(modelOutput.lead) && (turnCount >= 1 || modelOutput.handoff?.required)) {
     return { required: true, reason: "lead_qualified" };
   }
   // The model's own signal, honoured last -- everything above is a
