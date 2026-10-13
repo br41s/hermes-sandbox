@@ -30,12 +30,24 @@ function authToken() {
   return token;
 }
 
-async function chatwootRequest(path, { method = "GET", body } = {}) {
+// Agent-bot tokens can act on a conversation (send, toggle status, labels,
+// custom attributes) but Chatwoot refuses them the message-history endpoint
+// -- "Access to this endpoint is not authorized for bots", found live
+// 2026-10-13. Reads that need the transcript use the per-account
+// integration user's token instead. Reads only: the bot never sends as a
+// human, so a bot reply stays visibly a bot reply in Chatwoot.
+function readToken() {
+  const token = process.env.CHATWOOT_USER_API_TOKEN;
+  if (!token) throw new Error("CHATWOOT_USER_API_TOKEN is not configured");
+  return token;
+}
+
+async function chatwootRequest(path, { method = "GET", body, auth = "bot" } = {}) {
   const res = await fetch(`${baseUrl()}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
-      api_access_token: authToken(),
+      api_access_token: auth === "user" ? readToken() : authToken(),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -77,6 +89,7 @@ export async function getConversation(accountId, conversationId) {
 export async function getMessages(accountId, conversationId) {
   const data = await chatwootRequest(
     `${conversationPath(accountId, conversationId)}/messages`,
+    { auth: "user" },
   );
   return Array.isArray(data) ? data : data?.payload || [];
 }

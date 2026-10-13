@@ -55,14 +55,33 @@ export function messageTouchesSensitiveTopic(text) {
 }
 
 // Same bilingual-backstop reasoning as SENSITIVE_TOPIC_PATTERNS above.
-const HUMAN_REQUEST_PATTERNS = [
-  /\b(hablar con (una )?persona|agente humano|operador)\b/i,
-  /\b(talk to (a )?(person|human)|human agent|speak (to|with) (a )?(person|representative))\b/i,
-];
+// Loose on purpose: "talk with an human" (seen live, 2026-10-13) slipped past
+// the first version, the model was called instead and happened to fail, so
+// the visitor reached a person by accident rather than by rule.
+const HUMAN_REQUEST_PATTERNS = {
+  es: [
+    /\b(hablar|habla|chatear|contactar)\s+con\s+(una?\s+|el\s+|la\s+|alg[uú]n\s+)?(persona|humano|agente|operador|alguien|comercial|responsable)\b/i,
+    /\b(agente humano|persona real|operador|asesor humano)\b/i,
+  ],
+  en: [
+    /\b(talk|speak|chat)\s+(to|with)\s+(an?\s+|the\s+)?(person|human|agent|someone|representative|rep|support|sales)\b/i,
+    /\b(human agent|real person|real human|live agent|customer service)\b/i,
+  ],
+};
+
+// "es" | "en" | null: which language's pattern matched. The caller skips the
+// model on a human request, so this is also the only language signal left
+// for the reply when the channel carries none (WhatsApp).
+export function requestedHumanLanguage(text) {
+  if (typeof text !== "string" || !text) return null;
+  for (const [lang, patterns] of Object.entries(HUMAN_REQUEST_PATTERNS)) {
+    if (patterns.some((re) => re.test(text))) return lang;
+  }
+  return null;
+}
 
 export function messageRequestsHuman(text) {
-  if (typeof text !== "string" || !text) return false;
-  return HUMAN_REQUEST_PATTERNS.some((re) => re.test(text));
+  return requestedHumanLanguage(text) !== null;
 }
 
 /**
@@ -122,7 +141,14 @@ export function decideHandoff({
   if (messageTouchesSensitiveTopic(visitorMessage)) {
     return { required: true, reason: "sensitive_topic" };
   }
-  if (isLeadQualified(modelOutput.lead)) {
+  // A useful `need` alone is not enough on the first bot turn: the model
+  // fills it from a paraphrase of the visitor's question ("services for
+  // small business" from "what services do you offer?"), and qualifying on
+  // that threw the real answer away on the very first live conversation
+  // (2026-10-13). From the second turn on the bot has asked its one
+  // qualification question, so a need is the visitor's own; on the first
+  // turn only the model's explicit handoff signal counts.
+  if (isLeadQualified(modelOutput.lead) && (turnCount >= 1 || modelOutput.handoff?.required)) {
     return { required: true, reason: "lead_qualified" };
   }
   // The model's own signal, honoured last -- everything above is a

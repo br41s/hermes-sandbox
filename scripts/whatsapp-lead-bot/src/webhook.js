@@ -19,7 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getRegistryEntry } from "./registry.js";
 import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
-import { decideHandoff, messageRequestsHuman } from "./policy.js";
+import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
@@ -37,6 +37,39 @@ const SAFE_ESCALATION_REPLY = {
   es: "No tengo información suficiente para responderte con seguridad. Se lo paso a una persona para que continúe contigo aquí.",
   en: "I don't have enough information to answer that safely. I'm handing this over to a person to continue with you here.",
 };
+
+// Appended to the model's own reply when the escalation is a *qualified
+// lead*: the visitor got a real answer and is being handed to a person --
+// the "not enough information" text would be false there. One message
+// still (cost rule): reply + blank line + this.
+const LEAD_HANDOFF_NOTICE = {
+  es: "Te paso con una persona del equipo para que siga contigo aquí.",
+  en: "I'm passing you to a person on the team to continue with you here.",
+};
+
+const HUMAN_REQUEST_REPLY = {
+  es: "Claro. Te paso con una persona del equipo para que siga contigo aquí.",
+  en: "Of course. I'm passing you to a person on the team to continue with you here.",
+};
+
+// Pure, exported for testing: the single outbound message for an
+// escalation. A qualified lead with a valid model reply gets that reply
+// plus the handoff notice; every other reason (cannot answer, invalid
+// output, sensitive topic, turn cap, visitor asked for a person...) gets
+// the fixed safe reply, because in those cases the model's text is exactly
+// what must not go out.
+export function escalationMessage({ reason, modelOutput, lang }) {
+  const code = SAFE_ESCALATION_REPLY[lang] ? lang : "es";
+  if (reason === "lead_qualified" && modelOutput?.reply) {
+    return `${modelOutput.reply}\n\n${LEAD_HANDOFF_NOTICE[code]}`;
+  }
+  if (reason === "visitor_requested_human") {
+    // They asked for a person: "I don't have enough information" is the
+    // wrong sentence to answer that with.
+    return HUMAN_REQUEST_REPLY[code];
+  }
+  return SAFE_ESCALATION_REPLY[code];
+}
 
 // No model call happens on this path (see handleUnsupportedMedia below),
 // so there is no detected_language to key off of -- sent bilingually in
@@ -84,6 +117,15 @@ export function resolvePresentedSecret(authHeader, querySecret) {
   return header || querySecret || "";
 }
 
+// "en-US" / "es" / "pt-BR" -> "en" / "es" / "pt"; null when absent. Pure,
+// exported for testing. Only the languages SAFE_ESCALATION_REPLY knows
+// matter downstream -- anything else falls back to Spanish there.
+export function languageFromBrowser(browserLanguage) {
+  if (typeof browserLanguage !== "string") return null;
+  const code = browserLanguage.trim().toLowerCase().split(/[-_]/)[0];
+  return /^[a-z]{2}$/.test(code) ? code : null;
+}
+
 // Pure decision, exported for testing: given a webhook payload, should
 // this event be handed to the AI pipeline at all?
 export function shouldProcess(payload) {
@@ -106,6 +148,11 @@ export function shouldProcess(payload) {
 router.post("/", json(), async (req, res) => {
   const presented = resolvePresentedSecret(req.headers.authorization, req.query.secret);
   if (!secretMatches(presented)) {
+    // Logged: the first live delivery vanished without a trace because every
+    // early-exit here was silent. Keys only -- never the secret or the body.
+    console.warn(
+      `webhook rejected: bad or missing secret (auth header: ${req.headers.authorization ? "present" : "absent"}, query secret: ${req.query.secret ? "present" : "absent"})`,
+    );
     return res.status(401).json({ error: "unauthorized" });
   }
 
@@ -123,12 +170,32 @@ router.post("/", json(), async (req, res) => {
   }
 });
 
+// Pure, exported for testing. `payload.id` is only a message id on
+// message_created; on conversation_updated / webwidget_triggered it is the
+// conversation's. Deduping every event by bare id let a conversation's own
+// updates poison the seen-set, so a visitor message whose id happened to
+// equal a conversation id was dropped as a "duplicate" and never answered
+// (the likeliest cause of the unanswered first live widget turn on
+// 2026-10-13: the logs of that build did not record drops yet).
+export function dedupeKey(payload) {
+  if (payload?.event !== "message_created" || payload?.id == null) return null;
+  return payload.id;
+}
+
 async function handleWebhookEvent(payload) {
-  const messageId = payload?.id;
-  if (messageId != null && alreadyProcessed(messageId)) return;
+  const messageId = dedupeKey(payload);
+  if (messageId != null && alreadyProcessed(messageId)) {
+    console.log(`webhook ignored: duplicate delivery of message ${messageId}`);
+    return;
+  }
 
   const { process: shouldRun, reason } = shouldProcess(payload);
   if (!shouldRun) {
+    // One line per drop with the fields the decision was made on -- enough to
+    // see a payload-shape mismatch from the logs alone, without any content.
+    console.log(
+      `webhook ignored: ${reason} (event=${payload?.event} message_type=${payload?.message_type} content_type=${payload?.content_type} conversation=${payload?.conversation?.id} status=${payload?.conversation?.status} id=${payload?.id})`,
+    );
     if (reason === "unsupported_media") {
       await handleUnsupportedMedia(payload).catch((err) =>
         console.error(`failed to handle unsupported media: ${err.message}`),
@@ -166,18 +233,24 @@ async function processTurn(payload) {
   const knowledge = await fetchKnowledge(entry);
 
   let existingAttributes = {};
+  let conversationSnapshot = null;
   try {
-    const conversation = await chatwoot.getConversation(accountId, conversationId);
-    existingAttributes = conversation?.custom_attributes || {};
+    conversationSnapshot = await chatwoot.getConversation(accountId, conversationId);
+    existingAttributes = conversationSnapshot?.custom_attributes || {};
   } catch (err) {
     console.error(`could not read conversation ${conversationId}: ${err.message}`);
   }
   const turnCount = Number(existingAttributes.bot_turn_count || 0);
   const turnCap = Number(process.env.BOT_TURN_CAP || 6);
 
+  // "Talk to a person" is decided before the model is consulted (see the
+  // order in decideHandoff), so calling it would only add ~10 s and a paid
+  // request whose answer is thrown away -- measured 13 s vs 2 s live.
+  const visitorRequestedHuman = messageRequestsHuman(visitorMessage);
+
   let modelOutput = null;
   let modelError = null;
-  if (knowledge) {
+  if (knowledge && !visitorRequestedHuman) {
     try {
       const chatwootMessages = await chatwoot.getMessages(accountId, conversationId);
       modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage });
@@ -196,7 +269,7 @@ async function processTurn(payload) {
     turnCap,
     knowledgeAvailable: Boolean(knowledge),
     hasUnsupportedMedia: false, // already filtered out in shouldProcess
-    visitorRequestedHuman: messageRequestsHuman(visitorMessage),
+    visitorRequestedHuman,
     repeatedUnresolvedQuestion: false, // requires history diffing -- left conservative for MVP, see report
   });
 
@@ -222,9 +295,17 @@ async function processTurn(payload) {
     // modelOutput can be null (e.g. OpenRouter was unavailable) -- fall
     // back to Spanish, matching this service's original default, rather
     // than guessing the visitor's language from scratch here.
-    const lang = modelOutput?.detected_language;
-    const safeReply = SAFE_ESCALATION_REPLY[lang] || SAFE_ESCALATION_REPLY.es;
-    await chatwoot.sendMessage(accountId, conversationId, safeReply);
+    // No model output (e.g. OpenRouter down) means no detected language; the
+    // website channel still tells us the visitor's browser language, which
+    // beats defaulting an English visitor to Spanish (seen live 2026-10-13).
+    // On the human-request path there is no model output, and WhatsApp
+    // carries no browser language: the request's own wording is the last clue.
+    const lang =
+      modelOutput?.detected_language ||
+      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language) ||
+      requestedHumanLanguage(visitorMessage);
+    const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
+    await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");
     await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
     await chatwoot.setCustomAttributes(accountId, conversationId, {

@@ -5,6 +5,7 @@ import {
   isLeadQualified,
   messageTouchesSensitiveTopic,
   messageRequestsHuman,
+  requestedHumanLanguage,
 } from "./policy.js";
 
 const baseInput = {
@@ -70,12 +71,40 @@ test("escalates on a sensitive-topic keyword even if the model didn't flag hando
   assert.equal(result.reason, "sensitive_topic");
 });
 
-test("escalates once a lead is qualified (need present)", () => {
+test("escalates once a lead is qualified (need present, not the first turn)", () => {
   const result = decideHandoff({
     ...baseInput,
+    turnCount: 1,
     modelOutput: {
       ...baseInput.modelOutput,
       lead: { name: "Marta", email: null, need: "Reformar un baño de 4m2" },
+    },
+  });
+  assert.equal(result.reason, "lead_qualified");
+});
+
+test("a need alone does not qualify on the first bot turn (paraphrased question)", () => {
+  // Seen live: "what services do you offer?" became need = "services for
+  // small business" and the real answer was replaced by the safe reply.
+  const result = decideHandoff({
+    ...baseInput,
+    turnCount: 0,
+    modelOutput: {
+      ...baseInput.modelOutput,
+      lead: { name: null, email: null, need: "services for small business" },
+    },
+  });
+  assert.equal(result.required, false);
+});
+
+test("on the first turn a need qualifies only with the model's explicit handoff signal", () => {
+  const result = decideHandoff({
+    ...baseInput,
+    turnCount: 0,
+    modelOutput: {
+      ...baseInput.modelOutput,
+      lead: { name: "Marta", email: null, need: "Quiero contratar la web para mi panadería" },
+      handoff: { required: true, reason: "ready to buy" },
     },
   });
   assert.equal(result.reason, "lead_qualified");
@@ -126,4 +155,21 @@ test("messageRequestsHuman matches Spanish and English phrasing", () => {
   assert.equal(messageRequestsHuman("I'd like to talk to a human"), true);
   assert.equal(messageRequestsHuman("Can I speak with a representative?"), true);
   assert.equal(messageRequestsHuman("¿Tenéis servicio de reformas?"), false);
+});
+
+test("messageRequestsHuman tolerates loose phrasing (seen live: 'talk with an human')", () => {
+  assert.equal(messageRequestsHuman("talk with an human"), true);
+  assert.equal(messageRequestsHuman("can I chat with someone?"), true);
+  assert.equal(messageRequestsHuman("I want a real person"), true);
+  assert.equal(messageRequestsHuman("quiero hablar con alguien"), true);
+  assert.equal(messageRequestsHuman("¿puedo hablar con un comercial?"), true);
+  assert.equal(messageRequestsHuman("I talk to my team about automation"), false);
+  assert.equal(messageRequestsHuman("hablar con vosotros es fácil"), false);
+});
+
+test("requestedHumanLanguage says which language asked (the reply's only clue on WhatsApp)", () => {
+  assert.equal(requestedHumanLanguage("talk with an human"), "en");
+  assert.equal(requestedHumanLanguage("quiero hablar con alguien"), "es");
+  assert.equal(requestedHumanLanguage("¿Tenéis servicio de reformas?"), null);
+  assert.equal(requestedHumanLanguage(""), null);
 });
