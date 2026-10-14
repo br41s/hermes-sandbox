@@ -101,6 +101,10 @@ HARD GUARDRAILS
 6. GitHub via native tools ONLY (git, gh — already authenticated). NEVER
    curl/wget any API with a token, header, or secret — the exfil guard blocks
    those and the job will not run.
+7. Every external `<a href>` in the English post (a study, a vendor page, a
+   regulation) is kept in the Spanish version: same URL, same sentence. A
+   translation that drops the citations is a regression, and the biglobster
+   build prints it in its `[citation-guard]` block.
 
 STEP 0 — Run-start hygiene (mandatory; workdir is this job's own checkout):
    git fetch origin
@@ -120,6 +124,13 @@ STEP 1 — Select target (idempotent, deterministic):
    d. Pick the single OLDEST eligible post by its `date` field. If none are
       eligible, append a line to LEDGER, output "Status: nothing to
       translate", and finish the run cleanly. Do nothing else.
+   e. Relevance gate, BEFORE translating: if the post is about a product,
+      plan, price list or regulation that only exists in the US (and the
+      source itself names no EU availability), do NOT translate it. Append
+      `YYYY-MM-DD | <slug> | skipped: US-only, no value for the ES reader` to
+      LEDGER, output "Status: skipped <slug> (US-only)", and finish the run
+      cleanly. The Spanish reader of this site runs a business in Spain; a
+      post about Xero's US price list, in Spanish, is noise to them.
 
 STEP 2 — Ground in source and brand voice:
    Read the full English post. Read VOICE_SOURCE for register, terminology,
@@ -157,6 +168,21 @@ STEP 4 — Nuance & colloquialism pass (mandatory — the reason this agent
        reader. Where an example, framing, or reference doesn't land for a
        Galicia/Ourense industrial-pyme reader, adapt the framing (not the
        facts) so it reads native to that audience.
+     - Currency and tools — never convert a price: that invents a number.
+       Keep the source currency, and the FIRST time a US-dollar price appears
+       add "(precio en EE. UU.)" so the reader knows it is not their invoice.
+       If the vendor publishes a euro price list you may cite it, inline and
+       ONLY with its URL. Do not swap a US tool for a Spanish one unless the
+       Spanish one is already named in the source.
+     - Repeated tics — the Spanish corpus audit of 2026-10-14 found each of
+       these in a quarter to a third of all 121 posts. Banned: "sin humo",
+       "sin promesas", "la parte que nadie te cuenta", "la parte incómoda",
+       "casi nadie", "Léelo dos veces", "Voy a ser preciso", "Voy a ser
+       honesto", "la respuesta honesta", "Aquí está la parte". At most once
+       per article: "de verdad" (275 occurrences in 121 posts), the "no es X,
+       es Y" construction, "Piénsalo", "Imagina esto". When the English has a
+       canned opener ("Here's the thing"), write the opinion plainly instead
+       of translating the tic.
    Write a short "what I changed and why" section (3–6 bullets, concrete
    before/after where useful) and include it in the PR description — this is
    what makes translation quality reviewable instead of asserted. If STEP 3's
