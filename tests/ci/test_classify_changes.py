@@ -285,6 +285,16 @@ CASES = {
         ["apps/desktop/src/app.tsx"],
         _lanes(desktop=True, frontend=True),
     ),
+    # scripts/whatsapp-lead-bot is JS with its own job in js-tests.yml: frontend
+    # lane, and no Python slices for a bot-only change.
+    "whatsapp-lead-bot src → frontend only": (
+        ["scripts/whatsapp-lead-bot/src/assistant.js"],
+        _lanes(frontend=True),
+    ),
+    "whatsapp-lead-bot lockfile → frontend + npm_lock": (
+        ["scripts/whatsapp-lead-bot/package-lock.json"],
+        _lanes(frontend=True, npm_lock=True),
+    ),
     # Fail open: CI-config / empty / blank diffs run everything.
     ".github change → all": ([".github/workflows/tests.yml"], DEFAULT),
     "action change → all": ([".github/actions/detect-changes/action.yml"], DEFAULT),
