@@ -109,18 +109,28 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
    - Short sentences mixed with longer ones
    - "You" instead of "the user" or "businesses"
    - Direct questions to the reader
-   - Own opinions: "Here's the thing...", "I won't sugarcoat it..."
+   - Own opinions, stated plainly and phrased differently every time. The
+     canned openers are banned (see 6b): the Spanish translations of "Here's
+     the thing" and "I won't sugarcoat it" turned up in 60 of 121 posts.
    - Natural English idiom, no corporate formality
    - Use "Instead of doing X, do Y" not "It is recommended to implement..."
    - Worldwide audience: no country-specific assumptions (currency, regulation, culture) unless the topic is explicitly about a specific market — default to general SMB/startup framing.
 
 3. **Don't use**: emojis in headings, bold on every sentence (only 2-3 per important section), ✅-checkmark lists, excessive tables (max 2), `<hr>` between sections (use transition paragraphs instead), excessive em dashes
 
-4. **Do use**: concrete data with a source, real company/person examples, specific numbers (not "many businesses" but "68% of businesses according to..."), pull-quote blocks, stats-block for key data
+4. **Do use**: real company/person examples, pull-quote blocks, stats-block for key data — and numbers ONLY under rule 4b. "68% of businesses according to Gartner" with no link is the exact pattern that got this blog publishing figures that were not in the source it named. Two numbers with a link each beat ten without.
+
+4b. **Sourcing is per claim, not per article**:
+   - Every figure, percentage, date or quoted finding carries an inline `<a href>` to the PRIMARY document where it appears — the report itself, the vendor's own page, the regulation text. Not a press article about it, and never a "statistics roundup" page.
+   - If you cannot paste the primary URL, the number does not go in. Rewrite the sentence without it or drop it.
+   - Third-party statistics aggregators ("N stats about X") are NOT sources. On 2026-10-14 four figures from one published article were traced to one such page; none was in the study the article attributed it to.
+   - Attribute at the point of use ("According to <a href=…>Salesforce's State of Sales 2025</a>, …"), not in a trailing "Sources" list.
+   - `npm run build` prints a `[citation-guard]` block naming every article that cites sources or gives figures with zero external links. Yours must not be in it.
 
 5. **Content structure**:
    - H1 with a personal hook, not a manual-style title
    - article-summary with a direct 2-3 line summary
+   - Right after the summary, a definitional block the answer engines can quote: `<aside class="geo-callout" role="note">` with an `<h3>Key concepts</h3>` and 2-3 sentences of the form "[Concept] is [definition in at most two sentences]." The class is styled in style-blog.css (no inline style). The SEO agent retrofits this on old posts; new posts ship with it.
    - H2 as direct questions or statements (NOT manually numbered — main.js's TOC already auto-numbers, NEVER put manual numbers in H2/H3 titles)
    - FAQ at the end with direct h3 questions
    - Final CTA about how BigLobster can help (subtle, not pushy)
@@ -132,6 +142,11 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
    - Lists with 10+ items
    - Tables with more than 4 columns
    - Text that starts each H2 by repeating the title
+
+6b. **Repeated tics** (the corpus audit of 2026-10-14 found each of these in a quarter to a third of all posts):
+   - Banned outright: "Here's the thing", "I won't sugarcoat it", "Read that again", "the part nobody tells you", "the uncomfortable part", "no fluff", "no hype", "Let me be precise", "Let me be honest", "the honest answer".
+   - At most once per article: the "It's not X, it's Y" construction; "really", "actually" or "genuinely" as emphasis; "Picture this" / "Imagine".
+   - Opening paragraph: rotate between a dated fact, a question the reader actually types, a single number, a short scene, and a contrast. Before writing yours, read the first paragraph of the last five posts (`ls -t site/en/blog | head -5`) and open differently from all of them.
 
 ### IMÁGENES (REGLAS CRÍTICAS — NO NEGOCIABLES)
 
@@ -260,6 +275,10 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] Imagen guardada como JPG en web/assets/blog/covers/
 - [ ] El tema NO está anclado a regulación/subvenciones/geografía española (CBAM, VeriFactu, Galicia, IRPF...) salvo que el propio gap sea explícitamente sobre ese mercado
 - [ ] El artículo cita ≥1 fuente primaria con fecha y enlace (también en RESERVA)
+- [ ] CADA cifra, porcentaje y hallazgo citado lleva su propio enlace inline a la fuente primaria (regla 4b); ninguno viene de una página agregadora de estadísticas
+- [ ] La salida de `npm run build` NO contiene una línea `[citation-guard]` con este artículo
+- [ ] Tras el article-summary hay un `<aside class="geo-callout">` con 2-3 definiciones citables
+- [ ] Ninguna muletilla de 6b, y el primer párrafo no abre como los últimos cinco artículos
 - [ ] El tema pasa la PUERTA 2 (duradera): no trata de precios, planes, licencias,
       versiones, betas ni incidentes, y el título no depende de una fecha, un precio
       ni un número de versión (salvo fecha de entrada en vigor de una norma)
