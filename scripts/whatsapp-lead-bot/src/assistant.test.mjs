@@ -153,7 +153,9 @@ test("knowledge block lists a catalogue client's categories and says the product
     "papel",
     "https://shop.example",
   );
-  assert.match(block, /Categorías del catálogo \(14487 productos en total; arriba solo hay una muestra de 60/);
+  // The count quoted is what is listed above (1 product here), not the 60 the site sampled.
+  assert.match(block, /Categorías del catálogo \(14487 productos en total; arriba solo hay 1 -- /);
+  assert.doesNotMatch(block, /muestra de 60/);
   assert.match(block, /- Papel \(1200\) — https:\/\/shop\.example\/productos\/categoria\/papel\//);
   assert.match(block, /- Bolígrafos \(340\)/);
 });
@@ -174,6 +176,57 @@ test("knowledge block never carries a link off the customer's site", () => {
     "https://shop.example",
   );
   assert.ok(!block.includes("evil.example"), block);
+  assert.ok(!block.includes("— null"), block); // a dropped URL leaves no trace, not the word null
+  assert.match(block, /- Cat \(3\)\n/);
   assert.match(block, /https:\/\/shop\.example\/productos\/ok · https:\/\/shop\.example\/es\/ok/);
   assert.match(block, /Página https:\/\/shop\.example\/ok-page/);
+});
+
+test("categories: the ones matching the message come first, the rest is a count", () => {
+  const categories = Array.from({ length: 35 }, (_, i) => ({ name: `Familia ${i}`, url: `/c/${i}/`, products: 100 - i }));
+  categories.push({ name: "Tornillería", url: "/c/tornilleria/", products: 7 });
+  const block = buildKnowledgeBlock(
+    { business: { name: "Shop" }, products: [], categories, catalogue: { product_count: 500 } },
+    "¿tenéis tornillería inoxidable?",
+    "https://shop.example",
+  );
+  const catLines = block.split("\n").filter((l) => /^- (Familia|Tornillería)/.test(l));
+  assert.equal(catLines.length, 30);
+  assert.match(catLines[0], /^- Tornillería \(7\) — https:\/\/shop\.example\/c\/tornilleria\//);
+  assert.match(block, /- … y 6 categorías más/);
+  assert.match(block, /\(500 productos en total, se buscan por categoría\):/); // no products listed: no "arriba solo hay 0"
+});
+
+test("categories: with no matching term the payload order is kept and a short list has no 'y N más'", () => {
+  const block = buildKnowledgeBlock(
+    { business: { name: "Shop" }, products: [], categories: [{ name: "B", url: "/b/" }, { name: "A", url: "/a/" }] },
+    "hola",
+    "https://shop.example",
+  );
+  assert.match(block, /- B — https:\/\/shop\.example\/b\/\n- A — /);
+  assert.doesNotMatch(block, /categorías más/);
+});
+
+test("knowledge without a site_url warns once per block that absolute URLs were dropped", () => {
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (m) => warned.push(String(m));
+  try {
+    const block = buildKnowledgeBlock(
+      { business: { name: "Sin registro\nFAKE LINE" }, pages: { "https://shop.example/x": { text: "t" }, "/ok": { text: "u" } }, articles: [{ title: "T", url: "https://shop.example/post", excerpt: "e" }] },
+      "hola",
+      "",
+    );
+    assert.equal(warned.length, 1, warned.join("|"));
+    // The newline in the name must not survive: a crafted name cannot forge a second log line.
+    assert.match(warned[0], /"Sin registroFAKE LINE" has no site_url: 2 absolute URL\(s\) dropped/);
+    assert.ok(!warned[0].includes("\n"), warned[0]);
+    assert.match(block, /Página \/ok/); // relative paths still travel, unprefixed
+    warned.length = 0;
+    buildKnowledgeBlock({ business: { name: "Ok" }, pages: { "https://shop.example/x": { text: "t" } } }, "hola", "https://shop.example");
+    buildKnowledgeBlock({ business: { name: "Ok" }, pages: { "https://evil.example/x": { text: "t" } } }, "hola", "https://shop.example");
+    assert.equal(warned.length, 0); // with a site known, dropping a foreign URL is the intended, silent behaviour
+  } finally {
+    console.warn = orig;
+  }
 });
