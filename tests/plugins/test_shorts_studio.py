@@ -99,7 +99,7 @@ def test_word_count_walls(sample):
 
 def test_palettes_and_motifs_match_the_remotion_theme():
     theme = (REPO / "shorts/studio/remotion/src/theme.ts").read_text(encoding="utf-8")
-    ts_palettes = re.findall(r"^\s+'([a-z]+-[a-z]+)': \{", theme, re.M)
+    ts_palettes = re.findall(r"^\s+'([a-z]+(?:-[a-z]+)?)': \{", theme, re.M)
     ts_motifs = re.search(r"MOTIFS = \[(.*?)\]", theme).group(1)
     assert tuple(ts_palettes) == pkg_mod.PALETTES
     assert tuple(re.findall(r"'([a-z]+)'", ts_motifs)) == pkg_mod.MOTIFS
@@ -269,6 +269,7 @@ def test_posts_skips_done_and_reports_twin_style(home, monkeypatch):
 def submit_env(home, monkeypatch):
     dispatched = []
     monkeypatch.setattr("plugins.shorts.studio.article.fetch_article", lambda url: ("T", ARTICLE_TEXT))
+    monkeypatch.setattr("plugins.shorts.critic.review", lambda pkg, text, **kw: [])   # the critic has its own tests
     monkeypatch.setattr(github_studio, "dispatch",
                         lambda rid, pkg: dispatched.append((rid, pkg)) or {"run_id": 7, "run_url": "u"})
     return dispatched
@@ -287,6 +288,7 @@ def test_submit_dispatches_and_records(tip, submit_env):
 
 def test_submit_rejects_invented_figures_and_a_repeated_look(tip, submit_env):
     ledger.add(_entry("es-x-1", palette="teal-amber", motif="grid"))
+    tip["style"]["palette"] = "teal-amber"          # a rotating palette; "brand" is exempt (see below)
     tip["beats"][3]["value"] = "91%"
     out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
     assert not out["success"]
@@ -998,6 +1000,7 @@ def test_the_hook_opens_on_the_promise_within_three_seconds(sample, vo, problem)
 def test_a_direct_hook_passes(sample):
     pkg = copy.deepcopy(sample)
     pkg["beats"][0]["vo"] = "¿Sigues escribiendo cada factura a mano? Hay una forma más rápida."
+    pkg["beats"][0]["onscreen"] = "¿Cada *factura* a mano?"      # the written promise matches the spoken one
     assert pkg_mod.validate_package(pkg)["beats"][0]["vo"].startswith("¿Sigues")
 
 
@@ -1585,4 +1588,237 @@ def test_kokoro_failure_falls_back_to_azure_with_the_neural_twin(tmp_path, monke
     assert spoken == [] and b"es-ES-ElviraNeural" in sent[0] and len(words) == 1
     voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "b.mp3")   # Martín keeps his HD voice
     assert b"Tristan:DragonHDLatestNeural" in sent[1]
+
+
+# ---------------------------------------------------------------------------
+# The brand look, the article's pictures, the promise and the critic (T3, T4)
+# ---------------------------------------------------------------------------
+
+HTML_WITH_IMAGES = (
+    '<html><head><meta property="og:image" content="https://biglobster.top/assets/blog/covers/x.jpg"></head>'
+    '<body><article class="article-body"><div class="article-cover"><img src="/assets/blog/covers/x.jpg" alt="c"></div>'
+    '<p>Texto...</p><figure class="article-infographic"><img src="/assets/blog/infographics/x.jpg" '
+    'alt="Infografía: el 23% de las pymes ganó clientes"><figcaption>Lo que declararon 533 pymes. '
+    'Fuente: <b>PYMNTS</b>.</figcaption></figure></article></body></html>'
+)
+
+
+def test_the_brand_palette_is_the_look_and_never_rotates(tip, submit_env):
+    assert tip["style"]["palette"] == "brand" == pkg_mod.BRAND_PALETTE and "brand" in pkg_mod.PALETTES
+    ledger.add(_entry("es-x-1", palette="brand", motif="grid"))       # the look repeats; the motif still rotates
+    ledger.add(_entry("es-x-2", palette="brand", motif="dots"))
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
+    assert out["success"], out
+
+
+def test_the_written_promise_must_say_what_the_first_sentence_says(tip):
+    pkg = pkg_mod.validate_package(tip)            # "Automatiza primero lo aburrido." / "...lo *aburrido*"
+    assert pkg["beats"][0]["onscreen"] == "Automatiza primero lo *aburrido*"
+    bad = copy.deepcopy(tip)
+    bad["beats"][0]["onscreen"] = "Guía 2026 para pymes"
+    with pytest.raises(pkg_mod.PackageError) as exc:
+        pkg_mod.validate_package(bad)
+    assert "written promise" in str(exc.value) and "Guía 2026" in str(exc.value)
+    # A shared figure is enough, accents and asterisks aside.
+    fig = copy.deepcopy(tip)
+    fig["beats"][0]["vo"] = "El 73% ahorró tiempo en tres meses. " + fig["beats"][0]["vo"]
+    fig["beats"][0]["onscreen"] = "*73%* menos tiempo, en tres meses"
+    pkg_mod.validate_package(fig)
+    acc = copy.deepcopy(tip)
+    acc["beats"][0]["vo"] = "Recupera dos horas cada semana sin contratar. Y sin programar."
+    acc["beats"][0]["onscreen"] = "Recupera *dos horas* a la semana"
+    pkg_mod.validate_package(acc)
+    assert pkg_mod._key_words("¿Cuántas facturas pagas dos veces?") == {"cuantas", "facturas", "pagas", "veces"}
+
+
+def test_the_infographic_goes_on_one_card_only(tip):
+    pkg = pkg_mod.validate_package(tip)
+    assert pkg["beats"][2]["visual"] == "infographic" and "visual" not in pkg["beats"][1]
+    bad = copy.deepcopy(tip)
+    bad["beats"][0]["visual"] = "infographic"
+    with pytest.raises(pkg_mod.PackageError, match="not the hook"):
+        pkg_mod.validate_package(bad)
+    bad = copy.deepcopy(tip)
+    bad["beats"][1]["visual"] = "infographic"
+    with pytest.raises(pkg_mod.PackageError, match="one card only"):
+        pkg_mod.validate_package(bad)
+    bad = copy.deepcopy(tip)
+    bad["beats"][2]["visual"] = "chart"
+    with pytest.raises(pkg_mod.PackageError, match="visual: one of"):
+        pkg_mod.validate_package(bad)
+
+
+def test_article_images_find_the_cover_and_the_raster_infographic():
+    found = article_mod.article_images(HTML_WITH_IMAGES, "https://biglobster.top/es/blog/x.html")
+    assert found["cover"] == "https://biglobster.top/assets/blog/covers/x.jpg"
+    assert found["infographic"]["url"] == "https://biglobster.top/assets/blog/infographics/x.jpg"
+    assert found["infographic"]["alt"].startswith("Infografía")
+    assert found["infographic"]["caption"] == "Lo que declararon 533 pymes. Fuente: PYMNTS."
+    assert article_mod.article_images("<html><body><p>hi</p></body></html>", "https://biglobster.top/a") == {
+        "cover": None, "infographic": None}
+
+
+def test_the_article_action_reports_the_pictures_the_producer_may_use(home, monkeypatch):
+    html = HTML_WITH_IMAGES.replace("<p>Texto...</p>", "<p>" + ARTICLE_TEXT + "</p>")
+    monkeypatch.setattr("plugins.shorts.studio.article.fetch_html", lambda url: html)
+    out = json.loads(st.handle_shorts_studio({"action": "article", "url": "https://biglobster.top/es/blog/x.html"}))
+    assert out["success"], out
+    assert out["cover"] is True and out["infographic"]["present"] is True
+    assert out["infographic"]["alt"].startswith("Infografía") and "73" in " ".join(out["figures"])
+
+
+def test_the_articles_pictures_reach_the_render(tip, tmp_path, monkeypatch):
+    import httpx
+
+    class Resp:
+        status_code, text = 200, HTML_WITH_IMAGES
+        content, encoding = HTML_WITH_IMAGES.encode("utf-8"), "utf-8"
+
+        def raise_for_status(self):
+            pass
+
+    class Client:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def close(self):
+            pass
+
+        def get(self, url):
+            return Resp()
+
+    monkeypatch.setattr(httpx, "Client", Client)
+    monkeypatch.setattr(build_mod.article, "url_is_safe", lambda url: True)     # the guard has its own test
+    got = []
+    monkeypatch.setattr(build_mod.sources, "download", lambda url, dest, **kw: got.append(url) or _touch(dest))
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
+    public = tmp_path / "public"
+    images = build_mod.gather_article_images(pkg, tmp_path, public, offline=False)
+    assert images == {"cover": "article/cover.jpg", "infographic": "article/infographic.jpg",
+                      "infographic_alt": "Infografía: el 23% de las pymes ganó clientes"}
+    assert got == ["https://biglobster.top/assets/blog/covers/x.jpg",
+                   "https://biglobster.top/assets/blog/infographics/x.jpg"]
+    assert (public / "article" / "cover.jpg").exists()
+    timeline = [{"from": i * 90, "duration": 90, "show": b["show"]} for i, b in enumerate(pkg["beats"])]
+    props = build_mod.remotion_props(pkg, {"timeline": timeline, "words": [], "frames": 90 * len(timeline),
+                                           "article_cover": images["cover"],
+                                           "article_infographic": images["infographic"]})
+    assert props["articleCover"] == "article/cover.jpg" and props["articleInfographic"] == "article/infographic.jpg"
+    assert props["beats"][2]["visual"] == "infographic" and "visual" not in props["beats"][1]
+    assert props["palette"] == "brand"
+    # Offline (tests, dry runs): nothing fetched. A picture off the article's host is left alone.
+    assert build_mod.gather_article_images(pkg, tmp_path, public, offline=True) == {
+        "cover": None, "infographic": None, "infographic_alt": ""}
+    Resp.content = HTML_WITH_IMAGES.replace("https://biglobster.top/assets/blog/covers/x.jpg", "https://cdn.example.com/x.jpg").encode("utf-8")
+    got.clear()
+    images = build_mod.gather_article_images(pkg, tmp_path, public, offline=False)
+    assert images["cover"] is None and images["infographic"] == "article/infographic.jpg"
+
+
+class _CriticAPI:
+    def __init__(self, content, status=200):
+        self.content, self.status, self.calls = content, status, []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def close(self):
+        pass
+
+    def post(self, url, headers=None, json=None):
+        self.calls.append((url, headers, json))
+        if self.status != 200:
+            return _ORResp(self.status, {"error": "boom"})
+        return _ORResp(data={"choices": [{"message": {"content": self.content}}]})
+
+
+def test_the_critic_returns_the_openings_problems_and_a_better_first_line(tip, monkeypatch):
+    from plugins.shorts import critic
+
+    monkeypatch.setattr(critic, "config", lambda: {"enabled": True, "model": "m", "min": 7, "key": "sk-crit"})
+    pkg = pkg_mod.validate_package(tip)
+    api = _CriticAPI(json.dumps({"score": 4, "problems": ["la primera frase es un tema, no una promesa", "la broma no lleva al consejo"],
+                                 "rewrite": {"first_sentence": "Recupera dos horas cada semana sin contratar.",
+                                             "onscreen": "Recupera *dos horas* a la semana"}}))
+    problems = critic.review(pkg, ARTICLE_TEXT, client=api)
+    assert problems[0].startswith("guionista: the opening scores 4/10 (minimum 7): la primera frase es un tema")
+    assert problems[1] == "guionista: la broma no lleva al consejo"
+    assert "Recupera dos horas cada semana" in problems[2] and "on screen" in problems[2]
+    url, headers, sent = api.calls[0]
+    assert url == critic.CHAT_API and headers == {"Authorization": "Bearer sk-crit"}
+    assert sent["model"] == "m" and sent["provider"] == {"data_collection": "deny"}
+    assert sent["response_format"] == {"type": "json_object"}
+    script = sent["messages"][1]["content"]
+    assert "Automatiza primero lo aburrido" in script and "LUCIA (joke" in script and "MARTIN (card)" in script
+    assert "ARTICLE (beginning)" in script and sent["messages"][0]["content"] == critic.RUBRIC
+    # Good enough, fenced JSON, nonsense, an API error, or the critic switched off: no objection.
+    assert critic.review(pkg, ARTICLE_TEXT, client=_CriticAPI("```json\n{\"score\": 9, \"problems\": []}\n```")) == []
+    assert critic.review(pkg, ARTICLE_TEXT, client=_CriticAPI("not json at all")) == []
+    assert critic.review(pkg, ARTICLE_TEXT, client=_CriticAPI("{}", status=500)) == []
+    monkeypatch.setattr(critic, "config", lambda: {"enabled": False, "model": "m", "min": 7, "key": "sk-crit"})
+    assert critic.review(pkg, ARTICLE_TEXT, client=api) == [] and len(api.calls) == 1
+    monkeypatch.setattr(critic, "config", lambda: {"enabled": True, "model": "m", "min": 7, "key": ""})
+    assert critic.review(pkg, ARTICLE_TEXT, client=api) == [] and len(api.calls) == 1
+
+
+def test_submit_refuses_a_script_the_critic_rejects(tip, submit_env, monkeypatch):
+    monkeypatch.setattr("plugins.shorts.critic.review",
+                        lambda pkg, text, **kw: ["guionista: the opening scores 3/10 (minimum 7): a topic, not a promise"])
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
+    assert not out["success"] and "value proposition" in out["error"]
+    assert out["problems"] == ["guionista: the opening scores 3/10 (minimum 7): a topic, not a promise"]
+    assert submit_env == []
+
+
+def test_the_render_farm_refuses_private_article_hosts_and_redirects(monkeypatch):
+    """Without Hermes's tools/ (the Actions checkout), article.public_url is the guard."""
+    import types
+
+    monkeypatch.setattr(article_mod, "url_is_safe", lambda url: article_mod.public_url(url))
+    resolves = {"biglobster.top": "93.184.216.34", "metadata.internal": "169.254.169.254", "home.test": "10.0.0.5"}
+    monkeypatch.setattr(article_mod.socket, "getaddrinfo",
+                        lambda host, *a, **kw: [(None, None, None, None, (resolves[host], 443))] if host in resolves else (_ for _ in ()).throw(article_mod.socket.gaierror()))
+    assert article_mod.public_url("https://biglobster.top/es/blog/x.html")
+    assert not article_mod.public_url("http://biglobster.top/x")                 # https only
+    assert not article_mod.public_url("https://metadata.internal/latest")      # link-local
+    assert not article_mod.public_url("https://home.test/x")                    # private
+    assert not article_mod.public_url("https://127.0.0.1/x") and not article_mod.public_url("https://nowhere.invalid/x")
+    with pytest.raises(ValueError, match="unsafe"):
+        article_mod.fetch_html("https://home.test/x")
+    hop = types.SimpleNamespace(is_redirect=True, next_request=types.SimpleNamespace(url="https://metadata.internal/"))
+    with pytest.raises(ValueError, match="blocked redirect"):
+        article_mod.guard_redirect(hop)
+    article_mod.guard_redirect(types.SimpleNamespace(is_redirect=True, next_request=types.SimpleNamespace(url="https://biglobster.top/a")))
+    article_mod.guard_redirect(types.SimpleNamespace(is_redirect=False, next_request=None))
+    # The pictures go through the same guard before they are downloaded.
+    got = []
+    monkeypatch.setattr(build_mod.sources, "download", lambda url, dest, **kw: got.append(url) or _touch(dest))
+    monkeypatch.setattr(build_mod.article, "fetch_html", lambda url, **kw: HTML_WITH_IMAGES.replace(
+        "https://biglobster.top/assets/blog/covers/x.jpg", "https://biglobster.top/covers/x.jpg"))
+    monkeypatch.setattr(build_mod.article, "url_is_safe", lambda url: "infographics" not in url)
+    pkg = {"article": {"url": "https://biglobster.top/es/blog/x.html"}}
+    images = build_mod.gather_article_images(pkg, Path("/tmp"), Path("/tmp/shorts-test-public"), offline=False)
+    assert images["cover"] == "article/cover.jpg" and images["infographic"] is None and got == ["https://biglobster.top/covers/x.jpg"]
+
+
+def test_a_mistyped_critic_bar_never_raises(monkeypatch):
+    from plugins.shorts import critic
+
+    values = {"SHORTS_CRITIC_MIN": "seven", "OPENROUTER_API_KEY": "sk"}
+    monkeypatch.setattr(critic, "env", lambda name, default="": values.get(name, default))
+    assert critic.config()["min"] == critic.DEFAULT_MIN
+    values["SHORTS_CRITIC_MIN"] = "42"
+    assert critic.config()["min"] == 10
+    values["SHORTS_CRITIC_MIN"] = "5"
+    assert critic.config()["min"] == 5 and critic.config()["enabled"] and critic.config()["key"] == "sk"
 

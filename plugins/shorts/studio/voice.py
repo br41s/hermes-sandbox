@@ -410,10 +410,11 @@ def attach_raw(words: List[Word], vo_text: str) -> List[Word]:
     return words
 
 
-def paginate(words: List[Dict], *, max_words: int = 4, max_chars: int = 20,
+def paginate(words: List[Dict], *, max_words: int = 3, max_chars: int = 18,
              pause_ms: int = 380) -> List[Dict]:
     """Assign a karaoke ``page`` to each word (absolute-ms words, in order).
 
+    Three words a page, big, like VideoDesk's subtitles (owner, 2026-10-14).
     A page breaks on a beat change, a pause, or when it is full, so a caption
     never straddles two scenes or runs ahead of the voice.
     """

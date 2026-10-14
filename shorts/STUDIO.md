@@ -70,8 +70,27 @@ render: the producer submits and exits, the publisher collects what finished.
 - **Facts.** `submit` re-fetches the article and rejects any figure (a number
   with %, currency, a multiplier, or above 10) that the article body does not
   contain. Counting words ("3 mistakes") are exempt.
-- **Look.** Palette and motif must differ from the last two shorts, which
-  includes the other language's twin.
+- **Look.** Every short uses the `brand` palette (owner, 2026-10-14: cream
+  cards, red accent, ink text, sampled from VideoDesk's shorts in Buzz, over
+  the article's own cover, blurred); it is exempt from the old rule that the
+  palette must differ from the last two shorts, which still applies to the
+  other palettes. The motif still rotates (it is barely visible under the cover).
+- **The promise, written and spoken.** The hook's on-screen line must share a
+  key word or the figure with its first spoken sentence (`package._check_promise`):
+  the viewer reads what they hear. Then a **critic** (`plugins/shorts/critic.py`,
+  one cheap model call per clean submission, `SHORTS_CRITIC_MODEL`, bar
+  `SHORTS_CRITIC_MIN`, default 7/10) scores whether the opening lands what the
+  viewer gains or what pain goes away, in the second person, with the article's
+  figure or deadline and the tool or trade named; below the bar `submit` refuses
+  with its reasons and a better first sentence, prefixed `guionista:`. No key,
+  a network error or a nonsense answer never block a short (`SHORTS_CRITIC=off`
+  switches it off). The rubric is Guionista's evidence in
+  `~/fizz/salida/guionista/alcance/`.
+- **The article's own pictures.** The renderer fetches the article and puts its
+  cover (`og:image`) behind the cards; a card marked `"visual": "infographic"`
+  (one per short, never the hook or the CTA) shows the article's raster
+  infographic (`figure.article-infographic img`). Only pictures on the
+  article's host; a missing one is a log line, never a failed render.
 - **Shape.** 4–10 beats, hook first, CTA last and on the article's own domain,
   70–200 spoken words, on-screen ≤8 words, X ≤280, and so on. All problems come
   back in one list.
@@ -315,7 +334,11 @@ What a tip short is, in order:
    2026-10-12 and 10-13), and a generated nod cost $0.65 (Hailuo 3).
 4. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
-   look back; `presenter.bubble_loop`).
+   look back; `presenter.bubble_loop`). The cards are paper (`brand` palette:
+   cream, red, ink; `Tip.tsx` `CardZone` wraps them in a `Panel`) over the
+   article's blurred cover (`Backdrop`), and one of them may be the article's
+   infographic (`InfographicCard`, the beat's `visual`). The karaoke runs three
+   words a page in white over the dark backdrop (`voice.paginate`, `Karaoke.tsx`).
 5. **CTA**, a card too, in Martín's voice: save it or share it (checked in
    `package.py`).
 6. **Outro**, added by the renderer and the same in every short: the full

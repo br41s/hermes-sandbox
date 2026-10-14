@@ -63,7 +63,11 @@ def _pexels_key() -> str:
 def _client():
     import httpx
 
-    return httpx.Client(timeout=TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT})
+    from plugins.shorts.studio.article import guard_redirect
+
+    # Footage, music and the article's pictures all follow redirects; none may land on a private address.
+    return httpx.Client(timeout=TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT},
+                        event_hooks={"response": [guard_redirect]})
 
 
 def _pick(candidates: List[Dict], avoid: Iterable[str], seed: str) -> Optional[Dict]:

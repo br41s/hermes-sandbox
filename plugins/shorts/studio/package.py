@@ -88,8 +88,12 @@ PALETTES = (
     "crimson-sky",
     "slate-cyan",
     "orange-navy",
+    "brand",            # BigLobster's own look (cream, red, ink), the article's cover behind the cards
 )
 MOTIFS = ("diamonds", "circles", "chevrons", "dots", "bars", "rings", "grid", "waves")
+# The brand palette is every short's look (owner, 2026-10-14): it is exempt from the
+# "differ from the last two shorts" rule; the article's own pictures vary the look.
+BRAND_PALETTE = "brand"
 
 BEAT_KINDS = ("hook", "point", "stat", "list", "quote", "avatar", "cta")
 MIDDLE_KINDS = ("point", "stat", "list", "quote", "avatar")
@@ -142,6 +146,8 @@ TIP_VOICES = {"es": "es-ES-Tristan:DragonHDLatestNeural", "en": "en-US-AndrewMul
 # The handoff names the partner it passes the word to.
 TIP_PARTNER = re.compile(r"\bmart[ií]n\b", re.IGNORECASE)
 SHOWS = ("presenter", "card")
+# A card may show one of the article's own pictures instead of its text alone.
+VISUALS = ("infographic",)
 MAX_COMPARE_WORDS = 8
 # The CTA asks for the save or the share: a tip people keep is the goal.
 _SAVE_OR_SHARE = re.compile(
@@ -230,6 +236,43 @@ def _check_hook_lead(problems: List[str], where: str, vo: str) -> None:
         )
 
 
+_PROMISE_STOP = {
+    "para", "pero", "como", "cuando", "donde", "este", "esta", "esto", "estos", "estas", "tienes", "tiene",
+    "puede", "puedes", "porque", "sobre", "entre", "hasta", "desde", "todo", "toda", "todos", "todas",
+    "nada", "cada", "ahora", "antes", "despues", "aqui", "with", "that", "this", "your", "from", "what",
+    "when", "where", "have", "will", "they", "them", "than", "then", "into", "more", "most", "just", "like",
+    "does", "about", "still", "while", "every", "there", "their", "these", "those", "been", "being", "were",
+    "make", "makes", "need", "needs", "know", "think",
+}
+
+
+def _key_words(text: str) -> set:
+    """Content words (4+ letters, accents stripped) and figures, for the promise check."""
+    plain = unicodedata.normalize("NFD", (text or "").lower().replace("*", " "))
+    plain = "".join(ch for ch in plain if not unicodedata.combining(ch))
+    out = set()
+    for token in re.findall(r"[0-9][0-9.,%€$]*|[a-z]+", plain):
+        if token[0].isdigit() or (len(token) >= 4 and token not in _PROMISE_STOP):
+            out.add(token)
+    return out
+
+
+def _check_promise(problems: List[str], where: str, vo: str, onscreen: str) -> None:
+    """The written promise says what the first spoken sentence says (owner, 2026-10-14).
+
+    The Studio's shorts named the topic on screen while the voice said
+    something else, and neither told the viewer what they gain. Sharing a key
+    word or the figure is the cheap, mechanical half of the check; the
+    critic (plugins/shorts/critic.py) judges the rest.
+    """
+    lead = _SENTENCE_END.split(vo.lstrip("¿¡ "), maxsplit=1)[0]
+    if not (_key_words(lead) & _key_words(onscreen)):
+        problems.append(
+            f"{where}.onscreen: the written promise must say what the first spoken sentence says, "
+            f"sharing a key word or the figure: spoken {lead!r}, written {onscreen!r}"
+        )
+
+
 def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
     """Tip format: the joke said in the setting before the hook."""
     raw = raw if isinstance(raw, dict) else {}
@@ -263,6 +306,15 @@ def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Di
         problems.append(f"{where}.show: after the hook Martín narrates cards, the CTA too "
                         "(Lucía on camera is paid by the second)")
     beat["show"] = show
+    visual = _text(b.get("visual"))
+    if visual:
+        if visual not in VISUALS:
+            problems.append(f"{where}.visual: one of {list(VISUALS)}, got {visual!r}")
+        elif kind in ("hook", "cta"):
+            problems.append(f"{where}.visual: the article's infographic goes on one of Martín's cards, "
+                            "not the hook or the CTA")
+        else:
+            beat["visual"] = visual
     if kind == "compare":
         for side in ("before", "after"):
             beat[side] = _text(b.get(side))
@@ -423,6 +475,8 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             beat["onscreen"] = _text(b.get("onscreen"))
             _check_text(problems, f"{where}.onscreen", beat["onscreen"],
                         max_words=MAX_ONSCREEN_WORDS, max_chars=MAX_ONSCREEN_CHARS)
+            if i == 0 and kind == "hook" and beat["vo"] and beat["onscreen"]:
+                _check_promise(problems, where, beat["vo"], beat["onscreen"])
         if kind == "hook":
             kicker = _text(b.get("kicker"))
             _check_text(problems, f"{where}.kicker", kicker, required=False,
@@ -463,6 +517,8 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
                 )
         beats.append(beat)
 
+    if sum(1 for b in beats if b.get("visual")) > 1:
+        problems.append("beats: the infographic goes on one card only")
     scenes = sum(1 for b in beats if b.get("scene"))
     if scenes > MAX_SCENES:
         problems.append(f"beats: {scenes} generated scenes, max {MAX_SCENES} per short "

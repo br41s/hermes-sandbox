@@ -185,17 +185,27 @@ def _action_posts(args: Dict[str, Any]) -> str:
 
 
 def _action_article(args: Dict[str, Any]) -> str:
-    from plugins.shorts.studio.article import fetch_article
+    from plugins.shorts.studio.article import article_images, fetch_html, html_to_text
     from plugins.shorts.studio.package import figures
 
     url = (args.get("url") or "").strip()
     try:
-        title, text = fetch_article(url)
+        html = fetch_html(url)
     except ValueError as exc:
         return _fail(str(exc))
+    title, text = html_to_text(html)
+    if len(text) < 200:
+        return _fail(f"the article at {url} has almost no readable text ({len(text)} chars)")
     truncated = len(text) > ARTICLE_CHARS
+    # The article's own pictures (brand look): the cover goes behind the cards by
+    # itself; the Producer may put the infographic on the one card it illustrates.
+    images = article_images(html, url)
+    info = images.get("infographic") or {}
     return _ok(url=url, title=title, chars=len(text), truncated=truncated,
-               figures=sorted(set(figures(text)))[:80], text=text[:ARTICLE_CHARS])
+               figures=sorted(set(figures(text)))[:80], text=text[:ARTICLE_CHARS],
+               cover=bool(images.get("cover")),
+               infographic={"present": bool(info), "alt": info.get("alt", ""),
+                            "caption": info.get("caption", "")})
 
 
 def _action_ledger(args: Dict[str, Any]) -> str:
@@ -222,8 +232,9 @@ def _request_id(pkg: Dict[str, Any]) -> str:
 
 def _action_submit(args: Dict[str, Any]) -> str:
     from plugins.shorts import github_studio, ledger
+    from plugins.shorts import critic
     from plugins.shorts.studio.article import fetch_article
-    from plugins.shorts.studio.package import PackageError, check_grounding, validate_package
+    from plugins.shorts.studio.package import BRAND_PALETTE, PackageError, check_grounding, validate_package
 
     raw = args.get("package")
     if isinstance(raw, str):
@@ -247,7 +258,7 @@ def _action_submit(args: Dict[str, Any]) -> str:
     if pkg["article"]["url"] in ledger.done_urls(data):
         return _fail(f"{pkg['article']['url']} already has a short (see ledger)")
     taken = ledger.recent_style(data)
-    if pkg["style"]["palette"] in taken["palettes"]:
+    if pkg["style"]["palette"] != BRAND_PALETTE and pkg["style"]["palette"] in taken["palettes"]:
         problems.append(f"style.palette {pkg['style']['palette']!r} was used by one of the last "
                         f"two shorts ({taken['palettes']}); pick another")
     if pkg["style"]["motif"] in taken["motifs"]:
@@ -276,6 +287,12 @@ def _action_submit(args: Dict[str, Any]) -> str:
     problems += check_grounding(pkg, article_text)
     if problems:
         return _fail("the package has problems — fix every one and submit again", problems=problems)
+    # Only a mechanically clean script reaches the critic (one model call per
+    # submission); its objections come back like any other problem.
+    problems = critic.review(pkg, article_text)
+    if problems:
+        return _fail("the opening does not land its value proposition — rewrite it and submit again",
+                     problems=problems)
 
     used = ledger.used_assets(data)
     pkg["avoid_broll_ids"] = sorted(set(pkg.get("avoid_broll_ids", []) + used["broll"]))

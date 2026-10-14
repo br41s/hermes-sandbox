@@ -6,7 +6,7 @@
   "slug": "when-to-adopt-ai-sme-2026"
  },
  "style": {
-  "palette": "teal-amber",
+  "palette": "brand",
   "motif": "rings"
  },
  "beats": [
@@ -34,7 +34,8 @@
     "Con reglas claras",
     "Fácil de medir"
    ],
-   "vo": "Repetitiva, con reglas claras y fácil de medir."
+   "vo": "Repetitiva, con reglas claras y fácil de medir.",
+   "visual": "infographic"
   },
   {
    "kind": "stat",

@@ -1,16 +1,24 @@
 """Fetch a blog post and reduce it to the text a short may cite.
 
 Used by ``shorts_studio submit`` to run the grounding check itself, so that
-check never depends on the agent's own copy of the article. Standard library
-HTML parsing only; the network call goes through ``httpx`` and Hermes's SSRF
-guard on the Hermes side.
+check never depends on the agent's own copy of the article, and by the
+render farm (``build.gather_article_images``) for the article's pictures.
+Standard library HTML parsing only. Every fetch goes through an SSRF guard:
+Hermes's ``tools.url_safety`` where it is importable, and ``public_url``
+below on the render farm (the Actions checkout has no ``tools/``), with the
+same check on every redirect hop, so a public URL cannot 302 to a private
+address.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
+from html import unescape
 from html.parser import HTMLParser
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin, urlsplit
 
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "template"}
 _BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "tr",
@@ -107,32 +115,99 @@ def html_to_text(html: str) -> tuple[str, str]:
     return parser.title.strip(), text
 
 
-def fetch_article(url: str, *, client=None) -> tuple[str, str]:
-    """Fetch ``url`` and return ``(title, text)``. Raises ``ValueError``."""
+_OG_IMAGE = re.compile(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', re.I)
+_COVER_IMG = re.compile(r'<div class="article-cover">.*?<img[^>]+src=["\']([^"\']+)["\']', re.I | re.S)
+_INFOGRAPHIC = re.compile(r'<figure class="article-infographic">(.*?)</figure>', re.I | re.S)
+_IMG_SRC = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.I)
+_IMG_ALT = re.compile(r'<img[^>]+alt=["\']([^"\']*)["\']', re.I)
+_FIGCAPTION = re.compile(r'<figcaption>(.*?)</figcaption>', re.I | re.S)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def article_images(html: str, base_url: str) -> Dict[str, Any]:
+    """The article's own pictures: its cover, and its infographic when it has a raster one.
+
+    The brand look (shorts/STUDIO.md §3.8, owner 2026-10-14: the picture is
+    the article's, as in VideoDesk's shorts) puts the cover behind the cards
+    and can show the infographic as a card. An inline SVG infographic is not
+    returned: the renderer shows a picture file, never markup from a page.
+    """
+    html = html or ""
+    cover: Optional[str] = None
+    found = _OG_IMAGE.search(html) or _COVER_IMG.search(html)
+    if found:
+        cover = urljoin(base_url, unescape(found.group(1)).strip())
+    infographic: Optional[Dict[str, str]] = None
+    figure = _INFOGRAPHIC.search(html)
+    if figure:
+        src = _IMG_SRC.search(figure.group(1))
+        if src:
+            alt = _IMG_ALT.search(figure.group(1))
+            caption = _FIGCAPTION.search(figure.group(1))
+            infographic = {
+                "url": urljoin(base_url, unescape(src.group(1)).strip()),
+                "alt": unescape(alt.group(1)).strip() if alt else "",
+                "caption": " ".join(_TAGS.sub("", unescape(caption.group(1))).split()) if caption else "",
+            }
+    return {"cover": cover, "infographic": infographic}
+
+
+def public_url(url: str) -> bool:
+    """The render farm's SSRF guard: https, and a host that resolves only to public addresses."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").strip().lower()
+    if parts.scheme != "https" or not host or parts.username or parts.password:
+        return False
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        return _public_ip(literal)
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return False
+    return bool(infos) and all(_public_ip(ipaddress.ip_address(info[4][0])) for info in infos)
+
+
+def _public_ip(ip) -> bool:
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                or ip.is_reserved or ip.is_unspecified)
+
+
+def url_is_safe(url: str) -> bool:
+    """Hermes's guard when it is importable (the tool side), ours otherwise (the render farm)."""
     try:
         from tools.url_safety import is_safe_url
-    except Exception:  # pragma: no cover - render side never fetches articles
-        is_safe_url = None
+    except Exception:  # the Actions checkout carries plugins/shorts only
+        return public_url(url)
+    return bool(is_safe_url(url))
+
+
+def guard_redirect(response) -> None:
+    """Re-check every redirect hop: a safe URL must not 302 us onto a private address."""
+    if response.is_redirect and response.next_request:
+        target = str(response.next_request.url)
+        if not url_is_safe(target):
+            raise ValueError(f"blocked redirect to a private address: {target}")
+
+
+def fetch_html(url: str, *, client=None) -> str:
+    """Fetch ``url`` (https, SSRF-guarded on both sides) and return its HTML. Raises ``ValueError``."""
     if not url.startswith("https://"):
         raise ValueError(f"article URL must be https: {url!r}")
-    if is_safe_url is not None and not is_safe_url(url):
+    if not url_is_safe(url):
         raise ValueError(f"refusing to fetch unsafe article URL: {url!r}")
 
     import httpx
-
-    def _guard_redirect(response) -> None:
-        # A public URL must not be able to 302 us onto a private address.
-        if is_safe_url is not None and response.is_redirect and response.next_request:
-            target = str(response.next_request.url)
-            if not is_safe_url(target):
-                raise ValueError(f"blocked redirect to a private address: {target}")
 
     own_client: Optional[httpx.Client] = None
     if client is None:
         own_client = client = httpx.Client(
             timeout=FETCH_TIMEOUT, follow_redirects=True,
             headers={"User-Agent": "BigLobster-Shorts/1.0 (+https://biglobster.top)"},
-            event_hooks={"response": [_guard_redirect]},
+            event_hooks={"response": [guard_redirect]},
         )
     try:
         response = client.get(url)
@@ -145,8 +220,12 @@ def fetch_article(url: str, *, client=None) -> tuple[str, str]:
     finally:
         if own_client is not None:
             own_client.close()
+    return html
 
-    title, text = html_to_text(html)
+
+def fetch_article(url: str, *, client=None) -> tuple[str, str]:
+    """Fetch ``url`` and return ``(title, text)``. Raises ``ValueError``."""
+    title, text = html_to_text(fetch_html(url, client=client))
     if len(text) < 200:
         raise ValueError(f"the article at {url} has almost no readable text ({len(text)} chars)")
     return title, text

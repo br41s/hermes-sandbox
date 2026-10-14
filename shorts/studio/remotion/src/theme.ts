@@ -10,6 +10,8 @@ export type Palette = {
   text: string;
   muted: string;
   card: string;     // translucent card fill
+  highlight?: string; // the sweep behind a key word, when accent2 is too dark for it
+  light?: boolean;    // cards are light paper on a dark backdrop (the brand look)
 };
 
 export const PALETTES: Record<string, Palette> = {
@@ -21,7 +23,14 @@ export const PALETTES: Record<string, Palette> = {
   'crimson-sky': {bg: '#1A0B0E', bg2: '#4C0519', accent: '#FB7185', accent2: '#38BDF8', text: '#FFF1F2', muted: '#C2A2A8', card: 'rgba(40,10,16,0.72)'},
   'slate-cyan': {bg: '#0F172A', bg2: '#1E293B', accent: '#22D3EE', accent2: '#F472B6', text: '#F8FAFC', muted: '#94A3B8', card: 'rgba(15,23,42,0.74)'},
   'orange-navy': {bg: '#0B1020', bg2: '#1E3A5F', accent: '#FB923C', accent2: '#60A5FA', text: '#FFF7ED', muted: '#A8B3C7', card: 'rgba(11,16,32,0.74)'},
+  // BigLobster's own look (owner, 2026-10-14), sampled from VideoDesk's shorts in Buzz:
+  // cream paper cards, red accent, ink text, over the article's blurred cover.
+  'brand': {bg: '#F3EEE4', bg2: '#2A221B', accent: '#B5391C', accent2: '#17120D', text: '#17120D', muted: '#615D55', card: 'rgba(250,247,240,0.94)', highlight: '#F1C9BD', light: true},
 };
+
+/** Text drawn straight on the backdrop (not on a card): white on the dark brand backdrop. */
+export const onBackdrop = (pal: Palette): string => (pal.light ? '#FFFFFF' : pal.text);
+export const onBackdropMuted = (pal: Palette): string => (pal.light ? '#D9D0C3' : pal.muted);
 
 export const MOTIFS = ['diamonds', 'circles', 'chevrons', 'dots', 'bars', 'rings', 'grid', 'waves'] as const;
 

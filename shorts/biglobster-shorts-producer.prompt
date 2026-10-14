@@ -24,12 +24,19 @@ Para cada idioma:
    tu short tiene que verse distinto: otra paleta y otro motivo.
 2. `shorts_studio` action:"article", url:<url del post>. Léelo entero. `figures`
    lista las cifras que el artículo contiene: son las ÚNICAS que puedes usar.
+   `infographic` dice si el artículo tiene infografía (con su `alt` y su pie):
+   si la tiene y una de tus tarjetas dice justo lo que ella enseña, ponle
+   `"visual": "infographic"` a esa tarjeta (solo a una). La portada del
+   artículo va de fondo en todo el short, no tienes que pedirla.
 3. `shorts_studio` action:"ledger" → `style_taken` son paletas y motivos
    prohibidos hoy.
 4. Escribe el paquete (formato abajo) y envíalo: action:"submit", package:{…}.
    - `success: true` → apunta el `request_id` y pasa al siguiente idioma.
    - `problems` → corrígelos TODOS y reenvía. Máximo 3 envíos por idioma; si al
-     tercero sigue rechazado, déjalo y repórtalo.
+     tercero sigue rechazado, déjalo y repórtalo. Los problemas que empiezan por
+     `guionista:` vienen de un guionista crítico que ha leído tu arranque: te
+     dice por qué no se entiende qué gana el espectador y te propone una primera
+     frase; úsala o mejórala, pero comprueba sus cifras contra el artículo.
    - "already has a short" → pasa al siguiente post de la lista.
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -84,12 +91,21 @@ por segundo, la voz de Martín no. La herramienta rechaza fuera de esos límites
 Estructura (`beats`, en orden, 4–6). Cada beat lleva `show`: "presenter" =
 Lucía en su escenario, hablando a cámara (solo el hook); "card" = una tarjeta
 animada que ENSEÑA el consejo, con Martín en una burbuja señalándola.
-  1. `hook`, show "presenter" — Lucía, justo después de la broma. La PRIMERA FRASE de
-     `vo` tiene ≤8 palabras (la herramienta lo rechaza si pasa) y dice, sin
-     preámbulo, el beneficio concreto, el dolor que reconoce, la cifra que
-     sorprende o la creencia que el consejo desmiente. Nada de saludos, "en este
-     vídeo", "hoy hablamos de". `onscreen` = esa promesa en ≤8 palabras; la
-     portada la repite. `kicker` opcional (≤28 caracteres).
+  1. `hook`, show "presenter" — Lucía, justo después de la broma. Es lo que más
+     importa del short: LA PROPUESTA DE VALOR, dicha y escrita, en 3 segundos.
+     - La PRIMERA FRASE de `vo` tiene ≤8 palabras (la herramienta lo rechaza si
+       pasa) y le dice al espectador, en segunda persona y sin preámbulo, qué
+       GANA o qué DOLOR se le quita: con la cifra o el plazo del artículo si lo
+       hay, y nombrando la tarea, la herramienta o el oficio. Vale una pregunta
+       de dolor ("¿Cuántas facturas pagas dos veces?"), un beneficio ("Recupera
+       dos horas cada semana sin contratar") o una creencia desmentida.
+     - NO vale un tema ("La IA ya es lo normal"), un dato sin consecuencia ("El
+       23% de las pymes usa IA"), una fuente ("Según PYMNTS…"), un saludo, "en
+       este vídeo" ni "hoy hablamos de". Prueba de los 3 segundos: lee la
+       primera frase sola; si no sabes qué ganas viendo el resto, reescríbela.
+     - `onscreen` = ESA MISMA promesa en ≤8 palabras, con sus palabras clave (la
+       herramienta comprueba que lo escrito dice lo que se dice); la portada la
+       repite. `kicker` opcional (≤28 caracteres).
   2. 2–4 beats que ENSEÑAN el consejo, TODOS show "card", narrados por
      Martín. Elige la tarjeta que
      mejor lo muestre:
@@ -125,11 +141,12 @@ REGLAS DURAS
 ──────────────────────────────────────────────────────────────────────────────
 ESTILO
 
-`style.palette`: indigo-coral · teal-amber · violet-lime · cobalt-pink ·
-  emerald-gold · crimson-sky · slate-cyan · orange-navy
+`style.palette`: `brand` siempre. Es la estética de BigLobster (tarjetas crema,
+  rojo y negro sobre la portada del artículo desenfocada) y no rota: la
+  herramienta ya no exige cambiar de paleta, lo que varía de un short a otro es
+  la imagen del artículo.
 `style.motif`: diamonds · circles · chevrons · dots · bars · rings · grid · waves
-Ninguno de `style_taken`, y distinto del `twin` si lo hay. Elige el que pegue
-con el tema, no el primero de la lista.
+  (apenas se ve con la portada de fondo; elige cualquiera distinto de `style_taken`).
 
 `music.mood`: corporate · upbeat · technology · inspiring · chill (una etiqueta).
 
@@ -142,7 +159,11 @@ que haría clicar. Distintos entre sí.
 TEXTOS POR RED (`social`) — en el idioma del short
 
 - `youtube.title`: ≤70 caracteres, natural, sin clickbait; no pongas #Shorts
-  (se añade solo). `youtube.description`: 2–3 líneas útiles + la URL del
+  (se añade solo). Que se teclee así: nombra la herramienta o el oficio
+  (n8n, Gmail, clínicas, restaurante…) y lleva la cifra o el plazo, o una
+  pregunta de dolor en segunda persona; nunca "| Fuente 2026" ni el tema a
+  secas (lo medido por Guionista en los shorts publicados: los títulos con
+  herramienta, cifra o pregunta rinden; los descriptivos, no). `youtube.description`: 2–3 líneas útiles + la URL del
   artículo + 3 hashtags. `youtube.tags`: 5–10.
 - `instagram`: primera línea = el gancho; 2–4 líneas o viñetas con el consejo,
   que se pueda aplicar sin ver el vídeo; una línea que invite a guardarlo o a
@@ -163,11 +184,11 @@ FORMATO DEL PAQUETE
   "format": "tip",
   "opener": {"line": "…", "setting": "…", "handoff": "…"},
   "article": {"url": "<url>", "title": "<título>", "slug": "<slug del post>"},
-  "style": {"palette": "teal-amber", "motif": "rings"},
+  "style": {"palette": "brand", "motif": "rings"},
   "beats": [
     {"kind": "hook", "show": "presenter", "kicker": "…", "onscreen": "…", "vo": "…"},
     {"kind": "compare", "show": "card", "onscreen": "…", "before": "…", "after": "…", "vo": "…"},
-    {"kind": "list", "show": "card", "onscreen": "…", "items": ["…", "…", "…"], "vo": "…"},
+    {"kind": "list", "show": "card", "onscreen": "…", "items": ["…", "…", "…"], "vo": "…", "visual": "infographic"},
     {"kind": "stat", "show": "card", "value": "73%", "label": "…", "vo": "…"},
     {"kind": "cta", "show": "card", "onscreen": "…", "url": "<url>", "vo": "…"}
   ],
