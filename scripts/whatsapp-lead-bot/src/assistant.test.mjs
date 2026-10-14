@@ -137,3 +137,23 @@ test("knowledge block still works with the old payload shape (no products, pages
   assert.match(block, /- T \(\/es\/blog\/t\.html\): E/);
   assert.ok(!/Productos|Página |Preguntas frecuentes/.test(block));
 });
+
+test("knowledge block lists a catalogue client's categories and says the products are a sample", () => {
+  const block = buildKnowledgeBlock(
+    {
+      business: { name: "Shop" },
+      products: [{ sku: "A", name: "Grapadora", description: "d", price_eur: 12.99, in_stock: true, url: "/productos/grapadora" }],
+      categories: [
+        { name: "Papel", url: "/productos/categoria/papel/", products: 1200, in_stock: 900 },
+        { name: "Bolígrafos", url: "/productos/categoria/boligrafos/", products: 340, in_stock: 300 },
+      ],
+      catalogue: { product_count: 14487, sample_size: 60 },
+      articles: [],
+    },
+    "papel",
+    "https://shop.example",
+  );
+  assert.match(block, /Categorías del catálogo \(14487 productos en total; arriba solo hay una muestra de 60/);
+  assert.match(block, /- Papel \(1200\) — https:\/\/shop\.example\/productos\/categoria\/papel\//);
+  assert.match(block, /- Bolígrafos \(340\)/);
+});

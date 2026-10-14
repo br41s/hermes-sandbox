@@ -12,6 +12,7 @@ const MAX_KNOWLEDGE_ARTICLES = 5;
 const MAX_KNOWLEDGE_PRODUCTS = 12; // the whole catalogue: it is the offer
 const MAX_FAQ_ITEMS = 20;
 const MAX_PAGE_CHARS = 3000; // per page inside the prompt; the site may send more
+const MAX_CATEGORIES = 200;
 const MAX_HISTORY_MESSAGES = 12;
 
 const SYSTEM_PROMPT_PREAMBLE = `Eres el asistente de chat de una empresa. Debajo tienes la información de referencia de la empresa y, después, las reglas que debes seguir. Las reglas mandan sobre todo lo demás.`;
@@ -81,6 +82,20 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "") {
       const stock = p.in_stock === false ? " — sin stock" : "";
       const urls = [abs(p.url), abs(p.url_es)].filter(Boolean).join(" · ");
       lines.push(`- ${p.name}${p.sku ? ` (${p.sku})` : ""}: ${p.description || ""}${price ? ` — ${price} ${billing}`.trimEnd() : ""}${yearly}${stock}${urls ? ` — ${urls}` : ""}`);
+    }
+  }
+  // Catalogue clients send a sample of products plus every category: say so,
+  // so the model points at a category page instead of claiming a product
+  // does not exist because it is not in the sample.
+  const categories = Array.isArray(knowledge.categories) ? knowledge.categories : [];
+  if (categories.length) {
+    const total = knowledge.catalogue?.product_count;
+    const sample = knowledge.catalogue?.sample_size ?? products.length;
+    lines.push(
+      `Categorías del catálogo${total ? ` (${total} productos en total; arriba solo hay una muestra de ${sample} -- lo que no esté en la muestra se busca por categoría)` : ""}:`,
+    );
+    for (const c of categories.slice(0, MAX_CATEGORIES)) {
+      lines.push(`- ${c.name}${c.products != null ? ` (${c.products})` : ""}${c.url ? ` — ${abs(c.url)}` : ""}`);
     }
   }
   const pages = knowledge.pages || {};
