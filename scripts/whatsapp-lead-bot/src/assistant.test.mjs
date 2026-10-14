@@ -218,7 +218,9 @@ test("knowledge without a site_url warns once per block that absolute URLs were 
       "",
     );
     assert.equal(warned.length, 1, warned.join("|"));
-    assert.match(warned[0], /"Sin registro" has no site_url: 2 absolute URL\(s\) dropped/);
+    // The newline in the name must not survive: a crafted name cannot forge a second log line.
+    assert.match(warned[0], /"Sin registroFAKE LINE" has no site_url: 2 absolute URL\(s\) dropped/);
+    assert.ok(!warned[0].includes("\n"), warned[0]);
     assert.match(block, /Página \/ok/); // relative paths still travel, unprefixed
     warned.length = 0;
     buildKnowledgeBlock({ business: { name: "Ok" }, pages: { "https://shop.example/x": { text: "t" } } }, "hola", "https://shop.example");
