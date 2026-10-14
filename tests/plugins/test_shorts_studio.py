@@ -1398,6 +1398,7 @@ def test_edge_is_retried_for_over_a_minute(monkeypatch, tmp_path):
         calls.append(1)
         raise RuntimeError("403, message='Invalid response status'")
 
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
     monkeypatch.setattr(voice_mod, "_edge_stream", refuse)
     monkeypatch.setattr(voice_mod.time, "sleep", waits.append)
     with pytest.raises(voice_mod.VoiceError, match="403"):
@@ -1417,6 +1418,7 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
         def __init__(self, code, content=b"ID3 mp3"):
             self.status_code, self.content, self.text = code, content, "denied"
 
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
     monkeypatch.setattr(media, "duration", lambda p: 2.0)
@@ -1457,3 +1459,91 @@ def test_a_normalised_tip_package_validates_again_in_the_renderer(tip):
     tip["voice"] = "es-ES-Bad Voice"
     with pytest.raises(pkg_mod.PackageError, match="not a neural voice name"):
         pkg_mod.validate_package(tip)
+
+
+# ---------------------------------------------------------------------------
+# The free voice: Kokoro on the runner, timings aligned to the script
+# ---------------------------------------------------------------------------
+
+def _kokoro_env(monkeypatch, tmp_path, spoken, heard=None, *, fail=None):
+    from plugins.shorts.studio import media
+
+    def fake_kokoro(text, voice, lang, wav):
+        if fail:
+            raise fail
+        spoken.append((text, voice, lang))
+        wav.write_bytes(b"RIFF")
+        return 4.0
+
+    monkeypatch.delenv("SHORTS_TTS_ENGINE", raising=False)
+    monkeypatch.setenv("SHORTS_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.setattr(voice_mod, "_kokoro", fake_kokoro)
+    monkeypatch.setattr(voice_mod, "heard_words", lambda wav, lang: list(heard or []))
+    monkeypatch.setattr(media, "ffmpeg", lambda *a, what, **kw: Path(a[-1]).write_bytes(b"mp3"))
+
+
+def test_kokoro_is_the_default_engine_and_maps_each_voice(tmp_path, monkeypatch):
+    spoken = []
+    _kokoro_env(monkeypatch, tmp_path, spoken)
+    assert voice_mod.engine() == "kokoro"
+    words = voice_mod.synthesize("Elige una tarea y mide.", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "a.mp3")
+    assert spoken == [("Elige una tarea y mide.", "em_alex", "es")]     # Martín's Azure name maps to his Kokoro voice
+    assert (tmp_path / "a.mp3").exists() and (tmp_path / "a.wav").exists()
+    assert [w["text"] for w in words] == ["Elige", "una", "tarea", "y", "mide."]   # nothing heard: spread evenly
+    voice_mod.synthesize("Start with one boring task.", pkg_mod.TIP_VOICES["en"], "+0%", tmp_path / "b.mp3")
+    assert spoken[-1][1:] == ("am_michael", "en")
+    voice_mod.synthesize("Hola", "ef_dora", "+0%", tmp_path / "c.mp3")   # Lucía's free voice passes through
+    assert spoken[-1][1:] == ("ef_dora", "es")
+    monkeypatch.setenv("SHORTS_KOKORO_VOICE_ES", "em_santa")              # the owner's pick after the smoke render
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "d.mp3")
+    assert spoken[-1][1] == "em_santa"
+    monkeypatch.setenv("SHORTS_KOKORO_VOICE_ES", "not a voice")
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "e.mp3")
+    assert spoken[-1][1] == "em_alex"
+    assert voice_mod.host_voice("es", presenter_mod.HOST_FALLBACK_VOICES) == "ef_dora"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
+    assert voice_mod.host_voice("en", presenter_mod.HOST_FALLBACK_VOICES) == presenter_mod.HOST_FALLBACK_VOICES["en"]
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "nonsense")
+    assert voice_mod.engine() == "kokoro"
+
+
+def test_kokoro_words_follow_the_script_at_the_heard_times(tmp_path, monkeypatch):
+    heard = [{"text": "Big", "start": 0.1, "end": 0.3}, {"text": "Lobster", "start": 0.3, "end": 0.6},
+             {"text": "ahorra", "start": 0.7, "end": 1.0}, {"text": "mil", "start": 1.1, "end": 1.3},
+             {"text": "cincuenta", "start": 1.3, "end": 1.7}, {"text": "euros", "start": 1.8, "end": 2.1}]
+    spoken = []
+    _kokoro_env(monkeypatch, tmp_path, spoken, heard)
+    words = voice_mod.synthesize("BigLobster ahorra 1.050 euros al mes.", "em_alex", "+0%", tmp_path / "a.mp3")
+    assert [w["text"] for w in words] == ["BigLobster", "ahorra", "1.050", "euros", "al", "mes."]
+    by = {w["text"]: (w["start"], w["end"]) for w in words}
+    assert by["BigLobster"][0] == 0.1 and 0.5 <= by["BigLobster"][1] <= 0.6   # heard as two words: their span
+    assert by["ahorra"] == (0.7, 1.0)                                          # heard as is
+    assert by["1.050"][0] == 1.1 and 1.6 <= by["1.050"][1] <= 1.7              # read as "mil cincuenta": their span
+    assert by["euros"] == (1.8, 2.1)
+    assert 2.1 <= by["al"][0] < by["mes."][0] < by["mes."][1] <= 4.0   # unheard tail sits between euros and the end
+    # Nothing heard at all: an even spread, still the script's words.
+    assert [w["text"] for w in voice_mod.align_words("Hola mundo", [], 1.0)] == ["Hola", "mundo"]
+
+
+def test_kokoro_failure_falls_back_to_azure_with_the_neural_twin(tmp_path, monkeypatch):
+    import httpx
+
+    from plugins.shorts.studio import media
+
+    spoken, sent = [], []
+    _kokoro_env(monkeypatch, tmp_path, spoken, fail=RuntimeError("onnxruntime missing"))
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
+    monkeypatch.setattr(media, "duration", lambda p: 2.0)
+    monkeypatch.setattr(media, "tempo", lambda src, dst, factor: dst.write_bytes(src.read_bytes()) or dst)
+    monkeypatch.setattr(voice_mod.time, "sleep", lambda s: None)
+
+    class Resp:
+        status_code, content, text = 200, b"ID3 mp3", ""
+
+    monkeypatch.setattr(httpx, "post", lambda url, content, timeout, headers: sent.append(content) or Resp())
+    words = voice_mod.synthesize("Hola", "ef_dora", "+0%", tmp_path / "a.mp3")      # Lucía's Kokoro id → Elvira
+    assert spoken == [] and b"es-ES-ElviraNeural" in sent[0] and len(words) == 1
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "b.mp3")   # Martín keeps his HD voice
+    assert b"Tristan:DragonHDLatestNeural" in sent[1]
+
