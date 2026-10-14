@@ -29,6 +29,8 @@ export type Beat = {
   show?: 'presenter' | 'card' | 'outro';
   /** Tip format, one take: the frame within the beat where her joke ends and the promise card comes in. */
   overlayFrom?: number;
+  /** Tip format: this card shows one of the article's own pictures (articleInfographic). */
+  visual?: 'infographic';
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;
@@ -64,6 +66,9 @@ export type ShortProps = {
   presenterPhoto?: string | null;
   palette: string;
   motif: string;
+  /** Tip format, brand look: the article's cover behind the cards, and its infographic for a card. */
+  articleCover?: string | null;
+  articleInfographic?: string | null;
   brand: {name: string; site: string};
   beats: Beat[];
   words: Word[];

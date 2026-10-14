@@ -635,10 +635,21 @@ it writes from. Sold to a client without one it goes quiet on every run.
   `SHORTS_BUZZ_CHANNEL` set the tool drops the Meta targets, so the two systems can
   never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
-  and rejects unsourced figures, repeated palettes, malformed packages and a hook
-  whose first sentence will not land in ~3 s (≤8 words, no greeting or intro). `publish`
+  and rejects unsourced figures, repeated palettes (the `brand` palette, every
+  short's look since 2026-10-14, is exempt), malformed packages, a hook whose first
+  sentence will not land in ~3 s (≤8 words, no greeting or intro) and an on-screen
+  promise that does not say what the first sentence says. A clean package then
+  goes to the **critic** (`plugins/shorts/critic.py`): one cheap model call that
+  scores whether the opening tells the viewer what they gain; below 7/10 the
+  submission comes back with `guionista:` problems and a better first sentence,
+  and the Producer rewrites. It never blocks on its own failure. `publish`
   refuses QA failures and does nothing unless `SHORTS_PUBLISH_MODE=live`. A rule
   that matters goes in `plugins/shorts/studio_tool.py` or `studio/package.py`.
+- **The brand look (owner, 2026-10-14).** Cream paper cards, red accent, ink text
+  (`theme.ts` `brand`, sampled from VideoDesk's shorts in Buzz) over the article's
+  own cover, blurred (`build.gather_article_images`); a card may show the article's
+  infographic (`"visual": "infographic"`). No stock footage in a tip short. The
+  karaoke is three words a page.
 - `package.py` is shared by Hermes and the renderer, and `PALETTES`/`MOTIFS` are
   mirrored in `shorts/studio/remotion/src/theme.ts` (a test keeps them equal).
 - A studio change smoke-renders both samples on push, with Kokoro and with

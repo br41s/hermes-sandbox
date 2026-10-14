@@ -1,11 +1,11 @@
 import React from 'react';
 import {AbsoluteFill, Easing, Img, Loop, OffthreadVideo, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {Beat, ShortProps} from './types';
-import {FONT, SAFE, palette, type Palette} from './theme';
+import {FONT, SAFE, onBackdrop, onBackdropMuted, palette, type Palette} from './theme';
 import {MotifField} from './components/Background';
 import {TopBar} from './components/TopBar';
 import {Karaoke} from './components/Karaoke';
-import {CtaScene, HookScene} from './components/Scenes';
+import {CtaScene} from './components/Scenes';
 import './fonts';
 
 // The tip format (package.py, "format": "tip"), two presenters. Lucía opens
@@ -63,7 +63,7 @@ const KeyText: React.FC<{text: string; pal: Palette; size: number; delay?: numbe
         return (
           <span key={i} style={{position: 'relative', display: 'inline-block', opacity: p, transform: `translateY(${(1 - p) * 30}px)`}}>
             {key ? (
-              <span style={{position: 'absolute', left: -8, right: -8, bottom: size * 0.04, height: size * 0.42, background: pal.accent2, opacity: 0.85, borderRadius: 8, transformOrigin: 'left', transform: `scaleX(${sweep})`}} />
+              <span style={{position: 'absolute', left: -8, right: -8, bottom: size * 0.04, height: size * 0.42, background: pal.highlight ?? pal.accent2, opacity: pal.highlight ? 1 : 0.85, borderRadius: 8, transformOrigin: 'left', transform: `scaleX(${sweep})`}} />
             ) : null}
             <span style={{position: 'relative'}}>{clean}</span>
           </span>
@@ -74,14 +74,34 @@ const KeyText: React.FC<{text: string; pal: Palette; size: number; delay?: numbe
 };
 
 const Panel: React.FC<{pal: Palette; children: React.ReactNode; style?: React.CSSProperties}> = ({pal, children, style}) => (
-  <div style={{background: pal.card, border: `2px solid ${pal.text}1A`, borderRadius: 34, padding: '40px 44px', boxShadow: '0 30px 80px rgba(0,0,0,0.35)', ...style}}>{children}</div>
+  <div style={{background: pal.card, border: `2px solid ${pal.text}1A`, borderRadius: 34, padding: '40px 44px', boxShadow: pal.light ? '0 24px 60px rgba(23,18,13,0.28)' : '0 30px 80px rgba(0,0,0,0.35)', ...style}}>{children}</div>
 );
 
-const CardZone: React.FC<{children: React.ReactNode}> = ({children}) => (
+/** The card zone; with `pal` (the brand look) its content sits on a paper panel. */
+const CardZone: React.FC<{children: React.ReactNode; pal?: Palette}> = ({children, pal}) => (
   <div style={{position: 'absolute', top: CARD_TOP, bottom: H - CARD_BOTTOM, left: SAFE.left, right: W - SAFE.right, display: 'flex', flexDirection: 'column', justifyContent: 'center', fontFamily: FONT}}>
-    {children}
+    {pal?.light ? <Panel pal={pal}>{children}</Panel> : children}
   </div>
 );
+
+/** One of the article's own pictures (its infographic) on a card, with the beat's line above it. */
+const InfographicCard: React.FC<{beat: Beat; pal: Palette; src: string}> = ({beat, pal, src}) => {
+  const frame = useCurrentFrame();
+  const enter = useEnter(2);
+  const zoom = 1 + 0.035 * Math.min(1, frame / Math.max(beat.duration, 1));
+  return (
+    <CardZone>
+      <Panel pal={pal} style={{padding: '30px 32px 32px', transform: `translateY(${(1 - enter) * 60}px)`, opacity: enter}}>
+        {beat.onscreen ? (
+          <div style={{fontSize: fit(beat.onscreen, 58), fontWeight: 850, color: pal.text, lineHeight: 1.1, marginBottom: 22}}>{beat.onscreen.replace(/\*/g, '')}</div>
+        ) : null}
+        <div style={{overflow: 'hidden', borderRadius: 18, border: `2px solid ${pal.text}14`}}>
+          <Img src={staticFile(src)} style={{width: '100%', display: 'block', transform: `scale(${zoom})`, transformOrigin: '50% 50%'}} />
+        </div>
+      </Panel>
+    </CardZone>
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Cards
@@ -118,7 +138,7 @@ const StatCard: React.FC<{beat: Beat; pal: Palette}> = ({beat, pal}) => {
   const R = 230;
   const C = 2 * Math.PI * R;
   return (
-    <CardZone>
+    <CardZone pal={pal}>
       <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: enter, transform: `scale(${0.9 + enter * 0.1})`}}>
         <div style={{position: 'relative', width: 2 * R + 40, height: 2 * R + 40, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
           <svg width={2 * R + 40} height={2 * R + 40} style={{position: 'absolute', inset: 0, transform: 'rotate(-90deg)'}}>
@@ -143,7 +163,7 @@ const StepsCard: React.FC<{beat: Beat; pal: Palette}> = ({beat, pal}) => {
   const at = (i: number) => 6 + (i * span) / Math.max(items.length, 1);
   const title = useEnter(0);
   return (
-    <CardZone>
+    <CardZone pal={pal}>
       {beat.onscreen ? (
         <div style={{fontSize: fit(beat.onscreen, 70), fontWeight: 850, color: pal.text, marginBottom: 38, lineHeight: 1.1, opacity: title}}>{beat.onscreen.replace(/\*/g, '')}</div>
       ) : null}
@@ -172,7 +192,7 @@ const CompareCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'}> = ({b
   const second = spring({frame: frame - Math.round(beat.duration * 0.42), fps: 30, config: {damping: 14, stiffness: 150, mass: 0.7}});
   const strike = interpolate(frame - Math.round(beat.duration * 0.42), [0, 10], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const row = (label: string, text: string, good: boolean, p: number) => (
-    <div style={{opacity: p, transform: `translateY(${(1 - p) * 50}px)`, background: good ? `${pal.accent}22` : pal.card, border: `3px solid ${good ? pal.accent : `${pal.text}22`}`, borderRadius: 30, padding: '30px 36px', marginBottom: 26}}>
+    <div style={{opacity: p, transform: `translateY(${(1 - p) * 50}px)`, background: good ? `${pal.accent}22` : pal.light ? `${pal.text}0D` : pal.card, border: `3px solid ${good ? pal.accent : `${pal.text}22`}`, borderRadius: 30, padding: '30px 36px', marginBottom: 26}}>
       <div style={{display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12}}>
         <div style={{width: 52, height: 52, borderRadius: 26, background: good ? pal.accent : `${pal.text}33`, color: good ? pal.bg : pal.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34, fontWeight: 900}}>{good ? '✓' : '✕'}</div>
         <div style={{fontSize: 38, fontWeight: 850, letterSpacing: 3, textTransform: 'uppercase', color: good ? pal.accent : pal.muted}}>{label}</div>
@@ -184,7 +204,7 @@ const CompareCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'}> = ({b
     </div>
   );
   return (
-    <CardZone>
+    <CardZone pal={pal}>
       {beat.onscreen ? <div style={{fontSize: fit(beat.onscreen, 70), fontWeight: 850, color: pal.text, marginBottom: 34, opacity: first}}>{beat.onscreen.replace(/\*/g, '')}</div> : null}
       {row(copy.before, beat.before ?? '', false, first)}
       {row(copy.after, beat.after ?? '', true, second)}
@@ -275,12 +295,14 @@ const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palett
   const frame = useCurrentFrame();
   // A different framing per on-camera beat, like a cut between two cameras, and a slow push-in.
   const zoom = ZOOMS[nth % ZOOMS.length] + 0.035 * Math.min(1, frame / Math.max(beat.duration, 1));
+  // The brand look fogs the take with its dark backdrop colour, never with cream.
+  const fog = pal.light ? pal.bg2 : pal.bg;
   return (
     <AbsoluteFill>
       <AbsoluteFill style={{transform: `scale(${zoom})`, transformOrigin: `50% ${faceY * 100}%`}}>
         <OffthreadVideo src={staticFile(src)} muted style={{width: '100%', height: '100%', objectFit: 'cover'}} />
       </AbsoluteFill>
-      <AbsoluteFill style={{background: `linear-gradient(180deg, ${pal.bg}99 0%, transparent 16%, transparent 46%, ${pal.bg}40 62%, ${pal.bg}D9 100%)`}} />
+      <AbsoluteFill style={{background: `linear-gradient(180deg, ${fog}99 0%, transparent 16%, transparent 46%, ${fog}40 62%, ${fog}D9 100%)`}} />
     </AbsoluteFill>
   );
 };
@@ -343,19 +365,20 @@ const OutroCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'; brand: {
   const follow = spring({frame: frame - followAt, fps: 30, config: {damping: 11, stiffness: 170, mass: 0.6}});
   const tap = interpolate(frame - followAt - 14, [0, 6, 12], [1, 0.9, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const tapped = frame > followAt + 20;
+  const ink = onBackdrop(pal);
   return (
     <AbsoluteFill style={{fontFamily: FONT, alignItems: 'center', justifyContent: 'center', padding: `0 ${SAFE.left}px`}}>
       <div style={{display: 'flex', alignItems: 'center', gap: 18, opacity: logo, transform: `scale(${0.8 + logo * 0.2})`, marginBottom: 60}}>
-        <div style={{width: 34, height: 34, background: pal.accent2, transform: 'rotate(45deg)', borderRadius: 6}} />
-        <div style={{fontWeight: 900, fontSize: 68, letterSpacing: 10, color: pal.text, textTransform: 'uppercase'}}>{brand.name}</div>
+        <div style={{width: 34, height: 34, background: pal.light ? pal.accent : pal.accent2, transform: 'rotate(45deg)', borderRadius: 6}} />
+        <div style={{fontWeight: 900, fontSize: 68, letterSpacing: 10, color: ink, textTransform: 'uppercase'}}>{brand.name}</div>
       </div>
-      <div style={{fontSize: 52, fontWeight: 750, color: pal.muted, opacity: site, transform: `translateY(${(1 - site) * 30}px)`}}>{copy.full}</div>
-      <div style={{marginTop: 22, background: pal.accent, color: pal.bg, borderRadius: 999, padding: '20px 48px', fontSize: 64, fontWeight: 900,
+      <div style={{fontSize: 52, fontWeight: 750, color: onBackdropMuted(pal), opacity: site, transform: `translateY(${(1 - site) * 30}px)`}}>{copy.full}</div>
+      <div style={{marginTop: 22, background: pal.accent, color: pal.light ? '#FFFFFF' : pal.bg, borderRadius: 999, padding: '20px 48px', fontSize: 64, fontWeight: 900,
                    opacity: site, transform: `scale(${0.85 + site * 0.15 + Math.sin(frame / 8) * 0.012})`}}>{host}</div>
       <div style={{marginTop: 90, display: 'flex', flexDirection: 'column', alignItems: 'center', opacity: follow, transform: `translateY(${(1 - follow) * 50}px)`}}>
-        <div style={{fontSize: 58, fontWeight: 850, color: pal.text, textAlign: 'center', lineHeight: 1.1}}>{copy.follow}</div>
+        <div style={{fontSize: 58, fontWeight: 850, color: ink, textAlign: 'center', lineHeight: 1.1}}>{copy.follow}</div>
         <div style={{marginTop: 28, display: 'flex', alignItems: 'center', gap: 14, borderRadius: 999, padding: '16px 40px', fontSize: 46, fontWeight: 900,
-                     background: tapped ? pal.text : pal.accent2, color: pal.bg, transform: `scale(${tap})`}}>
+                     background: tapped ? ink : pal.light ? pal.accent : pal.accent2, color: pal.light && tapped ? pal.text : pal.light ? '#FFFFFF' : pal.bg, transform: `scale(${tap})`}}>
           {tapped ? '✓' : '+'} {copy.followBtn}
         </div>
       </div>
@@ -363,11 +386,22 @@ const OutroCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'; brand: {
   );
 };
 
-const Backdrop: React.FC<{pal: Palette; motif: string; seed: string}> = ({pal, motif, seed}) => (
-  <AbsoluteFill style={{background: `linear-gradient(165deg, ${pal.bg} 0%, ${pal.bg2} 55%, ${pal.bg} 100%)`}}>
-    <MotifField motif={motif} pal={pal} seed={seed} intensity={0.9} />
-  </AbsoluteFill>
-);
+/** Behind the cards: the article's own cover, blurred and darkened with a slow zoom (the brand look, as VideoDesk's shorts), or the palette's gradient. */
+const Backdrop: React.FC<{pal: Palette; motif: string; seed: string; cover?: string | null}> = ({pal, motif, seed, cover}) => {
+  const frame = useCurrentFrame();
+  const zoom = 1.18 + 0.06 * Math.min(1, frame / 1800);
+  const base = pal.light
+    ? `linear-gradient(165deg, ${pal.bg2} 0%, #17120D 70%, ${pal.bg2} 100%)`
+    : `linear-gradient(165deg, ${pal.bg} 0%, ${pal.bg2} 55%, ${pal.bg} 100%)`;
+  return (
+    <AbsoluteFill style={{background: base}}>
+      {cover ? (
+        <Img src={staticFile(cover)} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(26px) brightness(0.5) saturate(1.1)', transform: `scale(${zoom})`}} />
+      ) : null}
+      <MotifField motif={motif} pal={pal} seed={seed} intensity={cover ? 0.25 : pal.light ? 0.4 : 0.9} />
+    </AbsoluteFill>
+  );
+};
 
 export const TipShort: React.FC<ShortProps> = (props) => {
   const pal = palette(props.palette);
@@ -382,8 +416,8 @@ export const TipShort: React.FC<ShortProps> = (props) => {
   );
   let onCamera = -1;
   return (
-    <AbsoluteFill style={{backgroundColor: pal.bg}}>
-      <Backdrop pal={pal} motif={props.motif} seed={seed} />
+    <AbsoluteFill style={{backgroundColor: pal.light ? pal.bg2 : pal.bg}}>
+      <Backdrop pal={pal} motif={props.motif} seed={seed} cover={props.articleCover} />
       {props.beats.map((beat, i) => {
         let scene: React.ReactNode;
         if (beat.kind === 'outro') {
@@ -405,7 +439,15 @@ export const TipShort: React.FC<ShortProps> = (props) => {
             </>
           );
         } else if (beat.kind === 'hook') {
-          scene = <HookScene beat={beat} pal={pal} />;
+          // Her take was not made: the promise as a card, her lines in her free voice.
+          scene = <KeyLineCard beat={beat} pal={pal} />;
+        } else if (beat.visual === 'infographic' && props.articleInfographic) {
+          scene = (
+            <>
+              <InfographicCard beat={beat} pal={pal} src={props.articleInfographic} />
+              {bubble}
+            </>
+          );
         } else if (beat.kind === 'cta') {
           // Martín asks for the save or the share, from his bubble.
           scene = (

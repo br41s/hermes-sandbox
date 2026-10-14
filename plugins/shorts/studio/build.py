@@ -42,7 +42,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from plugins.shorts.studio import genvideo, media, presenter, qa, sources, voice
+from plugins.shorts.studio import article, genvideo, media, presenter, qa, sources, voice
 from plugins.shorts.studio.package import PackageError, validate_package
 
 FPS = media.FPS
@@ -436,6 +436,54 @@ def gather_music(pkg: Dict[str, Any], work: Path, seed: str, *, offline: bool) -
 # 3. Remotion
 # ---------------------------------------------------------------------------
 
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offline: bool) -> Dict[str, Any]:
+    """The article's own pictures for the brand look: its cover behind the cards, its infographic as a card.
+
+    VideoDesk's shorts in Buzz show the article's cover and its figures and
+    nothing from a stock library; the owner chose that look (2026-10-14).
+    Only pictures on the article's own host are taken, and a missing one is
+    a log line, never a failed render.
+    """
+    out: Dict[str, Any] = {"cover": None, "infographic": None, "infographic_alt": ""}
+    if offline:
+        return out
+    url = pkg["article"]["url"]
+    try:
+        import httpx
+
+        with httpx.Client(timeout=30.0, follow_redirects=True,
+                          headers={"User-Agent": sources.USER_AGENT}) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception as exc:  # pictures are decoration: degrade, never fail
+        _log(f"article images: could not read {url}: {exc}")
+        return out
+    found = article.article_images(html, url)
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    (public / "article").mkdir(parents=True, exist_ok=True)
+    infographic = found.get("infographic") or {}
+    for key, src in (("cover", found.get("cover")), ("infographic", infographic.get("url"))):
+        if not src:
+            continue
+        parsed = urllib.parse.urlparse(src)
+        suffix = Path(parsed.path).suffix.lower()
+        if (parsed.hostname or "").lower() != host or suffix not in IMAGE_SUFFIXES:
+            _log(f"article {key}: skipped {src} (not an image on {host})")
+            continue
+        try:
+            sources.download(src, public / "article" / f"{key}{suffix}")
+            out[key] = f"article/{key}{suffix}"
+        except Exception as exc:
+            _log(f"article {key}: {exc}")
+    if out["infographic"]:
+        out["infographic_alt"] = infographic.get("alt", "")
+    return out
+
+
 def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
     beats = []
     number = 0
@@ -457,7 +505,7 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
                 entry["overlayFrom"] = int(round(slot["duration"] * joke / said))
         if slot.get("show"):
             entry["show"] = slot["show"]
-        for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
+        for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after", "visual"):
             if beat.get(key):
                 entry[key] = beat[key]
         if beat["kind"] == "avatar":
@@ -481,6 +529,8 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
         "loopX": tl.get("loop_x"),
         "palette": pkg["style"]["palette"],
         "motif": pkg["style"]["motif"],
+        "articleCover": tl.get("article_cover"),
+        "articleInfographic": tl.get("article_infographic"),
         "brand": BRANDS["biglobster"],
         "beats": beats,
         "words": [{k: w[k] for k in ("text", "startMs", "endMs", "page")} for w in tl["words"]],
@@ -589,6 +639,12 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     broll = [] if tip else gather_broll(pkg, tl["timeline"], work, public, seed, offline=offline)
     music = gather_music(pkg, work, seed, offline=offline)
     _log(f"sources: {len(broll)} clips, music={'none' if not music else music['id']}")
+    images = (gather_article_images(render_pkg, work, public, offline=offline) if tip
+              else {"cover": None, "infographic": None, "infographic_alt": ""})
+    if tip:
+        _log(f"article pictures: cover {'yes' if images['cover'] else 'no'}, "
+             f"infographic {'yes' if images['infographic'] else 'no'}")
+    tl.update({"article_cover": images["cover"], "article_infographic": images["infographic"]})
 
     props = remotion_props(render_pkg, tl)
     props_path = work / "props.json"
@@ -634,6 +690,7 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
                   "thumb": "thumb.jpg", "srt": "captions.srt"},
         "broll": broll,
         "music": {k: music[k] for k in ("id", "source", "url")} if music else None,
+        "article_images": images,
         "avatars": [b["avatar"] for b in pkg["beats"] if b["kind"] == "avatar"],
         "ai_video": ai_video,
         "presenter": talking["report"],

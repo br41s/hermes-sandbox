@@ -1,10 +1,11 @@
 import React from 'react';
 import {interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {Word} from '../types';
-import {FONT, SAFE, type Palette} from '../theme';
+import {FONT, SAFE, onBackdrop, type Palette} from '../theme';
 
-// Word-level captions. Timings come from Edge TTS WordBoundary events (or, for
-// avatar clips, are spread across the clip), so the highlight tracks the voice.
+// Word-level captions, three words a page like VideoDesk's (owner, 2026-10-14).
+// Timings come from faster-whisper aligned to the script (Kokoro), Edge TTS
+// WordBoundary events, or are spread across a clip, so the highlight tracks the voice.
 const LINGER_MS = 350;
 
 export const Karaoke: React.FC<{words: Word[]; pal: Palette}> = ({words, pal}) => {
@@ -27,7 +28,9 @@ export const Karaoke: React.FC<{words: Word[]; pal: Palette}> = ({words, pal}) =
   const pageStart = pageWords[0].startMs;
   const pop = interpolate(t - pageStart, [0, 120], [0.92, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   const chars = pageWords.reduce((n, w) => n + w.text.length + 1, 0);
-  const fontSize = chars > 22 ? 56 : chars > 16 ? 62 : 68;
+  const fontSize = chars > 22 ? 64 : chars > 16 ? 74 : 84;
+  const ink = onBackdrop(pal);
+  const onActive = pal.light ? '#FFFFFF' : pal.bg;
 
   return (
     <div
@@ -56,7 +59,7 @@ export const Karaoke: React.FC<{words: Word[]; pal: Palette}> = ({words, pal}) =
               lineHeight: 1.15,
               padding: '2px 12px',
               borderRadius: 14,
-              color: active ? pal.bg : pal.text,
+              color: active ? onActive : ink,
               background: active ? pal.accent : 'transparent',
               opacity: spoken ? 1 : 0.55,
               textShadow: active ? 'none' : '0 4px 18px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.9)',
