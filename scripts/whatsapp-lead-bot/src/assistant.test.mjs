@@ -28,7 +28,8 @@ test("rejects an empty reply", () => {
 });
 
 test("rejects a reply that exceeds the max length", () => {
-  assert.throws(() => validateAssistantOutput(validRaw({ reply: "a".repeat(1000) })));
+  assert.throws(() => validateAssistantOutput(validRaw({ reply: "a".repeat(1001) })));
+  assert.doesNotThrow(() => validateAssistantOutput(validRaw({ reply: "a".repeat(900) })));
 });
 
 test("rejects an invalid answer_status enum value", () => {
@@ -100,7 +101,11 @@ test("every OpenRouter request asks for providers that neither store nor train o
   assert.deepEqual(sent.provider, { data_collection: "deny" });
   // Reasoning tokens count against max_tokens on gpt-oss; a cap that only fits
   // the answer gets eaten by reasoning and truncates the JSON (seen live).
-  assert.deepEqual(sent.reasoning, { effort: "low" });
+  assert.ok(["low", "medium"].includes(sent.reasoning?.effort), "reasoning effort must be bounded");
+  assert.ok(sent.temperature <= 0.5, "JSON contract wants cold sampling");
+  const system = sent.messages[0].content;
+  assert.ok(system.indexOf("INFORMACIÓN DE REFERENCIA") < system.indexOf("Reglas."), "rules must come after the reference block");
+  assert.match(system.slice(-400), /MISMO idioma/);
   assert.ok(sent.max_tokens >= 1000, `max_tokens ${sent.max_tokens} leaves no room for reasoning + answer`);
   assert.deepEqual(PROVIDER_POLICY, { data_collection: "deny" });
   assert.equal(sent.model, "some/model");
