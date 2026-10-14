@@ -7,6 +7,10 @@
  * bot may quote them and a pricing question does not escalate on its own.
  * Leave it unset for a business that quotes per job.
  *
+ * `telegram: { chatId, threadId }` (optional): where handoff alerts go --
+ * the shared bot (TELEGRAM_BOT_TOKEN) posts into that chat, and into that
+ * forum topic when threadId is set. One topic per customer in Hermes HQ.
+ *
  * MVP storage: a single JSON blob, loaded once at startup. No hot-reload,
  * no database -- restart the service to pick up a new/changed customer
  * entry. This matches the project's "no new infra unless it earns it"
