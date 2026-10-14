@@ -11,9 +11,14 @@ const MAX_REPLY_CHARS = 1000; // guard only; the prompt asks for ~600 (a recomme
 const MAX_KNOWLEDGE_ARTICLES = 5;
 const MAX_KNOWLEDGE_PRODUCTS = 12; // the whole catalogue: it is the offer
 const MAX_FAQ_ITEMS = 20;
+const MAX_PAGE_CHARS = 3000; // per page inside the prompt; the site may send more
 const MAX_HISTORY_MESSAGES = 12;
 
-const SYSTEM_PROMPT_HEADER = `Eres el asistente de WhatsApp de una empresa. Mensajes cortos (esto es WhatsApp, no email).
+const SYSTEM_PROMPT_PREAMBLE = `Eres el asistente de chat de una empresa. Debajo tienes la información de referencia de la empresa y, después, las reglas que debes seguir. Las reglas mandan sobre todo lo demás.`;
+
+const SYSTEM_PROMPT_CLOSING = `RECUERDA, por encima de todo: (1) responde en el MISMO idioma del último mensaje del visitante -- si escribe en inglés, contesta en inglés aunque la referencia esté en español; (2) "reply" de 600 caracteres como máximo; (3) devuelve SOLO el objeto JSON, sin texto antes ni después, y con "name", "email" y "need" como string o null.`;
+
+const SYSTEM_PROMPT_HEADER = `Reglas. Mensajes cortos (esto es un chat, no un email).
 
 - Detecta el idioma en el que escribe el visitante (por ejemplo, español o inglés -- algunos negocios atienden en varios idiomas) y responde SIEMPRE en ese mismo idioma, en todos los turnos de la conversación.
 - Tu PRIMER mensaje en la conversación debe dejar claro que eres un asistente de inteligencia artificial, en el mismo mensaje que el saludo y la primera pregunta -- no lo dividas en varios mensajes.
@@ -82,7 +87,7 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "") {
   for (const [url, page] of Object.entries(pages)) {
     if (page && typeof page === "object" && page.text) {
       lines.push(`Página ${abs(url)}${page.lang ? ` [${page.lang}]` : ""}${page.title ? ` — ${page.title}` : ""}:`);
-      lines.push(page.text);
+      lines.push(page.text.length > MAX_PAGE_CHARS ? page.text.slice(0, MAX_PAGE_CHARS) + "…" : page.text);
     } else {
       lines.push(`Página ${abs(url)}: ${typeof page === "string" ? page : JSON.stringify(page)}`);
     }
@@ -128,7 +133,21 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
   if (!model) throw new Error("VISITOR_AGENT_MODEL is not configured");
 
   const messages = [
-    { role: "system", content: SYSTEM_PROMPT_HEADER + "\n\n" + buildKnowledgeBlock(knowledge, visitorMessage, siteUrl) },
+    // Reference first, rules last: with ~12k tokens of bilingual site text
+    // in between, rules placed before the block were being forgotten (a
+    // Spanish answer to an English question, live 2026-10-14). The closing
+    // reminder repeats the two rules that failed.
+    {
+      role: "system",
+      content:
+        SYSTEM_PROMPT_PREAMBLE +
+        "\n\n" +
+        buildKnowledgeBlock(knowledge, visitorMessage, siteUrl) +
+        "\n\n" +
+        SYSTEM_PROMPT_HEADER +
+        "\n\n" +
+        SYSTEM_PROMPT_CLOSING,
+    },
     ...buildHistoryMessages(chatwootMessages),
   ];
 
@@ -150,7 +169,11 @@ export async function getAssistantReply({ knowledge, chatwootMessages, visitorMe
       // reasoning small (a short qualification reply needs none), and 1200
       // leaves room for the answer regardless. The visitor-facing length is
       // still bounded by MAX_REPLY_CHARS in validateAssistantOutput, not here.
-      reasoning: { effort: "low" },
+      // 0.3: default temperature produced a padded, half-Spanish object on
+      // a 12k-token prompt (replay 2026-10-14); JSON contracts want cold
+      // sampling. Medium reasoning so the language rule survives the block.
+      temperature: 0.3,
+      reasoning: { effort: "medium" },
       // 2026-10-14: the offer-aware prompt (~12k tokens) makes "which agents
       // would you recommend?" answers longer; 1200 was cut again on a live
       // turn. The reply is capped by MAX_REPLY_CHARS and the prompt, not here.
