@@ -253,7 +253,7 @@ async function processTurn(payload) {
   if (knowledge && !visitorRequestedHuman) {
     try {
       const chatwootMessages = await chatwoot.getMessages(accountId, conversationId);
-      modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage });
+      modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage, siteUrl: entry.siteUrl });
     } catch (err) {
       modelError = err;
       console.error(
@@ -271,6 +271,7 @@ async function processTurn(payload) {
     hasUnsupportedMedia: false, // already filtered out in shouldProcess
     visitorRequestedHuman,
     repeatedUnresolvedQuestion: false, // requires history diffing -- left conservative for MVP, see report
+    pricingIsPublic: entry.answersPricing === true, // registry flag: the site publishes prices
   });
 
   // Race check: re-read status right before sending. If a human took the

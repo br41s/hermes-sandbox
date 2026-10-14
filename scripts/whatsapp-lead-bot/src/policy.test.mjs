@@ -173,3 +173,27 @@ test("requestedHumanLanguage says which language asked (the reply's only clue on
   assert.equal(requestedHumanLanguage("¿Tenéis servicio de reformas?"), null);
   assert.equal(requestedHumanLanguage(""), null);
 });
+
+test("a pricing question escalates by default (quotes-per-job business)", () => {
+  const result = decideHandoff({ ...baseInput, visitorMessage: "What's the price of the SEO agent?" });
+  assert.equal(result.reason, "sensitive_topic");
+});
+
+test("a pricing question is answered when the site publishes its prices (answersPricing)", () => {
+  const result = decideHandoff({
+    ...baseInput,
+    visitorMessage: "What's the price of the SEO agent?",
+    pricingIsPublic: true,
+  });
+  assert.equal(result.required, false);
+  assert.equal(decideHandoff({ ...baseInput, visitorMessage: "¿cuánto cuesta el agente de contenidos?", pricingIsPublic: true }).required, false);
+});
+
+test("answersPricing never relaxes complaints or legal matters", () => {
+  for (const msg of ["I want to file a complaint about the price", "mi abogado dice que el precio es ilegal"]) {
+    const result = decideHandoff({ ...baseInput, visitorMessage: msg, pricingIsPublic: true });
+    assert.equal(result.reason, "sensitive_topic", msg);
+  }
+  assert.equal(messageTouchesSensitiveTopic("how much does it cost?", { pricingIsPublic: true }), false);
+  assert.equal(messageTouchesSensitiveTopic("how much does it cost?"), true);
+});
