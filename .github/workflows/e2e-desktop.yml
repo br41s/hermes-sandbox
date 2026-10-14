@@ -40,7 +40,7 @@ jobs:
             xdg-utils libatspi2.0-0 libdrm2 libgbm1 libasound2t64
 
       # ── Node ───────────────────────────────────────────────────────────
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
           cache: npm
@@ -58,7 +58,7 @@ jobs:
 
       # ── Python (for the hermes serve backend) ──────────────────────────
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # 10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
         with:
           # Pin the uv version: unpinned, setup-uv resolves "latest" by
           # fetching a manifest from raw.githubusercontent.com on EVERY job —
@@ -136,7 +136,7 @@ jobs:
       - name: Upload Playwright report
         id: upload-report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report-${{ github.sha }}
           path: apps/desktop/playwright-report
@@ -147,7 +147,7 @@ jobs:
       - name: Upload test results
         id: upload-results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-test-results-${{ github.sha }}
           path: apps/desktop/test-results
@@ -158,7 +158,7 @@ jobs:
       - name: Upload visual diffs
         id: upload-diffs
         if: always() && github.ref_name != 'main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: visual-diffs-${{ github.sha }}
           path: |
@@ -192,7 +192,7 @@ jobs:
       - name: Upload review status artifact
         if: always() && steps.review-status.outcome != 'skipped'
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: review-status-e2e-desktop
           path: apps/desktop/review-status.json
@@ -205,7 +205,7 @@ jobs:
       # never checks out or runs this PR's code.
       - name: Upload inline E2E evidence
         if: always() && github.ref_name != 'main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-evidence-${{ github.sha }}
           path: /tmp/e2e-evidence
