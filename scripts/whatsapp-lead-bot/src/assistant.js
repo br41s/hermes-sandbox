@@ -13,6 +13,7 @@ const MAX_KNOWLEDGE_PRODUCTS = 12; // shown per turn, best term overlap first; a
 const MAX_FAQ_ITEMS = 20;
 const MAX_PAGE_CHARS = 3000; // per page inside the prompt; the site may send more
 const MAX_CATEGORIES = 30; // shown per turn, best term overlap first; the rest is a count (200 lines were ~3.5k tokens on every turn)
+const MAX_CATEGORIES_IN = 200; // what the package sends at most; anything beyond is ignored before sorting (payload is untrusted input)
 const MAX_HISTORY_MESSAGES = 12;
 
 const SYSTEM_PROMPT_PREAMBLE = `Eres el asistente de chat de una empresa. Debajo tienes la información de referencia de la empresa y, después, las reglas que debes seguir. Las reglas mandan sobre todo lo demás.`;
@@ -67,9 +68,12 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "") {
   // message first (sort is stable, so with no terms the payload's own order,
   // biggest category first, survives), then a count of what was left out.
   const allCategories = Array.isArray(knowledge.categories) ? knowledge.categories : [];
-  const categories = [...allCategories]
-    .sort((a, b) => scoreText(String(b.name || "")) - scoreText(String(a.name || "")))
-    .slice(0, MAX_CATEGORIES);
+  const categories = allCategories
+    .slice(0, MAX_CATEGORIES_IN)
+    .map((c) => ({ c, score: scoreText(String(c?.name || "")) })) // score once, not per comparison
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_CATEGORIES)
+    .map(({ c }) => c);
 
   // The registry knows the site; older payloads may also carry it themselves.
   siteUrl = String(siteUrl || knowledge.business?.site_url || knowledge.site_url || "").replace(/\/+$/, "");
@@ -153,8 +157,11 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "") {
     // Logged: with no site to check against, every absolute URL in the payload
     // is dropped and the reply silently loses its links. The fix is the
     // registry entry (site_url), not this code. Name only -- never the payload.
+    // The name comes from the payload: keep letters, digits and a few separators,
+    // cap the length, so a crafted name cannot forge extra log lines.
+    const who = String(knowledge.business?.name || "?").replace(/[^\p{L}\p{N} ._-]/gu, "").slice(0, 60) || "?";
     console.warn(
-      `knowledge for "${knowledge.business?.name || "?"}" has no site_url: ${droppedAbsolute} absolute URL(s) dropped from the prompt; set site_url in the registry so the site's own links survive`,
+      `knowledge for "${who}" has no site_url: ${droppedAbsolute} absolute URL(s) dropped from the prompt; set site_url in the registry so the site's own links survive`,
     );
   }
   return lines.join("\n");

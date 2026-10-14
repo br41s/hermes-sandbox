@@ -213,7 +213,7 @@ test("knowledge without a site_url warns once per block that absolute URLs were 
   console.warn = (m) => warned.push(String(m));
   try {
     const block = buildKnowledgeBlock(
-      { business: { name: "Sin registro" }, pages: { "https://shop.example/x": { text: "t" }, "/ok": { text: "u" } }, articles: [{ title: "T", url: "https://shop.example/post", excerpt: "e" }] },
+      { business: { name: "Sin registro\nFAKE LINE" }, pages: { "https://shop.example/x": { text: "t" }, "/ok": { text: "u" } }, articles: [{ title: "T", url: "https://shop.example/post", excerpt: "e" }] },
       "hola",
       "",
     );
