@@ -218,12 +218,18 @@ SETTING_PROMPT = (
 # setting keeps her hands free and objects on surfaces (SETTING_PROMPT).
 TAKE_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm hand gestures with "
                "empty hands, steady posture.")
-# She hands over by turning to Martín and saying the line to him, the way
-# a presenter turns to a colleague; a frozen last frame with a zoom read as
-# a stall (owner's review, 2026-10-13). Her face stays visible for the lips.
-HANDOFF_MOTION = ("Turns her head and shoulders partway towards the man working behind her and says "
-                  "the line to him, with a relaxed open-hand gesture in his direction, her face still "
-                  "visible to the camera; she stays turned towards him at the end.")
+# One take for her joke, hook and handoff (owner, 2026-10-14): she speaks to
+# the camera and, on her last sentence, turns to Martín and says it to him,
+# the way a presenter turns to a colleague; her face stays visible for the
+# lips. Three separate takes meant three OpenRouter credit holds, and the
+# second or third was refused with 402 on every daily short from 12 to 14
+# October with the account in credit. A frozen last frame with a zoom read
+# as a stall (owner's review, 2026-10-13), hence the turn.
+HANDOFF_MOTION = ("Speaks warmly and naturally straight to the camera, small, calm hand gestures with "
+                  "empty hands, steady posture. On her last sentence she turns her head and shoulders "
+                  "partway towards the man working behind her and says it to him, with a relaxed "
+                  "open-hand gesture in his direction, her face still visible to the camera; she stays "
+                  "turned towards him at the end.")
 # Her takes play this much faster, picture and voice together: at 1.0 she
 # read slowly to the owner (2026-10-13). HeyGen's voice takes no rate.
 TAKE_TEMPO = 1.12
@@ -328,9 +334,10 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
                handoff: Optional[int], work: Path, report: Dict[str, Any]) -> Dict[int, Path]:
     """Lucía says each line to camera, one Avatar IV take per line, in her HeyGen voice.
 
-    One take per line gives each beat its exact length and audio. Every take
-    is planned before any is sent, so the budget refuses the short cleanly
-    instead of leaving it with half its lines. Returns {beat: clip}.
+    The tip format sends ONE line: joke + hook + handoff together, so a short
+    holds one OpenRouter credit at a time (owner, 2026-10-14). A take gives
+    its beat its exact length and audio. Every take is planned before any is
+    sent, so the budget refuses the short cleanly. Returns {beat: clip}.
     """
     cfg, tcfg = config(), tip_config()
     voice = tcfg["host_voice"].get(lang)

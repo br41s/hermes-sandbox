@@ -54,7 +54,7 @@ TAKE_TAIL = 0.12      # kept after its last word
 HANDOFF_TAIL = 0.6    # the handoff keeps her turn towards Martín after the words
 CTA_TAIL = 1.4        # the CTA stays on screen after the last word
 AVATAR_MAX = 12.0     # seconds of avatar clip used per beat
-PRESENTER_MAX = 15.0  # a presenter line is <=24 words; anything longer is a model fault
+PRESENTER_MAX = 18.0  # one take is <=32 words (tip) or <=24 (classic); longer is a model fault
 STORY_LIMIT = 59.5
 
 BRANDS = {
@@ -160,7 +160,7 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
             # Cut the take at its speech: its still, silent edges read as a frozen face.
             begin, finish = media.speech_bounds(talking)
             take_start = max(0.0, begin - TAKE_LEAD)
-            tail = HANDOFF_TAIL if beat["kind"] == "handoff" else TAKE_TAIL
+            tail = HANDOFF_TAIL if (beat["kind"] == "handoff" or beat.get("handoff")) else TAKE_TAIL
             take_end = min(media.duration(talking), finish + tail, take_start + PRESENTER_MAX)
             wav = media.extract_audio(talking, work / f"vo_{i:02d}.wav", start=take_start, end=take_end)
             speech = take_end - take_start
@@ -235,25 +235,33 @@ OUTRO_VO = {
 }
 
 
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if not text or text[-1] in ".!?…" else text + "."
+
+
 def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The tip short as rendered.
 
-    Lucía on camera (``show`` "presenter"): the opener joke, the hook, the
-    handoff, said turned towards Martín. Then his cards and CTA, and the outro. Lucía's beats carry her fallback voice, used only when
-    her take was not made (a render with no key).
+    Lucía on camera (``show`` "presenter") in ONE take: the opener joke, the
+    hook and the handoff, which she says turned towards Martín (owner,
+    2026-10-14: more natural than three cuts, and one OpenRouter credit
+    hold instead of three, the 402s of 12-14 October). Then his cards and
+    CTA, and the outro. The take beat keeps the hook's kind, kicker and
+    on-screen promise, plus ``opener_line`` and ``handoff`` so the render
+    knows where the joke ends. It carries her free voice, used only when the
+    take was not made (no key, a refusal, a failure).
     """
     opener = pkg.get("opener") or {}
-    host_voice = presenter.HOST_FALLBACK_VOICES.get(pkg["lang"], presenter.HOST_FALLBACK_VOICES["en"])
-    host = {"show": "presenter", "speaker": "host", "voice": host_voice}
-    beats: List[Dict[str, Any]] = []
-    if opener.get("line"):
-        # onscreen only shows when she is not on camera (then the joke is a card)
-        beats.append({"kind": "opener", "vo": opener["line"], "onscreen": opener["line"], **host})
+    lang = pkg["lang"]
+    host_voice = voice.host_voice(lang, presenter.HOST_FALLBACK_VOICES)
     hook, rest = pkg["beats"][0], pkg["beats"][1:]
-    beats.append({**hook, **host})
-    if opener.get("handoff"):
-        beats.append({"kind": "handoff", "vo": opener["handoff"], "onscreen": opener["handoff"], **host})
-    beats += rest
+    line = (opener.get("line") or "").strip()
+    handoff = (opener.get("handoff") or "").strip()
+    said = " ".join(_sentence(part) for part in (line, hook["vo"], handoff) if part.strip())
+    take = {**hook, "vo": said, "show": "presenter", "speaker": "host", "voice": host_voice,
+            "opener_line": line, "hook_vo": hook["vo"], "handoff": handoff}
+    beats: List[Dict[str, Any]] = [take, *rest]
     beats.append({"kind": "outro", "vo": OUTRO_VO.get(pkg["lang"], OUTRO_VO["en"]), "show": "outro",
                   "url": pkg["beats"][-1].get("url", "")})
     return beats
@@ -263,12 +271,15 @@ def on_camera(beats: List[Dict[str, Any]]) -> List[int]:
     return [i for i, b in enumerate(beats) if b.get("show") == "presenter"]
 
 
-def presenter_missing_error(tip: bool, missing: List[int], real_dispatch: bool,
-                            presenter_report: Dict[str, Any]) -> Optional[str]:
-    """The QA error for a tip short with a line of Lucía's not on camera, or None.
+def presenter_missing_warning(tip: bool, missing: List[int], real_dispatch: bool,
+                              presenter_report: Dict[str, Any]) -> Optional[str]:
+    """The QA warning for a tip short whose take of Lucía's was not made, or None.
 
-    She opens every tip short, so one without her is not published. A render
-    with no key (the push smoke test) keeps its fallback.
+    The short goes out without her on camera, her lines in her free voice
+    over the hook card (owner, 2026-10-14): until then a missing take failed
+    QA with the setting and part of the day's budget already spent, and no
+    daily short passed from 12 to 14 October. A render with no key (the push
+    smoke test) is not reported at all.
     """
     if not tip or not missing or not real_dispatch:
         return None
@@ -276,7 +287,7 @@ def presenter_missing_error(tip: bool, missing: List[int], real_dispatch: bool,
                if t.get("beat") in missing]
     why = "; ".join(dict.fromkeys(r for r in reasons if r)) or presenter_report.get("reason") or "not made"
     return (f"Lucía's take missing for beat(s) {missing} ({why}): "
-            "a tip short is published only with her on camera")
+            "published without her on camera")
 
 
 def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
@@ -302,7 +313,7 @@ def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline
     import httpx
 
     lines = {i: beats[i]["vo"] for i in on_camera(beats)}
-    handoff = next((i for i in lines if beats[i]["kind"] == "handoff"), None)
+    handoff = next((i for i in lines if beats[i].get("handoff") or beats[i]["kind"] == "handoff"), None)
     with httpx.Client(timeout=180.0, follow_redirects=True) as client:
         setting = (pkg.get("opener") or {}).get("setting")
         image = presenter.setting_image(client, budget, setting, work / "setting.png", report) if setting else None
@@ -440,6 +451,10 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
             entry["presenter"] = slot["presenter"]
             entry["presenterName"] = (presenter.HOST[1] if pkg.get("format") == "tip"
                                       else (presenter.who(pkg["lang"]) or ("", ""))[1])
+            if beat.get("opener_line"):
+                # One take: the promise card comes in when her joke ends (by word share).
+                joke, said = len(beat["opener_line"].split()), max(1, len(beat["vo"].split()))
+                entry["overlayFrom"] = int(round(slot["duration"] * joke / said))
         if slot.get("show"):
             entry["show"] = slot["show"]
         for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after"):
@@ -595,11 +610,10 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     report = qa.check_master(master, expected_seconds=total_seconds,
                              target=qa.TIP_TARGET if tip else (qa.TARGET_MIN, qa.TARGET_MAX), quiet=quiet)
     missing = [i for i in on_camera(render_pkg["beats"]) if not tl["timeline"][i].get("presenter")] if tip else []
-    cast_error = presenter_missing_error(tip, missing, bool(budget["cfg"]["key"]) and not offline,
-                                         talking["report"])
-    if cast_error:
-        report["passed"] = False
-        report["errors"].append(cast_error)
+    cast_warning = presenter_missing_warning(tip, missing, bool(budget["cfg"]["key"]) and not offline,
+                                             talking["report"])
+    if cast_warning:
+        report["warnings"].append(cast_warning)
     report["story"] = qa.check_story(story)
     report["cover"] = qa.check_still(visuals["cover"])
     report["thumb"] = qa.check_still(visuals["thumb"])

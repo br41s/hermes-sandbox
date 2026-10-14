@@ -303,12 +303,16 @@ What a tip short is, in order:
    the setting prompt keeps her hands free and objects on surfaces (the
    first paid test's tray of bread stayed floating in the air).
 2. **Hook**, Lucía on camera, in the same setting.
-3. **Handoff** (`opener.handoff`, ≤8 words, names Martín): she turns her
-   head and shoulders to him and says the line to him (`HANDOFF_MOTION`);
-   the take keeps 0.6 s after the words so the turn is seen, then it cuts to
-   his first card. There is no shot of Martín reacting: a frozen last frame
-   with a push-in read as a stall (owner, 2026-10-12 and 10-13), and a
-   generated nod cost $0.65 (Hailuo 3), more than all of Lucía's lines.
+3. **Handoff** (`opener.handoff`, ≤8 words, names Martín). Since 2026-10-14
+   the joke, the hook and the handoff are **one Avatar IV take** (owner: more
+   natural than three cuts, and one OpenRouter credit hold instead of three).
+   She speaks to the camera with her name tag on screen during the joke, the
+   promise card comes in where the joke ends (`overlayFrom`, by the joke's
+   share of the words) and on her last sentence she turns to Martín and says
+   it to him (`HANDOFF_MOTION`); the take keeps 0.6 s after the words so the
+   turn is seen, then it cuts to his first card. There is no shot of Martín
+   reacting: a frozen last frame with a push-in read as a stall (owner,
+   2026-10-12 and 10-13), and a generated nod cost $0.65 (Hailuo 3).
 4. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`).
@@ -319,14 +323,23 @@ What a tip short is, in order:
    card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
    reads them as a jump in pitch, and it sounded overexcited.
 
-**Martín's voice goes through Azure Speech** (official REST, the same neural
-voices) when `SHORTS_AZURE_SPEECH_KEY` (Actions secret) and
-`SHORTS_AZURE_SPEECH_REGION` (repo variable, e.g. `westeurope`) are set;
-the free F0 tier gives 500k characters a month, about 300 per short. Edge TTS
-stays as the fallback: Microsoft changed the Edge endpoint's anti-abuse
-token on 2026-10-10/12 and edge-tts 7.2.8 got a 403 on nearly every call
-(edge-tts issue #490). Every free line is voiced before anything is paid
-(`build.prevoice`), so a voice outage costs nothing.
+**Martín's voice is Kokoro, on the runner, for free** (since 2026-10-14:
+the owner compared VideoDesk's shorts in Buzz, voiced by Kokoro at its own
+pace, with the Studio's and chose that sound). `voice.py` runs Kokoro-82M
+(Apache-2.0, `kokoro-onnx`, int8 model and voice pack from the kokoro-onnx
+release, cached by the workflow) at speed 1.0, with no tempo shift, and gets
+the word timings for the karaoke by reading the audio back with faster-whisper
+(`small`, CPU) and aligning what it heard to the script, so the captions show
+the script's words at the heard times (`voice.align_words`, the way
+VideoDesk's `subtitular --guion` does it). `SHORTS_TTS_ENGINE=azure` (repo
+variable) switches the narrator to Azure Speech (official REST, the same
+neural voices; the free F0 tier gives 500k characters a month) when
+`SHORTS_AZURE_SPEECH_KEY` (Actions secret) and `SHORTS_AZURE_SPEECH_REGION`
+are set, with Edge TTS behind it: Microsoft changed the Edge endpoint's
+anti-abuse token on 2026-10-10/12 and edge-tts 7.2.8 got a 403 on nearly
+every call (edge-tts issue #490). If Kokoro itself fails, the line falls
+through to Azure, then Edge. Every free line is voiced before anything is
+paid (`build.prevoice`), so a voice outage costs nothing.
 
 **Voices.** Lucía speaks with her HeyGen voice (`presenter.HOST_VOICES`,
 chosen by the owner: es `ec971490…` (the first, `a78e0a4d…`, sounded too
@@ -334,23 +347,33 @@ young on the avatar), en `47aff89a…`; override with
 `SHORTS_HOST_VOICE_ES`/`_EN`). Avatar IV takes a script and a `voice_id`;
 it does NOT take a voice track as a data URL (it wants a public HTTPS URL),
 which is why her lines are voiced by HeyGen and not by our TTS. Martín
-narrates with an Azure voice (`package.TIP_VOICES`: the HD
-`es-ES-Tristan:DragonHDLatestNeural`, the owner's pick over Álvaro, and
-`en-US-AndrewMultilingualNeural`), forced by the package. HD voices take
-no prosody rate and exist on Azure only; if Azure fails, Edge reads the
-line with `voice.EDGE_FALLBACK`. Both read slowly to the owner at their own
-pace (2026-10-13), so Martín's HD lines are sped up after synthesis
-(`voice.HD_TEMPO`) and each of Lucía's takes plays faster, lips and voice
-together (`presenter.TAKE_TEMPO`), both 1.12x with the pitch kept. Two
-characters, two voices, each the same in every short.
+narrates with Kokoro: `voice.KOKORO_VOICES`, es `em_alex`, en `am_michael`;
+the owner picks between the Spanish male voices (`em_alex`, `em_santa`) after
+hearing the smoke renders, with the repo variables `SHORTS_KOKORO_VOICE_ES` /
+`_EN`. The package still carries Martín's neural name (`package.TIP_VOICES`,
+the HD `es-ES-Tristan:DragonHDLatestNeural` and `en-US-AndrewMultilingualNeural`),
+which Kokoro maps to its voice for the language and Azure uses as is; an HD
+voice takes no prosody rate and is sped up after synthesis (`voice.HD_TEMPO`,
+1.12x, Martín read slowly to the owner on 2026-10-13), and each of Lucía's
+takes plays faster too, lips and voice together (`presenter.TAKE_TEMPO`).
+A line of Lucía's whose take was not made is said by her free voice of the
+same kind (`voice.KOKORO_HOST_VOICES`, `ef_dora`/`af_heart`, or
+`presenter.HOST_FALLBACK_VOICES` under Azure). Two characters, two voices,
+each the same in every short.
 
-**What is paid.** Only Lucía's lines (opener + hook + handoff ≤32 words,
-~12 s at $0.05/s), one take per line so each beat gets its exact length and
-audio (`presenter.host_takes`); all of them are budgeted before any is sent,
-so a short is never left with half her lines. If a take is missing in a real
-dispatch, QA fails the short ("Lucía's take missing"); a render without a key
-(the push smoke test) keeps its card-only fallback, her lines in a free voice
-(`presenter.HOST_FALLBACK_VOICES`).
+**What is paid.** Only Lucía's one take (opener + hook + handoff ≤32 words,
+~12 s at $0.05/s, about $0.5–0.6), budgeted before it is sent
+(`presenter.host_takes`). If the take is not made (a refusal, a 402, a model
+error, the 10-minute timeout), **the short still goes out**: her lines are
+said by her free voice over the hook card, QA records a warning
+(`build.presenter_missing_warning`) and the manifest's `presenter` block says
+why (owner, 2026-10-14). Until then a missing take failed QA with the setting
+and part of the day's budget already spent, and no daily short passed from
+12 to 14 October: OpenRouter holds credit for every video in progress, and
+with three takes the second or third was refused "Insufficient credits"
+(`limit_source: openrouter_credits`) while the key's daily limit still had
+room. One take is one hold. A render without a key (the push smoke test)
+keeps its card-only fallback and reports nothing.
 
 **The narrator's loop is recorded by the owner, once** (Google Flow, frames
 to video with the presenter's photo as first and last frame), and committed as
@@ -363,17 +386,19 @@ generates a loop (`presenter.bubble_loop` only looks it up); without one the
 bubble shows the photo. A loop for Lucía is for when she narrates; the roles
 are fixed (she opens, he narrates) until the owner says otherwise.
 
-**Cuts.** Each take opens and closes with a still, silent second; the
-timeline cuts it at its speech (`media.speech_bounds`) and runs the next beat
-after 0.06 s, so the takes follow each other like one conversation instead
-of a face that freezes between lines.
+**Cuts.** The take opens and closes with a still, silent second; the
+timeline cuts it at its speech (`media.speech_bounds`) and runs his first
+card after 0.06 s, so the handoff reads as one conversation instead of a face
+that freezes between lines.
 
 **Music.** Jazz and lounge only (`sources.ELEGANT_MUSIC_PAGES`, Mixkit), at
 `media.BED_VOLUME` 0.06 under the voices, ducked further while anyone speaks.
 
-Cost per short: setting ~$0.07 + Lucía ~$0.55 (her three takes on
-2026-10-12: $0.24, $0.14, $0.17) ≈ $0.6, inside the $1 per short. QA accepts the
-silence of Martín's turn (`qa.check_master(quiet=...)`).
+Cost per short: setting ~$0.07 + Lucía's one take ~$0.5–0.6 (her three
+takes on 2026-10-12 cost $0.24, $0.14 and $0.17; one take of the same words
+is about the same money and one credit hold) ≈ $0.6–0.7, inside the $1 per
+short. Everything else is free. QA accepts the silence of Martín's turn
+(`qa.check_master(quiet=...)`).
 
 Framing: `presenter.FACE_Y` is where each photo's face is (Martín's loop),
 and `SETTING_FACE_Y` where the setting prompt puts Lucía's; the zoom and the
@@ -409,7 +434,7 @@ decision, not a code one.
 | Piece | Cost |
 |---|---|
 | Script writing | LLM tokens for two short agent runs a day |
-| Voice (Edge TTS), footage (Pexels/Mixkit), music (Mixkit) | €0 |
+| Voice (Kokoro on the runner; Azure Speech F0 and Edge as fallbacks), footage (Pexels/Mixkit), music (Mixkit) | €0 |
 | Presenter (HeyGen Avatar IV) and generated scenes (HeyGen Video 1), both via OpenRouter | ≤ $1 per short and $2/day together, capped in code and on the key (§3.5, §3.7); ~$0.05/s said to camera, ~$0.10–0.15 per 8 s scene at the launch price |
 | Render (GitHub Actions) | €0 — public repo, unmetered runners |
 | YouTube Data API, Meta Graph API | €0 |
@@ -455,7 +480,9 @@ been rendered yet. The first dispatch with the key set is the test; its log's
 Palettes and motifs live in `shorts/studio/remotion/src/theme.ts` and are mirrored in
 `package.py` (a test keeps them in step). Preview with
 `cd shorts/studio/remotion && npm ci && npm run studio`. Any change to the studio
-triggers the smoke render of both samples on push.
+triggers the smoke render of both samples on push, once per voice engine
+(`short-smoke-<lang>-kokoro` and `-azure`): download the two Spanish ones from
+the run and listen to Martín before picking `SHORTS_KOKORO_VOICE_ES`.
 
 ## 9. Next: the rental version
 

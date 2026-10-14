@@ -27,6 +27,8 @@ export type Beat = {
   presenterName?: string;
   /** Tip format: Lucía full-frame, or an animated card with Martín in a bubble. */
   show?: 'presenter' | 'card' | 'outro';
+  /** Tip format, one take: the frame within the beat where her joke ends and the promise card comes in. */
+  overlayFrom?: number;
   /** compare beats (tip format): the before and the after. */
   before?: string;
   after?: string;
