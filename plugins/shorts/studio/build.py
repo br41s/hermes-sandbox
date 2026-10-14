@@ -452,13 +452,8 @@ def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offl
         return out
     url = pkg["article"]["url"]
     try:
-        import httpx
-
-        with httpx.Client(timeout=30.0, follow_redirects=True,
-                          headers={"User-Agent": sources.USER_AGENT}) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            html = resp.text
+        # SSRF-guarded on the render farm too (article.public_url, redirects re-checked).
+        html = article.fetch_html(url)
     except Exception as exc:  # pictures are decoration: degrade, never fail
         _log(f"article images: could not read {url}: {exc}")
         return out
@@ -471,7 +466,7 @@ def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offl
             continue
         parsed = urllib.parse.urlparse(src)
         suffix = Path(parsed.path).suffix.lower()
-        if (parsed.hostname or "").lower() != host or suffix not in IMAGE_SUFFIXES:
+        if (parsed.hostname or "").lower() != host or suffix not in IMAGE_SUFFIXES or not article.url_is_safe(src):
             _log(f"article {key}: skipped {src} (not an image on {host})")
             continue
         try:

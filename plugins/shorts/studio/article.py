@@ -1,18 +1,24 @@
 """Fetch a blog post and reduce it to the text a short may cite.
 
 Used by ``shorts_studio submit`` to run the grounding check itself, so that
-check never depends on the agent's own copy of the article. Standard library
-HTML parsing only; the network call goes through ``httpx`` and Hermes's SSRF
-guard on the Hermes side.
+check never depends on the agent's own copy of the article, and by the
+render farm (``build.gather_article_images``) for the article's pictures.
+Standard library HTML parsing only. Every fetch goes through an SSRF guard:
+Hermes's ``tools.url_safety`` where it is importable, and ``public_url``
+below on the render farm (the Actions checkout has no ``tools/``), with the
+same check on every redirect hop, so a public URL cannot 302 to a private
+address.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "template"}
 _BLOCK_TAGS = {"p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th", "tr",
@@ -146,32 +152,62 @@ def article_images(html: str, base_url: str) -> Dict[str, Any]:
     return {"cover": cover, "infographic": infographic}
 
 
-def fetch_html(url: str, *, client=None) -> str:
-    """Fetch ``url`` (https, SSRF-guarded on the Hermes side) and return its HTML. Raises ``ValueError``."""
+def public_url(url: str) -> bool:
+    """The render farm's SSRF guard: https, and a host that resolves only to public addresses."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").strip().lower()
+    if parts.scheme != "https" or not host or parts.username or parts.password:
+        return False
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        return _public_ip(literal)
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return False
+    return bool(infos) and all(_public_ip(ipaddress.ip_address(info[4][0])) for info in infos)
+
+
+def _public_ip(ip) -> bool:
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                or ip.is_reserved or ip.is_unspecified)
+
+
+def url_is_safe(url: str) -> bool:
+    """Hermes's guard when it is importable (the tool side), ours otherwise (the render farm)."""
     try:
         from tools.url_safety import is_safe_url
-    except Exception:  # pragma: no cover - render side never fetches articles
-        is_safe_url = None
+    except Exception:  # the Actions checkout carries plugins/shorts only
+        return public_url(url)
+    return bool(is_safe_url(url))
+
+
+def guard_redirect(response) -> None:
+    """Re-check every redirect hop: a safe URL must not 302 us onto a private address."""
+    if response.is_redirect and response.next_request:
+        target = str(response.next_request.url)
+        if not url_is_safe(target):
+            raise ValueError(f"blocked redirect to a private address: {target}")
+
+
+def fetch_html(url: str, *, client=None) -> str:
+    """Fetch ``url`` (https, SSRF-guarded on both sides) and return its HTML. Raises ``ValueError``."""
     if not url.startswith("https://"):
         raise ValueError(f"article URL must be https: {url!r}")
-    if is_safe_url is not None and not is_safe_url(url):
+    if not url_is_safe(url):
         raise ValueError(f"refusing to fetch unsafe article URL: {url!r}")
 
     import httpx
-
-    def _guard_redirect(response) -> None:
-        # A public URL must not be able to 302 us onto a private address.
-        if is_safe_url is not None and response.is_redirect and response.next_request:
-            target = str(response.next_request.url)
-            if not is_safe_url(target):
-                raise ValueError(f"blocked redirect to a private address: {target}")
 
     own_client: Optional[httpx.Client] = None
     if client is None:
         own_client = client = httpx.Client(
             timeout=FETCH_TIMEOUT, follow_redirects=True,
             headers={"User-Agent": "BigLobster-Shorts/1.0 (+https://biglobster.top)"},
-            event_hooks={"response": [_guard_redirect]},
+            event_hooks={"response": [guard_redirect]},
         )
     try:
         response = client.get(url)
@@ -184,7 +220,6 @@ def fetch_html(url: str, *, client=None) -> str:
     finally:
         if own_client is not None:
             own_client.close()
-
     return html
 
 

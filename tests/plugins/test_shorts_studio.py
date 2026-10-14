@@ -1672,6 +1672,7 @@ def test_the_articles_pictures_reach_the_render(tip, tmp_path, monkeypatch):
 
     class Resp:
         status_code, text = 200, HTML_WITH_IMAGES
+        content, encoding = HTML_WITH_IMAGES.encode("utf-8"), "utf-8"
 
         def raise_for_status(self):
             pass
@@ -1686,10 +1687,14 @@ def test_the_articles_pictures_reach_the_render(tip, tmp_path, monkeypatch):
         def __exit__(self, *a):
             pass
 
+        def close(self):
+            pass
+
         def get(self, url):
             return Resp()
 
     monkeypatch.setattr(httpx, "Client", Client)
+    monkeypatch.setattr(build_mod.article, "url_is_safe", lambda url: True)     # the guard has its own test
     got = []
     monkeypatch.setattr(build_mod.sources, "download", lambda url, dest, **kw: got.append(url) or _touch(dest))
     pkg = dict(pkg_mod.validate_package(tip))
@@ -1711,7 +1716,7 @@ def test_the_articles_pictures_reach_the_render(tip, tmp_path, monkeypatch):
     # Offline (tests, dry runs): nothing fetched. A picture off the article's host is left alone.
     assert build_mod.gather_article_images(pkg, tmp_path, public, offline=True) == {
         "cover": None, "infographic": None, "infographic_alt": ""}
-    Resp.text = HTML_WITH_IMAGES.replace("https://biglobster.top/assets/blog/covers/x.jpg", "https://cdn.example.com/x.jpg")
+    Resp.content = HTML_WITH_IMAGES.replace("https://biglobster.top/assets/blog/covers/x.jpg", "https://cdn.example.com/x.jpg").encode("utf-8")
     got.clear()
     images = build_mod.gather_article_images(pkg, tmp_path, public, offline=False)
     assert images["cover"] is None and images["infographic"] == "article/infographic.jpg"
@@ -1773,4 +1778,47 @@ def test_submit_refuses_a_script_the_critic_rejects(tip, submit_env, monkeypatch
     assert not out["success"] and "value proposition" in out["error"]
     assert out["problems"] == ["guionista: the opening scores 3/10 (minimum 7): a topic, not a promise"]
     assert submit_env == []
+
+
+def test_the_render_farm_refuses_private_article_hosts_and_redirects(monkeypatch):
+    """Without Hermes's tools/ (the Actions checkout), article.public_url is the guard."""
+    import types
+
+    monkeypatch.setattr(article_mod, "url_is_safe", lambda url: article_mod.public_url(url))
+    resolves = {"biglobster.top": "93.184.216.34", "metadata.internal": "169.254.169.254", "home.test": "10.0.0.5"}
+    monkeypatch.setattr(article_mod.socket, "getaddrinfo",
+                        lambda host, *a, **kw: [(None, None, None, None, (resolves[host], 443))] if host in resolves else (_ for _ in ()).throw(article_mod.socket.gaierror()))
+    assert article_mod.public_url("https://biglobster.top/es/blog/x.html")
+    assert not article_mod.public_url("http://biglobster.top/x")                 # https only
+    assert not article_mod.public_url("https://metadata.internal/latest")      # link-local
+    assert not article_mod.public_url("https://home.test/x")                    # private
+    assert not article_mod.public_url("https://127.0.0.1/x") and not article_mod.public_url("https://nowhere.invalid/x")
+    with pytest.raises(ValueError, match="unsafe"):
+        article_mod.fetch_html("https://home.test/x")
+    hop = types.SimpleNamespace(is_redirect=True, next_request=types.SimpleNamespace(url="https://metadata.internal/"))
+    with pytest.raises(ValueError, match="blocked redirect"):
+        article_mod.guard_redirect(hop)
+    article_mod.guard_redirect(types.SimpleNamespace(is_redirect=True, next_request=types.SimpleNamespace(url="https://biglobster.top/a")))
+    article_mod.guard_redirect(types.SimpleNamespace(is_redirect=False, next_request=None))
+    # The pictures go through the same guard before they are downloaded.
+    got = []
+    monkeypatch.setattr(build_mod.sources, "download", lambda url, dest, **kw: got.append(url) or _touch(dest))
+    monkeypatch.setattr(build_mod.article, "fetch_html", lambda url, **kw: HTML_WITH_IMAGES.replace(
+        "https://biglobster.top/assets/blog/covers/x.jpg", "https://biglobster.top/covers/x.jpg"))
+    monkeypatch.setattr(build_mod.article, "url_is_safe", lambda url: "infographics" not in url)
+    pkg = {"article": {"url": "https://biglobster.top/es/blog/x.html"}}
+    images = build_mod.gather_article_images(pkg, Path("/tmp"), Path("/tmp/shorts-test-public"), offline=False)
+    assert images["cover"] == "article/cover.jpg" and images["infographic"] is None and got == ["https://biglobster.top/covers/x.jpg"]
+
+
+def test_a_mistyped_critic_bar_never_raises(monkeypatch):
+    from plugins.shorts import critic
+
+    values = {"SHORTS_CRITIC_MIN": "seven", "OPENROUTER_API_KEY": "sk"}
+    monkeypatch.setattr(critic, "env", lambda name, default="": values.get(name, default))
+    assert critic.config()["min"] == critic.DEFAULT_MIN
+    values["SHORTS_CRITIC_MIN"] = "42"
+    assert critic.config()["min"] == 10
+    values["SHORTS_CRITIC_MIN"] = "5"
+    assert critic.config()["min"] == 5 and critic.config()["enabled"] and critic.config()["key"] == "sk"
 

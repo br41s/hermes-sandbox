@@ -53,10 +53,16 @@ Return exactly this JSON object, with "problems" and the rewrite written in the 
 
 
 def config() -> Dict[str, Any]:
+    raw_min = env("SHORTS_CRITIC_MIN")
+    try:
+        minimum = int(raw_min) if raw_min else DEFAULT_MIN
+    except ValueError:  # a mistyped bar must not raise out of submit (never-block contract)
+        logger.warning("shorts critic: SHORTS_CRITIC_MIN=%r is not a number; using %d", raw_min, DEFAULT_MIN)
+        minimum = DEFAULT_MIN
     return {
         "enabled": env("SHORTS_CRITIC", "on").lower() != "off",
         "model": env("SHORTS_CRITIC_MODEL") or DEFAULT_MODEL,
-        "min": int(env("SHORTS_CRITIC_MIN") or DEFAULT_MIN),
+        "min": max(0, min(10, minimum)),
         "key": env("OPENROUTER_API_KEY"),
     }
 
