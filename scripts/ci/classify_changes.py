@@ -16,7 +16,7 @@ Lanes:
 * ``docker_meta`` — Dockerfiles etc.
 * ``docker`` — any product change + docker meta
 * ``nix``         — ``nix flake check``: the flake inputs and any product change.
-* ``frontend``    — TS typecheck matrix + desktop build.
+* ``frontend``    — TS typecheck matrix + desktop build + the WhatsApp lead bot tests.
 * ``desktop``     — fork: the apps/desktop leg of that matrix (~20 min on a
   4-core runner). The fork ships no desktop app and has no commits there, so
   it runs only when a PR touches the desktop tree, the shared package it
@@ -70,7 +70,10 @@ import os
 import subprocess
 import sys
 
-_FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
+# TS typecheck-matrix packages, plus scripts/whatsapp-lead-bot: not an npm workspace
+# (own lockfile, deployed on its own) so js-tests.yml gives it a job of its own. Before
+# it was listed here a bot-only PR ran the eight Python slices and no JS test at all.
+_FRONTEND = ("ui-tui/", "web/", "apps/", "scripts/whatsapp-lead-bot/")
 # Shipped page outside those packages, exercised by the desktop Electron suite.
 _FRONTEND_FILES = {"scripts/desktop-update/ui.html"}
 _DESKTOP = ("apps/desktop/", "apps/shared/")  # fork: the desktop leg and what it builds on
