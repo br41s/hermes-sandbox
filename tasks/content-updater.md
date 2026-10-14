@@ -1,11 +1,13 @@
 # Content Updater Agent — planning
 
-> **Status as of 2026-09-29: built, still dry-run.** The "nothing built" line below is
-> out of date: the prompt landed in PR #251, cron wiring notes in #253, the DRY_RUN branch
-> fix in #254 (all 2026-09-16). Open: `content-updater/biglobster-content-updater.prompt`
-> still says `DRY_RUN : true` (Next step 6, flip + `sync-prompt`, not done), and the
-> `web_search` backoff (defect 4) has no fix on main. The rental variant is
-> `tasks/content-updater-rental.md`.
+> **Status as of 2026-10-14: `DRY_RUN: false` in the prompt; live once `sync-prompt`
+> runs.** Decided after reading three of the 24 dry-run branches by hand
+> (`content-update/ley-ia-espana-pymes-2026`, `…/atlassian-subida-precios-octubre-2026-pymes`,
+> `…/cloudflare-bloquear-ia-sin-perder-google-pymes-2026`): surgical edits, ES and EN in
+> step, `dateModified` set. The 24 stale dry-run branches block their articles through the
+> branch-claim check; the CEO deletes them. Still open: the `web_search` backoff (defect 4).
+> History: the prompt landed in PR #251, cron wiring notes in #253, the DRY_RUN branch fix
+> in #254 (all 2026-09-16). The rental variant is `tasks/content-updater-rental.md`.
 
 Status: **planning, nothing built.** Step 1 of the plan: use-case catalogue.
 Target: build → run on biglobster.top → sell as a bl-site-package rental.
@@ -489,7 +491,8 @@ Four things that will bite otherwise:
 5. First run with `DRY_RUN: true` — read the diff by hand. Note that consecutive
    dry runs re-pick the SAME article, because nothing is pushed and the ledger
    row never commits.
-6. Flip `DRY_RUN` to false and `sync-prompt` once the diffs look right.
+6. ~~Flip `DRY_RUN` to false~~ — DONE in the prompt on 2026-10-14 after reading three
+   dry-run diffs. `sync-prompt` pending (BIGLOBSTER_SETUP.md, "Refreshing `/opt/hermes`").
 
 ---
 
