@@ -28,7 +28,8 @@ test("rejects an empty reply", () => {
 });
 
 test("rejects a reply that exceeds the max length", () => {
-  assert.throws(() => validateAssistantOutput(validRaw({ reply: "a".repeat(1000) })));
+  assert.throws(() => validateAssistantOutput(validRaw({ reply: "a".repeat(1001) })));
+  assert.doesNotThrow(() => validateAssistantOutput(validRaw({ reply: "a".repeat(900) })));
 });
 
 test("rejects an invalid answer_status enum value", () => {
