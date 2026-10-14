@@ -214,8 +214,9 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
   camera, 16:9 landscape, high quality"
 
 #### Infografía del artículo
-- Genera con image_generate (datos visuales del tema, estilo oscuro con acentos #B8391C y #D4622A)
-- Inserta infografía con `<figure class="article-infographic">` en el contenido
+- NO la haces tú: el Infographic Engineer añade la figura en su propio cron. No generes ni insertes
+  ninguna, y si la plantilla de referencia trae un `<figure class="article-infographic">`, no lo copies:
+  esa clase es la marca de "artículo terminado" y haría que el Engineer se lo salte.
 
 #### Si `image_generate` falla (REGLA DURA)
 Reinténtalo UNA vez: muchos fallos son transitorios del proveedor. Si vuelve a
@@ -223,7 +224,7 @@ fallar:
 
 - **NUNCA copies, dupliques ni reutilices una imagen que ya exista en el repo** —
   ni de otro artículo, ni de `covers/`, ni de `infographics/`. Ni con `cp`, ni
-  renombrando, ni "provisionalmente hasta que alguien la cambie". Cada imagen de
+  renombrando, ni "provisionalmente hasta que alguien la cambie". La portada de
   este artículo la genera `image_generate` en ESTA ejecución o no existe.
 - **No abras el PR.** El hero de la plantilla necesita la portada; un artículo
   sin ella no está terminado.
@@ -282,9 +283,9 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] El tema pasa la PUERTA 2 (duradera): no trata de precios, planes, licencias,
       versiones, betas ni incidentes, y el título no depende de una fecha, un precio
       ni un número de versión (salvo fecha de entrada en vigor de una norma)
-- [ ] La infografía existe en web/assets/blog/infographics/<slug>.jpg y está insertada
-- [ ] Cover e infografía las generaste TÚ en esta ejecución con image_generate —
-      ninguna copiada, renombrada ni reutilizada de otro artículo
+- [ ] La cover la generaste TÚ en esta ejecución con image_generate —
+      no copiada, renombrada ni reutilizada de otro artículo
+- [ ] NO hay `<figure class="article-infographic">` ni ficheros en web/assets/blog/infographics/ en tu PR
 
 ## Flujo de trabajo:
 
@@ -461,14 +462,10 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
    "Límites de escritura" más abajo): frontmatter JSON completo (`lang: "en"`,
    `permalink: "/blog/<slug>.html"`) + cuerpo del artículo en inglés (SIN chrome)
 3. **Genera la cover con image_generate (FOTO REALISTA, no infografía)** — seguir las reglas de imagen arriba
-4. Genera infografía con image_generate para el interior del artículo y guárdala en
-   `web/assets/blog/infographics/<slug>.jpg` (mismo directorio que usa la plantilla
-   de referencia — NO `infografias/`, esa es la carpeta legacy)
-5. Inserta infografía en el contenido con `<figure class="article-infographic">`
-6. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
+4. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
    en `_site/blog.html` (el índice inglés en la raíz — la tarjeta se genera sola del
    frontmatter — NO edites blog.html ni sitemap.xml ni feed.xml)
-7. Corre `npm test`, lo mismo que CI. Si falla un test por tu artículo (p. ej. un
+5. Corre `npm test`, lo mismo que CI. Si falla un test por tu artículo (p. ej. un
    `title` o `description` demasiado largo), corrige el frontmatter y repítelo hasta
    que pase. No abras el PR con un test en rojo: el auditor lo bloquea.
 
@@ -504,17 +501,15 @@ Pasos:
 1. `git checkout -B blog/TITULO-CORTO-YYYYMMDD` (mayúscula `-B`: como el checkout es
    persistente entre ejecuciones, un run previo pudo dejar esta rama a medias si falló
    antes de limpiar — `-B` la resetea en vez de fallar con "branch already exists")
-2. Comprueba PRIMERO que existen los TRES artefactos — artículo, portada e
-   infografía — y que las dos imágenes salieron de `image_generate` en esta
-   misma ejecución (si no, vuelve arriba: no vale reutilizar una existente):
-   `ls -l site/en/blog/<slug>.html web/assets/blog/covers/<slug>.* web/assets/blog/infographics/<slug>.*`
-   Si falta la infografía, vuelve a la FASE 3 (pasos 4-5) y genérala AHORA. NUNCA abras
-   un PR con dos ficheros: el PR #502 salió así y eso es una regresión, no una variante.
+2. Comprueba PRIMERO que existen los DOS artefactos — artículo y portada — y que la
+   portada salió de `image_generate` en esta misma ejecución (si no, vuelve arriba: no
+   vale reutilizar una existente):
+   `ls -l site/en/blog/<slug>.html web/assets/blog/covers/<slug>.*`
    Después añade SOLO los archivos de este artículo (nunca `git add -A` ni `git add .`):
-   `git add site/en/blog/<slug>.html web/assets/blog/covers/<slug>.* web/assets/blog/infographics/<slug>.*`
+   `git add site/en/blog/<slug>.html web/assets/blog/covers/<slug>.*`
    Comprueba que no queda ningún asset del artículo sin trackear: `git status --porcelain`.
    Si aparece otro binario nuevo del artículo, añádelo también.
-3. Commit atómico (artículo + portada + infografía en el MISMO commit):
+3. Commit atómico (artículo + portada en el MISMO commit):
    `git commit -m "blog: [TÍTULO]\n\n- URL: /blog/NOMBRE.html\n- Keyword: [keyword]\n- Gap: [descripción]\n- [lista archivos]"`
 4. `git push origin blog/TITULO-CORTO-YYYYMMDD`
 5. Para crear el PR, usa `gh pr create --base main --head <rama> --title "…" --body "…"` (gh ya está autenticado en el contenedor). No uses curl ni incrustes tokens/claves. Usa descripcion y resto de datos acorde a estandares.
