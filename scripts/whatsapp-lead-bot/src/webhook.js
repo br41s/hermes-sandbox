@@ -20,6 +20,7 @@ import { getRegistryEntry } from "./registry.js";
 import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
 import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
+import { notifyHandoff, conversationUrl } from "./notify.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
@@ -217,6 +218,24 @@ async function handleUnsupportedMedia(payload) {
   await chatwoot
     .setCustomAttributes(accountId, conversationId, { escalation_reason: "unsupported_media" })
     .catch(() => {});
+  const entry = getRegistryEntry(accountId);
+  if (entry) {
+    notifyHandoff(entry, {
+      channel: channelLabel(payload),
+      reason: "unsupported_media",
+      visitorMessage: "",
+      lead: null,
+      conversationUrl: conversationUrl(accountId, conversationId),
+    }).catch(() => {});
+  }
+}
+
+// "web chat" / "WhatsApp" for the alert, from Chatwoot's inbox channel type.
+function channelLabel(payload) {
+  const type = String(payload?.inbox?.channel_type || payload?.conversation?.channel || "");
+  if (/whatsapp/i.test(type)) return "WhatsApp";
+  if (/webwidget|website/i.test(type)) return "web chat";
+  return type ? type.replace(/^Channel::/, "") : "chat";
 }
 
 async function processTurn(payload) {
@@ -323,6 +342,15 @@ async function processTurn(payload) {
     console.log(
       `escalated conversation ${conversationId} (account ${accountId}, ${maskPhone(payload?.sender?.phone_number)}): ${decision.reason}`,
     );
+    // Someone has to pick this up now: tell the customer's Telegram topic.
+    // Fire-and-forget by design -- the handoff is already done above.
+    notifyHandoff(entry, {
+      channel: channelLabel(payload),
+      reason: decision.reason,
+      visitorMessage,
+      lead: modelOutput?.lead || null,
+      conversationUrl: conversationUrl(accountId, conversationId),
+    }).catch(() => {});
     return;
   }
 
