@@ -10,9 +10,9 @@ import './fonts';
 
 // The tip format (package.py, "format": "tip"), two presenters. Lucía opens
 // full-frame in a setting built for the article, Martín at work behind her:
-// the joke, the hook and the line that hands him the word, one take each with
-// its own zoom, like a cut between cameras; on the handoff she turns to
-// Martín and says it to him. Then he narrates the cards and the CTA
+// the joke, the hook and the line that hands him the word, in one take
+// (owner, 2026-10-14): her name tag during the joke, the promise card from
+// `overlayFrom`, and she turns to Martín on the last line. Then he narrates the cards and the CTA
 // from a bubble that plays a loop of him recorded once by the owner (look,
 // point at the card, look back). The outro is an
 // animated card: the full article on the site, follow us. Without a take (no
@@ -206,8 +206,8 @@ const Card: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'}> = ({beat, pa
 
 const overTop = (faceY: number) => Math.max(800, Math.round(faceY * H + 330));
 
-const HookOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number}> = ({beat, pal, faceY}) => {
-  const enter = useEnter(3);
+const HookOverlay: React.FC<{beat: Beat; pal: Palette; faceY: number; from?: number}> = ({beat, pal, faceY, from}) => {
+  const enter = useEnter(from ?? 3);
   return (
     <div style={{position: 'absolute', top: overTop(faceY), left: SAFE.left, right: W - SAFE.right, fontFamily: FONT, opacity: enter, transform: `translateY(${(1 - enter) * 40}px)`}}>
       {beat.kicker ? (
@@ -285,10 +285,13 @@ const PresenterShot: React.FC<{src: string; beat: Beat; nth: number; pal: Palett
   );
 };
 
-const NameTag: React.FC<{name: string; brand: string; pal: Palette; faceY: number}> = ({name, brand, pal, faceY}) => {
+const NameTag: React.FC<{name: string; brand: string; pal: Palette; faceY: number; until?: number}> = ({name, brand, pal, faceY, until}) => {
+  const frame = useCurrentFrame();
   const enter = useEnter(8);
+  // One take: the tag stays for her joke and leaves as the promise card comes in.
+  const leave = until ? interpolate(frame, [until - 8, until], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 1;
   return (
-    <div style={{position: 'absolute', left: SAFE.left, top: overTop(faceY) + 40, fontFamily: FONT, opacity: enter, transform: `translateX(${(1 - enter) * -40}px)`}}>
+    <div style={{position: 'absolute', left: SAFE.left, top: overTop(faceY) + 40, fontFamily: FONT, opacity: enter * leave, transform: `translateX(${(1 - enter) * -40}px)`}}>
       <div style={{display: 'inline-block', background: `${pal.bg}D9`, color: pal.text, fontWeight: 800, fontSize: 34,
                    padding: '8px 20px', borderRadius: 12, borderLeft: `6px solid ${pal.accent}`}}>{name} · {brand}</div>
     </div>
@@ -390,7 +393,12 @@ export const TipShort: React.FC<ShortProps> = (props) => {
           scene = (
             <>
               <PresenterShot src={beat.presenter} beat={beat} nth={onCamera} pal={pal} faceY={faceY} />
-              {beat.kind === 'hook' ? <HookOverlay beat={beat} pal={pal} faceY={faceY} />
+              {beat.kind === 'hook' ? (
+                <>
+                  {beat.overlayFrom ? <NameTag name={host} brand={props.brand.site} pal={pal} faceY={faceY} until={beat.overlayFrom} /> : null}
+                  <HookOverlay beat={beat} pal={pal} faceY={faceY} from={beat.overlayFrom} />
+                </>
+              )
                 : beat.kind === 'opener' ? <NameTag name={host} brand={props.brand.site} pal={pal} faceY={faceY} />
                 : beat.kind === 'handoff' ? null
                 : <LowerThird beat={beat} pal={pal} faceY={faceY} />}

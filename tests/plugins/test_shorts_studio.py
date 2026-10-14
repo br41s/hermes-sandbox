@@ -1149,20 +1149,29 @@ def test_a_figure_in_the_opener_or_a_before_after_must_be_in_the_article(tip):
     assert "beats[1].after" in problems and "opener.line" in problems and "opener.handoff" in problems
 
 
-def test_the_tip_short_runs_lucia_handing_over_then_martins_cards(tip):
+
+def test_the_tip_short_runs_lucia_in_one_take_then_martins_cards(tip, monkeypatch):
     pkg = pkg_mod.validate_package(tip)
     beats = build_mod.tip_beats(pkg)
-    # no frozen frame with a zoom between them: she turns to him on the handoff
-    assert [b["kind"] for b in beats[:3]] == ["opener", "hook", "handoff"]
-    assert beats[3]["kind"] != "reaction" and not any(b.get("silent") for b in beats)
-    assert beats[0]["vo"] == pkg["opener"]["line"] and beats[2]["vo"] == pkg["opener"]["handoff"]
+    take = beats[0]
+    # Joke, hook and handoff in one take (one credit hold); the hook's kind, kicker and promise stay.
+    assert take["kind"] == "hook" and take["show"] == "presenter" and take["kicker"] == pkg["beats"][0]["kicker"]
+    assert take["vo"].startswith(pkg["opener"]["line"]) and take["vo"].endswith(pkg["opener"]["handoff"])
+    assert pkg["beats"][0]["vo"] in take["vo"] and take["handoff"] == pkg["opener"]["handoff"]
+    assert take["opener_line"] == pkg["opener"]["line"] and take["onscreen"] == pkg["beats"][0]["onscreen"]
+    assert beats[1:-1] == pkg["beats"][1:] and not any(b.get("silent") for b in beats)
     assert beats[-2]["kind"] == "cta" and beats[-1]["kind"] == "outro"
     assert "biglobster" in beats[-1]["vo"] and "síguenos" in beats[-1]["vo"].lower()
     assert "!" not in beats[-1]["vo"] and "¡" not in beats[-1]["vo"]      # calm, not overexcited
-    assert build_mod.on_camera(beats) == [0, 1, 2]                    # only Lucía's lines are paid
-    # Her lines fall back to her free voice; Martín's take the package's (his).
-    assert {beats[i]["voice"] for i in (0, 1, 2)} == {presenter_mod.HOST_FALLBACK_VOICES["es"]}
-    assert all("voice" not in b for b in beats[3:])
+    assert build_mod.on_camera(beats) == [0]                               # only her take is paid
+    # Her free voice (for a missing take) follows the engine; Martín's beats take the package's.
+    assert take["voice"] == voice_mod.KOKORO_HOST_VOICES["es"] == "ef_dora"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
+    assert build_mod.tip_beats(pkg)[0]["voice"] == presenter_mod.HOST_FALLBACK_VOICES["es"]
+    assert all("voice" not in b for b in beats[1:])
+    # A line without its full stop still reads as a sentence inside the take.
+    bare = dict(pkg, opener={**pkg["opener"], "line": "Si ya madrugo, que las facturas se hagan solas"})
+    assert build_mod.tip_beats(bare)[0]["vo"].startswith("Si ya madrugo, que las facturas se hagan solas. ")
 
 
 class _FakeImageAPI(_FakeOpenRouter):
@@ -1205,7 +1214,8 @@ def _touch(path):
     return path
 
 
-def test_lucia_is_paid_only_for_her_lines_and_martin_costs_nothing(tip, tmp_path, monkeypatch):
+
+def test_lucia_is_paid_for_one_take_and_martin_costs_nothing(tip, tmp_path, monkeypatch):
     fake = _FakeImageAPI()
     _tip_env(monkeypatch, tmp_path, fake)
     pkg = dict(pkg_mod.validate_package(tip))
@@ -1215,13 +1225,14 @@ def test_lucia_is_paid_only_for_her_lines_and_martin_costs_nothing(tip, tmp_path
     assert len(fake.chat) == 1
     content = fake.chat[0]["messages"][0]["content"]
     assert "bakery" in content[0]["text"] and "physics" in content[0]["text"] and len(content) == 3
-    # Avatar IV once per line of hers, in her HeyGen voice, on the setting; nothing for Martín.
-    assert len(fake.posts) == 3
-    assert [t["prompt"] for t in fake.posts] == [pkg["beats"][i]["vo"] for i in (0, 1, 2)]
-    assert {t["provider"]["options"]["heygen"]["voice_id"] for t in fake.posts} == {presenter_mod.HOST_VOICES["es"]}
+    # Avatar IV once, for joke + hook + handoff, in her HeyGen voice, on the setting; nothing for Martín.
+    assert len(fake.posts) == 1
+    assert fake.posts[0]["prompt"] == pkg["beats"][0]["vo"]
+    assert fake.posts[0]["provider"]["options"]["heygen"]["voice_id"] == presenter_mod.HOST_VOICES["es"]
     assert fake.posts[0]["input_references"][0]["image_url"]["url"].startswith("data:image/png")
-    assert fake.posts[2]["provider"]["options"]["heygen"]["motion_prompt"] == presenter_mod.HANDOFF_MOTION
-    assert sorted(cast["takes"]) == [0, 1, 2]
+    assert fake.posts[0]["provider"]["options"]["heygen"]["motion_prompt"] == presenter_mod.HANDOFF_MOTION
+    assert "last sentence" in presenter_mod.HANDOFF_MOTION and "camera" in presenter_mod.HANDOFF_MOTION
+    assert sorted(cast["takes"]) == [0]
     # His loop is the owner's recording, committed: never generated, only looked up.
     assert cast["loop"] == presenter_mod.PHOTO_DIR / "assets" / "martin-loop.mp4"
     assert cast["report"]["loop"]["status"] == "reused"
@@ -1229,7 +1240,8 @@ def test_lucia_is_paid_only_for_her_lines_and_martin_costs_nothing(tip, tmp_path
     assert presenter_mod.bubble_loop(report, "nobody") is None and report["loop"]["status"] == "missing"
 
 
-def test_lucias_takes_are_all_or_nothing_under_the_budget(tip, tmp_path, monkeypatch):
+
+def test_lucias_take_is_refused_cleanly_under_the_budget(tip, tmp_path, monkeypatch):
     fake = _FakeImageAPI()
     _tip_env(monkeypatch, tmp_path, fake)
     monkeypatch.setenv("SHORTS_AI_SHORT_BUDGET_USD", "0.30")
@@ -1237,15 +1249,17 @@ def test_lucias_takes_are_all_or_nothing_under_the_budget(tip, tmp_path, monkeyp
     pkg["beats"] = build_mod.tip_beats(pkg)
     report = {}
     image = _touch(tmp_path / "setting.png")
-    lines = {i: pkg["beats"][i]["vo"] for i in (0, 1, 2)}
+    lines = {0: pkg["beats"][0]["vo"]}
     with fake() as client:
-        takes = presenter_mod.host_takes(client, genvideo.open_budget(offline=False), image, lines, "es", 2,
+        takes = presenter_mod.host_takes(client, genvideo.open_budget(offline=False), image, lines, "es", 0,
                                          tmp_path, report)
     assert takes == {} and not fake.posts
     assert {t["status"] for t in report["takes"]} == {"skipped"} and "short budget" in report["takes"][0]["reason"]
 
 
-def test_lucias_takes_go_one_at_a_time_and_stop_at_the_first_refusal(tip, tmp_path, monkeypatch):
+
+def test_takes_go_one_at_a_time_and_stop_at_the_first_refusal(tip, tmp_path, monkeypatch):
+    """host_takes still takes several lines (the classic format); they go one by one."""
     class Refuses2nd(_FakeImageAPI):
         def post(self, url, headers=None, json=None):
             if url != presenter_mod.CHAT_API and len(self.posts) == 1:
@@ -1259,10 +1273,9 @@ def test_lucias_takes_go_one_at_a_time_and_stop_at_the_first_refusal(tip, tmp_pa
     real_wait = genvideo.wait_for
     monkeypatch.setattr(genvideo, "wait_for", lambda client, key, jobs, *a, **kw: order.append(
         ("wait", [j["beat"] for j in jobs], len(fake.posts))) or real_wait(client, key, jobs, *a, **kw))
-    pkg = dict(pkg_mod.validate_package(tip))
-    pkg["beats"] = build_mod.tip_beats(pkg)
     report = {}
-    lines = {i: pkg["beats"][i]["vo"] for i in (0, 1, 2)}
+    lines = {0: "Si ya madrugo para hacer el pan, que las facturas se hagan solas.",
+             1: "Automatiza primero lo aburrido.", 2: "Martín, cuéntales tú por dónde empezar."}
     with fake() as client:
         takes = presenter_mod.host_takes(client, genvideo.open_budget(offline=False), _touch(tmp_path / "s.png"),
                                          lines, "es", 2, tmp_path, report)
@@ -1271,6 +1284,24 @@ def test_lucias_takes_go_one_at_a_time_and_stop_at_the_first_refusal(tip, tmp_pa
     status = {t["beat"]: (t["status"], t.get("reason", "")) for t in report["takes"]}
     assert status[1][0] == "failed" and "Insufficient credits" in status[1][1]
     assert status[2][0] == "skipped" and report["spent_usd"] == 0.12
+
+
+def test_a_refused_take_costs_nothing_more_and_is_reported(tip, tmp_path, monkeypatch):
+    class Refuses(_FakeImageAPI):
+        def post(self, url, headers=None, json=None):
+            if url != presenter_mod.CHAT_API:
+                self.posts.append(json)
+                return _ORResp(402, {"error": {"message": "Insufficient credits"}})
+            return super().post(url, headers, json)
+
+    fake = Refuses()
+    _tip_env(monkeypatch, tmp_path, fake)
+    pkg = dict(pkg_mod.validate_package(tip))
+    pkg["beats"] = build_mod.tip_beats(pkg)
+    cast = build_mod.tip_cast(pkg, tmp_path, genvideo.open_budget(offline=False), offline=False)
+    assert cast["takes"] == {} and len(fake.posts) == 1
+    assert cast["report"]["takes"][0]["status"] == "failed" and "Insufficient credits" in cast["report"]["takes"][0]["reason"]
+    assert cast["report"]["spent_usd"] == 0.04        # the setting only
 
 
 def test_a_refused_setting_falls_through_to_the_next_model_for_free(tmp_path, monkeypatch):
@@ -1299,18 +1330,21 @@ def test_a_refused_setting_falls_through_to_the_next_model_for_free(tmp_path, mo
     assert report.get("spent_usd", 0) == 0
 
 
-def test_a_tip_short_without_lucia_is_not_published():
-    report = {"takes": [{"beat": 0, "status": "skipped", "reason": "daily cap $2.00 reached"},
-                        {"beat": 1, "status": "skipped", "reason": "daily cap $2.00 reached"}]}
-    error = build_mod.presenter_missing_error(True, [0, 1], True, report)
-    assert error and "Lucía's take missing" in error and error.count("daily cap") == 1
-    assert build_mod.presenter_missing_error(True, [], True, report) is None        # every take was made
-    assert build_mod.presenter_missing_error(True, [0], False, report) is None      # no key: smoke test
-    assert build_mod.presenter_missing_error(False, [0], True, report) is None      # classic format
-    assert "not made" in build_mod.presenter_missing_error(True, [0], True, {})
+
+def test_a_tip_short_without_lucia_is_published_with_a_warning():
+    report = {"takes": [{"beat": 0, "status": "failed", "reason": "OpenRouter refused (402): Insufficient credits"}]}
+    warning = build_mod.presenter_missing_warning(True, [0], True, report)
+    assert warning and "Lucía's take missing" in warning and "published without her on camera" in warning
+    assert warning.count("Insufficient credits") == 1
+    assert build_mod.presenter_missing_warning(True, [], True, report) is None        # the take was made
+    assert build_mod.presenter_missing_warning(True, [0], False, report) is None      # no key: smoke test
+    assert build_mod.presenter_missing_warning(False, [0], True, report) is None      # classic format
+    assert "not made" in build_mod.presenter_missing_warning(True, [0], True, {})
+    assert not hasattr(build_mod, "presenter_missing_error")                          # no longer a QA error
 
 
-def test_tip_props_carry_her_takes_his_nod_his_loop_and_the_cards(tip):
+
+def test_tip_props_carry_her_take_his_loop_and_the_cards(tip):
     pkg = dict(pkg_mod.validate_package(tip))
     pkg["beats"] = build_mod.tip_beats(pkg)
     timeline = [{"from": i * 90, "duration": 90, "show": b["show"]} for i, b in enumerate(pkg["beats"])]
@@ -1323,10 +1357,15 @@ def test_tip_props_carry_her_takes_his_nod_his_loop_and_the_cards(tip):
     assert props["bubbleLoop"] == "presenter/loop.mp4" and props["bubbleLoopFrames"] == 300
     assert props["presenterName"] == "Lucía" and props["partnerName"] == "Martín"
     assert props["partnerPhoto"] == "presenter/partner.jpg" and props["faceY"] == 0.3 and props["loopFaceY"] == 0.21
-    assert props["beats"][0]["presenter"] == "presenter/p00.mp4" and props["beats"][0]["presenterName"] == "Lucía"
-    assert [b["number"] for b in props["beats"][:3]] == [0, 0, 0] and props["beats"][3]["number"] == 1
+    take = props["beats"][0]
+    assert take["presenter"] == "presenter/p00.mp4" and take["presenterName"] == "Lucía" and take["kind"] == "hook"
+    # The promise card comes in when her joke ends, by the joke's share of the words.
+    joke, said = len(pkg["opener"]["line"].split()), len(pkg["beats"][0]["vo"].split())
+    assert take["overlayFrom"] == round(90 * joke / said) and 0 < take["overlayFrom"] < 90
+    assert "overlayFrom" not in props["beats"][1]
+    assert [b["number"] for b in props["beats"][:2]] == [0, 1] and props["beats"][-2]["number"] == 0
     assert props["beats"][-1]["kind"] == "outro" and props["beats"][-1]["url"]
-    assert props["cover"]["kicker"] == pkg["beats"][1].get("kicker", "")
+    assert props["cover"]["kicker"] == pkg["beats"][0].get("kicker", "")
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
@@ -1385,7 +1424,7 @@ def test_martins_free_voice_is_made_before_anything_is_paid(tip, tmp_path, monke
     monkeypatch.setattr(voice_mod, "synthesize", lambda text, v, rate, mp3: said.append((text, v)) or [])
     voiced = build_mod.prevoice(pkg, tmp_path, fake_voice=False, skip=build_mod.on_camera(pkg["beats"]))
     # Every line of Martín's (cards, CTA, outro) in his voice; none of Lucía's.
-    assert sorted(voiced) == list(range(3, len(pkg["beats"])))
+    assert sorted(voiced) == list(range(1, len(pkg["beats"])))
     assert {v for _, v in said} == {pkg["voice"]}
 
 
@@ -1398,6 +1437,7 @@ def test_edge_is_retried_for_over_a_minute(monkeypatch, tmp_path):
         calls.append(1)
         raise RuntimeError("403, message='Invalid response status'")
 
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
     monkeypatch.setattr(voice_mod, "_edge_stream", refuse)
     monkeypatch.setattr(voice_mod.time, "sleep", waits.append)
     with pytest.raises(voice_mod.VoiceError, match="403"):
@@ -1417,6 +1457,7 @@ def test_azure_speech_comes_first_with_the_same_voice_and_edge_is_the_fallback(m
         def __init__(self, code, content=b"ID3 mp3"):
             self.status_code, self.content, self.text = code, content, "denied"
 
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
     monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
     monkeypatch.setattr(media, "duration", lambda p: 2.0)
@@ -1457,3 +1498,91 @@ def test_a_normalised_tip_package_validates_again_in_the_renderer(tip):
     tip["voice"] = "es-ES-Bad Voice"
     with pytest.raises(pkg_mod.PackageError, match="not a neural voice name"):
         pkg_mod.validate_package(tip)
+
+
+# ---------------------------------------------------------------------------
+# The free voice: Kokoro on the runner, timings aligned to the script
+# ---------------------------------------------------------------------------
+
+def _kokoro_env(monkeypatch, tmp_path, spoken, heard=None, *, fail=None):
+    from plugins.shorts.studio import media
+
+    def fake_kokoro(text, voice, lang, wav):
+        if fail:
+            raise fail
+        spoken.append((text, voice, lang))
+        wav.write_bytes(b"RIFF")
+        return 4.0
+
+    monkeypatch.delenv("SHORTS_TTS_ENGINE", raising=False)
+    monkeypatch.setenv("SHORTS_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.setattr(voice_mod, "_kokoro", fake_kokoro)
+    monkeypatch.setattr(voice_mod, "heard_words", lambda wav, lang: list(heard or []))
+    monkeypatch.setattr(media, "ffmpeg", lambda *a, what, **kw: Path(a[-1]).write_bytes(b"mp3"))
+
+
+def test_kokoro_is_the_default_engine_and_maps_each_voice(tmp_path, monkeypatch):
+    spoken = []
+    _kokoro_env(monkeypatch, tmp_path, spoken)
+    assert voice_mod.engine() == "kokoro"
+    words = voice_mod.synthesize("Elige una tarea y mide.", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "a.mp3")
+    assert spoken == [("Elige una tarea y mide.", "em_alex", "es")]     # Martín's Azure name maps to his Kokoro voice
+    assert (tmp_path / "a.mp3").exists() and (tmp_path / "a.wav").exists()
+    assert [w["text"] for w in words] == ["Elige", "una", "tarea", "y", "mide."]   # nothing heard: spread evenly
+    voice_mod.synthesize("Start with one boring task.", pkg_mod.TIP_VOICES["en"], "+0%", tmp_path / "b.mp3")
+    assert spoken[-1][1:] == ("am_michael", "en")
+    voice_mod.synthesize("Hola", "ef_dora", "+0%", tmp_path / "c.mp3")   # Lucía's free voice passes through
+    assert spoken[-1][1:] == ("ef_dora", "es")
+    monkeypatch.setenv("SHORTS_KOKORO_VOICE_ES", "em_santa")              # the owner's pick after the smoke render
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "d.mp3")
+    assert spoken[-1][1] == "em_santa"
+    monkeypatch.setenv("SHORTS_KOKORO_VOICE_ES", "not a voice")
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "e.mp3")
+    assert spoken[-1][1] == "em_alex"
+    assert voice_mod.host_voice("es", presenter_mod.HOST_FALLBACK_VOICES) == "ef_dora"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
+    assert voice_mod.host_voice("en", presenter_mod.HOST_FALLBACK_VOICES) == presenter_mod.HOST_FALLBACK_VOICES["en"]
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "nonsense")
+    assert voice_mod.engine() == "kokoro"
+
+
+def test_kokoro_words_follow_the_script_at_the_heard_times(tmp_path, monkeypatch):
+    heard = [{"text": "Big", "start": 0.1, "end": 0.3}, {"text": "Lobster", "start": 0.3, "end": 0.6},
+             {"text": "ahorra", "start": 0.7, "end": 1.0}, {"text": "mil", "start": 1.1, "end": 1.3},
+             {"text": "cincuenta", "start": 1.3, "end": 1.7}, {"text": "euros", "start": 1.8, "end": 2.1}]
+    spoken = []
+    _kokoro_env(monkeypatch, tmp_path, spoken, heard)
+    words = voice_mod.synthesize("BigLobster ahorra 1.050 euros al mes.", "em_alex", "+0%", tmp_path / "a.mp3")
+    assert [w["text"] for w in words] == ["BigLobster", "ahorra", "1.050", "euros", "al", "mes."]
+    by = {w["text"]: (w["start"], w["end"]) for w in words}
+    assert by["BigLobster"][0] == 0.1 and 0.5 <= by["BigLobster"][1] <= 0.6   # heard as two words: their span
+    assert by["ahorra"] == (0.7, 1.0)                                          # heard as is
+    assert by["1.050"][0] == 1.1 and 1.6 <= by["1.050"][1] <= 1.7              # read as "mil cincuenta": their span
+    assert by["euros"] == (1.8, 2.1)
+    assert 2.1 <= by["al"][0] < by["mes."][0] < by["mes."][1] <= 4.0   # unheard tail sits between euros and the end
+    # Nothing heard at all: an even spread, still the script's words.
+    assert [w["text"] for w in voice_mod.align_words("Hola mundo", [], 1.0)] == ["Hola", "mundo"]
+
+
+def test_kokoro_failure_falls_back_to_azure_with_the_neural_twin(tmp_path, monkeypatch):
+    import httpx
+
+    from plugins.shorts.studio import media
+
+    spoken, sent = [], []
+    _kokoro_env(monkeypatch, tmp_path, spoken, fail=RuntimeError("onnxruntime missing"))
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_KEY", "az-key")
+    monkeypatch.setenv("SHORTS_AZURE_SPEECH_REGION", "westeurope")
+    monkeypatch.setattr(media, "duration", lambda p: 2.0)
+    monkeypatch.setattr(media, "tempo", lambda src, dst, factor: dst.write_bytes(src.read_bytes()) or dst)
+    monkeypatch.setattr(voice_mod.time, "sleep", lambda s: None)
+
+    class Resp:
+        status_code, content, text = 200, b"ID3 mp3", ""
+
+    monkeypatch.setattr(httpx, "post", lambda url, content, timeout, headers: sent.append(content) or Resp())
+    words = voice_mod.synthesize("Hola", "ef_dora", "+0%", tmp_path / "a.mp3")      # Lucía's Kokoro id → Elvira
+    assert spoken == [] and b"es-ES-ElviraNeural" in sent[0] and len(words) == 1
+    voice_mod.synthesize("Hola", pkg_mod.TIP_VOICES["es"], "+0%", tmp_path / "b.mp3")   # Martín keeps his HD voice
+    assert b"Tristan:DragonHDLatestNeural" in sent[1]
+

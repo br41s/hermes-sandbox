@@ -610,17 +610,20 @@ it writes from. Sold to a client without one it goes quiet on every run.
 - **Every short is one tip by two presenters, each with one fixed voice**
   (the tip format, `shorts/STUDIO.md` §3.8; owner's design 2026-10-11).
   Lucía opens on camera in a setting an image model builds from both photos
-  and the article (Martín at work behind her): joke, hook, a line handing
-  Martín the word. Those are the only paid seconds: HeyGen Avatar IV with her
-  HeyGen voice (`presenter.HOST_VOICES`, Spain Spanish; Avatar IV will not
-  take our TTS as a data URL). On the handoff she turns to Martín and says it
-  to him (no freeze, no zoom; a generated nod cost $0.65), then he narrates
-  the cards and the CTA in an Azure HD voice (`package.TIP_VOICES`, forced by
-  the package; both voices play 1.12x, `TAKE_TEMPO`/`HD_TEMPO`)
-  from a bubble playing a loop of him the owner recorded once
-  (`presenters/assets/martin-loop.mp4`; never generated); the outro is a
-  fixed animated card. ~$0.6 per short. `submit` refuses any other format, and a real render
-  missing one of her takes fails QA. The classic format (paid generated
+  and the article (Martín at work behind her): joke, hook and the line handing
+  Martín the word, in **one Avatar IV take** (owner, 2026-10-14: one OpenRouter
+  credit hold; three takes got a 402 on the second or third every day from
+  12 to 14 October) with her HeyGen voice (`presenter.HOST_VOICES`, Spain
+  Spanish; Avatar IV will not take our TTS as a data URL). On the last line she
+  turns to Martín and says it to him (no freeze, no zoom; a generated nod cost
+  $0.65), then he narrates the cards and the CTA in a **Kokoro voice, free on
+  the runner** (`voice.KOKORO_VOICES`, at 1.0; word timings from faster-whisper
+  aligned to the script; `SHORTS_TTS_ENGINE=azure` switches to Azure HD at 1.12x
+  with Edge behind it) from a bubble playing a loop of him the owner recorded
+  once (`presenters/assets/martin-loop.mp4`; never generated); the outro is a
+  fixed animated card. ~$0.6 per short. `submit` refuses any other format. A
+  real render missing her take is published without her on camera, her lines in
+  her free voice, with a QA warning. The classic format (paid generated
   backgrounds, `studio/genvideo.py`) stays in the renderer. All paid calls
   go through OpenRouter on their own key (`SHORTS_OPENROUTER_API_KEY`, an
   Actions secret), never the agents' shared one, and share one budget: $1
@@ -638,7 +641,8 @@ it writes from. Sold to a client without one it goes quiet on every run.
   that matters goes in `plugins/shorts/studio_tool.py` or `studio/package.py`.
 - `package.py` is shared by Hermes and the renderer, and `PALETTES`/`MOTIFS` are
   mirrored in `shorts/studio/remotion/src/theme.ts` (a test keeps them equal).
-- A studio change smoke-renders both samples on push. Read the job log's
+- A studio change smoke-renders both samples on push, with Kokoro and with
+  Azure (`short-smoke-<lang>-<engine>`), so the two narrators can be heard. Read the job log's
   `[studio]` lines: they give TTS duration, footage hits, render time and QA.
 - The rental SKU (`shorts_render`, in-container ffmpeg) is separate and unchanged.
 

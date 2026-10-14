@@ -11,8 +11,9 @@ name: Shorts Studio
 # every other agent (see CLAUDE.md, "One long agent run starves every other
 # agent"). Actions minutes are free and isolated.
 #
-# A push touching the studio renders the example package as a smoke test, so
-# a template change is proven on real Edge TTS and real footage before merge.
+# A push touching the studio renders both sample packages as a smoke test,
+# once per voice engine (Kokoro on the runner, Azure/Edge), so a template or
+# voice change is proven before merge and the owner can hear both.
 #
 # Design and setup: shorts/STUDIO.md.
 
@@ -56,11 +57,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # A dispatch renders its one package; a push smoke-renders both
-        # samples, so the Spanish voice and text are proven as well.
+        # A dispatch renders its one package with the configured engine; a
+        # push smoke-renders both samples with both engines, so the Spanish
+        # voice and text are proven and the two voices can be compared.
         sample: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["package"]' || '["en","es"]') }}
+        engine: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["default"]' || '["kokoro","azure"]') }}
     env:
-      REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}', matrix.sample) }}
+      REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}-{1}', matrix.sample, matrix.engine) }}
+      # The free voice: Kokoro on the runner (plugins/shorts/studio/voice.py), its
+      # models cached below; "azure" switches the narrator to Azure Speech with
+      # Edge behind it. SHORTS_KOKORO_VOICE_ES/_EN pick Martín's Kokoro voice.
+      SHORTS_TTS_ENGINE: ${{ (matrix.engine != 'default' && matrix.engine) || vars.SHORTS_TTS_ENGINE || 'kokoro' }}
+      SHORTS_KOKORO_VOICE_ES: ${{ vars.SHORTS_KOKORO_VOICE_ES || '' }}
+      SHORTS_KOKORO_VOICE_EN: ${{ vars.SHORTS_KOKORO_VOICE_EN || '' }}
+      SHORTS_MODEL_DIR: ${{ github.workspace }}/.shorts-models
       PACKAGE_B64: ${{ inputs.package }}
       PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
       # Official Azure Speech for the narrator's neural voice; Edge is the
@@ -106,7 +116,8 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends ffmpeg
-          python -m pip install --quiet "edge-tts==7.2.8" "httpx>=0.28,<1"
+          python -m pip install --quiet "edge-tts==7.2.8" "httpx>=0.28,<1" \
+            "kokoro-onnx==0.6.1" "faster-whisper==1.2.1"
           ffmpeg -version | head -1
 
       - name: Install Remotion
@@ -125,6 +136,15 @@ jobs:
           path: ~/.cache/shorts-assets
           key: shorts-assets-v1-${{ github.run_id }}
           restore-keys: shorts-assets-v1-
+
+      # Kokoro's model and voices (~120 MB) and faster-whisper's "small"
+      # (~480 MB) are downloaded by voice.py on first use and kept here; the
+      # key names the versions, so a bump is a new cache.
+      - name: Restore the free voice's models (Kokoro, faster-whisper)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.shorts-models
+          key: shorts-models-v1-kokoro-1.0-int8-whisper-small
 
       - name: Decode package
         run: |
