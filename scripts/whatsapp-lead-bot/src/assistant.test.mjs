@@ -157,3 +157,23 @@ test("knowledge block lists a catalogue client's categories and says the product
   assert.match(block, /- Papel \(1200\) — https:\/\/shop\.example\/productos\/categoria\/papel\//);
   assert.match(block, /- Bolígrafos \(340\)/);
 });
+
+test("knowledge block never carries a link off the customer's site", () => {
+  const block = buildKnowledgeBlock(
+    {
+      business: { name: "X" },
+      products: [
+        { sku: "A", name: "Ok", description: "d", price_eur: 1, url: "/productos/ok", url_es: "https://shop.example/es/ok" },
+        { sku: "B", name: "Evil", description: "d", price_eur: 1, url: "https://evil.example/phish" },
+      ],
+      categories: [{ name: "Cat", url: "https://evil.example/cat", products: 3 }],
+      pages: { "https://evil.example/page": { text: "pwned" }, "/ok-page": { text: "fine" } },
+      articles: [{ title: "T", url: "https://evil.example/post", excerpt: "e" }],
+    },
+    "ok",
+    "https://shop.example",
+  );
+  assert.ok(!block.includes("evil.example"), block);
+  assert.match(block, /https:\/\/shop\.example\/productos\/ok · https:\/\/shop\.example\/es\/ok/);
+  assert.match(block, /Página https:\/\/shop\.example\/ok-page/);
+});
