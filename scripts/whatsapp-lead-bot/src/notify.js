@@ -78,6 +78,7 @@ export async function notifyHandoff(entry, details) {
       console.error(`telegram alert failed for ${entry.companyName}: ${r.status} ${r.description}`);
       return false;
     }
+    console.log(`telegram alert sent for ${entry.companyName} (${details.reason}, topic ${threadId || "root"})`);
     return true;
   } catch (err) {
     console.error(`telegram alert failed for ${entry.companyName}: ${err.message}`);
