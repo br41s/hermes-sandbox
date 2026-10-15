@@ -1841,3 +1841,33 @@ def test_a_mistyped_critic_bar_never_raises(monkeypatch):
     values["SHORTS_CRITIC_MIN"] = "5"
     assert critic.config()["min"] == 5 and critic.config()["enabled"] and critic.config()["key"] == "sk"
 
+
+def test_going_live_picks_up_the_shorts_handed_over_in_shadow(home, tmp_path, monkeypatch):
+    for rid, created in (("es-today-1", None), ("en-old-1", "2026-10-01T00:00:00Z")):
+        d = tmp_path / rid
+        _touch(d / "out" / "master.mp4")
+        ledger.add(_entry(rid, dir=str(d)))
+        fields = {"state": "handed_off", "x_handoff_at": "2026-10-15T08:20:00Z",
+                  "qa": {"passed": True, "errors": [], "warnings": []}}
+        if created:
+            fields["created_at"] = created
+        ledger.update(rid, **fields)
+    # Shadow mode: nothing moves.
+    monkeypatch.setattr(st, "publish_mode", lambda: "shadow")
+    out = json.loads(st.handle_shorts_studio({"action": "status"}))
+    assert out["shorts"] == [] and ledger.get("es-today-1")["state"] == "handed_off"
+    # Live: today's shadow hand-off is ready for the publisher; the old one is left alone.
+    monkeypatch.setattr(st, "publish_mode", lambda: "live")
+    out = json.loads(st.handle_shorts_studio({"action": "status"}))
+    assert [(s_["request_id"], s_["state"]) for s_ in out["shorts"]] == [("es-today-1", "ready")]
+    assert out["shorts"][0]["files"]["master"].endswith("master.mp4")
+    today = ledger.get("es-today-1")
+    assert today["state"] == "ready" and not today.get("x_handoff_at") and "live now" in today["notes"][-1]
+    assert ledger.get("en-old-1")["state"] == "handed_off"
+    # A second status does not touch it again, and a shadow hand-off without files is not promoted.
+    ledger.add(_entry("es-nofiles-1", dir=str(tmp_path / "nofiles")))
+    ledger.update("es-nofiles-1", state="handed_off", x_handoff_at="2026-10-15T08:20:00Z")
+    out = json.loads(st.handle_shorts_studio({"action": "status"}))
+    assert [s_["request_id"] for s_ in out["shorts"]] == ["es-today-1"]
+    assert ledger.get("es-nofiles-1")["state"] == "handed_off"
+

@@ -398,10 +398,32 @@ def _prune() -> None:
             shutil.rmtree(out, ignore_errors=True)
 
 
+# Going live: the shorts handed to a human in shadow mode during the last days
+# are the ones the owner just approved, so the next `status` makes them
+# ``ready`` and the publisher takes them like any other (2026-10-15: the first
+# three shorts of the new format went to Telegram at 15:20 and the mode went
+# live the same afternoon). Older shadow hand-offs stay as they are.
+LIVE_CATCHUP_DAYS = 3
+
+
+def _shadow_to_ready(entry: Dict[str, Any]) -> Dict[str, Any]:
+    from plugins.shorts import ledger
+
+    try:
+        created = calendar.timegm(time.strptime(entry.get("created_at", ""), "%Y-%m-%dT%H:%M:%SZ"))
+    except ValueError:
+        return entry
+    if created < time.time() - LIVE_CATCHUP_DAYS * 86400 or "master" not in _files(entry):
+        return entry
+    return ledger.update(entry["request_id"], state="ready", x_handoff_at=None, buzz_posted_at=None,
+                         note="handed to a human in shadow mode; the mode is live now, so it publishes")
+
+
 def _action_status(args: Dict[str, Any]) -> str:
     from plugins.shorts import github_studio, ledger
 
     started = time.time()
+    live = publish_mode() == "live"
     only = (args.get("request_id") or "").strip()
     report = []
     for entry in ledger.entries():
@@ -415,6 +437,8 @@ def _action_status(args: Dict[str, Any]) -> str:
             except Exception as exc:
                 logger.warning("shorts status %s: %s", entry["request_id"], exc)
                 entry = {**entry, "collect_error": str(exc)}
+        if live and entry.get("state") == "handed_off" and not entry.get("published"):
+            entry = _shadow_to_ready(entry)
         failed = entry.get("state") in ("qa_failed", "render_failed")
         if failed and entry.get("failure_reported") and not only:
             continue  # a failure is reported once, not on every run
