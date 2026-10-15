@@ -332,7 +332,11 @@ What a tip short is, in order:
    turn is seen, then it cuts to his first card. There is no shot of Martín
    reacting: a frozen last frame with a push-in read as a stall (owner,
    2026-10-12 and 10-13), and a generated nod cost $0.65 (Hailuo 3).
-4. **2–4 cards** (before/after, steps, a figure, a key line), narrated by
+4. **3–5 cards** (before/after, steps, a figure, a key line, the caveat that
+   avoids the usual mistake; 60–110 spoken words in all, ~40–55 s with the
+   take and the outro: the free part is where the tip becomes something the
+   viewer can apply, owner 2026-10-15; Lucía's take is the paid part and does
+   not grow, 32 words still), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`). The cards are paper (`brand` palette:
    cream, red, ink; `Tip.tsx` `CardZone` wraps them in a `Panel`) over the
@@ -346,7 +350,12 @@ What a tip short is, in order:
    card (`Tip.tsx`, `OutroCard`). No exclamation marks in its text: Edge
    reads them as a jump in pitch, and it sounded overexcited.
 
-**Martín's voice is Kokoro, on the runner, for free** (since 2026-10-14:
+**Martín's English voice is Kokoro, on the runner, for free; his Spanish
+voice is Azure's `es-ES-Tristan`, Spain Spanish.** The engine is chosen per
+language (`voice.DEFAULT_ENGINES`; `SHORTS_TTS_ENGINE_ES` / `_EN` override one
+language, `SHORTS_TTS_ENGINE` both): Kokoro's Spanish male voices read with a
+Latin American accent to the owner on the first live shorts (2026-10-15), and
+Martín speaks Spain Spanish (owner's rule, 2026-10-11). Kokoro (since 2026-10-14:
 the owner compared VideoDesk's shorts in Buzz, voiced by Kokoro at its own
 pace, with the Studio's and chose that sound). `voice.py` runs Kokoro-82M
 (Apache-2.0, `kokoro-onnx`, int8 model and voice pack from the kokoro-onnx
@@ -489,6 +498,9 @@ been rendered yet. The first dispatch with the key set is the test; its log's
 ## 7. Operating it
 
 - `shorts_studio ledger` (from chat) shows the last shorts, their state and URLs.
+- **Going live:** the shorts handed to a human in shadow mode during the last
+  3 days (`studio_tool.LIVE_CATCHUP_DAYS`) become `ready` on the next `status`
+  and the publisher takes them; older shadow hand-offs stay as they are.
 - A short stuck in `rendering`: open its `run_url`. After an hour with no run it
   becomes `render_failed`.
 - `qa_failed`: `qa.errors` says why.

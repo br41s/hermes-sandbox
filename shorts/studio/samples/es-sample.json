@@ -23,7 +23,7 @@
    "onscreen": "Cómo empezar",
    "before": "Comprar una herramienta y probar",
    "after": "Elegir una tarea y medir sus horas",
-   "vo": "Antes de comprar nada, elige una tarea semanal y apunta sus horas."
+   "vo": "Antes de comprar nada, elige una tarea semanal y apunta cuántas horas te lleva. Ese número es tu punto de partida."
   },
   {
    "kind": "list",
@@ -34,15 +34,21 @@
     "Con reglas claras",
     "Fácil de medir"
    ],
-   "vo": "Repetitiva, con reglas claras y fácil de medir.",
-   "visual": "infographic"
+   "visual": "infographic",
+   "vo": "Una buena primera tarea es repetitiva, con reglas claras y fácil de medir. Si no la puedes medir, no sabrás si funcionó."
   },
   {
    "kind": "stat",
    "show": "card",
    "value": "73%",
    "label": "de las pymes ahorró *tiempo* en 3 meses",
-   "vo": "El setenta y tres por ciento ahorró tiempo en tres meses."
+   "vo": "El setenta y tres por ciento de las pymes que empezaron así ahorró tiempo en tres meses."
+  },
+  {
+   "kind": "point",
+   "show": "card",
+   "onscreen": "Arregla el *proceso*, no el caos",
+   "vo": "Y arregla el proceso antes de automatizarlo: la IA hace más rápido un proceso desordenado, no mejor."
   },
   {
    "kind": "cta",

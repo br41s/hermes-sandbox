@@ -622,10 +622,13 @@ it writes from. Sold to a client without one it goes quiet on every run.
   12 to 14 October) with her HeyGen voice (`presenter.HOST_VOICES`, Spain
   Spanish; Avatar IV will not take our TTS as a data URL). On the last line she
   turns to Martín and says it to him (no freeze, no zoom; a generated nod cost
-  $0.65), then he narrates the cards and the CTA in a **Kokoro voice, free on
-  the runner** (`voice.KOKORO_VOICES`, at 1.0; word timings from faster-whisper
-  aligned to the script; `SHORTS_TTS_ENGINE=azure` switches to Azure HD at 1.12x
-  with Edge behind it) from a bubble playing a loop of him the owner recorded
+  $0.65), then he narrates 3–5 cards (60–110 words; the free part is where the
+  tip becomes applicable, owner 2026-10-15) and the CTA: in English a **Kokoro
+  voice, free on the runner** (`voice.KOKORO_VOICES`, at 1.0; word timings from
+  faster-whisper aligned to the script), in Spanish **Azure's es-ES Tristan at
+  1.12x**, Spain Spanish (Kokoro's Spanish male voices sounded Latin American to
+  the owner; `voice.DEFAULT_ENGINES`, `SHORTS_TTS_ENGINE_ES`/`_EN` and
+  `SHORTS_TTS_ENGINE` switch engines, Edge behind Azure) from a bubble playing a loop of him the owner recorded
   once (`presenters/assets/martin-loop.mp4`; never generated); the outro is a
   fixed animated card. ~$0.6 per short. `submit` refuses any other format. A
   real render missing her take is published without her on camera, her lines in
