@@ -442,13 +442,18 @@ def _action_status(args: Dict[str, Any]) -> str:
         failed = entry.get("state") in ("qa_failed", "render_failed")
         if failed and entry.get("failure_reported") and not only:
             continue  # a failure is reported once, not on every run
-        if entry.get("state") in ("rendering", "ready", "qa_failed", "render_failed") or only:
+        # Published on YouTube but never handed to SocialBot (the hand-off failed
+        # on 2026-10-15 and the next runs could not see it): listed until it is.
+        handoff_pending = live and entry.get("state") == "published" and not entry.get("x_handoff_at")
+        if entry.get("state") in ("rendering", "ready", "qa_failed", "render_failed") or handoff_pending or only:
             if failed and not entry.get("failure_reported"):
                 entry = ledger.update(entry["request_id"], failure_reported=True)
             item = {k: entry.get(k) for k in ("request_id", "lang", "slug", "title", "article_url",
                                               "state", "qa", "duration_s", "run_url", "published",
                                               "collect_error", "notes")}
-            if entry.get("state") in ("ready", "qa_failed"):
+            if handoff_pending:
+                item["handoff_pending"] = True
+            if entry.get("state") in ("ready", "qa_failed") or handoff_pending:
                 item["files"] = _files(entry)
                 pkg_path = Path(entry["dir"]) / "package.json"
                 if pkg_path.exists():

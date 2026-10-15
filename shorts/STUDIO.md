@@ -504,6 +504,8 @@ been rendered yet. The first dispatch with the key set is the test; its log's
 ## 7. Operating it
 
 - `shorts_studio ledger` (from chat) shows the last shorts, their state and URLs.
+- A short published on YouTube whose hand-off to SocialBot failed stays listed by
+  `status` as `published` with `handoff_pending: true` until a run hands it off.
 - **Going live:** the shorts handed to a human in shadow mode during the last
   3 days (`studio_tool.LIVE_CATCHUP_DAYS`) become `ready` on the next `status`
   and the publisher takes them; older shadow hand-offs stay as they are.

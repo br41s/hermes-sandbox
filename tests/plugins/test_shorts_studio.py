@@ -1929,3 +1929,19 @@ def test_the_hand_off_attaches_metadata_free_copies_for_the_relay(tmp_path, monk
         buzz_share.canonical(_touch(tmp_path / "story.mp4"))
     assert not (tmp_path / "story.buzz.mp4").exists() and not (tmp_path / "story.buzz.mp4.part").exists()
 
+
+def test_a_published_short_whose_hand_off_failed_stays_listed_until_handed_off(home, tmp_path, monkeypatch):
+    for rid, stamp in (("en-pub-1", None), ("en-done-1", "2026-10-15T12:00:00Z")):
+        d = tmp_path / rid
+        _touch(d / "out" / "master.mp4")
+        ledger.add(_entry(rid, dir=str(d)))
+        ledger.update(rid, state="published", published={"youtube": {"id": "y", "url": "https://youtube.com/shorts/y"}},
+                      qa={"passed": True, "errors": [], "warnings": []}, **({"x_handoff_at": stamp} if stamp else {}))
+    monkeypatch.setattr(st, "publish_mode", lambda: "live")
+    out = json.loads(st.handle_shorts_studio({"action": "status"}))
+    assert [(x["request_id"], x["state"], x.get("handoff_pending")) for x in out["shorts"]] == [("en-pub-1", "published", True)]
+    assert out["shorts"][0]["files"]["master"].endswith("master.mp4")
+    # Shadow mode never lists it (nothing is handed off there), and a handed-off one is done.
+    monkeypatch.setattr(st, "publish_mode", lambda: "shadow")
+    assert json.loads(st.handle_shorts_studio({"action": "status"}))["shorts"] == []
+

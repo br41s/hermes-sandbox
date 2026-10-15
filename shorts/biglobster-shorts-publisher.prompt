@@ -34,6 +34,10 @@ FLUJO
      `handoff` falla al entregarlo a Buzz, informa del error en una línea: la
      próxima ejecución lo reintenta.
 
+   - `published` con `handoff_pending: true` → ya está en YouTube, pero la
+     entrega a SocialBot falló en otra ejecución: action:"handoff", request_id,
+     y pega su `message` TAL CUAL. Si vuelve a fallar, anótalo con el error.
+
    - `ready` y publish_mode "shadow" → NO publiques nada. action:"handoff",
      request_id → pega su `message` TAL CUAL en tu respuesta final: lleva el
      vídeo, la portada y todos los textos para revisarlos.
