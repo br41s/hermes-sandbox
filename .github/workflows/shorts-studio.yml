@@ -64,10 +64,13 @@ jobs:
         engine: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["default"]' || '["kokoro","azure"]') }}
     env:
       REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}-{1}', matrix.sample, matrix.engine) }}
-      # The free voice: Kokoro on the runner (plugins/shorts/studio/voice.py), its
-      # models cached below; "azure" switches the narrator to Azure Speech with
-      # Edge behind it. SHORTS_KOKORO_VOICE_ES/_EN pick Martín's Kokoro voice.
-      SHORTS_TTS_ENGINE: ${{ (matrix.engine != 'default' && matrix.engine) || vars.SHORTS_TTS_ENGINE || 'kokoro' }}
+      # The free voice (plugins/shorts/studio/voice.py): per language, its own
+      # switch, then the global one, then the code's defaults (English on Kokoro
+      # on the runner, models cached below; Spanish on Azure Speech, Spain
+      # Spanish, Edge behind it). The smoke matrix forces one engine for both.
+      SHORTS_TTS_ENGINE: ${{ (matrix.engine != 'default' && matrix.engine) || vars.SHORTS_TTS_ENGINE || '' }}
+      SHORTS_TTS_ENGINE_ES: ${{ matrix.engine == 'default' && vars.SHORTS_TTS_ENGINE_ES || '' }}
+      SHORTS_TTS_ENGINE_EN: ${{ matrix.engine == 'default' && vars.SHORTS_TTS_ENGINE_EN || '' }}
       SHORTS_KOKORO_VOICE_ES: ${{ vars.SHORTS_KOKORO_VOICE_ES || '' }}
       SHORTS_KOKORO_VOICE_EN: ${{ vars.SHORTS_KOKORO_VOICE_EN || '' }}
       SHORTS_MODEL_DIR: ${{ github.workspace }}/.shorts-models

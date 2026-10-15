@@ -129,13 +129,16 @@ MAX_SCENE_CHARS = 400
 # handoff ≤ TIP_MAX_ON_CAMERA_WORDS (~12 s, ~$0.65).
 TIP_MIDDLE_KINDS = ("point", "stat", "list", "compare", "quote")
 TIP_MAX_BEATS = 7
-TIP_MIN_TOTAL_WORDS = 35
-TIP_MAX_TOTAL_WORDS = 60
+# The free part carries the tip (owner, 2026-10-15, after the first live shorts:
+# "longer, so the tip is useful, not just stated"): 60-110 spoken words, 3-5
+# cards, ~40-55 s with Lucía's take and the outro. Her words stay at 32.
+TIP_MIN_TOTAL_WORDS = 60
+TIP_MAX_TOTAL_WORDS = 110
 TIP_MAX_OPENER_WORDS = 18
 TIP_MAX_ON_CAMERA_WORDS = 32
 TIP_MAX_HANDOFF_WORDS = 8
 TIP_MIN_SETTING_WORDS = 8
-TIP_MIN_CARDS = 2
+TIP_MIN_CARDS = 3
 # Martín's voice, the narrator of every card, the same in every short
 # (owner's rule, 2026-10-11): Spain Spanish, never a Latin American accent.
 # Lucía speaks with her HeyGen voice (presenter.HOST_VOICES). Spanish is an
@@ -529,7 +532,7 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
     if beats_raw and not (lo <= total_words <= hi):
         problems.append(
             f"beats: {total_words} spoken words in total, need {lo}-{hi} "
-            + ("(one tip, ~20 s)" if tip else "(~150 words is a 60s short)")
+            + ("(one tip that can be applied, ~45 s)" if tip else "(~150 words is a 60s short)")
         )
     if tip and beats:
         opener = pkg.get("opener", {})
@@ -538,10 +541,10 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         if on_camera > TIP_MAX_ON_CAMERA_WORDS:
             problems.append(f"opener + hook + handoff: {on_camera} words Lucía says on camera, max "
                             f"{TIP_MAX_ON_CAMERA_WORDS} (~12 s; she is paid by the second)")
-        cards = sum(1 for b in beats if b.get("show") == "card")
+        cards = sum(1 for b in beats if b.get("show") == "card" and b.get("kind") != "cta")
         if cards < TIP_MIN_CARDS:
-            problems.append(f"beats: {cards} card beats, need at least {TIP_MIN_CARDS}: show the tip, "
-                            "do not only say it")
+            problems.append(f"beats: {cards} card beats before the CTA, need at least {TIP_MIN_CARDS}: show "
+                            "the tip step by step, do not only say it")
         cta = beats[-1]
         if cta.get("kind") == "cta" and cta.get("vo") and not _SAVE_OR_SHARE.search(cta["vo"]):
             problems.append(f"beats[{len(beats) - 1}].vo: the CTA asks the viewer to save the tip or "

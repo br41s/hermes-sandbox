@@ -15,9 +15,13 @@ call returns no word timings, so its words are spread evenly. Microsoft
 changed the Edge endpoint's anti-abuse token on 2026-10-12 and edge-tts
 7.2.8 got a 403 on nearly every call, which is why Azure came first then.
 
-``SHORTS_TTS_ENGINE`` picks the engine: ``kokoro`` (the default) or
-``azure``. The push smoke render builds every sample with both, so the
-owner can hear them side by side.
+The engine is chosen per language: ``SHORTS_TTS_ENGINE_ES`` / ``_EN`` first,
+then ``SHORTS_TTS_ENGINE`` for both, then the defaults in ``DEFAULT_ENGINES``:
+Kokoro for English, Azure for Spanish, because Kokoro's Spanish male voices
+read with a Latin American accent to the owner on the first live shorts
+(2026-10-15) and Martín must speak Spain Spanish (owner's rule, 2026-10-11);
+Azure's ``es-ES-Tristan`` does. The push smoke render builds every sample
+with both engines, so the owner can hear them side by side.
 
 Beats with no TTS timing — avatar clips, Azure, or the offline ``fake``
 voice used in tests — get their words spread evenly across the speech,
@@ -47,6 +51,8 @@ class VoiceError(RuntimeError):
 
 
 ENGINES = ("kokoro", "azure")
+# Per-language defaults: Spain Spanish only exists on Azure (es-ES Tristan).
+DEFAULT_ENGINES = {"es": "azure", "en": "kokoro"}
 
 # Kokoro voices. Martín, the narrator of every card, per language; the owner
 # picks between the Spanish male voices (em_alex, em_santa) after hearing the
@@ -73,9 +79,16 @@ EDGE_FALLBACK = {"es-ES": "es-ES-AlvaroNeural", "en-US": "en-US-AndrewMultilingu
 HD_TEMPO = 1.12
 
 
-def engine() -> str:
-    name = (os.environ.get("SHORTS_TTS_ENGINE") or "kokoro").strip().lower()
-    return name if name in ENGINES else "kokoro"
+def engine(lang: Optional[str] = None) -> str:
+    """The engine for ``lang``: its own switch, then the global one, then the language's default."""
+    if lang:
+        own = (os.environ.get(f"SHORTS_TTS_ENGINE_{lang.upper()}") or "").strip().lower()
+        if own in ENGINES:
+            return own
+    name = (os.environ.get("SHORTS_TTS_ENGINE") or "").strip().lower()
+    if name in ENGINES:
+        return name
+    return DEFAULT_ENGINES.get(lang or "", "kokoro")
 
 
 def model_dir() -> Path:
@@ -101,7 +114,7 @@ def kokoro_voice(voice: str) -> str:
 
 def host_voice(lang: str, neural: Dict[str, str]) -> str:
     """Lucía's free voice for a line without a take: Kokoro's, or the neural one under Azure."""
-    if engine() == "kokoro":
+    if engine(lang) == "kokoro":
         return KOKORO_HOST_VOICES.get(lang, KOKORO_HOST_VOICES["en"])
     return neural.get(lang, neural["en"])
 
@@ -323,7 +336,7 @@ def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = l
     neural name to its own voice for the language; Azure and Edge map a Kokoro
     id to the neural voice of the same kind.
     """
-    if engine() == "kokoro":
+    if engine(lang2(voice)) == "kokoro":
         try:
             return _kokoro_synthesize(text, voice, mp3)
         except Exception as exc:  # the model files, the runtime, or the audio

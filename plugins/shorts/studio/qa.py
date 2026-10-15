@@ -13,9 +13,9 @@ from typing import Any, Dict, List
 
 from plugins.shorts.studio import media
 
-MIN_SECONDS, MAX_SECONDS = 12.0, 90.0          # hard (a tip short runs ~15-20 s)
+MIN_SECONDS, MAX_SECONDS = 12.0, 90.0          # hard
 TARGET_MIN, TARGET_MAX = 45.0, 70.0            # warn outside
-TIP_TARGET = (18.0, 40.0)                      # the tip format: opener, one tip, outro
+TIP_TARGET = (28.0, 62.0)                      # the tip format: opener, 3-5 cards, outro (owner, 2026-10-15)
 STORY_MAX = 59.9
 LUFS_TOLERANCE = 1.5
 MAX_TRUE_PEAK = -0.5

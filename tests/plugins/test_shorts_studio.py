@@ -1107,7 +1107,7 @@ def test_the_tip_sample_is_one_tip_opened_by_lucia_and_narrated_by_martin(tip):
     opener = pkg["opener"]
     assert opener["line"] and len(opener["setting"].split()) >= pkg_mod.TIP_MIN_SETTING_WORDS
     assert pkg_mod.TIP_PARTNER.search(opener["handoff"])
-    assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "card"]
+    assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "card", "card"]
     words = sum(len(b["vo"].split()) for b in pkg["beats"])
     assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS
     assert pkg["beats"][1]["before"] and pkg["beats"][1]["after"]
@@ -1126,7 +1126,8 @@ def test_a_package_cannot_pick_another_voice_for_the_narrator(tip):
     (lambda p: p["beats"][0].update(scene="Slow push-in on a bakery counter at dawn, warm light"), "no generated scenes"),
     (lambda p: p["beats"][0].update(presenter=True), "use show"),
     (lambda p: p["beats"][1].update(after=""), "after: required"),
-    (lambda p: p["beats"][2].update(vo=p["beats"][2]["vo"] + " " + "muy " * 20), "one tip"),
+    (lambda p: p["beats"][2].update(vo=p["beats"][2]["vo"] + " " + "muy " * 40), "one tip"),
+    (lambda p: p["beats"].__delitem__(slice(2, 4)), "need at least 3"),
     (lambda p: p["beats"].insert(1, {"kind": "avatar", "vo": "Hola.", "clip_url": "https://x/c.mp4", "avatar": "lucia"}), "middle beats"),
     (lambda p: p.pop("opener"), "opener.line: required"),
     (lambda p: p["opener"].update(setting="a bakery"), "at least"),
@@ -1167,10 +1168,11 @@ def test_the_tip_short_runs_lucia_in_one_take_then_martins_cards(tip, monkeypatc
     assert "biglobster" in beats[-1]["vo"] and "síguenos" in beats[-1]["vo"].lower()
     assert "!" not in beats[-1]["vo"] and "¡" not in beats[-1]["vo"]      # calm, not overexcited
     assert build_mod.on_camera(beats) == [0]                               # only her take is paid
-    # Her free voice (for a missing take) follows the engine; Martín's beats take the package's.
-    assert take["voice"] == voice_mod.KOKORO_HOST_VOICES["es"] == "ef_dora"
-    monkeypatch.setenv("SHORTS_TTS_ENGINE", "azure")
-    assert build_mod.tip_beats(pkg)[0]["voice"] == presenter_mod.HOST_FALLBACK_VOICES["es"]
+    # Her free voice (for a missing take) follows the language's engine: Spanish is Azure by
+    # default (Spain Spanish), so Elvira; on Kokoro, ef_dora. Martín's beats take the package's.
+    assert take["voice"] == presenter_mod.HOST_FALLBACK_VOICES["es"]
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "kokoro")
+    assert build_mod.tip_beats(pkg)[0]["voice"] == voice_mod.KOKORO_HOST_VOICES["es"] == "ef_dora"
     assert all("voice" not in b for b in beats[1:])
     # A line without its full stop still reads as a sentence inside the take.
     bare = dict(pkg, opener={**pkg["opener"], "line": "Si ya madrugo, que las facturas se hagan solas"})
@@ -1517,7 +1519,7 @@ def _kokoro_env(monkeypatch, tmp_path, spoken, heard=None, *, fail=None):
         wav.write_bytes(b"RIFF")
         return 4.0
 
-    monkeypatch.delenv("SHORTS_TTS_ENGINE", raising=False)
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "kokoro")                 # both languages on Kokoro for these tests
     monkeypatch.setenv("SHORTS_MODEL_DIR", str(tmp_path / "models"))
     monkeypatch.setattr(voice_mod, "_kokoro", fake_kokoro)
     monkeypatch.setattr(voice_mod, "heard_words", lambda wav, lang: list(heard or []))
@@ -1547,6 +1549,21 @@ def test_kokoro_is_the_default_engine_and_maps_each_voice(tmp_path, monkeypatch)
     assert voice_mod.host_voice("en", presenter_mod.HOST_FALLBACK_VOICES) == presenter_mod.HOST_FALLBACK_VOICES["en"]
     monkeypatch.setenv("SHORTS_TTS_ENGINE", "nonsense")
     assert voice_mod.engine() == "kokoro"
+
+
+def test_each_language_has_its_own_engine_and_spanish_is_azure_by_default(monkeypatch):
+    for name in ("SHORTS_TTS_ENGINE", "SHORTS_TTS_ENGINE_ES", "SHORTS_TTS_ENGINE_EN"):
+        monkeypatch.delenv(name, raising=False)
+    # Spain Spanish lives on Azure (es-ES Tristan); Kokoro's Spanish male voices sounded Latin American (owner, 2026-10-15).
+    assert voice_mod.engine("es") == "azure" and voice_mod.engine("en") == "kokoro" and voice_mod.engine() == "kokoro"
+    assert voice_mod.host_voice("es", presenter_mod.HOST_FALLBACK_VOICES) == presenter_mod.HOST_FALLBACK_VOICES["es"]
+    assert voice_mod.host_voice("en", presenter_mod.HOST_FALLBACK_VOICES) == "af_heart"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE", "kokoro")                 # the global switch covers both (the smoke matrix)
+    assert voice_mod.engine("es") == "kokoro"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE_ES", "azure")               # a language's own switch wins
+    assert voice_mod.engine("es") == "azure" and voice_mod.engine("en") == "kokoro"
+    monkeypatch.setenv("SHORTS_TTS_ENGINE_ES", "nonsense")
+    assert voice_mod.engine("es") == "kokoro"
 
 
 def test_kokoro_words_follow_the_script_at_the_heard_times(tmp_path, monkeypatch):
