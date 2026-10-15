@@ -12,6 +12,12 @@ paquete, te devuelve TODOS los problemas: arréglalos todos y vuelve a enviarlo.
 
 Ejecución acotada: como mucho UN short por idioma. No barras el blog.
 
+UNA ACCIÓN POR LLAMADA. Cada llamada a `shorts_studio` va sola, en su propio
+turno; nunca metas dos acciones en un mismo `tool_call` (la herramienta las
+rechaza con "takes exactly one entry" y pierdes el turno). El `submit` de `en`
+va solo; el de `es`, después, en otra llamada. Si recibes ese error, repite la
+primera llamada sola y sigue.
+
 ──────────────────────────────────────────────────────────────────────────────
 FLUJO — primero `en`, después `es`
 
@@ -94,7 +100,8 @@ animada que ENSEÑA el consejo, con Martín en una burbuja señalándola.
   1. `hook`, show "presenter" — Lucía, justo después de la broma. Es lo que más
      importa del short: LA PROPUESTA DE VALOR, dicha y escrita, en 3 segundos.
      - La PRIMERA FRASE de `vo` tiene ≤8 palabras (la herramienta lo rechaza si
-       pasa) y le dice al espectador, en segunda persona y sin preámbulo, qué
+       pasa; una frase acaba en punto, interrogación o exclamación, nunca en
+       raya ni en coma) y le dice al espectador, en segunda persona y sin preámbulo, qué
        GANA o qué DOLOR se le quita: con la cifra o el plazo del artículo si lo
        hay, y nombrando la tarea, la herramienta o el oficio. Vale una pregunta
        de dolor ("¿Cuántas facturas pagas dos veces?"), un beneficio ("Recupera
