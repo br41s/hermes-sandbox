@@ -21,6 +21,7 @@ import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
 import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
 import { notifyHandoff, conversationUrl } from "./notify.js";
+import { handoffExpired, handoffTtlMs } from "./handoff.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
@@ -96,13 +97,23 @@ function alreadyProcessed(messageId) {
   return false;
 }
 
-function secretMatches(presented) {
-  const configured = process.env.WEBHOOK_SHARED_SECRET || "";
+function secretMatches(presented, configured) {
   if (!configured) return false; // never accept an unconfigured secret
   const a = Buffer.from(presented || "");
   const b = Buffer.from(configured);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+// The secret is bound to the account the payload names: an account whose
+// registry entry carries its own `webhookSecret` (its Agent Bot's outgoing
+// URL carries it) is accepted with that secret only, never with the shared
+// one -- otherwise a leaked shared secret would let a forged webhook act in
+// every account, with every account's bot token. Accounts without one keep
+// WEBHOOK_SHARED_SECRET. Exported for tests.
+export function expectedSecretFor(accountId) {
+  const entry = accountId != null ? getRegistryEntry(accountId) : null;
+  return entry?.webhookSecret || process.env.WEBHOOK_SHARED_SECRET || "";
 }
 
 // Chatwoot's Agent Bot "outgoing_url" is configured as a plain URL with no
@@ -148,7 +159,7 @@ export function shouldProcess(payload) {
 // relying on server.js to have applied one globally first.
 router.post("/", json(), async (req, res) => {
   const presented = resolvePresentedSecret(req.headers.authorization, req.query.secret);
-  if (!secretMatches(presented)) {
+  if (!secretMatches(presented, expectedSecretFor(req.body?.account?.id))) {
     // Logged: the first live delivery vanished without a trace because every
     // early-exit here was silent. Keys only -- never the secret or the body.
     console.warn(
@@ -202,10 +213,42 @@ async function handleWebhookEvent(payload) {
         console.error(`failed to handle unsupported media: ${err.message}`),
       );
     }
+    if (reason === "not_bot_owned" && payload?.conversation?.status === "open") {
+      await maybeReclaim(payload).catch((err) =>
+        console.error(`reclaim check failed for conversation ${payload?.conversation?.id}: ${err.message}`),
+      );
+    }
     return;
   }
 
   await processTurn(payload);
+}
+
+// A visitor wrote into a conversation a person owns. If that person (or
+// anyone) has been silent for longer than the handoff TTL, the handoff has
+// expired: take the conversation back and answer. See handoff.js.
+async function maybeReclaim(payload) {
+  const accountId = payload?.account?.id;
+  const conversationId = payload?.conversation?.id;
+  if (!accountId || !conversationId || !getRegistryEntry(accountId)) return;
+  const [conversation, messages] = await Promise.all([
+    chatwoot.getConversation(accountId, conversationId),
+    chatwoot.getMessages(accountId, conversationId),
+  ]);
+  const attrs = conversation?.custom_attributes || {};
+  const { expired, idleMs } = handoffExpired({ messages, escalationAt: attrs.escalation_at });
+  const idleMin = idleMs == null ? "unknown" : Math.round(idleMs / 60000);
+  if (!expired) {
+    console.log(`conversation ${conversationId} stays with a person (last human activity ${idleMin} min ago, ttl ${handoffTtlMs() / 60000} min)`);
+    return;
+  }
+  console.log(`handoff expired in conversation ${conversationId} (idle ${idleMin} min): bot takes it back`);
+  await chatwoot.setStatus(accountId, conversationId, "pending");
+  await chatwoot.setCustomAttributes(accountId, conversationId, {
+    handoff_expired_at: new Date().toISOString(),
+    bot_turn_count: 0, // a new episode: the turn cap counts from here
+  });
+  await processTurn({ ...payload, conversation: { ...payload.conversation, status: "pending" } }, { reclaimed: true });
 }
 
 async function handleUnsupportedMedia(payload) {
@@ -216,7 +259,7 @@ async function handleUnsupportedMedia(payload) {
   await chatwoot.setStatus(accountId, conversationId, "open");
   await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
   await chatwoot
-    .setCustomAttributes(accountId, conversationId, { escalation_reason: "unsupported_media" })
+    .setCustomAttributes(accountId, conversationId, { escalation_reason: "unsupported_media", escalation_at: new Date().toISOString() })
     .catch(() => {});
   const entry = getRegistryEntry(accountId);
   if (entry) {
@@ -238,7 +281,14 @@ function channelLabel(payload) {
   return type ? type.replace(/^Channel::/, "") : "chat";
 }
 
-async function processTurn(payload) {
+// Prefixed to the first bot reply after an expired handoff, in the
+// visitor's language: they were told a person would continue.
+const RECLAIM_NOTICE = {
+  es: "Sigo ayudándote yo mientras una persona del equipo se incorpora.",
+  en: "I'll keep helping you while a person from the team joins.",
+};
+
+async function processTurn(payload, { reclaimed = false } = {}) {
   const accountId = payload.account.id;
   const conversationId = payload.conversation.id;
   const visitorMessage = String(payload.content || "");
@@ -320,10 +370,13 @@ async function processTurn(payload) {
     // beats defaulting an English visitor to Spanish (seen live 2026-10-13).
     // On the human-request path there is no model output, and WhatsApp
     // carries no browser language: the request's own wording is the last clue.
+    // The message's own language beats the browser's: a Spanish "quiero
+    // hablar con una persona" from an English browser got an English reply
+    // (2026-10-15).
     const lang =
       modelOutput?.detected_language ||
-      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language) ||
-      requestedHumanLanguage(visitorMessage);
+      requestedHumanLanguage(visitorMessage) ||
+      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
     const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
     await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");
@@ -331,6 +384,7 @@ async function processTurn(payload) {
     await chatwoot.setCustomAttributes(accountId, conversationId, {
       bot_turn_count: turnCount + 1,
       escalation_reason: decision.reason,
+      escalation_at: new Date().toISOString(), // the handoff TTL counts from here (handoff.js)
       // Bounded, operator-facing detail on *why* the model output was
       // unusable -- useful when debugging a spike in escalations without
       // needing to grep service logs for the conversation id.
@@ -354,7 +408,8 @@ async function processTurn(payload) {
     return;
   }
 
-  await chatwoot.sendMessage(accountId, conversationId, modelOutput.reply);
+  const notice = reclaimed ? RECLAIM_NOTICE[modelOutput.detected_language] || RECLAIM_NOTICE.es : null;
+  await chatwoot.sendMessage(accountId, conversationId, notice ? `${notice}\n\n${modelOutput.reply}` : modelOutput.reply);
   await chatwoot.setCustomAttributes(accountId, conversationId, {
     bot_turn_count: turnCount + 1,
     lead_need: modelOutput.lead.need || existingAttributes.lead_need || null,
