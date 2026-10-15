@@ -1016,6 +1016,8 @@ def buzz_env(monkeypatch):
                  "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
                  "YOUTUBE_REFRESH_TOKEN": "r"}.items():
         monkeypatch.setenv(k, v)
+    # The relay's metadata rule has its own test; the hand-off tests attach the files as they are.
+    monkeypatch.setattr("plugins.shorts.buzz_share.canonical", lambda path: Path(path))
 
 
 def test_buzz_takes_meta_away_from_hermes(buzz_env, monkeypatch):
@@ -1871,4 +1873,43 @@ def test_going_live_picks_up_the_shorts_handed_over_in_shadow(home, tmp_path, mo
     out = json.loads(st.handle_shorts_studio({"action": "status"}))
     assert [s_["request_id"] for s_ in out["shorts"]] == ["es-today-1"]
     assert ledger.get("es-nofiles-1")["state"] == "handed_off"
+
+
+def test_the_hand_off_attaches_metadata_free_copies_for_the_relay(tmp_path, monkeypatch):
+    from plugins.shorts import buzz_share
+
+    # A JPEG: SOI, APP0 (JFIF), COM, DQT, SOS + scan, EOI. APP0 and COM go; the image stays.
+    app0 = b"\xff\xe0" + (2 + 4).to_bytes(2, "big") + b"JFIF"
+    com = b"\xff\xfe" + (2 + 5).to_bytes(2, "big") + b"hello"
+    dqt = b"\xff\xdb" + (2 + 3).to_bytes(2, "big") + b"\x00\x01\x02"
+    sos = b"\xff\xda" + (2 + 2).to_bytes(2, "big") + b"\x01\x00" + b"\x12\x34\xff\xd9"
+    jpg = tmp_path / "cover.jpg"
+    jpg.write_bytes(b"\xff\xd8" + app0 + com + dqt + sos)
+    clean = buzz_share.canonical(jpg)
+    assert clean == tmp_path / "cover.buzz.jpg" and clean.read_bytes() == b"\xff\xd8" + dqt + sos
+    assert buzz_share.canonical(jpg) == clean                       # reused while the original is unchanged
+    with pytest.raises(buzz_share.BuzzError, match="not a JPEG"):
+        buzz_share.canonical(_touch(tmp_path / "bad.jpg"))
+    # An MP4: streams copied, every tag, chapter and encoder stamp dropped.
+    mp4 = _touch(tmp_path / "master.mp4")
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"clean")
+        return type("Done", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(buzz_share.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(buzz_share.subprocess, "run", fake_run)
+    out = buzz_share.canonical(mp4)
+    assert out == tmp_path / "master.buzz.mp4" and out.read_bytes() == b"clean"
+    args = calls[0]
+    assert args[0] == "/usr/bin/ffmpeg" and args[args.index("-map_metadata") + 1] == "-1"
+    assert args[args.index("-c") + 1] == "copy" and args.count("+bitexact") == 3 and "-map_chapters" in args
+    # Other files go as they are; a failed ffmpeg is the hand-off's error (retried next run).
+    assert buzz_share.canonical(_touch(tmp_path / "captions.srt")) == tmp_path / "captions.srt"
+    monkeypatch.setattr(buzz_share.subprocess, "run",
+                        lambda args, **kw: type("Done", (), {"returncode": 1, "stdout": "", "stderr": "moov atom not found"})())
+    with pytest.raises(buzz_share.BuzzError, match="moov atom"):
+        buzz_share.canonical(_touch(tmp_path / "story.mp4"))
 

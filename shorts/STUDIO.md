@@ -237,6 +237,12 @@ BigLobster runs two agent teams. One factory and one owner per network:
 | YouTube | **Hermes** | official API (§3.2) |
 | Facebook, Instagram, X | **SocialBot** (Buzz) | already runs those accounts: Zernio, community replies, DMs, UTMs, its calendar |
 
+The relay accepts only canonical media: a file with metadata or a
+non-canonical metadata channel is refused with a 422 (found on the first live
+hand-off, 2026-10-15). `buzz_share.canonical` attaches stripped copies
+(`master.buzz.mp4`, streams copied, no tags; `cover.buzz.jpg`, no APPn/COM
+segments); a PNG is refused whatever is done to it, so the cover stays a JPEG.
+
 The hand-over is one Buzz message. Once a short is live on YouTube, the
 publisher's `handoff` posts it to the shorts channel: `master.mp4`,
 `story.mp4` and `cover.jpg` attached, the Instagram, Facebook and X copy, the

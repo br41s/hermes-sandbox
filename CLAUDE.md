@@ -640,7 +640,8 @@ it writes from. Sold to a client without one it goes quiet on every run.
   default $2), enforced before any request. Text and figures stay Remotion's.
 - **Hermes publishes YouTube; SocialBot (Buzz) publishes Facebook, Instagram and X.**
   Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
-  (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image); with
+  (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image; the
+  relay takes only metadata-free media, so stripped copies are attached); with
   `SHORTS_BUZZ_CHANNEL` set the tool drops the Meta targets, so the two systems can
   never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
