@@ -1760,6 +1760,8 @@ def test_the_critic_returns_the_openings_problems_and_a_better_first_line(tip, m
     assert sent["response_format"] == {"type": "json_object"}
     script = sent["messages"][1]["content"]
     assert "Automatiza primero lo aburrido" in script and "LUCIA (joke" in script and "MARTIN (card)" in script
+    # The joke opens every short by design: the rubric judges the hook's first sentence, not the joke.
+    assert "before the hook by design" in script and "judge the HOOK's first spoken sentence" in critic.RUBRIC
     assert "ARTICLE (beginning)" in script and sent["messages"][0]["content"] == critic.RUBRIC
     # Good enough, fenced JSON, nonsense, an API error, or the critic switched off: no objection.
     assert critic.review(pkg, ARTICLE_TEXT, client=_CriticAPI("```json\n{\"score\": 9, \"problems\": []}\n```")) == []
