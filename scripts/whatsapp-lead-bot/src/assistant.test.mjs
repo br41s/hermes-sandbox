@@ -98,7 +98,7 @@ test("every OpenRouter request asks for providers that neither store nor train o
     if (env.key === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = env.key;
     if (env.model === undefined) delete process.env.VISITOR_AGENT_MODEL; else process.env.VISITOR_AGENT_MODEL = env.model;
   }
-  assert.deepEqual(sent.provider, { data_collection: "deny" });
+  assert.deepEqual(sent.provider, { data_collection: "deny", sort: "price" });
   // Reasoning tokens count against max_tokens on gpt-oss; a cap that only fits
   // the answer gets eaten by reasoning and truncates the JSON (seen live).
   assert.ok(["low", "medium"].includes(sent.reasoning?.effort), "reasoning effort must be bounded");
@@ -107,7 +107,7 @@ test("every OpenRouter request asks for providers that neither store nor train o
   assert.ok(system.indexOf("INFORMACIÓN DE REFERENCIA") < system.indexOf("Reglas."), "rules must come after the reference block");
   assert.match(system.slice(-400), /MISMO idioma/);
   assert.ok(sent.max_tokens >= 1000, `max_tokens ${sent.max_tokens} leaves no room for reasoning + answer`);
-  assert.deepEqual(PROVIDER_POLICY, { data_collection: "deny" });
+  assert.deepEqual(PROVIDER_POLICY, { data_collection: "deny", sort: "price" });
   assert.equal(sent.model, "some/model");
 });
 
@@ -190,10 +190,14 @@ test("categories: the ones matching the message come first, the rest is a count"
     "¿tenéis tornillería inoxidable?",
     "https://shop.example",
   );
-  const catLines = block.split("\n").filter((l) => /^- (Familia|Tornillería)/.test(l));
+  // Static list: the payload's own order (cacheable), capped at 30 plus a count;
+  // the category the message names appears in the per-turn block after it.
+  const staticPart = block.slice(0, block.indexOf("=== REFERENCIA PARA ESTA CONSULTA"));
+  const catLines = staticPart.split("\n").filter((l) => /^- (Familia|Tornillería)/.test(l));
   assert.equal(catLines.length, 30);
-  assert.match(catLines[0], /^- Tornillería \(7\) — https:\/\/shop\.example\/c\/tornilleria\//);
+  assert.match(catLines[0], /^- Familia 0 \(100\)/);
   assert.match(block, /- … y 6 categorías más/);
+  assert.match(block, /Categorías relacionadas con la consulta:\n- Tornillería \(7\) — https:\/\/shop\.example\/c\/tornilleria\//);
   assert.match(block, /\(500 productos en total, se buscan por categoría\):/); // no products listed: no "arriba solo hay 0"
 });
 
@@ -238,8 +242,8 @@ test("catalogue matches for the visitor's message come first, with their real UR
     "https://shop.example",
     { products: [{ sku: "P1", name: "Lamy Safari", description: "pluma", price_eur: 29.95, in_stock: true, url: "/productos/pluma-lamy-safari-azul" }], categories: [{ name: "Plumas", url: "/productos/categoria/plumas/", products: 12 }] },
   );
-  const i = block.indexOf("coinciden con la consulta"), j = block.indexOf("Productos (catálogo");
-  assert.ok(i > 0 && i < j, "matches before the sample");
+  const i = block.indexOf("coinciden con la consulta"), j = block.indexOf("Productos (catálogo"), k = block.indexOf("REFERENCIA PARA ESTA CONSULTA");
+  assert.ok(j > 0 && j < k && k < i, "static sample first, per-turn block (with the matches) after it");
   assert.match(block, /- Lamy Safari \(P1\): pluma — 29\.95 € — https:\/\/shop\.example\/productos\/pluma-lamy-safari-azul/);
   assert.match(block, /Categorías que coinciden:\n- Plumas \(12\) — https:\/\/shop\.example\/productos\/categoria\/plumas\//);
 });
@@ -266,4 +270,22 @@ test("invented links on the customer's site are stripped; known ones and foreign
   assert.ok(cleaned.includes("https://shoroban.com/productos/categoria/plumas/"));
   assert.ok(cleaned.includes("https://shoroban.com/productos/."));
   assert.ok(cleaned.includes("https://example.org/x."));
+});
+
+test("the reference block before the per-turn marker is identical for different messages (cacheable prefix)", () => {
+  const knowledge = {
+    business: { name: "Shop" },
+    products: [{ sku: "A", name: "Grapadora", description: "d", price_eur: 1, url: "/productos/a" }, { sku: "B", name: "Pluma", description: "d", price_eur: 2, url: "/productos/b" }],
+    categories: [{ name: "Papel", url: "/productos/categoria/papel/", products: 5 }, { name: "Plumas", url: "/productos/categoria/plumas/", products: 3 }],
+    pages: { "/": { text: "home" } },
+    faq: { es: [{ q: "q", a: "a" }] },
+    articles: [{ title: "Plumas", url: "/blog/plumas", excerpt: "e" }, { title: "Grapas", url: "/blog/grapas", excerpt: "e" }],
+  };
+  const a = buildKnowledgeBlock(knowledge, "pluma", "https://s.example", { products: [], categories: [] });
+  const b = buildKnowledgeBlock(knowledge, "grapadora barata", "https://s.example", null);
+  const prefix = (t) => t.slice(0, t.indexOf("=== REFERENCIA PARA ESTA CONSULTA"));
+  assert.equal(prefix(a), prefix(b));
+  assert.ok(prefix(a).includes("Preguntas frecuentes"));
+  assert.match(a, /Categorías relacionadas con la consulta:\n- Plumas \(3\)/);
+  assert.match(a.slice(a.indexOf("=== REFERENCIA PARA ESTA CONSULTA")), /Artículos del blog relacionados:\n- Plumas/);
 });

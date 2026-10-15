@@ -61,19 +61,24 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "", mat
     .sort((a, b) => scoreText(b.title + " " + b.excerpt) - scoreText(a.title + " " + a.excerpt))
     .slice(0, MAX_KNOWLEDGE_ARTICLES);
 
-  const products = [...(knowledge.products || [])]
-    .sort((a, b) => scoreText(b.name + " " + b.description) - scoreText(a.name + " " + a.description))
-    .slice(0, MAX_KNOWLEDGE_PRODUCTS);
-
-  // Same treatment for the categories: the ones that share a term with the
-  // message first (sort is stable, so with no terms the payload's own order,
-  // biggest category first, survives), then a count of what was left out.
+  // Everything up to the FAQ is written in the payload's own order, never
+  // re-sorted by the message: the block is then byte-identical from one turn
+  // to the next and the provider caches those ~9k tokens (cached_tokens was
+  // 64 of 9,600 while the per-message sort came first, 2026-10-15). What
+  // depends on the message -- the catalogue search, the related categories,
+  // the related articles -- comes after it, in its own per-turn block.
+  const products = (knowledge.products || []).slice(0, MAX_KNOWLEDGE_PRODUCTS);
   const allCategories = Array.isArray(knowledge.categories) ? knowledge.categories : [];
-  const categories = allCategories
+  const categories = allCategories.slice(0, MAX_CATEGORIES);
+  // The categories that share a term with the message, for the per-turn
+  // block: the static list above is capped, and the one the visitor needs
+  // may be past the cap.
+  const relatedCategories = allCategories
     .slice(0, MAX_CATEGORIES_IN)
-    .map((c) => ({ c, score: scoreText(String(c?.name || "")) })) // score once, not per comparison
+    .map((c) => ({ c, score: scoreText(String(c?.name || "")) }))
+    .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_CATEGORIES)
+    .slice(0, 5)
     .map(({ c }) => c);
 
   // The registry knows the site; older payloads may also carry it themselves.
@@ -106,19 +111,6 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "", mat
     const urls = [abs(p.url), abs(p.url_es)].filter(Boolean).join(" · ");
     return `- ${p.name}${p.sku ? ` (${p.sku})` : ""}: ${p.description || ""}${price ? ` — ${price} ${billing}`.trimEnd() : ""}${yearly}${stock}${urls ? ` — ${urls}` : ""}`;
   };
-  // What the catalogue search found for THIS message goes first: these are
-  // the only products the model may name for a question about products that
-  // are not in the sample below.
-  if (matches && (matches.products?.length || matches.categories?.length)) {
-    lines.push("Productos del catálogo que coinciden con la consulta del visitante (búsqueda real, con precio y URL):");
-    for (const p of matches.products || []) lines.push(renderProduct(p));
-    if (matches.categories?.length) {
-      lines.push("Categorías que coinciden:");
-      for (const c of matches.categories) lines.push(`- ${c.name}${c.products != null ? ` (${c.products})` : ""}${c.url ? ` — ${abs(c.url)}` : ""}`);
-    }
-  } else if (matches && knowledge.catalogue?.search_path) {
-    lines.push("La búsqueda en el catálogo no ha encontrado productos para la consulta del visitante: no cites ningún producto concreto; remite a la categoría más cercana o al buscador del catálogo.");
-  }
   if (products.length) {
     lines.push("Productos (catálogo, precios publicados):");
     for (const p of products) lines.push(renderProduct(p));
@@ -162,6 +154,28 @@ export function buildKnowledgeBlock(knowledge, visitorMessage, siteUrl = "", mat
     if (!Array.isArray(items) || !items.length) continue;
     lines.push(`Preguntas frecuentes [${lang}]:`);
     for (const { q, a } of items.slice(0, MAX_FAQ_ITEMS)) lines.push(`- P: ${q} R: ${a}`);
+  }
+  // --- per-turn block: what depends on the visitor's message ---
+  lines.push("=== REFERENCIA PARA ESTA CONSULTA (búsqueda sobre el mensaje del visitante) ===");
+  // What the catalogue search found for THIS message: these are the only
+  // products the model may name for a question about products that are not
+  // in the sample above.
+  if (matches && (matches.products?.length || matches.categories?.length)) {
+    lines.push("Productos del catálogo que coinciden con la consulta del visitante (búsqueda real, con precio y URL):");
+    for (const p of matches.products || []) lines.push(renderProduct(p));
+    if (matches.categories?.length) {
+      lines.push("Categorías que coinciden:");
+      for (const c of matches.categories) lines.push(`- ${c.name}${c.products != null ? ` (${c.products})` : ""}${c.url ? ` — ${abs(c.url)}` : ""}`);
+    }
+  } else if (matches && knowledge.catalogue?.search_path) {
+    lines.push("La búsqueda en el catálogo no ha encontrado productos para la consulta del visitante: no cites ningún producto concreto; remite a la categoría más cercana o al buscador del catálogo.");
+  }
+  if (relatedCategories.length) {
+    lines.push("Categorías relacionadas con la consulta:");
+    for (const c of relatedCategories) {
+      const url = abs(c.url);
+      lines.push(`- ${c.name}${c.products != null ? ` (${c.products})` : ""}${url ? ` — ${url}` : ""}`);
+    }
   }
   if (articles.length) {
     lines.push("Artículos del blog relacionados:");
@@ -238,7 +252,10 @@ export function stripUnknownSiteLinks(reply, siteUrl, known) {
 // (webhook.js) must catch and treat any throw as "invalid_model_output" /
 // "openrouter_unavailable" per the escalation policy. Never returns a
 // partially-valid object.
-export const PROVIDER_POLICY = Object.freeze({ data_collection: "deny" });
+// `sort: "price"`: among the providers that satisfy `deny`, the cheapest. Same
+// model weights everywhere; a replay of the same turn cost 0.0004 $ on one
+// provider and 0.002 $ on another (2026-10-15) for the same answer.
+export const PROVIDER_POLICY = Object.freeze({ data_collection: "deny", sort: "price" });
 
 export async function getAssistantReply({ knowledge, chatwootMessages, visitorMessage, siteUrl, matches = null }) {
   const apiKey = process.env.OPENROUTER_API_KEY;
