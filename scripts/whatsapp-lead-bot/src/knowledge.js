@@ -52,3 +52,26 @@ export function knowledgeCacheState() {
     ]),
   );
 }
+
+// Per-turn catalogue lookup, when the site offers one (`catalogue.search_path`
+// in the payload). The payload carries a 60-product sample of a 20,000-product
+// catalogue; without this the model guessed products, prices and URLs for a
+// "pluma de buena calidad" (Shoroban, 2026-10-15). Never throws: null means
+// "no matches available", and the model falls back to the sample + categories.
+export async function searchCatalogue(entry, knowledge, query) {
+  const path = knowledge?.catalogue?.search_path;
+  if (!path || !query) return null;
+  const url = `${entry.siteUrl.replace(/\/+$/, "")}${path}?q=${encodeURIComponent(String(query).slice(0, 300))}&limit=8`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${entry.knowledgeToken}` },
+      signal: AbortSignal.timeout(Number(process.env.KNOWLEDGE_SEARCH_TIMEOUT_MS || 6000)),
+    });
+    if (!res.ok) throw new Error(`catalogue search failed: ${res.status}`);
+    const data = await res.json();
+    return { products: Array.isArray(data.products) ? data.products : [], categories: Array.isArray(data.categories) ? data.categories : [] };
+  } catch (err) {
+    console.error(`catalogue search failed for account ${entry.chatwootAccountId}: ${err.message}`);
+    return null;
+  }
+}

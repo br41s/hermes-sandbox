@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateAssistantOutput, getAssistantReply, buildKnowledgeBlock, PROVIDER_POLICY } from "./assistant.js";
+import { validateAssistantOutput, getAssistantReply, buildKnowledgeBlock, knownSiteUrls, stripUnknownSiteLinks, PROVIDER_POLICY } from "./assistant.js";
 
 function validRaw(overrides = {}) {
   return JSON.stringify({
@@ -229,4 +229,41 @@ test("knowledge without a site_url warns once per block that absolute URLs were 
   } finally {
     console.warn = orig;
   }
+});
+
+test("catalogue matches for the visitor's message come first, with their real URLs", () => {
+  const block = buildKnowledgeBlock(
+    { business: { name: "Shop" }, products: [{ sku: "S", name: "Sample", description: "d", price_eur: 1, url: "/productos/sample" }], catalogue: { search_path: "/api/knowledge/search" }, articles: [] },
+    "pluma",
+    "https://shop.example",
+    { products: [{ sku: "P1", name: "Lamy Safari", description: "pluma", price_eur: 29.95, in_stock: true, url: "/productos/pluma-lamy-safari-azul" }], categories: [{ name: "Plumas", url: "/productos/categoria/plumas/", products: 12 }] },
+  );
+  const i = block.indexOf("coinciden con la consulta"), j = block.indexOf("Productos (catálogo");
+  assert.ok(i > 0 && i < j, "matches before the sample");
+  assert.match(block, /- Lamy Safari \(P1\): pluma — 29\.95 € — https:\/\/shop\.example\/productos\/pluma-lamy-safari-azul/);
+  assert.match(block, /Categorías que coinciden:\n- Plumas \(12\) — https:\/\/shop\.example\/productos\/categoria\/plumas\//);
+});
+
+test("an empty catalogue search tells the model not to name products", () => {
+  const block = buildKnowledgeBlock(
+    { business: { name: "Shop" }, products: [], catalogue: { search_path: "/api/knowledge/search" }, articles: [] },
+    "grapadora",
+    "https://shop.example",
+    { products: [], categories: [] },
+  );
+  assert.match(block, /no ha encontrado productos/);
+});
+
+test("invented links on the customer's site are stripped; known ones and foreign ones stay", () => {
+  const knowledge = { business: { site_url: "https://shoroban.com" }, products: [{ url: "/productos/real" }], categories: [{ url: "/productos/categoria/plumas/" }], pages: { "/": {}, "/contacto": {} }, articles: [{ url: "/blog/post" }], faq: { es: [{ q: "q", a: "a", url: "/blog/faq" }] } };
+  const known = knownSiteUrls(knowledge, "https://shoroban.com", { products: [{ url: "/productos/from-search" }], categories: [] });
+  assert.ok(known.has("https://shoroban.com/productos/real") && known.has("https://shoroban.com/productos/from-search") && known.has("https://shoroban.com/productos/categoria/plumas") && known.has("https://shoroban.com/blog/post") && known.has("https://shoroban.com/blog/faq"));
+  const reply = "Tenemos: • Lamy https://shoroban.com/productos/lamy-safari • Real https://shoroban.com/productos/real. Categoría https://shoroban.com/productos/categoria/plumas/ y el buscador https://shoroban.com/productos/. Fuera: https://example.org/x.";
+  const { reply: cleaned, dropped } = stripUnknownSiteLinks(reply, "https://shoroban.com", known);
+  assert.equal(dropped, 1);
+  assert.ok(!cleaned.includes("lamy-safari"));
+  assert.ok(cleaned.includes("https://shoroban.com/productos/real."));
+  assert.ok(cleaned.includes("https://shoroban.com/productos/categoria/plumas/"));
+  assert.ok(cleaned.includes("https://shoroban.com/productos/."));
+  assert.ok(cleaned.includes("https://example.org/x."));
 });

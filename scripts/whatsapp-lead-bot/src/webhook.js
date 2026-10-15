@@ -17,7 +17,7 @@
 import { Router, json } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { getRegistryEntry } from "./registry.js";
-import { fetchKnowledge } from "./knowledge.js";
+import { fetchKnowledge, searchCatalogue } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
 import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
 import { notifyHandoff, conversationUrl } from "./notify.js";
@@ -321,8 +321,11 @@ async function processTurn(payload, { reclaimed = false } = {}) {
   let modelError = null;
   if (knowledge && !visitorRequestedHuman) {
     try {
-      const chatwootMessages = await chatwoot.getMessages(accountId, conversationId);
-      modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage, siteUrl: entry.siteUrl });
+      const [chatwootMessages, matches] = await Promise.all([
+        chatwoot.getMessages(accountId, conversationId),
+        searchCatalogue(entry, knowledge, visitorMessage),
+      ]);
+      modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage, siteUrl: entry.siteUrl, matches });
     } catch (err) {
       modelError = err;
       console.error(
