@@ -18,14 +18,21 @@
  * brief's own caveat on this point).
  */
 
+import { getRegistryEntry } from "./registry.js";
+
 function baseUrl() {
   const url = process.env.CHATWOOT_BASE_URL;
   if (!url) throw new Error("CHATWOOT_BASE_URL is not configured");
   return url.replace(/\/+$/, "");
 }
 
-function authToken() {
-  const token = process.env.CHATWOOT_AGENT_BOT_TOKEN;
+// Agent bots are scoped to one Chatwoot account, so a second customer needs
+// its own bot (platform API) and the registry entry carries that bot's
+// token as `agentBotToken`; CHATWOOT_AGENT_BOT_TOKEN stays the fallback for
+// the first account and for local runs.
+function authToken(accountId) {
+  const entry = accountId != null ? getRegistryEntry(accountId) : null;
+  const token = entry?.agentBotToken || process.env.CHATWOOT_AGENT_BOT_TOKEN;
   if (!token) throw new Error("CHATWOOT_AGENT_BOT_TOKEN is not configured");
   return token;
 }
@@ -42,12 +49,12 @@ function readToken() {
   return token;
 }
 
-async function chatwootRequest(path, { method = "GET", body, auth = "bot" } = {}) {
+async function chatwootRequest(path, { method = "GET", body, auth = "bot", accountId } = {}) {
   const res = await fetch(`${baseUrl()}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
-      api_access_token: auth === "user" ? readToken() : authToken(),
+      api_access_token: auth === "user" ? readToken() : authToken(accountId),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -73,6 +80,7 @@ export async function sendMessage(accountId, conversationId, content) {
   return chatwootRequest(`${conversationPath(accountId, conversationId)}/messages`, {
     method: "POST",
     body: { content, message_type: "outgoing" },
+    accountId,
   });
 }
 
@@ -80,7 +88,7 @@ export async function sendMessage(accountId, conversationId, content) {
 // catch the race where a human took over mid-generation -- do not trust
 // a status read at the start of the turn, always re-check here.
 export async function getConversation(accountId, conversationId) {
-  return chatwootRequest(conversationPath(accountId, conversationId));
+  return chatwootRequest(conversationPath(accountId, conversationId), { accountId });
 }
 
 // Last N messages for prompt context. Chatwoot returns newest-last or
@@ -99,13 +107,14 @@ export async function setStatus(accountId, conversationId, status) {
   return chatwootRequest(`${conversationPath(accountId, conversationId)}/toggle_status`, {
     method: "POST",
     body: { status },
+    accountId,
   });
 }
 
 export async function setCustomAttributes(accountId, conversationId, customAttributes) {
   return chatwootRequest(
     `${conversationPath(accountId, conversationId)}/custom_attributes`,
-    { method: "POST", body: { custom_attributes: customAttributes } },
+    { method: "POST", body: { custom_attributes: customAttributes }, accountId },
   );
 }
 
@@ -113,5 +122,6 @@ export async function addLabels(accountId, conversationId, labels) {
   return chatwootRequest(`${conversationPath(accountId, conversationId)}/labels`, {
     method: "POST",
     body: { labels },
+    accountId,
   });
 }

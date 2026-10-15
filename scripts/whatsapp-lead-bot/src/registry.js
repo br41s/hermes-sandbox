@@ -7,6 +7,10 @@
  * bot may quote them and a pricing question does not escalate on its own.
  * Leave it unset for a business that quotes per job.
  *
+ * `agentBotToken` (optional): the access token of this account's own Agent
+ * Bot (Chatwoot scopes bots to one account; create one per customer with the
+ * platform API, same webhook URL). Without it CHATWOOT_AGENT_BOT_TOKEN is used.
+ *
  * `telegram: { chatId, threadId }` (optional): where handoff alerts go --
  * the shared bot (TELEGRAM_BOT_TOKEN) posts into that chat, and into that
  * forum topic when threadId is set. One topic per customer in Hermes HQ.
