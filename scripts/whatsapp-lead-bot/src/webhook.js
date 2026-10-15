@@ -360,10 +360,13 @@ async function processTurn(payload, { reclaimed = false } = {}) {
     // beats defaulting an English visitor to Spanish (seen live 2026-10-13).
     // On the human-request path there is no model output, and WhatsApp
     // carries no browser language: the request's own wording is the last clue.
+    // The message's own language beats the browser's: a Spanish "quiero
+    // hablar con una persona" from an English browser got an English reply
+    // (2026-10-15).
     const lang =
       modelOutput?.detected_language ||
-      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language) ||
-      requestedHumanLanguage(visitorMessage);
+      requestedHumanLanguage(visitorMessage) ||
+      languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
     const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
     await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");
