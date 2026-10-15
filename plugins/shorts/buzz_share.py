@@ -67,6 +67,96 @@ def _child_env() -> Dict[str, str]:
     return child
 
 
+def strip_jpeg(data: bytes) -> bytes:
+    """The JPEG without its APPn and COM segments (JFIF, EXIF, ICC, comments); the image itself untouched.
+
+    Walks every marker, scans included, and stops at the EOI: a segment after
+    a scan (progressive files, trailing metadata) is filtered like any other,
+    and nothing after the EOI is carried over.
+    """
+    if data[:2] != b"\xff\xd8":
+        raise BuzzError("not a JPEG")
+    out = bytearray(b"\xff\xd8")
+    i, n = 2, len(data)
+    while i + 2 <= n:
+        if data[i] != 0xFF:
+            raise BuzzError("malformed JPEG")
+        marker = data[i + 1]
+        if marker == 0xFF:                      # fill byte
+            i += 1
+            continue
+        if marker == 0xD9:                      # EOI: the end, whatever follows
+            out += b"\xff\xd9"
+            return bytes(out)
+        if marker == 0xD8 or marker == 0x01 or 0xD0 <= marker <= 0xD7:   # standalone markers
+            out += data[i:i + 2]
+            i += 2
+            continue
+        if i + 4 > n:
+            raise BuzzError("malformed JPEG")
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        if length < 2 or i + 2 + length > n:
+            raise BuzzError("malformed JPEG")
+        segment = data[i:i + 2 + length]
+        i += 2 + length
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            continue                            # APPn and COM: dropped
+        out += segment
+        if marker == 0xDA:                      # the entropy-coded scan, up to the next real marker
+            j = i
+            while j + 1 < n and not (data[j] == 0xFF and data[j + 1] != 0x00 and not 0xD0 <= data[j + 1] <= 0xD7):
+                j += 1
+            out += data[i:j]
+            i = j
+    raise BuzzError("JPEG without an end")
+
+
+def canonical(path) -> Path:
+    """A copy of ``path`` the relay accepts: no metadata, no extra channels.
+
+    The Buzz relay refuses media that "contains metadata or a non-canonical
+    metadata channel" (HTTP 422, found 2026-10-15 when the first live
+    hand-off failed: every master.mp4 and cover.jpg the Studio renders carries
+    tags). MP4s are rewritten with their streams copied and every tag, chapter
+    and encoder stamp dropped; JPEGs lose their APPn and COM segments, which
+    is what the relay checks (a PNG is refused whatever is done to it).
+
+    The copy is always made afresh, into a temporary file promoted only when
+    the strip succeeded: a file already sitting beside the original (the
+    artifact is extracted there) is never trusted, and a failed strip leaves
+    nothing behind to be picked up next time.
+    """
+    src = Path(path)
+    suffix = src.suffix.lower()
+    if suffix in (".jpg", ".jpeg"):
+        kind = "jpeg"
+    elif suffix in (".mp4", ".m4v", ".mov"):
+        kind = "mp4"
+    else:
+        return src
+    dst = src.with_name(f"{src.stem}.buzz{suffix}")
+    part = dst.with_name(dst.name + ".part")
+    try:
+        if kind == "jpeg":
+            part.write_bytes(strip_jpeg(src.read_bytes()))
+        else:
+            ffmpeg = shutil.which("ffmpeg")
+            if not ffmpeg:
+                raise BuzzError("ffmpeg is not installed: cannot strip the video's metadata for the relay")
+            done = subprocess.run([ffmpeg, "-y", "-nostdin", "-loglevel", "error", "-i", str(src),
+                                   "-map", "0", "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1",
+                                   "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact",
+                                   "-movflags", "+faststart", "-f", "mp4", str(part)],
+                                  capture_output=True, text=True, errors="replace", timeout=300, check=False)
+            if done.returncode != 0 or not part.exists() or part.stat().st_size == 0:
+                raise BuzzError(f"could not strip {src.name} for the relay: {(done.stderr or '').strip()[-300:]}")
+        os.replace(part, dst)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    return dst
+
+
 def message(entry: Dict[str, Any], social: Dict[str, Any], youtube_url: Optional[str],
             attached: List[str]) -> str:
     mention = env("SHORTS_BUZZ_MENTION", "SocialBot").lstrip("@")
@@ -100,7 +190,8 @@ def post(entry: Dict[str, Any], files: Dict[str, str], social: Dict[str, Any],
     if not configured():
         raise BuzzError("Buzz is not configured (SHORTS_BUZZ_CHANNEL, BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG)")
     order = (("master", "master.mp4"), ("story", "story.mp4"), ("cover", "cover.jpg"))
-    paths = [(name, files[key]) for key, name in order if files.get(key) and Path(files[key]).exists()]
+    paths = [(name, str(canonical(files[key]))) for key, name in order
+             if files.get(key) and Path(files[key]).exists()]
     if not paths:
         raise BuzzError("no rendered files to attach")
     args = [binary, "messages", "send", "--channel", channel()]

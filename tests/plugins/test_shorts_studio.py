@@ -1016,6 +1016,8 @@ def buzz_env(monkeypatch):
                  "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
                  "YOUTUBE_REFRESH_TOKEN": "r"}.items():
         monkeypatch.setenv(k, v)
+    # The relay's metadata rule has its own test; the hand-off tests attach the files as they are.
+    monkeypatch.setattr("plugins.shorts.buzz_share.canonical", lambda path: Path(path))
 
 
 def test_buzz_takes_meta_away_from_hermes(buzz_env, monkeypatch):
@@ -1871,4 +1873,59 @@ def test_going_live_picks_up_the_shorts_handed_over_in_shadow(home, tmp_path, mo
     out = json.loads(st.handle_shorts_studio({"action": "status"}))
     assert [s_["request_id"] for s_ in out["shorts"]] == ["es-today-1"]
     assert ledger.get("es-nofiles-1")["state"] == "handed_off"
+
+
+def test_the_hand_off_attaches_metadata_free_copies_for_the_relay(tmp_path, monkeypatch):
+    from plugins.shorts import buzz_share
+
+    def seg(marker, payload):
+        return bytes([0xFF, marker]) + (2 + len(payload)).to_bytes(2, "big") + payload
+
+    # A progressive-looking JPEG: SOI, APP0, COM, DQT, SOS + scan (with a stuffed FF00 and an RST),
+    # a second DHT and SOS, then an APP1 after the scans, EOI, and a trailer after the EOI.
+    scan1 = b"\x12\xff\x00\x34\xff\xd0\x56"
+    scan2 = b"\x78\x9a"
+    jpg_bytes = (b"\xff\xd8" + seg(0xE0, b"JFIF") + seg(0xFE, b"hello") + seg(0xDB, b"\x00\x01\x02")
+                 + seg(0xDA, b"\x01\x00") + scan1 + seg(0xC4, b"\x10") + seg(0xDA, b"\x01\x01") + scan2
+                 + seg(0xE1, b"Exif\x00\x00secret") + b"\xff\xd9" + b"TRAILER")
+    jpg = tmp_path / "cover.jpg"
+    jpg.write_bytes(jpg_bytes)
+    (tmp_path / "cover.buzz.jpg").write_bytes(b"planted")          # a sibling from the artifact is never trusted
+    clean = buzz_share.canonical(jpg)
+    assert clean == tmp_path / "cover.buzz.jpg"
+    assert clean.read_bytes() == (b"\xff\xd8" + seg(0xDB, b"\x00\x01\x02") + seg(0xDA, b"\x01\x00") + scan1
+                                  + seg(0xC4, b"\x10") + seg(0xDA, b"\x01\x01") + scan2 + b"\xff\xd9")
+    assert not (tmp_path / "cover.buzz.jpg.part").exists()
+    for bad, why in ((b"x", "not a JPEG"), (b"\xff\xd8" + seg(0xDB, b"\x00"), "without an end"),
+                     (b"\xff\xd8\xff\xdb\xff\xff", "malformed")):
+        with pytest.raises(buzz_share.BuzzError, match=why):
+            buzz_share.strip_jpeg(bad)
+    # An MP4: streams copied, every tag, chapter and encoder stamp dropped, written to a temp file first.
+    mp4 = _touch(tmp_path / "master.mp4")
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"clean")
+        return type("Done", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(buzz_share.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(buzz_share.subprocess, "run", fake_run)
+    out = buzz_share.canonical(mp4)
+    assert out == tmp_path / "master.buzz.mp4" and out.read_bytes() == b"clean"
+    args = calls[0]
+    assert args[0] == "/usr/bin/ffmpeg" and args[-1].endswith("master.buzz.mp4.part")
+    assert args[args.index("-map_metadata") + 1] == "-1" and args[args.index("-c") + 1] == "copy"
+    assert args.count("+bitexact") == 3 and "-map_chapters" in args
+    # Other files go as they are; a failed ffmpeg is the hand-off's error and leaves nothing behind.
+    assert buzz_share.canonical(_touch(tmp_path / "captions.srt")) == tmp_path / "captions.srt"
+
+    def failing_run(args, **kw):
+        Path(args[-1]).write_bytes(b"half")
+        return type("Done", (), {"returncode": 1, "stdout": "", "stderr": "moov atom not found"})()
+
+    monkeypatch.setattr(buzz_share.subprocess, "run", failing_run)
+    with pytest.raises(buzz_share.BuzzError, match="moov atom"):
+        buzz_share.canonical(_touch(tmp_path / "story.mp4"))
+    assert not (tmp_path / "story.buzz.mp4").exists() and not (tmp_path / "story.buzz.mp4.part").exists()
 
