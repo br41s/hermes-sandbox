@@ -131,7 +131,8 @@ TIP_MIDDLE_KINDS = ("point", "stat", "list", "compare", "quote")
 TIP_MAX_BEATS = 7
 # The free part carries the tip (owner, 2026-10-15, after the first live shorts:
 # "longer, so the tip is useful, not just stated"): 60-110 spoken words, 3-5
-# cards, ~40-55 s with Lucía's take and the outro. Her words stay at 32.
+# cards, ~40-55 s with Lucía's take and the outro. The growth is Martín's
+# cards only: Lucía's take is the paid part and stays at TIP_MAX_ON_CAMERA_WORDS.
 TIP_MIN_TOTAL_WORDS = 60
 TIP_MAX_TOTAL_WORDS = 110
 TIP_MAX_OPENER_WORDS = 18

@@ -1110,6 +1110,7 @@ def test_the_tip_sample_is_one_tip_opened_by_lucia_and_narrated_by_martin(tip):
     assert [b["show"] for b in pkg["beats"]] == ["presenter", "card", "card", "card", "card", "card"]
     words = sum(len(b["vo"].split()) for b in pkg["beats"])
     assert pkg_mod.TIP_MIN_TOTAL_WORDS <= words <= pkg_mod.TIP_MAX_TOTAL_WORDS
+    assert pkg_mod.TIP_MAX_ON_CAMERA_WORDS == 32          # the longer tip is Martín's; Lucía's paid take did not grow
     assert pkg["beats"][1]["before"] and pkg["beats"][1]["after"]
 
 

@@ -335,7 +335,8 @@ What a tip short is, in order:
 4. **3–5 cards** (before/after, steps, a figure, a key line, the caveat that
    avoids the usual mistake; 60–110 spoken words in all, ~40–55 s with the
    take and the outro: the free part is where the tip becomes something the
-   viewer can apply, owner 2026-10-15), narrated by
+   viewer can apply, owner 2026-10-15; Lucía's take is the paid part and does
+   not grow, 32 words still), narrated by
    Martín from a bubble playing **his loop, recorded once** (look up, point,
    look back; `presenter.bubble_loop`). The cards are paper (`brand` palette:
    cream, red, ink; `Tip.tsx` `CardZone` wraps them in a `Panel`) over the
