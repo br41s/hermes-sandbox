@@ -21,6 +21,7 @@ import { fetchKnowledge } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
 import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
 import { notifyHandoff, conversationUrl } from "./notify.js";
+import { handoffExpired, handoffTtlMs } from "./handoff.js";
 import * as chatwoot from "./chatwoot.js";
 import { maskPhone, redactBody } from "./redact.js";
 
@@ -202,10 +203,42 @@ async function handleWebhookEvent(payload) {
         console.error(`failed to handle unsupported media: ${err.message}`),
       );
     }
+    if (reason === "not_bot_owned" && payload?.conversation?.status === "open") {
+      await maybeReclaim(payload).catch((err) =>
+        console.error(`reclaim check failed for conversation ${payload?.conversation?.id}: ${err.message}`),
+      );
+    }
     return;
   }
 
   await processTurn(payload);
+}
+
+// A visitor wrote into a conversation a person owns. If that person (or
+// anyone) has been silent for longer than the handoff TTL, the handoff has
+// expired: take the conversation back and answer. See handoff.js.
+async function maybeReclaim(payload) {
+  const accountId = payload?.account?.id;
+  const conversationId = payload?.conversation?.id;
+  if (!accountId || !conversationId || !getRegistryEntry(accountId)) return;
+  const [conversation, messages] = await Promise.all([
+    chatwoot.getConversation(accountId, conversationId),
+    chatwoot.getMessages(accountId, conversationId),
+  ]);
+  const attrs = conversation?.custom_attributes || {};
+  const { expired, idleMs } = handoffExpired({ messages, escalationAt: attrs.escalation_at });
+  const idleMin = idleMs == null ? "unknown" : Math.round(idleMs / 60000);
+  if (!expired) {
+    console.log(`conversation ${conversationId} stays with a person (last human activity ${idleMin} min ago, ttl ${handoffTtlMs() / 60000} min)`);
+    return;
+  }
+  console.log(`handoff expired in conversation ${conversationId} (idle ${idleMin} min): bot takes it back`);
+  await chatwoot.setStatus(accountId, conversationId, "pending");
+  await chatwoot.setCustomAttributes(accountId, conversationId, {
+    handoff_expired_at: new Date().toISOString(),
+    bot_turn_count: 0, // a new episode: the turn cap counts from here
+  });
+  await processTurn({ ...payload, conversation: { ...payload.conversation, status: "pending" } }, { reclaimed: true });
 }
 
 async function handleUnsupportedMedia(payload) {
@@ -216,7 +249,7 @@ async function handleUnsupportedMedia(payload) {
   await chatwoot.setStatus(accountId, conversationId, "open");
   await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
   await chatwoot
-    .setCustomAttributes(accountId, conversationId, { escalation_reason: "unsupported_media" })
+    .setCustomAttributes(accountId, conversationId, { escalation_reason: "unsupported_media", escalation_at: new Date().toISOString() })
     .catch(() => {});
   const entry = getRegistryEntry(accountId);
   if (entry) {
@@ -238,7 +271,14 @@ function channelLabel(payload) {
   return type ? type.replace(/^Channel::/, "") : "chat";
 }
 
-async function processTurn(payload) {
+// Prefixed to the first bot reply after an expired handoff, in the
+// visitor's language: they were told a person would continue.
+const RECLAIM_NOTICE = {
+  es: "Sigo ayudándote yo mientras una persona del equipo se incorpora.",
+  en: "I'll keep helping you while a person from the team joins.",
+};
+
+async function processTurn(payload, { reclaimed = false } = {}) {
   const accountId = payload.account.id;
   const conversationId = payload.conversation.id;
   const visitorMessage = String(payload.content || "");
@@ -331,6 +371,7 @@ async function processTurn(payload) {
     await chatwoot.setCustomAttributes(accountId, conversationId, {
       bot_turn_count: turnCount + 1,
       escalation_reason: decision.reason,
+      escalation_at: new Date().toISOString(), // the handoff TTL counts from here (handoff.js)
       // Bounded, operator-facing detail on *why* the model output was
       // unusable -- useful when debugging a spike in escalations without
       // needing to grep service logs for the conversation id.
@@ -354,7 +395,8 @@ async function processTurn(payload) {
     return;
   }
 
-  await chatwoot.sendMessage(accountId, conversationId, modelOutput.reply);
+  const notice = reclaimed ? RECLAIM_NOTICE[modelOutput.detected_language] || RECLAIM_NOTICE.es : null;
+  await chatwoot.sendMessage(accountId, conversationId, notice ? `${notice}\n\n${modelOutput.reply}` : modelOutput.reply);
   await chatwoot.setCustomAttributes(accountId, conversationId, {
     bot_turn_count: turnCount + 1,
     lead_need: modelOutput.lead.need || existingAttributes.lead_need || null,
