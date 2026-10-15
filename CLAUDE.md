@@ -208,6 +208,12 @@ on the file's stat.
 the bare `/webhooks/auditor-pr-trigger` no longer finds it; boot §6e of `03-biglobster-config`
 keeps the route's `profile: auditor` in step. A new audited repo needs its hook on the `/p/auditor/`
 URL, or its PRs wait for the 6-hourly poll.
+A webhook-queued run delivers through the gateway's live adapters, picked by the ticker's
+rule (`cron/fork_ext/dispatch.py` `live_adapters_for`). Until 2026-10-15 it got none, so
+every webhook-triggered `auditor-review` with output failed `platform 'telegram' not
+configured/enabled`: the auditor's scope holds no Telegram token. Only tick runs reached
+topic 1904. Upstream's `cron_job` route (`run_event_job`) still runs without adapters, and
+no live route uses it.
 
 ## Deployment — Zeabur, Frankfurt
 

@@ -558,6 +558,7 @@ class WebhookAdapter(BasePlatformAdapter):
         trigger_job_id = route_config["trigger_cron_job_id"]
         try:
             from cron.jobs import get_job as _get_job
+            from cron.fork_ext.dispatch import live_adapters_for
             from cron.scheduler import dispatch_job_async as _dispatch_async
             with self._profile_scope(profile):  # no-op for bare routes
                 _job = _get_job(trigger_job_id)
@@ -566,7 +567,10 @@ class WebhookAdapter(BasePlatformAdapter):
                                    route_name, trigger_job_id, delivery_id)
                     return web.json_response({"status": "error", "error": "Cron job not found",
                                               "delivery_id": delivery_id}, status=502)
-                trigger_result = _dispatch_async(_job)
+                # The ticker's adapters for this profile, so the run delivers like a tick run.
+                trigger_result = _dispatch_async(
+                    _job, adapters=live_adapters_for(self.gateway_runner, profile),
+                    loop=asyncio.get_running_loop())
         except Exception:
             logger.exception("[webhook] trigger_cron_job_id failed route=%s job_id=%s delivery=%s",
                              route_name, trigger_job_id, delivery_id)

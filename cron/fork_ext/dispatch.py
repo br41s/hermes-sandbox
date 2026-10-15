@@ -44,9 +44,38 @@ def in_profile_store() -> bool:
         return True
 
 
-def dispatch_job_async(job: dict) -> dict:
+def live_adapters_for(runner, profile=None):
+    """The live adapters a gateway-triggered run of ``profile``'s job delivers through.
+
+    The multiplex ticker's rule (``scheduler_provider`` ``tick_adapters_for``): the launch
+    profile uses the runner's adapters; a secondary uses its own, else rides the primary's
+    adapters only for targets a ``gateway.profile_routes`` entry maps to it
+    (``SharedRouteAdapters``), never the default bot. Call it inside the profile's scope:
+    the route lookup reads the active home. ``None`` without a runner (no live gateway).
+
+    Without this a webhook-triggered run had no adapters, so delivery fell to the
+    standalone path under the profile's secret scope, which holds no Telegram token: every
+    ``auditor-review`` run with something to say failed ``platform 'telegram' not
+    configured/enabled`` from its move to the auditor's store (2026-10-04) on.
+    """
+    if runner is None:
+        return None
+    adapters = getattr(runner, "adapters", None)
+    if not profile or profile == getattr(runner, "_primary_profile_name", None):
+        return adapters
+    own = (getattr(runner, "_profile_adapters", None) or {}).get(profile) or {}
+    if not own and adapters:
+        from cron.scheduler_preflight import (
+            SharedRouteAdapters, _primary_profile_routes_for_current_home,
+        )
+        return SharedRouteAdapters(adapters, _primary_profile_routes_for_current_home())
+    return own
+
+
+def dispatch_job_async(job: dict, *, adapters=None, loop=None) -> dict:
     """Enqueue a job on the pool ``tick`` uses for its store, fire-and-forget, and
-    return immediately without running it inline.
+    return immediately without running it inline. ``adapters``/``loop`` are the live
+    gateway's (``live_adapters_for``), so delivery takes the same path as a tick run.
 
     The webhook direct-trigger (``trigger_cron_job_id``) used to run ``run_one_job``
     INLINE in the gateway event loop, beside tick's runs of the same profile: that
@@ -85,7 +114,7 @@ def dispatch_job_async(job: dict) -> dict:
 
     def _run_and_release(j=job, c=ctx, home=claim_home):
         try:
-            return c.run(sched.run_one_job, j)
+            return c.run(sched.run_one_job, j, adapters=adapters, loop=loop)
         finally:
             sched.release_running_job(j["id"], home=home)
 
