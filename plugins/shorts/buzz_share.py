@@ -68,25 +68,47 @@ def _child_env() -> Dict[str, str]:
 
 
 def strip_jpeg(data: bytes) -> bytes:
-    """The JPEG without its APPn and COM segments (JFIF, EXIF, ICC, comments); the image itself untouched."""
+    """The JPEG without its APPn and COM segments (JFIF, EXIF, ICC, comments); the image itself untouched.
+
+    Walks every marker, scans included, and stops at the EOI: a segment after
+    a scan (progressive files, trailing metadata) is filtered like any other,
+    and nothing after the EOI is carried over.
+    """
     if data[:2] != b"\xff\xd8":
         raise BuzzError("not a JPEG")
     out = bytearray(b"\xff\xd8")
-    i = 2
-    while i + 4 <= len(data) and data[i] == 0xFF:
+    i, n = 2, len(data)
+    while i + 2 <= n:
+        if data[i] != 0xFF:
+            raise BuzzError("malformed JPEG")
         marker = data[i + 1]
-        if marker == 0xDA:                      # SOS: the scan and the EOI follow, kept whole
-            out += data[i:]
+        if marker == 0xFF:                      # fill byte
+            i += 1
+            continue
+        if marker == 0xD9:                      # EOI: the end, whatever follows
+            out += b"\xff\xd9"
             return bytes(out)
-        if marker == 0xD8 or 0xD0 <= marker <= 0xD7:   # standalone markers
+        if marker == 0xD8 or marker == 0x01 or 0xD0 <= marker <= 0xD7:   # standalone markers
             out += data[i:i + 2]
             i += 2
             continue
+        if i + 4 > n:
+            raise BuzzError("malformed JPEG")
         length = int.from_bytes(data[i + 2:i + 4], "big")
-        if not (0xE0 <= marker <= 0xEF or marker == 0xFE):
-            out += data[i:i + 2 + length]
+        if length < 2 or i + 2 + length > n:
+            raise BuzzError("malformed JPEG")
+        segment = data[i:i + 2 + length]
         i += 2 + length
-    raise BuzzError("JPEG without a scan")
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            continue                            # APPn and COM: dropped
+        out += segment
+        if marker == 0xDA:                      # the entropy-coded scan, up to the next real marker
+            j = i
+            while j + 1 < n and not (data[j] == 0xFF and data[j + 1] != 0x00 and not 0xD0 <= data[j + 1] <= 0xD7):
+                j += 1
+            out += data[i:j]
+            i = j
+    raise BuzzError("JPEG without an end")
 
 
 def canonical(path) -> Path:
@@ -97,31 +119,42 @@ def canonical(path) -> Path:
     hand-off failed: every master.mp4 and cover.jpg the Studio renders carries
     tags). MP4s are rewritten with their streams copied and every tag, chapter
     and encoder stamp dropped; JPEGs lose their APPn and COM segments, which
-    is what the relay checks (a PNG is refused whatever is done to it). The
-    copy sits beside the original as ``<stem>.buzz<suffix>`` and is reused
-    while the original is unchanged.
+    is what the relay checks (a PNG is refused whatever is done to it).
+
+    The copy is always made afresh, into a temporary file promoted only when
+    the strip succeeded: a file already sitting beside the original (the
+    artifact is extracted there) is never trusted, and a failed strip leaves
+    nothing behind to be picked up next time.
     """
     src = Path(path)
     suffix = src.suffix.lower()
-    dst = src.with_name(f"{src.stem}.buzz{suffix}")
-    if dst.exists() and dst.stat().st_size > 0 and dst.stat().st_mtime >= src.stat().st_mtime:
-        return dst
     if suffix in (".jpg", ".jpeg"):
-        dst.write_bytes(strip_jpeg(src.read_bytes()))
-        return dst
-    if suffix in (".mp4", ".m4v", ".mov"):
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
-            raise BuzzError("ffmpeg is not installed: cannot strip the video's metadata for the relay")
-        done = subprocess.run([ffmpeg, "-y", "-nostdin", "-loglevel", "error", "-i", str(src),
-                               "-map", "0", "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1",
-                               "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact",
-                               "-movflags", "+faststart", str(dst)],
-                              capture_output=True, text=True, errors="replace", timeout=300, check=False)
-        if done.returncode != 0 or not dst.exists():
-            raise BuzzError(f"could not strip {src.name} for the relay: {(done.stderr or '').strip()[-300:]}")
-        return dst
-    return src
+        kind = "jpeg"
+    elif suffix in (".mp4", ".m4v", ".mov"):
+        kind = "mp4"
+    else:
+        return src
+    dst = src.with_name(f"{src.stem}.buzz{suffix}")
+    part = dst.with_name(dst.name + ".part")
+    try:
+        if kind == "jpeg":
+            part.write_bytes(strip_jpeg(src.read_bytes()))
+        else:
+            ffmpeg = shutil.which("ffmpeg")
+            if not ffmpeg:
+                raise BuzzError("ffmpeg is not installed: cannot strip the video's metadata for the relay")
+            done = subprocess.run([ffmpeg, "-y", "-nostdin", "-loglevel", "error", "-i", str(src),
+                                   "-map", "0", "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1",
+                                   "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact",
+                                   "-movflags", "+faststart", "-f", "mp4", str(part)],
+                                  capture_output=True, text=True, errors="replace", timeout=300, check=False)
+            if done.returncode != 0 or not part.exists() or part.stat().st_size == 0:
+                raise BuzzError(f"could not strip {src.name} for the relay: {(done.stderr or '').strip()[-300:]}")
+        os.replace(part, dst)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    return dst
 
 
 def message(entry: Dict[str, Any], social: Dict[str, Any], youtube_url: Optional[str],
