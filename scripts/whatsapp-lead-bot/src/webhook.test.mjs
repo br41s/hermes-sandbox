@@ -6,6 +6,7 @@ import {
   languageFromBrowser,
   escalationMessage,
   dedupeKey,
+  expectedSecretFor,
 } from "./webhook.js";
 
 const basePayload = {
@@ -116,4 +117,23 @@ test("languageFromBrowser reduces a browser locale to a 2-letter code", () => {
   assert.equal(languageFromBrowser("pt_BR"), "pt");
   assert.equal(languageFromBrowser(undefined), null);
   assert.equal(languageFromBrowser(""), null);
+});
+
+test("the webhook secret is bound to the account named in the payload", async () => {
+  process.env.WEBHOOK_SHARED_SECRET = "shared-secret";
+  process.env.REGISTRY_JSON_BASE64 = Buffer.from(
+    JSON.stringify({
+      "2": { chatwootAccountId: 2, siteUrl: "https://a.example", enabled: true },
+      "3": { chatwootAccountId: 3, siteUrl: "https://b.example", enabled: true, webhookSecret: "secret-for-3" },
+    }),
+  ).toString("base64");
+  const { loadRegistry } = await import("./registry.js");
+  loadRegistry();
+  assert.equal(expectedSecretFor(2), "shared-secret"); // no own secret: the shared one
+  assert.equal(expectedSecretFor(3), "secret-for-3"); // own secret: only that one
+  assert.equal(expectedSecretFor(999), "shared-secret"); // unknown account: shared (dropped later as unregistered)
+  assert.equal(expectedSecretFor(undefined), "shared-secret");
+  delete process.env.REGISTRY_JSON_BASE64;
+  delete process.env.WEBHOOK_SHARED_SECRET;
+  assert.equal(expectedSecretFor(2), "", "unconfigured never matches");
 });

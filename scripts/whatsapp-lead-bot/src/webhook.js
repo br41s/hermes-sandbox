@@ -97,13 +97,23 @@ function alreadyProcessed(messageId) {
   return false;
 }
 
-function secretMatches(presented) {
-  const configured = process.env.WEBHOOK_SHARED_SECRET || "";
+function secretMatches(presented, configured) {
   if (!configured) return false; // never accept an unconfigured secret
   const a = Buffer.from(presented || "");
   const b = Buffer.from(configured);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+// The secret is bound to the account the payload names: an account whose
+// registry entry carries its own `webhookSecret` (its Agent Bot's outgoing
+// URL carries it) is accepted with that secret only, never with the shared
+// one -- otherwise a leaked shared secret would let a forged webhook act in
+// every account, with every account's bot token. Accounts without one keep
+// WEBHOOK_SHARED_SECRET. Exported for tests.
+export function expectedSecretFor(accountId) {
+  const entry = accountId != null ? getRegistryEntry(accountId) : null;
+  return entry?.webhookSecret || process.env.WEBHOOK_SHARED_SECRET || "";
 }
 
 // Chatwoot's Agent Bot "outgoing_url" is configured as a plain URL with no
@@ -149,7 +159,7 @@ export function shouldProcess(payload) {
 // relying on server.js to have applied one globally first.
 router.post("/", json(), async (req, res) => {
   const presented = resolvePresentedSecret(req.headers.authorization, req.query.secret);
-  if (!secretMatches(presented)) {
+  if (!secretMatches(presented, expectedSecretFor(req.body?.account?.id))) {
     // Logged: the first live delivery vanished without a trace because every
     // early-exit here was silent. Keys only -- never the secret or the body.
     console.warn(

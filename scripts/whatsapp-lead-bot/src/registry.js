@@ -7,6 +7,10 @@
  * bot may quote them and a pricing question does not escalate on its own.
  * Leave it unset for a business that quotes per job.
  *
+ * `webhookSecret` (optional): the secret in this account's Agent Bot
+ * outgoing URL (`?secret=...`). With it set, webhooks naming this account
+ * are accepted with this secret only; without it, WEBHOOK_SHARED_SECRET.
+ *
  * `agentBotToken` (optional): the access token of this account's own Agent
  * Bot (Chatwoot scopes bots to one account; create one per customer with the
  * platform API, same webhook URL). Without it CHATWOOT_AGENT_BOT_TOKEN is used.
