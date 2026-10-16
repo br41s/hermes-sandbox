@@ -15,6 +15,7 @@ from plugins.shorts.social import youtube
 
 RELAY = "https://relay.example"
 VIDEODESK = "d8" * 32
+SEODESK = "5e" * 32
 STRANGER = "ab" * 32
 
 
@@ -34,10 +35,22 @@ def _request(**over):
     return f"{series.MARK}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
 
 
+def _update(**over):
+    body = {
+        "episodio": "01", "agente": "content-gap-hunter",
+        "es": {"id": "esVideoId01", "titulo": "El artículo que te falta | Content Gap Hunter",
+               "descripcion": "0:00 El problema\n0:20 Cómo trabaja\n1:30 Qué recibes\n\n#SEO #IA",
+               "etiquetas": ["seo", "ia"], "portada": f"{RELAY}/media/{'4' * 64}.jpg"},
+    }
+    body.update(over)
+    return f"{series.MARK_UPDATE}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path, raising=False)
-    for k, v in {"SERIES_BUZZ_CHANNEL": "f4a74eae-a548-56fe-9a2e-f89bfd929f0e", "SERIES_BUZZ_FROM": VIDEODESK,
+    for k, v in {"SERIES_BUZZ_CHANNEL": "f4a74eae-a548-56fe-9a2e-f89bfd929f0e",
+                 "SERIES_BUZZ_FROM": f"{VIDEODESK},{SEODESK}",
                  "BUZZ_RELAY_URL": "wss://relay.example", "BUZZ_PRIVATE_KEY": "nsec1test", "BUZZ_AUTH_TAG": "[]",
                  "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s", "YOUTUBE_REFRESH_TOKEN": "r",
                  "SHORTS_PUBLISH_MODE": "live"}.items():
@@ -57,7 +70,8 @@ def buzz(monkeypatch):
         if args[1:3] == ["messages", "get"]:
             out = json.dumps(state["events"])
         elif args[1:3] == ["media", "get"]:
-            Path(args[args.index("-o") + 1]).write_bytes(b"video")
+            dest = Path(args[args.index("-o") + 1])
+            dest.write_bytes(b"\xff\xd8\xff\xe0cover" if "portada" in dest.name else b"video")
             out = ""
         else:
             out = "{}"
@@ -73,7 +87,7 @@ def uploads(monkeypatch):
 
     def fake_upload(video, thumb, srt, social, lang, **kw):
         done.append({"lang": lang, "srt": srt, "social": social, **kw})
-        vid = f"{lang}VideoId0"[:11]
+        vid = f"{lang}VideoId01"
         return {"id": vid, "url": f"https://www.youtube.com/watch?v={vid}", "privacy": "public", "warnings": []}
 
     monkeypatch.setattr(youtube, "upload", fake_upload)
@@ -173,3 +187,90 @@ def test_a_failed_language_is_retried_alone_next_run(env, buzz, uploads, monkeyp
 def test_not_configured_is_a_quiet_skip(tmp_path, monkeypatch):
     monkeypatch.delenv("SERIES_BUZZ_CHANNEL", raising=False)
     assert "not configured" in series.run()["skipped"]
+
+
+@pytest.fixture
+def updates(monkeypatch):
+    done = []
+
+    def fake_update(video_id, social, lang, thumb=None):
+        done.append({"id": video_id, "lang": lang, "social": social, "thumb": thumb.read_bytes() if thumb else None})
+        return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "thumbnail": bool(thumb),
+                "warnings": []}
+
+    monkeypatch.setattr(youtube, "update", fake_update)
+    return done
+
+
+def test_parse_update_lists_every_problem(env):
+    item = series.parse_update(_update())
+    assert item["langs"] == ["es"] and item["es"]["portada"].endswith(".jpg")
+    with pytest.raises(series.SeriesError) as exc:
+        series.parse_update(_update(es={"id": "short", "titulo": "Un <título> largo", "descripcion": "corta",
+                                        "portada": "https://evil.example/x.jpg"}))
+    text = str(exc.value)
+    assert "es.id" in text and "es.descripcion" in text and "< and >" in text and "es.portada" in text
+    with pytest.raises(series.SeriesError, match="at least one language"):
+        series.parse_update(_update(es=None))
+
+
+def test_seodesk_optimises_a_published_episode_once(env, buzz, uploads, updates):
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1),
+                      _event(_update(), pubkey=SEODESK, eid="b" * 64, at=2),
+                      _event(_update(), pubkey=STRANGER, eid="c" * 64, at=3)]
+    out = series.run()
+    assert out["published"] and out["updated"] == [{"episodio": "01", "agente": "content-gap-hunter", "langs": ["es"]}]
+    (up,) = updates
+    assert up["id"] == "esVideoId01" and up["thumb"].startswith(b"\xff\xd8")
+    assert up["social"]["youtube"]["description"].startswith("0:00 El problema")
+    reply = [kw["input"] for a, kw in _sends(buzz) if a[a.index("--reply-to") + 1] == "b" * 64]
+    assert len(reply) == 1 and "actualizado" in reply[0] and "portada" in reply[0]
+    assert not any((env / "workspace" / "shorts" / "series").glob("u-*/*"))
+
+    again = series.run()
+    assert "updated" not in again and len(updates) == 1
+
+
+def test_an_update_for_a_video_outside_the_series_is_refused(env, buzz, uploads, updates):
+    buzz["events"] = [_event(_update(), pubkey=SEODESK)]
+    out = series.run()
+    assert out["invalid"] and "not a video of the series" in out["invalid"][0]["error"] and not updates
+    (args, kw), = _sends(buzz)
+    assert "No puedo actualizar" in kw["input"]
+
+
+def test_youtube_update_rewrites_the_snippet_and_sets_the_cover(env, tmp_path, monkeypatch):
+    calls = []
+
+    class Resp:
+        def __init__(self, code, body=None):
+            self.status_code, self._body, self.text = code, body or {}, json.dumps(body or {})
+
+        def json(self):
+            return self._body
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **kw):
+            calls.append(("post", url, kw))
+            return Resp(200, {"access_token": "t"} if "token" in url else {})
+
+        def put(self, url, **kw):
+            calls.append(("put", url, kw))
+            return Resp(200, {"id": "esVideoId0"})
+
+    monkeypatch.setattr(youtube, "_client", lambda: Client())
+    cover = tmp_path / "c.jpg"
+    cover.write_bytes(b"\xff\xd8\xff")
+    social = {"youtube": {"title": "El artículo que te falta", "description": "0:00 Inicio", "tags": ["seo"]}}
+    out = youtube.update("esVideoId0", social, "es", cover)
+    put = next(c for c in calls if c[0] == "put")
+    body = json.loads(put[2]["content"])
+    assert put[2]["params"] == {"part": "snippet"} and body["id"] == "esVideoId0"
+    assert body["snippet"]["title"] == "El artículo que te falta" and body["snippet"]["categoryId"]
+    assert any(c[1] == youtube.THUMB_URL for c in calls) and out["thumbnail"] is True

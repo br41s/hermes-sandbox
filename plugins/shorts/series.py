@@ -21,10 +21,22 @@ message's thread with the links, mentioning the sender. A ledger keyed by the
 message id makes every step idempotent: a video is never uploaded twice, and a
 run that stops halfway is finished by the next one.
 
+Optimising a published episode: SEODesk posts ``#actualizar-video`` with a JSON block, one
+entry per language it rewrites (either or both)::
+
+    {"episodio": "01", "agente": "content-gap-hunter",
+     "es": {"id": "<YouTube id>", "titulo": "...", "descripcion": "... (chapters, links, hashtags)",
+            "etiquetas": ["..."], "portada": "<relay /media/ URL of a JPEG, or null>"},
+     "en": {...}}
+
+The same run applies it with ``videos.update`` (title, description, tags) and
+``thumbnails.set``, and replies in the thread. Only from the allowed senders, and
+only for videos this module uploaded (ids in its ledger). About 100 units each.
+
 Config (service env of the profile that runs the shorts jobs):
 
     SERIES_BUZZ_CHANNEL     UUID of the channel episodes are requested in
-    SERIES_BUZZ_FROM        hex pubkeys allowed to request (comma-separated; VideoDesk)
+    SERIES_BUZZ_FROM        hex pubkeys allowed to request (comma-separated; VideoDesk, SEODesk)
     SERIES_YOUTUBE_PRIVACY  public | unlisted | private   (default public)
     SERIES_MAX_PER_DAY      episodes started per UTC day (default 1)
     BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG   as for the shorts hand-off
@@ -48,10 +60,12 @@ from plugins.shorts import buzz_share
 from plugins.shorts._env import env
 
 MARK = "#publicar-episodio"
+MARK_UPDATE = "#actualizar-video"
 LANGS = ("es", "en")
 MAX_ATTEMPTS = 3            # per episode; after that the sender is told and it is left alone
 MIN_SECONDS, MAX_SECONDS = 30.0, 900.0
 TIMEOUT = 600
+MAX_THUMB_BYTES = 2_000_000     # YouTube's limit for a custom thumbnail
 
 
 class SeriesError(RuntimeError):
@@ -87,13 +101,17 @@ def _ledger_path() -> Path:
     return _root() / "ledger.json"
 
 
-def _load() -> Dict[str, Any]:
-    path = _ledger_path()
+def _updates_path() -> Path:
+    return _root() / "updates.json"
+
+
+def _load(path: Optional[Path] = None) -> Dict[str, Any]:
+    path = path or _ledger_path()
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def _save(data: Dict[str, Any]) -> None:
-    path = _ledger_path()
+def _save(data: Dict[str, Any], path: Optional[Path] = None) -> None:
+    path = path or _ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -123,25 +141,53 @@ def _media_url(value: Any, what: str) -> str:
     return url
 
 
-def parse(content: str) -> Dict[str, Any]:
-    """The episode request in a message, validated. Raises SeriesError with every problem."""
+def _json_block(content: str, mark: str) -> Dict[str, Any]:
     text = (content or "").strip()
-    if not text.startswith(MARK):
-        raise SeriesError(f"the message does not start with {MARK}")
+    if not text.startswith(mark):
+        raise SeriesError(f"the message does not start with {mark}")
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
-    raw = fenced.group(1) if fenced else text[len(MARK):].strip()
+    raw = fenced.group(1) if fenced else text[len(mark):].strip()
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SeriesError(f"the JSON block does not parse: {exc}") from exc
-    problems: List[str] = []
+    if not isinstance(data, dict):
+        raise SeriesError("the JSON block is not an object")
+    return data
+
+
+def _metadata(part: Dict[str, Any], lang: str, problems: List[str]) -> Dict[str, Any]:
+    """Title, description and tags of one language, as YouTube accepts them."""
+    titulo = " ".join(str(part.get("titulo") or "").split())
+    if not 10 <= len(titulo) <= 100:
+        problems.append(f"{lang}.titulo: 10 to 100 characters")
+    descripcion = str(part.get("descripcion") or "").strip()
+    if not 20 <= len(descripcion) <= 4900:
+        problems.append(f"{lang}.descripcion: 20 to 4900 characters")
+    if any(c in titulo + descripcion for c in "<>"):
+        problems.append(f"{lang}: YouTube rejects < and > in the title and description")
+    etiquetas = part.get("etiquetas") or []
+    if not isinstance(etiquetas, list) or not all(isinstance(t, str) and t.strip() for t in etiquetas):
+        problems.append(f"{lang}.etiquetas: a list of words")
+        etiquetas = []
+    return {"titulo": titulo, "descripcion": descripcion, "etiquetas": [t.strip() for t in etiquetas][:15]}
+
+
+def _episode(data: Dict[str, Any], problems: List[str]) -> Dict[str, Any]:
     agente = str(data.get("agente") or "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", agente):
         problems.append("agente: the agent's page slug, e.g. content-gap-hunter")
     episodio = str(data.get("episodio") or "")
     if not re.fullmatch(r"\d{1,3}", episodio):
         problems.append("episodio: its number, e.g. 01")
-    out = {"agente": agente, "episodio": episodio}
+    return {"agente": agente, "episodio": episodio}
+
+
+def parse(content: str) -> Dict[str, Any]:
+    """The episode request in a message, validated. Raises SeriesError with every problem."""
+    data = _json_block(content, MARK)
+    problems: List[str] = []
+    out = _episode(data, problems)
     for lang in LANGS:
         part = data.get(lang) or {}
         try:
@@ -155,18 +201,32 @@ def parse(content: str) -> Dict[str, Any]:
                 srt = _media_url(part.get("srt"), f"{lang}.srt")
             except SeriesError as exc:
                 problems.append(str(exc))
-        titulo = " ".join(str(part.get("titulo") or "").split())
-        if not 10 <= len(titulo) <= 100:
-            problems.append(f"{lang}.titulo: 10 to 100 characters")
-        descripcion = str(part.get("descripcion") or "").strip()
-        if not 20 <= len(descripcion) <= 4900:
-            problems.append(f"{lang}.descripcion: 20 to 4900 characters")
-        etiquetas = part.get("etiquetas") or []
-        if not isinstance(etiquetas, list) or not all(isinstance(t, str) and t.strip() for t in etiquetas):
-            problems.append(f"{lang}.etiquetas: a list of words")
-            etiquetas = []
-        out[lang] = {"video": video, "srt": srt, "titulo": titulo, "descripcion": descripcion,
-                     "etiquetas": [t.strip() for t in etiquetas][:15]}
+        out[lang] = {"video": video, "srt": srt, **_metadata(part, lang, problems)}
+    if problems:
+        raise SeriesError("; ".join(problems))
+    return out
+
+
+def parse_update(content: str) -> Dict[str, Any]:
+    """An optimisation request (new metadata and thumbnail for published videos), validated."""
+    data = _json_block(content, MARK_UPDATE)
+    problems: List[str] = []
+    out = _episode(data, problems)
+    out["langs"] = [lang for lang in LANGS if data.get(lang)]
+    if not out["langs"]:
+        problems.append("at least one language (es, en)")
+    for lang in out["langs"]:
+        part = data[lang] if isinstance(data[lang], dict) else {}
+        video_id = str(part.get("id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            problems.append(f"{lang}.id: the YouTube video id (11 characters)")
+        portada = None
+        if part.get("portada"):
+            try:
+                portada = _media_url(part.get("portada"), f"{lang}.portada")
+            except SeriesError as exc:
+                problems.append(str(exc))
+        out[lang] = {"id": video_id, "portada": portada, **_metadata(part, lang, problems)}
     if problems:
         raise SeriesError("; ".join(problems))
     return out
@@ -191,8 +251,9 @@ def _buzz(args: List[str], content: Optional[str] = None) -> str:
     return done.stdout or ""
 
 
-def requests(limit: int = 200) -> List[Dict[str, Any]]:
-    """Episode requests in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
+def requests(limit: int = 200, mark: str = MARK) -> List[Dict[str, Any]]:
+    """Requests with ``mark`` in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
+    parser = parse_update if mark == MARK_UPDATE else parse
     raw = _buzz(["messages", "get", "--channel", channel(), "--limit", str(limit)])
     try:
         events = json.loads(raw or "[]")
@@ -202,11 +263,11 @@ def requests(limit: int = 200) -> List[Dict[str, Any]]:
     senders = set(allowed())
     for ev in sorted(events if isinstance(events, list) else [], key=lambda e: e.get("created_at") or 0):
         content = str(ev.get("content") or "")
-        if str(ev.get("pubkey") or "").lower() not in senders or not content.strip().startswith(MARK):
+        if str(ev.get("pubkey") or "").lower() not in senders or not content.strip().startswith(mark):
             continue
         item = {"event": ev.get("id"), "from": str(ev.get("pubkey")).lower(), "created_at": ev.get("created_at")}
         try:
-            item.update(parse(content))
+            item.update(parser(content))
         except SeriesError as exc:
             item["error"] = str(exc)
         found.append(item)
@@ -236,6 +297,14 @@ def _check_video(path: Path) -> float:
     if not MIN_SECONDS <= seconds <= MAX_SECONDS:
         raise SeriesError(f"an episode lasts {MIN_SECONDS:.0f}-{MAX_SECONDS:.0f} s; this one {seconds:.1f} s")
     return seconds
+
+
+def _check_thumb(path: Path) -> None:
+    head = path.read_bytes()[:8]
+    if not (head.startswith(b"\xff\xd8") or head.startswith(b"\x89PNG")):
+        raise SeriesError("the cover is not a JPEG or PNG")
+    if path.stat().st_size > MAX_THUMB_BYTES:
+        raise SeriesError(f"the cover weighs {path.stat().st_size // 1000} KB; YouTube takes up to 2 MB")
 
 
 def _reply(item: Dict[str, Any], text: str) -> None:
@@ -273,6 +342,72 @@ def _summary(item: Dict[str, Any], entry: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _update_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, Any]:
+    from plugins.shorts.social import youtube
+
+    part = item[lang]
+    thumb = _download(part["portada"], work / f"{lang}-portada") if part.get("portada") else None
+    if thumb:
+        _check_thumb(thumb)
+    social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
+    result = youtube.update(part["id"], social, lang, thumb)
+    return {**result, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
+    """Apply the optimisation requests, each once; only to videos this module published."""
+    ours = {(e.get(lang) or {}).get("id") for e in ledger.values() for lang in LANGS} - {None}
+    updates = _load(_updates_path())
+    for item in requests(mark=MARK_UPDATE):
+        key = item["event"]
+        entry = updates.get(key) or {}
+        if entry.get("replied"):
+            continue
+        problem = item.get("error") or next(
+            (f"{lang}.id {item[lang]['id']} is not a video of the series" for lang in item["langs"]
+             if item[lang]["id"] not in ours), None)
+        if problem:
+            _reply(item, f"No puedo actualizar este vídeo: {problem}. Corrige el mensaje y vuelve a enviarlo.")
+            updates[key] = {"rejected": True, "replied": True, "error": problem}
+            _save(updates, _updates_path())
+            report["invalid"].append({"event": key, "error": problem})
+            continue
+        entry["attempts"] = int(entry.get("attempts") or 0) + 1
+        updates[key] = entry
+        _save(updates, _updates_path())
+        work = _root() / f"u-{key[:16]}"
+        try:
+            for lang in item["langs"]:
+                if not (entry.get(lang) or {}).get("id"):
+                    entry[lang] = _update_language(item, lang, work)
+                    _save(updates, _updates_path())
+        except Exception as exc:  # noqa: BLE001 - reported, and retried on the next run
+            entry["error"] = str(exc)[:400]
+            if entry["attempts"] >= MAX_ATTEMPTS:
+                _reply(item, f"No he podido actualizar el episodio {item['episodio']} tras {MAX_ATTEMPTS} intentos: "
+                             f"{entry['error']}. Necesita que alguien lo mire.")
+                entry["replied"] = True
+            _save(updates, _updates_path())
+            report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "update": True,
+                                     "error": entry["error"], "attempt": entry["attempts"]})
+            continue
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        lines = [f"Episodio {item['episodio']} ({item['agente']}) actualizado en YouTube por Hermes:"]
+        for lang in item["langs"]:
+            done = entry[lang]
+            lines.append(f"{lang.upper()}: {done['url']} · título, descripción y etiquetas"
+                         + (" · portada" if done.get("thumbnail") else ""))
+        warnings = [w for lang in item["langs"] for w in entry[lang].get("warnings") or []]
+        if warnings:
+            lines.append("Avisos: " + " · ".join(warnings))
+        _reply(item, "\n".join(lines))
+        entry["replied"] = True
+        entry.pop("error", None)
+        _save(updates, _updates_path())
+        report["updated"].append({"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
+
+
 def run() -> Dict[str, Any]:
     """Publish the pending episodes this run may take. Returns what happened, for the Publisher's report."""
     if not configured():
@@ -286,7 +421,7 @@ def run() -> Dict[str, Any]:
         return {"skipped": "YouTube is not configured"}
     ledger = _load()
     started_today = sum(1 for e in ledger.values() if e.get("started") == _today())
-    report: Dict[str, Any] = {"published": [], "failed": [], "invalid": [], "waiting": []}
+    report: Dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": []}
     for item in requests():
         key = item["event"]
         entry = ledger.get(key) or {}
@@ -336,4 +471,5 @@ def run() -> Dict[str, Any]:
         _save(ledger)
         report["published"].append({"episodio": item["episodio"], "agente": item["agente"],
                                     **{lang: {k: entry[lang].get(k) for k in ("id", "url", "privacy")} for lang in LANGS}})
+    _apply_updates(ledger, report)
     return {k: v for k, v in report.items() if v} or {"nothing": "no episode to publish"}
