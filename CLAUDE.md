@@ -644,6 +644,11 @@ it writes from. Sold to a client without one it goes quiet on every run.
   relay takes only metadata-free media, so stripped copies are attached); with
   `SHORTS_BUZZ_CHANNEL` set the tool drops the Meta targets, so the two systems can
   never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
+- **The GEO Scout brief also goes to SocialBot, via Buzz #geo.** This happens
+  only on BigLobster's job `be8a4add42b0`, and only through its `deliver`
+  (Telegram plus the Buzz #geo channel), never through
+  `offsite-geo/geo-scout.prompt`. That prompt is shared with rented tenants.
+  Details and the revert command are in `BIGLOBSTER_SETUP.md`.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
   and rejects unsourced figures, repeated palettes (the `brand` palette, every
   short's look since 2026-10-14, is exempt), malformed packages, a hook whose first
