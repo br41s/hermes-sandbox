@@ -268,6 +268,36 @@ Setup, once:
    shorts channel so it only watches that one. With `BUZZ_ALLOWED_USERS`
    empty it answers nobody; add Brais's npub there to talk to Hermes in Buzz.
 
+#### Series episodes: "Agentes BigLobster" (2026-10-16)
+
+- **What they are:** long horizontal explainers (2–3 min, ES and EN), one per agent BigLobster rents. Guionista and VideoDesk make them in Buzz at zero cost (Fizz repo, `tasks/video-serie-agentes.md`); YouTube stays Hermes's.
+- **The request:** when an episode is finished in both languages, VideoDesk posts one message in the series channel. Its first line is `#publicar-episodio`, followed by a JSON block:
+  - `episodio` and `agente` (the page slug);
+  - per language, `video` (the relay `/media/` URL of the master), optional `srt`, `titulo`, `descripcion` and `etiquetas`.
+- **The Publisher's run:** it calls `shorts_studio` action `series`, and `plugins/shorts/series.py` does the rest:
+  1. Reads the requests, only from the pubkeys in `SERIES_BUZZ_FROM`.
+  2. Downloads each master with `buzz media get`. This path has no 20 MB cap; the gateway's inbound attachments do.
+  3. Checks that it is horizontal, has audio and lasts 30–900 s.
+  4. Uploads it as a regular video (`youtube.upload(..., short=False)`: no `#Shorts`, a `watch?v=` link), with the SRT as captions.
+  5. Replies in the request's thread with both links, mentioning the sender.
+- **Safety:**
+  - A ledger keyed by the message id (`workspace/shorts/series/ledger.json`) means nothing is uploaded twice, and a run that stops halfway is finished by the next one.
+  - A malformed request gets one reply listing every problem.
+  - After 3 failed attempts the sender is told once.
+  - Shadow mode publishes nothing.
+- **Quota:** an episode is about 4,000 units (two uploads and two caption tracks) and the shorts use about 4,100, so `SERIES_MAX_PER_DAY` defaults to 1.
+- **Where the links end up:** VideoDesk records the ids in the series queue. The website shows each video once its id is in `site/_data/videosAgentes.json` (biglobster repo).
+
+Setup, once:
+
+1. Add Hermes to the series channel (Media Forgery, the video team's channel), so it can read it.
+2. Zeabur service env:
+   - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
+   - `SERIES_BUZZ_FROM` (VideoDesk's hex pubkey);
+   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`) and `SERIES_MAX_PER_DAY` (default 1).
+   - The Buzz credentials are the shorts hand-off's. Nothing goes in `INJECT`.
+3. Deploy and sync the Publisher prompt (`scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-publisher.prompt`).
+
 ### 3.7 The presenter: Lucía and Martín (paid, optional)
 
 The hook and the CTA can be said to camera by BigLobster's presenter: Lucía in

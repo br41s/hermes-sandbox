@@ -53,7 +53,9 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
         "posts → article → submit (renders in the cloud, ~5-10 min) → status (collects the "
         "finished video + QA) → publish. The tool keeps the ledger, checks every figure you "
         "use against the article, enforces a fresh palette/motif, and refuses to publish "
-        "anything that failed QA or while publishing is in shadow mode."
+        "anything that failed QA or while publishing is in shadow mode. series: publishes the "
+        "finished episodes of the 'Agentes BigLobster' series that VideoDesk requested in Buzz "
+        "(long videos, both languages) on YouTube and replies in Buzz with the links; no arguments."
     ),
     "parameters": {
         "type": "object",
@@ -61,7 +63,7 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
             "action": {
                 "type": "string",
                 "enum": ["posts", "article", "ledger", "submit", "status", "publish",
-                         "handoff", "avatars", "avatar_upload", "mark"],
+                         "handoff", "avatars", "avatar_upload", "mark", "series"],
             },
             "lang": {"type": "string", "enum": ["en", "es"],
                      "description": "posts: which blog feed to read. avatars/avatar_upload: the clip's language."},
@@ -700,6 +702,15 @@ def _action_mark(args: Dict[str, Any]) -> str:
     return _ok(request_id=request_id, state=entry["state"])
 
 
+def _action_series(args: Dict[str, Any]) -> str:
+    from plugins.shorts import series
+
+    try:
+        return _ok(**series.run())
+    except series.SeriesError as exc:
+        return _fail(f"series: {exc}")
+
+
 _ACTIONS = {
     "posts": _action_posts,
     "article": _action_article,
@@ -711,6 +722,7 @@ _ACTIONS = {
     "avatars": _action_avatars,
     "avatar_upload": _action_avatar_upload,
     "mark": _action_mark,
+    "series": _action_series,
 }
 
 
