@@ -287,13 +287,19 @@ Setup, once:
   - Shadow mode publishes nothing.
 - **Quota:** an episode is about 4,000 units (two uploads and two caption tracks) and the shorts use about 4,100, so `SERIES_MAX_PER_DAY` defaults to 1.
 - **Where the links end up:** VideoDesk records the ids in the series queue. The website shows each video once its id is in `site/_data/videosAgentes.json` (biglobster repo).
+- **Optimisation (SEODesk):** once an episode is up, SEODesk posts `#actualizar-video` in the same channel, with a JSON block:
+  - `episodio` and `agente`;
+  - per language it rewrites (either or both), `id` (the YouTube id), `titulo`, `descripcion` (chapters, links, hashtags), `etiquetas` and optional `portada` (the relay `/media/` URL of a JPEG or PNG of 2 MB at most).
+  - The same `series` run applies it with `youtube.update` (`videos.update` plus `thumbnails.set`, about 100 units) and replies in the thread.
+  - Only from `SERIES_BUZZ_FROM` and only for ids in the series ledger, so it can never touch the blog Shorts or another video. Each request is applied once (`workspace/shorts/series/updates.json`), with the same 3 attempts. Privacy is never changed.
+  - A custom thumbnail needs a phone-verified channel; if YouTube refuses it, the reply says so and the rest still applies.
 
 Setup, once:
 
-1. Add Hermes to the series channel (Media Forgery, the video team's channel), so it can read it.
+1. Add Hermes and SEODesk to the series channel (Media Forgery, the video team's channel), so Hermes can read it and SEODesk can post there.
 2. Zeabur service env:
    - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
-   - `SERIES_BUZZ_FROM` (VideoDesk's hex pubkey);
+   - `SERIES_BUZZ_FROM` (VideoDesk's and SEODesk's hex pubkeys, comma-separated);
    - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`) and `SERIES_MAX_PER_DAY` (default 1).
    - The Buzz credentials are the shorts hand-off's. Nothing goes in `INJECT`.
 3. Deploy and sync the Publisher prompt (`scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-publisher.prompt`).

@@ -51,7 +51,8 @@ FLUJO
 
 4. Serie "Agentes BigLobster": `shorts_studio` action:"series", UNA vez por
    ejecución, sin argumentos. Publica en YouTube los episodios largos que
-   VideoDesk pidió en Buzz y contesta allí con los enlaces; todo lo decide la
+   VideoDesk pidió en Buzz, aplica las optimizaciones que pidió SEODesk (título,
+   descripción, etiquetas y portada) y contesta allí; todo lo decide la
    herramienta (qué toca, el tope diario, no repetir). Si responde `skipped` o
    `nothing`, no cuentes nada de la serie.
    Un `handoff` que responde `already` ya se entregó: no lo repitas.
@@ -60,7 +61,7 @@ FLUJO
 INFORME FINAL (en español)
 
 Si `status` no trae ningún short o todos siguen en `rendering` sin errores, y
-`series` no publicó ni falló nada → exactamente `[SILENT]`.
+`series` no publicó, actualizó ni falló nada → exactamente `[SILENT]`.
 
 Si no, primero los mensajes de `handoff` tal cual (con sus líneas MEDIA:), uno
 detrás de otro, y al final un resumen corto:
@@ -70,5 +71,5 @@ detrás de otro, y al final un resumen corto:
 - Escenas generadas: [suma de `ai_scenes`] · gasto [suma de `ai_spend_usd`] $ (sólo si alguna lo tiene)
 - Avisos: [warnings de publish, p. ej. YouTube forzado a privado; sólo si los hay]
 
-🎞️ Serie (sólo si `series` publicó, falló o dejó algo esperando)
-- Episodio [episodio] [agente]: [enlaces ES y EN | ❌ error, intento N | espera: tope diario]
+🎞️ Serie (sólo si `series` publicó, actualizó, falló o dejó algo esperando)
+- Episodio [episodio] [agente]: [enlaces ES y EN | optimizado (idiomas) | ❌ error, intento N | espera: tope diario]

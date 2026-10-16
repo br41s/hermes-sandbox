@@ -1,5 +1,7 @@
 """YouTube uploads through the YouTube Data API v3 (free, quota-based): the blog Shorts and,
 with ``short=False``, the long episodes of the "Agentes BigLobster" series (plugins/shorts/series.py).
+``update`` rewrites an uploaded video's title, description and tags and sets its thumbnail
+(about 100 units): SEODesk's optimisation of the series episodes.
 
 Replaces the browser upload in YouTube Studio, which stopped on "Verify it's
 you" prompts. A short is any vertical video of 3 minutes or less; there is no
@@ -117,6 +119,37 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
     }
 
 
+def _set_thumbnail(client, auth: Dict[str, str], video_id: str, thumb: Optional[Path], warnings: List[str]) -> None:
+    if thumb and thumb.exists():
+        t = client.post(THUMB_URL, params={"videoId": video_id, "uploadType": "media"},
+                        headers={**auth, "Content-Type": "image/jpeg"}, content=thumb.read_bytes())
+        if t.status_code != 200:
+            warnings.append(f"thumbnail not set ({_error(t, 'thumbnail')}); "
+                            "custom thumbnails need a phone-verified channel")
+
+
+def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Path] = None) -> Dict[str, Any]:
+    """New title, description and tags for an uploaded (long) video, and its thumbnail if given.
+
+    ``videos.update`` replaces the whole snippet, so it is rebuilt complete (category, languages).
+    Privacy is not touched.
+    """
+    if not configured():
+        raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
+    snippet = build_metadata(social, lang, synthetic=False, short=False)["snippet"]
+    warnings: List[str] = []
+    with _client() as client:
+        auth = {"Authorization": f"Bearer {access_token(client)}"}
+        resp = client.put(VIDEOS_URL, params={"part": "snippet"},
+                          headers={**auth, "Content-Type": "application/json; charset=UTF-8"},
+                          content=json.dumps({"id": video_id, "snippet": snippet}).encode("utf-8"))
+        if resp.status_code != 200:
+            raise _error(resp, "update video")
+        _set_thumbnail(client, auth, video_id, thumb, warnings)
+    return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+            "thumbnail": bool(thumb) and not any(w.startswith("thumbnail") for w in warnings), "warnings": warnings}
+
+
 def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict[str, Any],
            lang: str, *, synthetic: bool = False,
            article: Optional[Dict[str, Any]] = None, short: bool = True,
@@ -145,12 +178,7 @@ def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict
         video_id = body["id"]
         applied_privacy = body.get("status", {}).get("privacyStatus")
 
-        if thumb and thumb.exists():
-            t = client.post(THUMB_URL, params={"videoId": video_id, "uploadType": "media"},
-                            headers={**auth, "Content-Type": "image/jpeg"}, content=thumb.read_bytes())
-            if t.status_code != 200:
-                warnings.append(f"thumbnail not set ({_error(t, 'thumbnail')}); "
-                                "custom thumbnails need a phone-verified channel")
+        _set_thumbnail(client, auth, video_id, thumb, warnings)
         if srt and srt.exists():
             boundary = "hermesshortsboundary"
             parts = (
