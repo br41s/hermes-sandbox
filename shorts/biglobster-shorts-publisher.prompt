@@ -48,13 +48,19 @@ FLUJO
    - `render_failed` → informa de la nota y del `run_url`.
 
 3. No publiques nunca dos veces: la herramienta lo impide, pero no lo intentes.
+
+4. Serie "Agentes BigLobster": `shorts_studio` action:"series", UNA vez por
+   ejecución, sin argumentos. Publica en YouTube los episodios largos que
+   VideoDesk pidió en Buzz y contesta allí con los enlaces; todo lo decide la
+   herramienta (qué toca, el tope diario, no repetir). Si responde `skipped` o
+   `nothing`, no cuentes nada de la serie.
    Un `handoff` que responde `already` ya se entregó: no lo repitas.
 
 ──────────────────────────────────────────────────────────────────────────────
 INFORME FINAL (en español)
 
-Si `status` no trae ningún short o todos siguen en `rendering` sin errores →
-exactamente `[SILENT]`.
+Si `status` no trae ningún short o todos siguen en `rendering` sin errores, y
+`series` no publicó ni falló nada → exactamente `[SILENT]`.
 
 Si no, primero los mensajes de `handoff` tal cual (con sus líneas MEDIA:), uno
 detrás de otro, y al final un resumen corto:
@@ -63,3 +69,6 @@ detrás de otro, y al final un resumen corto:
 - [EN|ES] [título]: [publicado en YouTube/IG/FB/Story | en revisión (shadow) | QA ❌ motivo | render ❌]
 - Escenas generadas: [suma de `ai_scenes`] · gasto [suma de `ai_spend_usd`] $ (sólo si alguna lo tiene)
 - Avisos: [warnings de publish, p. ej. YouTube forzado a privado; sólo si los hay]
+
+🎞️ Serie (sólo si `series` publicó, falló o dejó algo esperando)
+- Episodio [episodio] [agente]: [enlaces ES y EN | ❌ error, intento N | espera: tope diario]

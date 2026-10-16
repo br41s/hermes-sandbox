@@ -1,4 +1,5 @@
-"""YouTube Shorts upload through the YouTube Data API v3 (free, quota-based).
+"""YouTube uploads through the YouTube Data API v3 (free, quota-based): the blog Shorts and,
+with ``short=False``, the long episodes of the "Agentes BigLobster" series (plugins/shorts/series.py).
 
 Replaces the browser upload in YouTube Studio, which stopped on "Verify it's
 you" prompts. A short is any vertical video of 3 minutes or less; there is no
@@ -86,10 +87,12 @@ def article_link(article: Optional[Dict[str, Any]]) -> str:
 
 
 def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
-                   article: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                   article: Optional[Dict[str, Any]] = None, short: bool = True,
+                   privacy: Optional[str] = None) -> Dict[str, Any]:
+    """``short=False``: a regular video (no #Shorts in the title). ``privacy`` overrides SHORTS_YOUTUBE_PRIVACY."""
     yt = social.get("youtube") or {}
     title = (yt.get("title") or "").strip()
-    if "#shorts" not in title.lower() and len(title) <= 92:
+    if short and "#shorts" not in title.lower() and len(title) <= 92:
         title = f"{title} #Shorts"
     description = (yt.get("description") or "").strip()
     link = article_link(article)
@@ -105,7 +108,7 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
             "defaultAudioLanguage": lang,
         },
         "status": {
-            "privacyStatus": env("SHORTS_YOUTUBE_PRIVACY", "public") or "public",
+            "privacyStatus": privacy or env("SHORTS_YOUTUBE_PRIVACY", "public") or "public",
             "selfDeclaredMadeForKids": False,
             # YouTube's disclosure for realistic synthetic people — true when
             # the short carries an AI avatar.
@@ -116,10 +119,11 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
 
 def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict[str, Any],
            lang: str, *, synthetic: bool = False,
-           article: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+           article: Optional[Dict[str, Any]] = None, short: bool = True,
+           privacy: Optional[str] = None) -> Dict[str, Any]:
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
-    meta = build_metadata(social, lang, synthetic=synthetic, article=article)
+    meta = build_metadata(social, lang, synthetic=synthetic, article=article, short=short, privacy=privacy)
     size = video.stat().st_size
     warnings: List[str] = []
     with _client() as client:
@@ -160,7 +164,8 @@ def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict
             if c.status_code != 200:
                 warnings.append(f"captions not uploaded ({_error(c, 'captions')})")
 
-    result = {"id": video_id, "url": f"https://youtube.com/shorts/{video_id}",
+    url = f"https://youtube.com/shorts/{video_id}" if short else f"https://www.youtube.com/watch?v={video_id}"
+    result = {"id": video_id, "url": url,
               "privacy": applied_privacy, "warnings": warnings}
     requested = meta["status"]["privacyStatus"]
     if applied_privacy and applied_privacy != requested:
