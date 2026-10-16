@@ -191,7 +191,7 @@ def _buzz(args: List[str], content: Optional[str] = None) -> str:
     return done.stdout or ""
 
 
-def requests(limit: int = 50) -> List[Dict[str, Any]]:
+def requests(limit: int = 200) -> List[Dict[str, Any]]:
     """Episode requests in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
     raw = _buzz(["messages", "get", "--channel", channel(), "--limit", str(limit)])
     try:
