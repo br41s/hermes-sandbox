@@ -339,6 +339,32 @@ that the live cron prompt never had). As of 2026-07-09 both files just point at
 their canonical `.prompt` file in this repo and explain how to sync a change —
 do not re-expand them into full copies of the workflow.
 
+**The Off-Site GEO Scout hands its brief to SocialBot (since 2026-10-16).** The
+BigLobster job `be8a4add42b0` ("Off-Site GEO Scout — BigLobster", profile
+`biglobster`, `0 3 * * *` +07:00) delivers to two targets:
+
+```
+deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
+```
+
+- The second target is the Buzz channel **#geo**. Hermes posts there as its own
+  Buzz identity through the Buzz plugin's standalone sender
+  (`plugins/platforms/buzz/adapter.py`, `_standalone_send`), so the profile's
+  gateway does not need Buzz connected. Hermes must stay a member of #geo, or
+  that send fails while Telegram still delivers (`last_delivery_error`).
+- **SocialBot** (repo `br41s/fizz`, `agents/socialbot.*`, PR #57) picks the
+  brief up on its hourly heartbeat, not on a mention. That way a brief that
+  lands while the Mac running the bots is asleep is not lost.
+  - On Reddit it publishes the brief itself.
+  - Anywhere else it puts the brief in Brais's manual list.
+  - It never replies in #geo.
+- The Buzz target lives in **this job's `deliver`, not in
+  `offsite-geo/geo-scout.prompt`**. That prompt is meant to be shared, through
+  `prompt_source`, with rented tenants, and they must never post to our Buzz.
+  Do not add a Buzz send to the prompt.
+- The setting lives only in the live `jobs.json`. To revert it:
+  `hermes -p biglobster cron edit be8a4add42b0 --deliver "telegram:-1004224848555:2"`.
+
 ---
 
 ## Available tools
