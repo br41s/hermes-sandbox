@@ -394,6 +394,22 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
   and the route in `config.yaml`. To revert, run
   `hermes -p biglobster cron edit be8a4add42b0 --deliver "telegram:-1004224848555:2"`
   and then drop the `geo-scout:biglobster:buzz` route.
+- **Variety and the weekly community** (since 2026-10-17). Of the first 88
+  briefs, 44 went to n8n Community, Rankia or Indie Hackers, and several of
+  those are platforms SocialBot never posts on. The prompt now:
+  - Lists our accounts (X and Reddit) in CONFIG, plus the `EXCLUDED` and
+    `PAUSED` platforms. Those two mirror SocialBot's "Pausas y exclusiones"
+    (`br41s/fizz`, `agents/socialbot.prompt.md`): change both together.
+  - Bars any platform pitched in the last 21 days (`PLATFORM_COOLDOWN`). Each
+    subreddit counts as its own platform.
+  - Searches niche, crawlable communities first and ranks novelty above
+    familiar platforms.
+  - Every Monday, or on the next run if a Monday was missed, adds a "Community
+    to join this week" section. It lands even on a "Nothing worth pitching
+    today" run. SocialBot turns it into a "crear cuenta" item for Brais.
+  - Writes one `LEDGER | date | platform | url | query` line per run, plus a
+    `COMMUNITY | date | name | url` line for the weekly pick, so the cooldown
+    can be checked. Older entries stay as free-form blocks.
 
 ---
 
