@@ -42,8 +42,8 @@ Para cada idioma:
    - `problems` → corrígelos TODOS y reenvía. Máximo 3 envíos por idioma; si al
      tercero sigue rechazado, déjalo y repórtalo. Los problemas que empiezan por
      `guionista:` vienen de un guionista crítico que ha leído tu arranque: te
-     dice por qué no se entiende qué gana el espectador y te propone una primera
-     frase; úsala o mejórala, pero comprueba sus cifras contra el artículo.
+     dice por qué no se entiende qué gana el espectador y te propone un hook;
+     úsalo o mejóralo, pero comprueba sus cifras contra el artículo.
    - "already has a short" → pasa al siguiente post de la lista.
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -103,23 +103,26 @@ Estructura (`beats`, en orden, 5–7). Cada beat lleva `show`: "presenter" =
 Lucía en su escenario, hablando a cámara (solo el hook); "card" = una tarjeta
 animada que ENSEÑA el consejo, con Martín en una burbuja señalándola.
   1. `hook`, show "presenter" — Lucía, justo después de la broma. Es lo que más
-     importa del short: LA PROPUESTA DE VALOR, dicha y escrita, en 3 segundos.
-     - La PRIMERA FRASE de `vo` tiene ≤8 palabras (la herramienta lo rechaza si
-       pasa; una frase acaba en punto, interrogación o exclamación, nunca en
-       raya ni en coma) y le dice al espectador, en segunda persona y sin preámbulo, qué
-       GANA o qué DOLOR se le quita: con la cifra o el plazo del artículo si lo
-       hay, y nombrando la tarea, la herramienta o el oficio. Vale una pregunta
-       de dolor ("¿Cuántas facturas pagas dos veces?"), un beneficio ("Recupera
-       dos horas cada semana sin contratar") o una creencia desmentida.
+     importa del short: LA PROPUESTA DE VALOR, dicha y escrita, dentro de los
+     primeros 10 segundos de Lucía (la broma va delante a propósito).
+     - `line` + `vo` del hook caben en esos 10 s: unas 29 palabras en español y
+       34 en inglés entre las dos (la herramienta lo rechaza si pasa). Al
+       terminar el hook, el espectador sabe, en segunda persona, qué GANA o qué
+       DOLOR se le quita: con la cifra o el plazo del artículo si lo hay, y
+       nombrando la tarea, la herramienta o el oficio. Puede construirse en dos
+       frases (primero el dolor, luego la ganancia), pero la promesa se dice
+       ANTES de pasarle la palabra a Martín, nunca en sus tarjetas. Vale una
+       pregunta de dolor ("¿Cuántas facturas pagas dos veces?"), un beneficio
+       ("Recupera dos horas cada semana sin contratar") o una creencia desmentida.
      - NO vale un tema ("La IA ya es lo normal"), un dato sin consecuencia ("El
        23% de las pymes usa IA"), una fuente ("Según PYMNTS…"), un saludo, "en
-       este vídeo" ni "hoy hablamos de". Prueba de los 3 segundos: lee la
-       primera frase sola; si no sabes qué ganas viendo el resto, reescríbela.
+       este vídeo" ni "hoy hablamos de". Prueba de los 10 segundos: lee la
+       broma y el hook solos; si no sabes qué ganas viendo el resto, reescribe el hook.
      - `onscreen` = ESA MISMA promesa en ≤8 palabras, con sus palabras clave (la
-       herramienta comprueba que lo escrito dice lo que se dice); la portada la
+       herramienta comprueba que lo escrito dice lo que dice el hook); la portada la
        repite. `kicker` opcional (≤28 caracteres).
-     - EL PATRÓN DEL GANCHO (`hook_pattern`, obligatorio): CÓMO engancha esa
-       primera frase. Uno de:
+     - EL PATRÓN DEL GANCHO (`hook_pattern`, obligatorio): CÓMO engancha la
+       primera frase del hook. Uno de:
          `result-first`  — el resultado que consigue: "Recupera dos horas cada semana."
          `pain-first`    — el dolor, afirmado: "Pagas facturas dos veces sin verlo."
          `contrarian`    — desmiente lo que casi todos creen: "Más herramientas no te ahorran tiempo."
