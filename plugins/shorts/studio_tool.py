@@ -9,7 +9,7 @@ Actions:
 
   posts          newest posts from the blog feed with no short yet
   article        the text of one post (what the short may cite)
-  ledger         recent shorts, and the palettes/motifs that are now taken
+  ledger         recent shorts, and the palettes/motifs/hook patterns that are now taken
   submit         validate + ground-check a package, then dispatch the render
   status         collect finished renders into the workspace, with QA
   publish        post a ready short to youtube | facebook | instagram_reel | instagram_story
@@ -73,7 +73,7 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
                 "type": "object",
                 "description": (
                     "submit: the short package — lang, article{url,title,slug}, style{palette,motif}, "
-                    "beats[hook…cta], covers, social, music{mood}. The tool rejects it with a list of "
+                    "hook_pattern, beats[hook…cta], covers, social, music{mood}. The tool rejects it with a list of "
                     "problems when anything is off; fix them all and submit again."
                 ),
             },
@@ -217,8 +217,10 @@ def _action_ledger(args: Dict[str, Any]) -> str:
     data = ledger.read()
     recent = ledger.entries(data)[-limit:]
     slim = [{k: e.get(k) for k in ("request_id", "lang", "slug", "state", "palette", "motif",
-                                   "created_at", "published", "qa")} for e in recent]
-    return _ok(publish_mode=publish_mode(), style_taken=ledger.recent_style(data), shorts=slim)
+                                   "hook_pattern", "created_at", "published", "qa")} for e in recent]
+    hooks_taken = {lang: ledger.recent_hook_patterns(data, lang) for lang in ("en", "es")}
+    return _ok(publish_mode=publish_mode(), style_taken=ledger.recent_style(data),
+               hook_patterns_taken=hooks_taken, shorts=slim)
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +238,8 @@ def _action_submit(args: Dict[str, Any]) -> str:
     from plugins.shorts import github_studio, ledger
     from plugins.shorts import critic
     from plugins.shorts.studio.article import fetch_article
-    from plugins.shorts.studio.package import BRAND_PALETTE, PackageError, check_grounding, validate_package
+    from plugins.shorts.studio.package import (BRAND_PALETTE, HOOK_PATTERNS, PackageError,
+                                               check_grounding, validate_package)
 
     raw = args.get("package")
     if isinstance(raw, str):
@@ -266,6 +269,17 @@ def _action_submit(args: Dict[str, Any]) -> str:
     if pkg["style"]["motif"] in taken["motifs"]:
         problems.append(f"style.motif {pkg['style']['motif']!r} was used by one of the last "
                         f"two shorts ({taken['motifs']}); pick another")
+    # Required here, optional in the package: the renderer validates packages
+    # from whichever Hermes is deployed, and an older one never writes it.
+    pattern = pkg.get("hook_pattern")
+    patterns_taken = ledger.recent_hook_patterns(data, pkg["lang"])
+    if not pattern:
+        problems.append(f"hook_pattern: required, one of {list(HOOK_PATTERNS)} — how the hook's "
+                        "first sentence grabs the viewer")
+    elif pattern in patterns_taken:
+        problems.append(f"hook_pattern {pattern!r} was used by one of the last "
+                        f"{ledger.HOOK_PATTERN_WINDOW} {pkg['lang']} shorts ({patterns_taken}); "
+                        "pick another and write the hook for it")
 
     library = {c["clip_url"]: c for c in ledger.avatars()}
     for i, beat in enumerate(pkg["beats"]):
@@ -318,7 +332,7 @@ def _action_submit(args: Dict[str, Any]) -> str:
         "request_id": request_id, "lang": pkg["lang"], "slug": pkg["article"]["slug"],
         "article_url": pkg["article"]["url"], "title": pkg["article"]["title"],
         "palette": pkg["style"]["palette"], "motif": pkg["style"]["motif"],
-        "format": pkg.get("format"),
+        "format": pkg.get("format"), "hook_pattern": pkg.get("hook_pattern"),
         "avatars": [b["avatar"] for b in pkg["beats"] if b["kind"] == "avatar"],
         "run_id": details.get("run_id"), "run_url": details.get("run_url"), "dir": str(workdir),
     })

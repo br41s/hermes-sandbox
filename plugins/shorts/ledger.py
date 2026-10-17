@@ -118,6 +118,22 @@ def recent_style(data: Optional[Dict[str, Any]] = None, n: int = 2) -> Dict[str,
     }
 
 
+# Six hook patterns; three taken leaves the producer three to choose from.
+HOOK_PATTERN_WINDOW = 3
+
+
+def recent_hook_patterns(data: Optional[Dict[str, Any]] = None, lang: str = "",
+                         n: int = HOOK_PATTERN_WINDOW) -> List[str]:
+    """Hook patterns of the last ``n`` shorts in ``lang`` — the next one there must differ.
+
+    Counted per language: each language has its own audience. Shorts made
+    before the field existed carry none and take no slot.
+    """
+    recent = [e for e in entries(data) if e.get("state") != "render_failed"
+              and e.get("lang") == lang and e.get("hook_pattern")][-n:]
+    return [e["hook_pattern"] for e in recent]
+
+
 def used_assets(data: Optional[Dict[str, Any]] = None, n: int = 40) -> Dict[str, List[str]]:
     """Footage and music used by the last ``n`` shorts, to pass as avoid-lists."""
     recent = entries(data)[-n:]

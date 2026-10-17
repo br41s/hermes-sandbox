@@ -86,6 +86,19 @@ render: the producer submits and exits, the publisher collects what finished.
   a network error or a nonsense answer never block a short (`SHORTS_CRITIC=off`
   switches it off). The rubric is Guionista's evidence in
   `~/fizz/salida/guionista/alcance/`.
+- **Hook patterns rotate (2026-10-17).** Every package names how its hook grabs
+  the viewer: `hook_pattern`, one of `package.HOOK_PATTERNS` (`result-first`,
+  `pain-first`, `contrarian`, `number-payoff`, `question`, `warning`). `submit`
+  refuses a package without one, and refuses a pattern used by the last 3 shorts
+  in the same language (`ledger.HOOK_PATTERN_WINDOW`; a `render_failed` short
+  never aired and takes no slot). The ledger records it per short, and the
+  `ledger` action lists `hook_patterns_taken` per language. Where the form is
+  mechanical the label must match the hook: a first sentence that asks is
+  `question` and nothing else, and `number-payoff` needs a figure in digits in
+  that sentence. The field is optional in `validate_package` on purpose: the
+  renderer validates packages from whichever Hermes is deployed, and Actions
+  picks up a merge before the pod does. The per-pattern performance read-back
+  waits on a YouTube re-authorisation (§3.2).
 - **The article's own pictures.** The renderer fetches the article and puts its
   cover (`og:image`) behind the cards; a card marked `"visual": "infographic"`
   (one per short, never the hook or the CTA) shows the article's raster
@@ -149,6 +162,15 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
    The tool reports the privacy YouTube actually applied.
 7. Custom thumbnails need a phone-verified channel. Without one the upload
    still works and only the thumbnail is skipped, with a warning.
+8. **No analytics yet (checked 2026-10-17).** `scripts/youtube_oauth.py` asks
+   for `youtube.upload` and `youtube.force-ssl` only. YouTube Analytics
+   (`reports.query`: views, average view duration and percentage, shares)
+   accepts `yt-analytics.readonly` or the full `youtube` scope, so the current
+   refresh token cannot read it. Reading performance back needs the owner to
+   add `https://www.googleapis.com/auth/yt-analytics.readonly` to `SCOPES`,
+   (Google's reference page also says the method now needs `youtube.readonly`;
+   add both), enable the **YouTube Analytics API** on the same Cloud project, re-run the
+   script, replace `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
 
 ### 3.3 Facebook + Instagram
 

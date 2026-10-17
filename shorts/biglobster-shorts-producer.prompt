@@ -35,7 +35,8 @@ Para cada idioma:
    `"visual": "infographic"` a esa tarjeta (solo a una). La portada del
    artículo va de fondo en todo el short, no tienes que pedirla.
 3. `shorts_studio` action:"ledger" → `style_taken` son paletas y motivos
-   prohibidos hoy.
+   prohibidos hoy; `hook_patterns_taken[<idioma>]`, los patrones de gancho que
+   ese idioma no puede repetir (ver EL PATRÓN DEL GANCHO).
 4. Escribe el paquete (formato abajo) y envíalo: action:"submit", package:{…}.
    - `success: true` → apunta el `request_id` y pasa al siguiente idioma.
    - `problems` → corrígelos TODOS y reenvía. Máximo 3 envíos por idioma; si al
@@ -117,6 +118,20 @@ animada que ENSEÑA el consejo, con Martín en una burbuja señalándola.
      - `onscreen` = ESA MISMA promesa en ≤8 palabras, con sus palabras clave (la
        herramienta comprueba que lo escrito dice lo que se dice); la portada la
        repite. `kicker` opcional (≤28 caracteres).
+     - EL PATRÓN DEL GANCHO (`hook_pattern`, obligatorio): CÓMO engancha esa
+       primera frase. Uno de:
+         `result-first`  — el resultado que consigue: "Recupera dos horas cada semana."
+         `pain-first`    — el dolor, afirmado: "Pagas facturas dos veces sin verlo."
+         `contrarian`    — desmiente lo que casi todos creen: "Más herramientas no te ahorran tiempo."
+         `number-payoff` — abre con la cifra del artículo, en dígitos: "En 3 meses, horas libres cada semana."
+         `question`      — una pregunta de dolor: "¿Cuántas facturas pagas dos veces?"
+         `warning`       — el error que evitar: "No automatices nada sin medirlo antes."
+       Elige primero el patrón que mejor sirve a ESTE consejo y escribe el
+       gancho para él, no al revés. No puede ser ninguno de
+       `hook_patterns_taken[<idioma>]` (los 3 últimos de ese idioma): la
+       herramienta lo rechaza. Tampoco deja mentir a la etiqueta: si la primera
+       frase pregunta, el patrón es `question`; `number-payoff` lleva la cifra
+       en dígitos en esa frase.
   2. 3–5 beats que ENSEÑAN el consejo, TODOS show "card", narrados por
      Martín. Elige la tarjeta que
      mejor lo muestre:
@@ -196,6 +211,7 @@ FORMATO DEL PAQUETE
   "opener": {"line": "…", "setting": "…", "handoff": "…"},
   "article": {"url": "<url>", "title": "<título>", "slug": "<slug del post>"},
   "style": {"palette": "brand", "motif": "rings"},
+  "hook_pattern": "pain-first",
   "beats": [
     {"kind": "hook", "show": "presenter", "kicker": "…", "onscreen": "…", "vo": "…"},
     {"kind": "compare", "show": "card", "onscreen": "…", "before": "…", "after": "…", "vo": "…"},
@@ -218,7 +234,9 @@ Si no:
 
 🎬 Shorts enviados a render
 - EN: [título] → [request_id] — el consejo en una línea ([paleta]/[motivo], [n] beats)
+  Gancho [hook_pattern]: por qué ese patrón para este consejo, en una frase.
 - ES: [título] → [request_id] — el consejo en una línea ([paleta]/[motivo], [n] beats)
+  Gancho [hook_pattern]: por qué ese patrón para este consejo, en una frase.
 (o "EN: sin posts nuevos" / "ES: rechazado 3 veces — [problema principal]")
 
 El Publisher los recoge en su próxima ejecución.

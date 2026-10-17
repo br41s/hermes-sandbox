@@ -12,6 +12,7 @@ Shape::
       "voice": "en-US-ChristopherNeural",          # optional, default per lang
       "article": {"url": "...", "title": "...", "slug": "..."},
       "style": {"palette": "indigo-coral", "motif": "diamonds"},
+      "hook_pattern": "pain-first",                # one of HOOK_PATTERNS; submit requires it
       "beats": [
         {"kind": "hook",  "vo": "...", "onscreen": "...", "kicker": "...", "broll": "...",
          "scene": "...", "presenter": true},
@@ -94,6 +95,12 @@ MOTIFS = ("diamonds", "circles", "chevrons", "dots", "bars", "rings", "grid", "w
 # The brand palette is every short's look (owner, 2026-10-14): it is exempt from the
 # "differ from the last two shorts" rule; the article's own pictures vary the look.
 BRAND_PALETTE = "brand"
+
+# How the hook's first sentence grabs the viewer. A closed list so the ledger
+# can count which mechanism each short used and the submit can rotate them
+# (studio_tool.py); optional here because the renderer validates packages
+# from a Hermes that may predate the field.
+HOOK_PATTERNS = ("result-first", "pain-first", "contrarian", "number-payoff", "question", "warning")
 
 BEAT_KINDS = ("hook", "point", "stat", "list", "quote", "avatar", "cta")
 MIDDLE_KINDS = ("point", "stat", "list", "quote", "avatar")
@@ -275,6 +282,31 @@ def _check_promise(problems: List[str], where: str, vo: str, onscreen: str) -> N
             f"{where}.onscreen: the written promise must say what the first spoken sentence says, "
             f"sharing a key word or the figure: spoken {lead!r}, written {onscreen!r}"
         )
+
+
+def _check_hook_pattern(problems: List[str], pattern: str, vo: str) -> None:
+    """The label must match the hook where the form is mechanical.
+
+    A question and a number payoff are recognisable, so a mislabel there
+    is refused: a question hook labelled anything else, or a "question" or
+    "number-payoff" hook that is not one. A wrong label would skew any
+    per-pattern performance figure. The other patterns are judgement.
+    """
+    if pattern not in HOOK_PATTERNS:
+        problems.append(f"hook_pattern: one of {list(HOOK_PATTERNS)}, got {pattern!r}")
+        return
+    stripped = vo.lstrip("¿¡ ")
+    end = _SENTENCE_END.search(stripped)
+    lead = stripped[:end.start()] if end else stripped
+    asks = bool(end and "?" in end.group(0))
+    if asks and pattern != "question":
+        problems.append(f"hook_pattern: the hook's first sentence is a question, so the pattern is "
+                        f"'question', not {pattern!r}: {lead!r}")
+    elif pattern == "question" and not asks:
+        problems.append(f"hook_pattern: 'question' needs a first sentence that asks one: {lead!r}")
+    if pattern == "number-payoff" and not re.search(r"\d", lead):
+        problems.append(f"hook_pattern: 'number-payoff' leads with the article's figure in the first "
+                        f"sentence, written in digits: {lead!r}")
 
 
 def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
@@ -551,6 +583,12 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             problems.append(f"beats[{len(beats) - 1}].vo: the CTA asks the viewer to save the tip or "
                             f"share it with someone it helps: {cta['vo']!r}")
     pkg["beats"] = beats
+
+    hook_pattern = _text(raw.get("hook_pattern"))
+    if hook_pattern:
+        hook_vo = beats[0].get("vo", "") if beats and beats[0].get("kind") == "hook" else ""
+        _check_hook_pattern(problems, hook_pattern, hook_vo)
+        pkg["hook_pattern"] = hook_pattern
 
     covers = raw.get("covers") if isinstance(raw.get("covers"), dict) else {}
     pkg["covers"] = {
