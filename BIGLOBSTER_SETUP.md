@@ -348,10 +348,38 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
 ```
 
 - The second target is the Buzz channel **#geo**. Hermes posts there as its own
-  Buzz identity through the Buzz plugin's standalone sender
-  (`plugins/platforms/buzz/adapter.py`, `_standalone_send`), so the profile's
-  gateway does not need Buzz connected. Hermes must stay a member of #geo, or
-  that send fails while Telegram still delivers (`last_delivery_error`).
+  Buzz identity, through the **primary gateway's Buzz adapter**. Two things
+  make that work:
+  - **The primary route** (since 2026-10-17). `/opt/data/config.yaml` →
+    `gateway.profile_routes` holds:
+
+    ```yaml
+    - name: geo-scout:biglobster:buzz
+      platform: buzz
+      chat_id: 'afe75be1-3618-4b43-a9f1-d64387b04c72'
+      profile: biglobster
+    ```
+
+    `biglobster` is a satellite profile, and its cron scope is only its own
+    `.env`, which holds no `BUZZ_*` credentials. Without the route, the cron
+    preflight (`cron/scheduler_preflight.py`, `_preflight_check_delivery`)
+    reads Buzz as unconnected and blocks the **whole job**, Telegram included.
+    That is what happened on 2026-10-17 at 03:00: no brief that day. Testing
+    from a `zeabur service exec` shell hides this, because that shell has the
+    container's global `BUZZ_*`. Reproduce with
+    `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
+  - **Membership.** Hermes must stay a member of #geo, or the send fails while
+    Telegram still delivers (`last_delivery_error`).
+- What the route does and does not touch:
+  - It lets biglobster's cron reach #geo and no other channel. #shorts stays
+    unrouted.
+  - It is read from the file on every run, so it needs no restart.
+  - It survives boots: `reconcile_profile_routes` only rewrites `fork-topic:*`
+    routes.
+  - It does **not** make Hermes listen in #geo. The adapter only watches
+    `BUZZ_CHANNELS` (#shorts).
+  - It is **not** rebuilt if the data volume is: after a volume rebuild, add
+    it back by hand.
 - **SocialBot** (repo `br41s/fizz`, `agents/socialbot.*`, PR #57) picks the
   brief up on its hourly heartbeat, not on a mention. That way a brief that
   lands while the Mac running the bots is asleep is not lost.
@@ -362,8 +390,10 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
   `offsite-geo/geo-scout.prompt`**. That prompt is meant to be shared, through
   `prompt_source`, with rented tenants, and they must never post to our Buzz.
   Do not add a Buzz send to the prompt.
-- The setting lives only in the live `jobs.json`. To revert it:
-  `hermes -p biglobster cron edit be8a4add42b0 --deliver "telegram:-1004224848555:2"`.
+- Both settings live only on the volume: the job's `deliver` in `jobs.json`
+  and the route in `config.yaml`. To revert, run
+  `hermes -p biglobster cron edit be8a4add42b0 --deliver "telegram:-1004224848555:2"`
+  and then drop the `geo-scout:biglobster:buzz` route.
 
 ---
 
