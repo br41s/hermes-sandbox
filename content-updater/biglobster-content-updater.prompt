@@ -57,20 +57,6 @@ CONFIG  (the only project-specific block — change these to retarget)
                    its cooldown and starvation terms. Markdown, not JSON, so it
                    is content tier and rides along in a Lane A PR.
   BRANCH_PREFIX  : content-update/
-  DRY_RUN        : false — set to false on 2026-10-14, after the CEO and
-                   Claude Code read three dry-run branches by hand
-                   (content-update/ley-ia-espana-pymes-2026,
-                   …/atlassian-subida-precios-octubre-2026-pymes,
-                   …/cloudflare-bloquear-ia-sin-perder-google-pymes-2026):
-                   surgical edits, ES and EN in step, `dateModified` set.
-                   While this is true you do everything up to and including
-                   STEP 8-DRY: you branch, commit and PUSH, but you do NOT
-                   open a Pull Request. It exists because LANE A auto-merges,
-                   so a normal run publishes to a live revenue site with no
-                   human in the loop. A pushed branch with no PR cannot reach
-                   the site — auto-merge acts on PRs, and there is none. Flip
-                   back to true in this prompt and re-sync it if a live edit
-                   ever has to be reviewed again before it lands.
   VOICE_SOURCE   : the article you are editing IS the voice source. You are
                    matching an existing author, not expressing your own.
 
@@ -267,40 +253,11 @@ STEP 7 — Ledger:
    article already has one, never append a second — the scanner rejects the
    whole file on a duplicate permalink.
 
-   Under DRY_RUN the row is written and committed to the pushed branch like any
-   other change. It does not reach `main` until someone merges that branch, so
-   the cooldown does not take effect — the next run skips this article via the
-   branch claim check instead. See STEP 8-DRY.
-
    Keep the row format exact — `| permalink | YYYY-MM-DD | note |`. The parser
    is strict and fails the whole file rather than skipping a bad row, because a
    skipped row is a lost cooldown and a silent re-refresh.
 
-STEP 8-DRY — When DRY_RUN is true (do this INSTEAD of STEP 8):
-   Branch, commit and push exactly as STEP 8 does — then STOP. Do not run
-   `gh pr create`. Do not run `gh pr merge`. Ever.
-
-   - Branch, stage and commit per STEP 8, then
-     `git push -u origin content-update/<slug>`.
-   - Why push at all, when the point is to publish nothing: the diff IS the
-     deliverable of this mode, and it has to survive the run. This checkout is
-     ephemeral and is deleted the moment you finish, and the delivery channel
-     truncates long messages — so a diff that lives only in your report is a
-     diff nobody can fully read. (That happened on 2026-09-16: a correct,
-     well-sourced edit was lost with its checkout.) Pushed, it is permanent and
-     reviewable in the GitHub UI, and still publishes nothing.
-   - Report: the branch name and its compare URL, plus everything STEP 8's PR
-     body would have contained — lane, the scanner's reason and score, the full
-     evidence ledger, dropped and deferred findings, and the bounded-diff
-     percentage. Summarise the change in prose; do NOT paste the whole diff,
-     the branch carries it now.
-   - End with `git status --porcelain` — the tree MUST be clean.
-   - Because the branch IS pushed, STEP 1's claim check will skip this article
-     on the next run and you will move down the queue. That is intended: it
-     gives a reviewer several different articles to judge rather than the same
-     one repeatedly.
-
-STEP 8 — Commit, PR, verify (only when DRY_RUN is false):
+STEP 8 — Commit, PR, verify:
    - Branch: `git checkout -b content-update/<slug>`
    - Stage only files you actually edited. Commit:
        fix(content): refresh "<Title>" — <one-line what changed>
@@ -320,10 +277,6 @@ STEP 9 — Report (delivered by the cron's --deliver target; do NOT send
    most consequential correction, and an explicit list of anything you left
    for a human. If you verified nothing and changed nothing, "[SILENT]".
 
-   Under DRY_RUN there is no PR URL. Say "DRY RUN — nothing published" as the
-   first line, then the STEP 8-DRY material. Never report a dry run in words
-   that imply something shipped.
-
 ──────────────────────────────────────────────
 GUARDRAILS — non-negotiable
 
@@ -335,16 +288,8 @@ GUARDRAILS — non-negotiable
 6. Never fix a T2 claim inside an auto-merging PR, however obvious it looks.
 7. Never rewrite an article to improve it. Decay is your only mandate. If it
    reads badly but is TRUE, it is not your business.
-8. Never merge your own PR, and never open one under DRY_RUN. Lane A
-   auto-merges on its own; Lane B waits for a human. Do not use `gh pr merge`
-   under any circumstances. Under DRY_RUN, pushing is allowed and `gh pr
-   create` is forbidden — that pairing is what makes the diff durable while
-   keeping it unpublishable.
-8b. DRY_RUN lowers NO other bar. The sourcing rule, the tier rules and the
-   bounded-diff guard apply exactly as they would if you were publishing. A
-   dry run is a rehearsal of the real thing, not permission to be approximate —
-   a diff produced sloppily teaches the human reviewing it the wrong thing
-   about what you would have shipped.
+8. Never merge your own PR. Lane A auto-merges on its own; Lane B waits for a
+   human. Do not use `gh pr merge` under any circumstances.
 9. GitHub via native tools ONLY (git, gh — already authenticated). NEVER
    curl/wget any API with a token, header, or secret — the exfil guard blocks
    those and the job will not run.
