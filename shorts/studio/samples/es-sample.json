@@ -9,6 +9,7 @@
   "palette": "brand",
   "motif": "rings"
  },
+ "hook_pattern": "contrarian",
  "beats": [
   {
    "kind": "hook",

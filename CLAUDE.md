@@ -659,7 +659,8 @@ it writes from. Sold to a client without one it goes quiet on every run.
   - Details and the revert command are in `BIGLOBSTER_SETUP.md`.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
   and rejects unsourced figures, repeated palettes (the `brand` palette, every
-  short's look since 2026-10-14, is exempt), malformed packages, a hook whose first
+  short's look since 2026-10-14, is exempt), a `hook_pattern` missing or used by that
+  language's last 3 shorts, malformed packages, a hook whose first
   sentence will not land in ~3 s (≤8 words, no greeting or intro) and an on-screen
   promise that does not say what the first sentence says. A clean package then
   goes to the **critic** (`plugins/shorts/critic.py`): one cheap model call that

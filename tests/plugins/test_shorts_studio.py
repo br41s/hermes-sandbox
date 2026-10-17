@@ -306,6 +306,56 @@ def test_submit_accepts_only_tip_shorts(sample, tip, submit_env):
     assert ledger.get(out["request_id"])["format"] == "tip"
 
 
+@pytest.mark.parametrize("pattern,vo,problem", [
+    ("clickbait", None, "one of"),
+    ("pain-first", "¿Cuántas horas pierdes cada semana? Empieza por una tarea.", "is a question"),
+    ("question", "Automatiza primero lo aburrido.", "needs a first sentence that asks"),
+    ("number-payoff", "Automatiza primero lo aburrido.", "in digits"),
+])
+def test_the_hook_pattern_is_closed_and_matches_the_hook(tip, pattern, vo, problem):
+    tip["hook_pattern"] = pattern
+    if vo:
+        tip["beats"][0]["vo"] = vo
+    with pytest.raises(pkg_mod.PackageError) as err:
+        pkg_mod.validate_package(tip)
+    assert any(p.startswith("hook_pattern") and problem in p for p in err.value.problems), err.value.problems
+
+
+def test_the_hook_pattern_is_optional_for_the_renderer(tip):
+    # The renderer deploys on merge, Hermes on a manual deploy: an older Hermes's
+    # package carries no pattern and must still render.
+    assert pkg_mod.validate_package(tip)["hook_pattern"] == "contrarian"
+    del tip["hook_pattern"]
+    assert "hook_pattern" not in pkg_mod.validate_package(tip)
+    tip["hook_pattern"] = "question"
+    tip["beats"][0]["vo"] = "¿Automatizas lo aburrido primero? " + tip["beats"][0]["vo"]
+    assert pkg_mod.validate_package(tip)["hook_pattern"] == "question"
+
+
+def test_submit_rotates_hook_patterns_per_language(tip, submit_env):
+    for i, pattern in enumerate(("warning", "contrarian", "result-first")):
+        ledger.add(_entry(f"es-old-{i}", lang="es", motif="dots", hook_pattern=pattern))
+    ledger.add(_entry("es-failed-1", lang="es", motif="dots", hook_pattern="pain-first"))
+    ledger.update("es-failed-1", state="render_failed")       # never aired: takes no slot
+    ledger.add(_entry("en-other-1", motif="dots", hook_pattern="question"))   # other language
+    assert ledger.recent_hook_patterns(lang="es") == ["warning", "contrarian", "result-first"]
+
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
+    assert not out["success"] and submit_env == []
+    assert any("hook_pattern 'contrarian'" in p for p in out["problems"]), out["problems"]
+
+    del tip["hook_pattern"]
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
+    assert any(p.startswith("hook_pattern: required") for p in out["problems"]), out["problems"]
+
+    tip["hook_pattern"] = "pain-first"
+    out = json.loads(st.handle_shorts_studio({"action": "submit", "package": tip}))
+    assert out["success"], out
+    assert ledger.get(out["request_id"])["hook_pattern"] == "pain-first"
+    taken = json.loads(st.handle_shorts_studio({"action": "ledger"}))["hook_patterns_taken"]
+    assert taken == {"en": ["question"], "es": ["contrarian", "result-first", "pain-first"]}
+
+
 def _fake_artifact(passed=True, **extra):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
@@ -589,6 +639,7 @@ def test_submit_refuses_a_colliding_request_id_before_dispatching(tip, submit_en
     other["article"]["url"] = "https://biglobster.top/blog/another-post"
     other["beats"][-1]["url"] = other["article"]["url"]
     other["style"] = {"palette": "violet-lime", "motif": "grid"}
+    other["hook_pattern"] = "warning"
     second = json.loads(st.handle_shorts_studio({"action": "submit", "package": other}))
     assert not second["success"] and "submitted this second" in second["error"]
     assert len(submit_env) == 1  # no second render started
