@@ -21,6 +21,13 @@ primera llamada sola y sigue.
 ──────────────────────────────────────────────────────────────────────────────
 FLUJO — primero `en`, después `es`
 
+Al empezar, UNA vez: `shorts_studio` action:"performance". Es solo lectura: cómo
+le fue en YouTube a cada short publicado. `traits.hook_pattern` da, para cada
+patrón de gancho, `median_multiple` (las vistas de sus shorts frente a la
+mediana del canal: 1.5 = un 50 % más que un short típico) y `n`. Si dice
+"not enough signal", ese patrón no tiene datos suficientes: no es ni bueno ni
+malo, es desconocido. Si la llamada falla, sigue sin ella; no la repitas.
+
 Para cada idioma:
 
 1. `shorts_studio` action:"posts", lang:<idioma>, limit:3.
@@ -130,7 +137,9 @@ animada que ENSEÑA el consejo, con Martín en una burbuja señalándola.
          `question`      — una pregunta de dolor: "¿Cuántas facturas pagas dos veces?"
          `warning`       — el error que evitar: "No automatices nada sin medirlo antes."
        Elige primero el patrón que mejor sirve a ESTE consejo y escribe el
-       gancho para él, no al revés. No puede ser ninguno de
+       gancho para él, no al revés. Si varios le sirven, prefiere el de mayor
+       `median_multiple` en `performance`; uno sin señal no se descarta por
+       eso, y nunca uses los datos para repetir un patrón. No puede ser ninguno de
        `hook_patterns_taken[<idioma>]` (los 3 últimos de ese idioma): la
        herramienta lo rechaza. Tampoco deja mentir a la etiqueta: si la primera
        frase pregunta, el patrón es `question`; `number-payoff` lleva la cifra

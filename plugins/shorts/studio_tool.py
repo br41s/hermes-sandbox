@@ -18,6 +18,7 @@ Actions:
   avatars        the Google Flow avatar clips a package may use
   avatar_upload  add a Flow clip to the avatar library, with the line it speaks
   mark           close a short out (published / skipped) with a note
+  performance    how the published shorts did on YouTube, per hook pattern, language and palette
 """
 
 from __future__ import annotations
@@ -55,7 +56,9 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
         "use against the article, enforces a fresh palette/motif, and refuses to publish "
         "anything that failed QA or while publishing is in shadow mode. series: publishes the "
         "finished episodes of the 'Agentes BigLobster' series that VideoDesk requested in Buzz "
-        "(long videos, both languages) on YouTube and replies in Buzz with the links; no arguments."
+        "(long videos, both languages) on YouTube and replies in Buzz with the links; no arguments. "
+        "performance: read-only, how the published shorts did on YouTube — each short's views as a "
+        "multiple of the channel median, and the median multiple per hook_pattern, lang and palette."
     ),
     "parameters": {
         "type": "object",
@@ -63,11 +66,12 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
             "action": {
                 "type": "string",
                 "enum": ["posts", "article", "ledger", "submit", "status", "publish",
-                         "handoff", "avatars", "avatar_upload", "mark", "series"],
+                         "handoff", "avatars", "avatar_upload", "mark", "series", "performance"],
             },
             "lang": {"type": "string", "enum": ["en", "es"],
                      "description": "posts: which blog feed to read. avatars/avatar_upload: the clip's language."},
-            "limit": {"type": "integer", "description": "posts/ledger: how many (default 5/10)."},
+            "limit": {"type": "integer",
+                      "description": "posts/ledger/performance: how many (default 5/10/10 shorts listed)."},
             "url": {"type": "string", "description": "article: the post URL from `posts`."},
             "package": {
                 "type": "object",
@@ -725,6 +729,21 @@ def _action_series(args: Dict[str, Any]) -> str:
         return _fail(f"series: {exc}")
 
 
+def _action_performance(args: Dict[str, Any]) -> str:
+    """Read-only. The data reaches the Producer as this result, never in its prompt."""
+    from plugins.shorts import ledger
+    from plugins.shorts.social import youtube, youtube_analytics
+
+    limit = max(1, min(int(args.get("limit") or 10), 50))
+    try:
+        report = youtube_analytics.performance(ledger.entries())
+    except youtube.YouTubeError as exc:
+        return _fail(f"performance: {exc}")
+    # Every trait uses every measured short; only the listing is cut, newest last.
+    report["shorts"] = report["shorts"][-limit:]
+    return _ok(**report)
+
+
 _ACTIONS = {
     "posts": _action_posts,
     "article": _action_article,
@@ -737,6 +756,7 @@ _ACTIONS = {
     "avatar_upload": _action_avatar_upload,
     "mark": _action_mark,
     "series": _action_series,
+    "performance": _action_performance,
 }
 
 

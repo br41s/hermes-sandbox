@@ -105,8 +105,23 @@ render: the producer submits and exits, the publisher collects what finished.
   `question` and nothing else, and `number-payoff` needs a figure in digits in
   that sentence. The field is optional in `validate_package` on purpose: the
   renderer validates packages from whichever Hermes is deployed, and Actions
-  picks up a merge before the pod does. The per-pattern performance read-back
-  waits on a YouTube re-authorisation (§3.2).
+  picks up a merge before the pod does.
+- **Performance is read back, never guessed (2026-10-18).** The `performance`
+  action (`plugins/shorts/social/youtube_analytics.py`, read-only) takes the
+  shorts in the ledger with a `published.youtube.id`. It keeps the public ones
+  (`videos.list`) published at least 7 days ago (`MIN_AGE_DAYS`: Analytics lags
+  and a short's views come mostly in its first week), up to the last 60. For
+  those it reads YouTube Analytics `reports.query`: views, average view duration
+  and percentage, likes, shares. Each short's lifetime views become a multiple
+  of the channel median, which is the median of the shorts measured. For each
+  trait (`hook_pattern`, `lang`, `palette`) it reports the median multiple and
+  `n`; under 5 (`MIN_N`) it says `not enough signal` and gives no number.
+  Too-young, private and deleted shorts are counted, never filled in. The
+  Producer calls it once at the start of a run and, among the patterns that fit
+  the tip and are not in `hook_patterns_taken`, prefers the stronger one. The
+  numbers reach it only as that tool result: they never go into the prompt,
+  whose cached prefix stays fixed. The rotation rule above still decides what is
+  allowed.
 - **The article's own pictures.** The renderer fetches the article and puts its
   cover (`og:image`) behind the cards; a card marked `"visual": "infographic"`
   (one per short, never the hook or the CTA) shows the article's raster
@@ -170,14 +185,15 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
    The tool reports the privacy YouTube actually applied.
 7. Custom thumbnails need a phone-verified channel. Without one the upload
    still works and only the thumbnail is skipped, with a warning.
-8. **Analytics needs a re-minted token.** `scripts/youtube_oauth.py` now asks
+8. **Analytics (the `performance` action).** `scripts/youtube_oauth.py` asks
    for `yt-analytics.readonly` and `youtube.readonly` as well as
    `youtube.upload` and `youtube.force-ssl`: YouTube Analytics `reports.query`
-   (views, average view duration and percentage, shares) reads with those two.
-   The live refresh token was minted before that and still carries only the
-   upload scopes (checked 2026-10-17). To read performance back, enable the
-   **YouTube Analytics API** on the same Cloud project, re-run the script from
-   main, replace `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
+   reads with those two. The live token was re-minted with all four on
+   2026-10-18. The **YouTube Analytics API** must also be enabled on the same
+   Cloud project, separately from the Data API: without it `performance` fails
+   `HTTP 403 accessNotConfigured`. A token minted before 2026-10-18 fails
+   `HTTP 403 insufficientPermissions`. Re-run the script, replace
+   `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
 
 ### 3.3 Facebook + Instagram
 
@@ -569,6 +585,9 @@ been rendered yet. The first dispatch with the key set is the test; its log's
 ## 7. Operating it
 
 - `shorts_studio ledger` (from chat) shows the last shorts, their state and URLs.
+- `shorts_studio performance` (from chat) shows how they did on YouTube.
+  `measured: 0` with `too_young` > 0 is normal for the first week after shorts
+  start publishing; it is not a failure.
 - A short published on YouTube whose hand-off to SocialBot failed stays listed by
   `status` as `published` with `handoff_pending: true` until a run hands it off.
 - **Going live:** the shorts handed to a human in shadow mode during the last
