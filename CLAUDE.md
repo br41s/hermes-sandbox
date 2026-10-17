@@ -648,7 +648,15 @@ it writes from. Sold to a client without one it goes quiet on every run.
   only on BigLobster's job `be8a4add42b0`, and only through its `deliver`
   (Telegram plus the Buzz #geo channel), never through
   `offsite-geo/geo-scout.prompt`. That prompt is shared with rented tenants.
-  Details and the revert command are in `BIGLOBSTER_SETUP.md`.
+  It also needs the primary route `geo-scout:biglobster:buzz` in
+  `gateway.profile_routes`.
+  - The general rule: a satellite profile's cron can deliver only to platforms
+    that its own `.env` connects, or that a primary route covers. Otherwise the
+    preflight blocks the whole job.
+  - Check it with the container's global credentials unset
+    (`env -u BUZZ_RELAY_URL …`). An exec shell still has them, so it reports a
+    pass that the scheduler will not see.
+  - Details and the revert command are in `BIGLOBSTER_SETUP.md`.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
   and rejects unsourced figures, repeated palettes (the `brand` palette, every
   short's look since 2026-10-14, is exempt), malformed packages, a hook whose first
