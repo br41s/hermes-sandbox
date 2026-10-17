@@ -75,14 +75,22 @@ render: the producer submits and exits, the publisher collects what finished.
   the article's own cover, blurred); it is exempt from the old rule that the
   palette must differ from the last two shorts, which still applies to the
   other palettes. The motif still rotates (it is barely visible under the cover).
-- **The promise, written and spoken.** The hook's on-screen line must share a
-  key word or the figure with its first spoken sentence (`package._check_promise`):
-  the viewer reads what they hear. Then a **critic** (`plugins/shorts/critic.py`,
-  one cheap model call per clean submission, `SHORTS_CRITIC_MODEL`, bar
-  `SHORTS_CRITIC_MIN`, default 7/10) scores whether the opening lands what the
-  viewer gains or what pain goes away, in the second person, with the article's
-  figure or deadline and the tool or trade named; below the bar `submit` refuses
-  with its reasons and a better first sentence, prefixed `guionista:`. No key,
+- **The promise, written and spoken, within Lucía's first 10 s (owner,
+  2026-10-17).** Her joke comes first by design, so the tip format drops the
+  classic hook's ~3 s rule (first sentence ≤8 words) for a window: `opener.line`
+  plus the hook's `vo` fit in `package.TIP_PROMISE_SECONDS` (10) at her pace on
+  the take (`TIP_TAKE_WORDS_PER_SECOND`, presenter.WORDS_PER_SECOND ×
+  TAKE_TEMPO: ~29 words in Spanish, ~34 in English). Today the paid on-camera cap
+  (32 words with the handoff) is usually the tighter bound; the window is what
+  holds if that cap is raised. The hook's on-screen line must share a key word or
+  the figure with the hook (`package._check_promise`; the classic format compares
+  the first sentence): the viewer reads what they hear. Then a **critic**
+  (`plugins/shorts/critic.py`, one cheap model call per clean submission,
+  `SHORTS_CRITIC_MODEL`, bar `SHORTS_CRITIC_MIN`, default 7/10) scores whether the
+  promise is said by the end of the hook, what the viewer gains or what pain goes
+  away, in the second person, with the article's figure or deadline and the tool
+  or trade named; below the bar `submit` refuses with its reasons and a better
+  hook, prefixed `guionista:`. No key,
   a network error or a nonsense answer never block a short (`SHORTS_CRITIC=off`
   switches it off). The rubric is Guionista's evidence in
   `~/fizz/salida/guionista/alcance/`.

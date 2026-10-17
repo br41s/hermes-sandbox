@@ -1702,6 +1702,26 @@ def test_the_written_promise_must_say_what_the_first_sentence_says(tip):
     assert pkg_mod._key_words("¿Cuántas facturas pagas dos veces?") == {"cuantas", "facturas", "pagas", "veces"}
 
 
+def test_in_the_tip_format_lucia_has_ten_seconds_to_land_the_promise(tip):
+    # The joke comes first by design (owner, 2026-10-17): no 8-word cap on the hook's first
+    # sentence, and the written promise may echo any sentence of the hook.
+    slow = copy.deepcopy(tip)
+    slow["beats"][0]["vo"] = "Si repites facturas cada mes a mano: automatiza primero lo aburrido."
+    assert pkg_mod.validate_package(slow)["beats"][0]["vo"].startswith("Si repites")
+    # ...but opener + hook must still fit in her first 10 seconds.
+    late = copy.deepcopy(tip)
+    late["opener"]["line"] = "Si ya madrugo tanto para hacer el pan cada día, que al menos las facturas se vayan solas."
+    late["opener"]["handoff"] = "Martín, explícalo."
+    late["beats"][0]["vo"] = "Repites las mismas facturas cada mes a mano. Automatiza primero lo aburrido."
+    with pytest.raises(pkg_mod.PackageError) as exc:
+        pkg_mod.validate_package(late)
+    assert "within her first 10 seconds" in str(exc.value) and "on camera" not in str(exc.value)
+    # Her pace is the take's: the presenter's words a second at the take's tempo.
+    from plugins.shorts.studio import presenter
+    assert pkg_mod.TIP_TAKE_WORDS_PER_SECOND == {
+        lang: round(wps * presenter.TAKE_TEMPO, 1) for lang, wps in presenter.WORDS_PER_SECOND.items()}
+
+
 def test_the_infographic_goes_on_one_card_only(tip):
     pkg = pkg_mod.validate_package(tip)
     assert pkg["beats"][2]["visual"] == "infographic" and "visual" not in pkg["beats"][1]
@@ -1819,7 +1839,7 @@ def test_the_critic_returns_the_openings_problems_and_a_better_first_line(tip, m
     monkeypatch.setattr(critic, "config", lambda: {"enabled": True, "model": "m", "min": 7, "key": "sk-crit"})
     pkg = pkg_mod.validate_package(tip)
     api = _CriticAPI(json.dumps({"score": 4, "problems": ["la primera frase es un tema, no una promesa", "la broma no lleva al consejo"],
-                                 "rewrite": {"first_sentence": "Recupera dos horas cada semana sin contratar.",
+                                 "rewrite": {"hook": "Recupera dos horas cada semana sin contratar.",
                                              "onscreen": "Recupera *dos horas* a la semana"}}))
     problems = critic.review(pkg, ARTICLE_TEXT, client=api)
     assert problems[0].startswith("guionista: the opening scores 4/10 (minimum 7): la primera frase es un tema")
@@ -1831,8 +1851,9 @@ def test_the_critic_returns_the_openings_problems_and_a_better_first_line(tip, m
     assert sent["response_format"] == {"type": "json_object"}
     script = sent["messages"][1]["content"]
     assert "Automatiza primero lo aburrido" in script and "LUCIA (joke" in script and "MARTIN (card)" in script
-    # The joke opens every short by design: the rubric judges the hook's first sentence, not the joke.
-    assert "before the hook by design" in script and "judge the HOOK's first spoken sentence" in critic.RUBRIC
+    # The joke opens every short by design: the rubric judges the whole hook, within her first ten seconds.
+    assert "before the hook by design" in script and "judge the HOOK as a whole" in critic.RUBRIC
+    assert "first ten seconds" in critic.RUBRIC and "three seconds" not in critic.RUBRIC
     assert "ARTICLE (beginning)" in script and sent["messages"][0]["content"] == critic.RUBRIC
     # Good enough, fenced JSON, nonsense, an API error, or the critic switched off: no objection.
     assert critic.review(pkg, ARTICLE_TEXT, client=_CriticAPI("```json\n{\"score\": 9, \"problems\": []}\n```")) == []

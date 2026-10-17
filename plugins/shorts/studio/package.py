@@ -145,6 +145,12 @@ TIP_MAX_TOTAL_WORDS = 110
 TIP_MAX_OPENER_WORDS = 18
 TIP_MAX_ON_CAMERA_WORDS = 32
 TIP_MAX_HANDOFF_WORDS = 8
+# Lucía's joke comes first by design, so in the tip format the promise has
+# until TIP_PROMISE_SECONDS into her take, not the classic hook's ~3 s
+# (owner, 2026-10-17): opener + hook fit in that window at her pace on the
+# take, presenter.WORDS_PER_SECOND x presenter.TAKE_TEMPO (a test keeps them equal).
+TIP_PROMISE_SECONDS = 10
+TIP_TAKE_WORDS_PER_SECOND = {"es": 2.9, "en": 3.4}
 TIP_MIN_SETTING_WORDS = 8
 TIP_MIN_CARDS = 3
 # Martín's voice, the narrator of every card, the same in every short
@@ -232,15 +238,19 @@ def _check_text(problems: List[str], where: str, text: str, *,
         problems.append(f"{where}: {len(text)} chars, max {max_chars}: {text!r}")
 
 
-def _check_hook_lead(problems: List[str], where: str, vo: str) -> None:
-    """The hook's first ~3 seconds: the promise or the pain, said at once."""
+def _check_hook_lead(problems: List[str], where: str, vo: str, *, tip: bool = False) -> None:
+    """The hook's first ~3 seconds: the promise or the pain, said at once.
+
+    The tip format bounds the whole of Lucía's opening instead
+    (TIP_PROMISE_SECONDS), so its first sentence has no word cap here.
+    """
     if _HOOK_FILLER.match(vo):
         problems.append(
             f"{where}.vo: the hook must open on the hook itself — a pain, a figure or the "
             f"benefit for the viewer — never a greeting, an introduction or talk about the video: {vo!r}"
         )
     lead = _SENTENCE_END.split(vo.lstrip("¿¡ "), maxsplit=1)[0]
-    if _words(lead) > MAX_HOOK_LEAD_WORDS:
+    if not tip and _words(lead) > MAX_HOOK_LEAD_WORDS:
         problems.append(
             f"{where}.vo: the hook's first sentence has {_words(lead)} words, max "
             f"{MAX_HOOK_LEAD_WORDS} (~3 s): land the promise first, explain after: {lead!r}"
@@ -268,19 +278,22 @@ def _key_words(text: str) -> set:
     return out
 
 
-def _check_promise(problems: List[str], where: str, vo: str, onscreen: str) -> None:
+def _check_promise(problems: List[str], where: str, vo: str, onscreen: str, *, tip: bool = False) -> None:
     """The written promise says what the first spoken sentence says (owner, 2026-10-14).
 
     The Studio's shorts named the topic on screen while the voice said
     something else, and neither told the viewer what they gain. Sharing a key
     word or the figure is the cheap, mechanical half of the check; the
-    critic (plugins/shorts/critic.py) judges the rest.
+    critic (plugins/shorts/critic.py) judges the rest. In the tip format the
+    promise may land anywhere in the hook (TIP_PROMISE_SECONDS), so the whole
+    hook is compared.
     """
-    lead = _SENTENCE_END.split(vo.lstrip("¿¡ "), maxsplit=1)[0]
-    if not (_key_words(lead) & _key_words(onscreen)):
+    spoken = vo if tip else _SENTENCE_END.split(vo.lstrip("¿¡ "), maxsplit=1)[0]
+    what = "the hook" if tip else "the first spoken sentence"
+    if not (_key_words(spoken) & _key_words(onscreen)):
         problems.append(
-            f"{where}.onscreen: the written promise must say what the first spoken sentence says, "
-            f"sharing a key word or the figure: spoken {lead!r}, written {onscreen!r}"
+            f"{where}.onscreen: the written promise must say what {what} says, "
+            f"sharing a key word or the figure: spoken {spoken!r}, written {onscreen!r}"
         )
 
 
@@ -461,7 +474,7 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         beat: Dict[str, Any] = {"kind": kind, "vo": _text(b.get("vo"))}
         _check_text(problems, f"{where}.vo", beat["vo"], max_words=MAX_VO_WORDS)
         if i == 0 and kind == "hook" and beat["vo"]:
-            _check_hook_lead(problems, where, beat["vo"])
+            _check_hook_lead(problems, where, beat["vo"], tip=tip)
         total_words += _words(beat["vo"])
 
         broll = _text(b.get("broll"))
@@ -512,7 +525,7 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
             _check_text(problems, f"{where}.onscreen", beat["onscreen"],
                         max_words=MAX_ONSCREEN_WORDS, max_chars=MAX_ONSCREEN_CHARS)
             if i == 0 and kind == "hook" and beat["vo"] and beat["onscreen"]:
-                _check_promise(problems, where, beat["vo"], beat["onscreen"])
+                _check_promise(problems, where, beat["vo"], beat["onscreen"], tip=tip)
         if kind == "hook":
             kicker = _text(b.get("kicker"))
             _check_text(problems, f"{where}.kicker", kicker, required=False,
@@ -574,6 +587,13 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         if on_camera > TIP_MAX_ON_CAMERA_WORDS:
             problems.append(f"opener + hook + handoff: {on_camera} words Lucía says on camera, max "
                             f"{TIP_MAX_ON_CAMERA_WORDS} (~12 s; she is paid by the second)")
+        hook = beats[0] if beats[0].get("kind") == "hook" else {}
+        before_promise = _words(opener.get("line", "")) + _words(hook.get("vo", ""))
+        window = int(TIP_PROMISE_SECONDS * TIP_TAKE_WORDS_PER_SECOND.get(lang, TIP_TAKE_WORDS_PER_SECOND["es"]))
+        if hook and before_promise > window:
+            problems.append(f"opener.line + hook: {before_promise} words, max {window} (~{TIP_PROMISE_SECONDS} s "
+                            f"at Lucía's pace): the promise must be said within her first "
+                            f"{TIP_PROMISE_SECONDS} seconds")
         cards = sum(1 for b in beats if b.get("show") == "card" and b.get("kind") != "cta")
         if cards < TIP_MIN_CARDS:
             problems.append(f"beats: {cards} card beats before the CTA, need at least {TIP_MIN_CARDS}: show "
