@@ -147,7 +147,8 @@ def canonical(path) -> Path:
                                    "-map", "0", "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1",
                                    "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact",
                                    "-movflags", "+faststart", "-f", "mp4", str(part)],
-                                  capture_output=True, text=True, errors="replace", timeout=300, check=False)
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+                                  timeout=300, check=False)
             if done.returncode != 0 or not part.exists() or part.stat().st_size == 0:
                 raise BuzzError(f"could not strip {src.name} for the relay: {(done.stderr or '').strip()[-300:]}")
         os.replace(part, dst)
