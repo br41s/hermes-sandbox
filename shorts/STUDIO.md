@@ -170,15 +170,14 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
    The tool reports the privacy YouTube actually applied.
 7. Custom thumbnails need a phone-verified channel. Without one the upload
    still works and only the thumbnail is skipped, with a warning.
-8. **No analytics yet (checked 2026-10-17).** `scripts/youtube_oauth.py` asks
-   for `youtube.upload` and `youtube.force-ssl` only. YouTube Analytics
-   (`reports.query`: views, average view duration and percentage, shares)
-   accepts `yt-analytics.readonly` or the full `youtube` scope, so the current
-   refresh token cannot read it. Reading performance back needs the owner to
-   add `https://www.googleapis.com/auth/yt-analytics.readonly` to `SCOPES`,
-   (Google's reference page also says the method now needs `youtube.readonly`;
-   add both), enable the **YouTube Analytics API** on the same Cloud project, re-run the
-   script, replace `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
+8. **Analytics needs a re-minted token.** `scripts/youtube_oauth.py` now asks
+   for `yt-analytics.readonly` and `youtube.readonly` as well as
+   `youtube.upload` and `youtube.force-ssl`: YouTube Analytics `reports.query`
+   (views, average view duration and percentage, shares) reads with those two.
+   The live refresh token was minted before that and still carries only the
+   upload scopes (checked 2026-10-17). To read performance back, enable the
+   **YouTube Analytics API** on the same Cloud project, re-run the script from
+   main, replace `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
 
 ### 3.3 Facebook + Instagram
 

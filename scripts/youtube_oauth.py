@@ -36,6 +36,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     # thumbnails.set and captions.insert need this broader scope.
     "https://www.googleapis.com/auth/youtube.force-ssl",
+    # Analytics reports.query (views, retention, shares) reads with these two.
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 
