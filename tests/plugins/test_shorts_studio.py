@@ -2017,3 +2017,132 @@ def test_a_published_short_whose_hand_off_failed_stays_listed_until_handed_off(h
     monkeypatch.setattr(st, "publish_mode", lambda: "shadow")
     assert json.loads(st.handle_shorts_studio({"action": "status"}))["shorts"] == []
 
+
+
+# ---------------------------------------------------------------------------
+# performance — YouTube Analytics read-back
+# ---------------------------------------------------------------------------
+
+class _YouTubeFake:
+    """Routes by URL: token refresh, videos.list (privacy) and Analytics reports.query."""
+
+    def __init__(self, privacy, views, report_status=200):
+        self.privacy, self.views, self.report_status = privacy, views, report_status
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, **kw):
+        self.calls.append(("POST", url, kw))
+        return _Resp(200, {"access_token": "tok"})
+
+    def get(self, url, **kw):
+        from plugins.shorts.social import youtube, youtube_analytics
+
+        self.calls.append(("GET", url, kw))
+        ids = kw["params"].get("id", "").split(",")
+        if url == youtube.VIDEOS_URL:
+            return _Resp(200, {"items": [{"id": i, "status": {"privacyStatus": self.privacy[i]}}
+                                         for i in ids if i in self.privacy]})
+        assert url == youtube_analytics.REPORTS_URL
+        if self.report_status != 200:
+            return _Resp(self.report_status, {"error": {"errors": [{"reason": "insufficientPermissions"}]}})
+        asked = kw["params"]["filters"].removeprefix("video==").split(",")
+        return _Resp(200, {
+            "columnHeaders": [{"name": n} for n in ("video", "views", "averageViewDuration",
+                                                   "averageViewPercentage", "likes", "shares")],
+            # A video with no views in the window has no row at all.
+            "rows": [[v, self.views[v], 20.5, 41.0, 3, 1] for v in asked if self.views.get(v)],
+        })
+
+
+@pytest.fixture
+def yt_env(home, monkeypatch):
+    for k in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN"):
+        monkeypatch.setenv(k, "x")
+
+    def install(fake):
+        from plugins.shorts.social import youtube_analytics
+        monkeypatch.setattr(youtube_analytics, "_client", lambda: fake)
+        return fake
+    return install
+
+
+def _published_short(rid, video_id, days_ago, **kw):
+    import time as _time
+
+    at = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() - days_ago * 86400))
+    ledger.add(_entry(rid, **kw))
+    ledger.update(rid, state="published", published={"youtube": {"id": video_id, "at": at}})
+
+
+def test_performance_reports_multiples_of_the_channel_median_per_trait(yt_env):
+    shorts = [  # (video, views, lang, hook_pattern, palette)
+        ("v1", 100, "en", "pain-first", "brand"), ("v2", 200, "en", "pain-first", "brand"),
+        ("v3", 300, "es", "pain-first", "brand"), ("v4", 400, "es", "pain-first", "teal-amber"),
+        ("v5", 500, "en", "pain-first", "brand"), ("v6", 600, "en", "question", "brand"),
+        ("v7", 0, "es", "question", "brand"),
+    ]
+    for i, (vid, _, lang, pattern, palette) in enumerate(shorts):
+        _published_short(f"{lang}-s-{i}", vid, 30 - i, lang=lang, hook_pattern=pattern, palette=palette)
+    _published_short("en-young-1", "v8", 2, hook_pattern="warning")        # too young to judge
+    _published_short("en-private-1", "v9", 20, hook_pattern="warning")     # nobody can see it
+    ledger.add(_entry("en-unpublished-1"))                                 # never reached YouTube
+    privacy = {v[0]: "public" for v in shorts} | {"v9": "private"}
+    fake = yt_env(_YouTubeFake(privacy, {v[0]: v[1] for v in shorts}))
+
+    out = json.loads(st.handle_shorts_studio({"action": "performance"}))
+    assert out["success"], out
+    assert (out["measured"], out["too_young"], out["not_public"]) == (7, 1, 1)
+    assert out["baseline"] == {"median_views": 300, "n": 7}
+    traits = out["traits"]
+    assert traits["hook_pattern"]["pain-first"] == {"n": 5, "median_multiple": 1.0}
+    assert traits["hook_pattern"]["question"] == {"n": 2, "median_multiple": None, "signal": "not enough signal"}
+    assert "warning" not in traits["hook_pattern"]            # young and private shorts are left out, not guessed
+    assert traits["lang"]["en"]["signal"] == "not enough signal"
+    assert traits["palette"]["brand"] == {"n": 6, "median_multiple": 0.83}
+    by_video = {s["video_id"]: s for s in out["shorts"]}
+    assert by_video["v6"]["multiple"] == 2.0 and by_video["v7"]["views"] == 0   # no row = 0 views
+    assert by_video["v1"]["avg_view_pct"] == 41.0 and by_video["v1"]["shares"] == 1
+
+    report = [c for c in fake.calls if c[1].endswith("/v2/reports")]
+    assert len(report) == 1
+    params = report[0][2]["params"]
+    assert params["ids"] == "channel==MINE" and params["dimensions"] == "video"
+    assert "v9" not in params["filters"] and "v8" not in params["filters"]
+    assert report[0][2]["headers"]["Authorization"] == "Bearer tok"
+
+    listed = json.loads(st.handle_shorts_studio({"action": "performance", "limit": 2}))
+    assert [s["video_id"] for s in listed["shorts"]] == ["v6", "v7"]
+    assert listed["traits"] == traits                         # the listing is cut, the traits are not
+
+
+def test_performance_never_divides_by_a_zero_median(yt_env):
+    for i in range(3):
+        _published_short(f"en-z-{i}", f"z{i}", 10, hook_pattern="question")
+    yt_env(_YouTubeFake({f"z{i}": "public" for i in range(3)}, {"z0": 50}))
+    out = json.loads(st.handle_shorts_studio({"action": "performance"}))
+    assert out["success"] and out["baseline"]["median_views"] == 0
+    assert out["traits"] == {} and "0 views" in out["note"]
+
+
+def test_performance_names_the_missing_scope_and_needs_youtube(yt_env, monkeypatch):
+    _published_short("en-p-1", "p1", 10)
+    yt_env(_YouTubeFake({"p1": "public"}, {"p1": 5}, report_status=403))
+    out = json.loads(st.handle_shorts_studio({"action": "performance"}))
+    assert not out["success"] and "yt-analytics.readonly" in out["error"]
+
+    monkeypatch.delenv("YOUTUBE_REFRESH_TOKEN")
+    out = json.loads(st.handle_shorts_studio({"action": "performance"}))
+    assert not out["success"] and "not configured" in out["error"]
+
+
+def test_performance_with_nothing_old_enough_makes_no_call(yt_env):
+    _published_short("en-new-1", "n1", 1)
+    fake = yt_env(_YouTubeFake({}, {}))
+    out = json.loads(st.handle_shorts_studio({"action": "performance"}))
+    assert out["success"] and out["measured"] == 0 and out["too_young"] == 1 and fake.calls == []
