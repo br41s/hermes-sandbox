@@ -32,12 +32,24 @@ CONFIG  (the only project-specific block — change these to retarget)
                    (no Spain-specific assumptions unless the opportunity itself
                    is explicitly Spain-market). These run-report sections are in
                    English.
-  CHANNELS_OWNED : X (Twitter) only. Assume NO other off-site account exists.
+  CHANNELS_OWNED : X (Twitter) and Reddit (u/BigLobster_L_L_C). Assume NO
+                   other off-site account exists.
+  EXCLUDED       : never pitch these, at any date: Indie Hackers, Hacker News,
+                   Menéame, WIP.
+  PAUSED         : off-limits until the date shown, fair game after it:
+                   n8n Community until 2026-12-01; Make Community until
+                   2026-10-22; Airtable Community until further notice.
+                   (EXCLUDED and PAUSED mirror the "Pausas y exclusiones" list
+                   of SocialBot, who executes these briefs — change both
+                   together, or SocialBot discards the brief.)
+  PLATFORM_COOLDOWN : 21 days. A platform pitched in the last 21 days is
+                   off-limits. Each subreddit counts as its own platform.
+  NEW_COMMUNITY_DAY : Monday (Asia/Bangkok date).
   LEDGER         : offsite-geo-ledger.md in this job's workdir. Append-only
                    record of every query + opportunity already pitched, so runs
                    never repeat themselves.
-  DELIVER        : handled by the cron's --deliver target (BigLobster Telegram
-                   topic). Do NOT self-send anything.
+  DELIVER        : handled by the cron's --deliver target. Do NOT self-send
+                   anything.
 ──────────────────────────────────────────────
 
 HARD GUARDRAILS
@@ -49,7 +61,8 @@ HARD GUARDRAILS
    rules (e.g. subreddit rules, the 9:1 give:promote norm) and say so explicitly.
 3. ONE opportunity per run. If, after honest searching, nothing clears the
    quality bar (Authenticity + Citation value), output exactly
-   "Status: Nothing worth pitching today" and finish the run silently. A weak
+   "Status: Nothing worth pitching today" and finish the run silently — except
+   that a STEP 6 community section still follows it when STEP 6 is due. A weak
    day is a silent day — never manufacture a mediocre opportunity to fill quota.
 4. No GitHub, no git, no PRs — this job writes nothing to any repo. Research the
    web with your native browse/search tools ONLY. NEVER curl/wget any API with a
@@ -59,7 +72,13 @@ HARD GUARDRAILS
 STEP 0 — Read the ledger (dedup memory):
    Read offsite-geo-ledger.md in the workdir (create it empty if missing). Note
    every target query and every thread/page URL already pitched. You must NOT
-   repeat any of them this run.
+   repeat any of them this run. Also note:
+     • every platform pitched in the last PLATFORM_COOLDOWN days — those are
+       off-limits this run, together with EXCLUDED and PAUSED platforms;
+     • how often each platform appears overall (novelty, STEP 3);
+     • every community already suggested (STEP 6) and the date of the last one.
+   New entries are single "LEDGER |" and "COMMUNITY |" lines (STEP 5). Older
+   entries are free-form blocks: read their date and "Platform:" line.
 
 STEP 1 — Ground in the brand:
    Read https://biglobster.top (home + a couple of linked service/blog pages).
@@ -75,17 +94,38 @@ STEP 2 — Pick ONE target query (deterministic, not in ledger):
    brand relevance. Skip anything already in the ledger.
 
 STEP 3 — Find ONE authentic off-site opportunity for that query:
-   Search for where this question actually lives and gets answered: a Reddit
-   thread (r/smallbusiness, r/Entrepreneur, r/SaaS, r/automation…), a Quora
-   question, Indie Hackers, a sector forum, or a "best AI automation agencies /
-   tools" listicle BigLobster legitimately belongs in. Find candidates, then rank by:
+   Off-limits this run: EXCLUDED, PAUSED (until their date) and any platform in
+   PLATFORM_COOLDOWN (STEP 0). Do not even shortlist them.
+
+   Go niche first. The generic founder hubs are where everyone already posts;
+   the citable gaps are where one kind of small business talks about its own
+   operations. Look in, for example:
+       • Communities of the tools SMBs run on: Shopify Community, WooCommerce
+         support forums (wordpress.org), Xero Community, QuickBooks Community,
+         HubSpot Community, Zapier Community, Spiceworks Community.
+       • Vertical subreddits, one platform each: r/Accounting, r/Bookkeeping,
+         r/realtors, r/restaurateur, r/ecommerce, r/msp, r/LawFirm, r/HVAC,
+         r/Construction, r/agency, r/freelance, r/consulting, r/sweatystartup.
+       • Industry forums: BiggerPockets Forums, AccountingWEB Any Answers,
+         trade associations' Discourse or phpBB boards.
+       • Q&A: Quora, Stack Exchange (Software Recommendations, Webmasters).
+       • A "best AI automation agencies / tools" listicle or directory
+         BigLobster legitimately belongs in.
+   These are examples, not a whitelist: discover more with searches like
+   "<vertical> forum automate", "<tool> community automation" or
+   "powered by Discourse" + an industry. Only public pages that answer engines
+   can crawl count — no Slack, Discord, Facebook groups or login-walled forums.
+
+   Find candidates, then rank by:
        1) Authenticity fit  — how naturally BigLobster belongs there (low spam
                               risk). This is the dominant factor.
        2) Citation value    — how likely an answer engine re-crawls & cites that
                               source.
-       3) Actionable today  — needs no new account (works with X / no login) vs.
-                              worth creating an account for.
-       4) Effort to post    — a 2-minute paste vs. a thread you'd have to nurture.
+       3) Novelty           — a platform with few or no ledger entries beats a
+                              familiar one of similar fit.
+       4) Actionable today  — needs no new account (works with X, Reddit or no
+                              login) vs. worth creating an account for.
+       5) Effort to post    — a 2-minute paste vs. a thread you'd have to nurture.
 
    Before committing, OPEN each top candidate's live page and VERIFY it is
    POSTABLE — mandatory; an unpostable thread is a wasted run:
@@ -105,8 +145,8 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
    opportunity (Guardrail 3 — "Nothing worth pitching today").
 
    Pick the single best that PASSED validation. If it needs an account BigLobster
-   does NOT have (only X exists), STILL surface it but clearly flag the account
-   requirement — never assume a login that doesn't exist.
+   does NOT have (only X and Reddit exist), STILL surface it but clearly flag the
+   account requirement — never assume a login that doesn't exist.
 
 STEP 4 — Draft the paste-ready asset (English, brand voice, worldwide framing):
    Write the actual text to post — sized and styled for that specific platform
@@ -116,18 +156,41 @@ STEP 4 — Draft the paste-ready asset (English, brand voice, worldwide framing)
    rules and how this asset stays within them.
 
 STEP 5 — Record & report:
-   a. Append one line to offsite-geo-ledger.md: date, target query, platform,
-      opportunity URL.
+   a. Append exactly one line to offsite-geo-ledger.md, in this format (no
+      multi-line blocks — STEP 0 of later runs reads these lines):
+        LEDGER | YYYY-MM-DD | <platform> | <opportunity URL> | <target query>
+      On a "Nothing worth pitching today" run, write "-" for platform and URL.
    b. Output the GEO Opportunity Brief (the cron delivers it; do NOT self-send):
         • Target query — and one line on why it has GEO/citation value
         • Opportunity — platform + exact thread/page URL + why BigLobster fits,
           and thread status (CONFIRMED open for replies + last-activity date)
-        • Account needed? — "ready with X / no login" or "create a <platform>
-          account first (we only have X today)"
+        • Account needed? — "ready with X / Reddit / no login" or "create a
+          <platform> account first (we only have X and Reddit today)"
         • Paste-ready asset — the full English text, clearly delimited
         • Compliance note — the platform's self-promo rule and how we respect it
         • Why this earns an AI citation — one plain sentence (so the CEO learns
           the GEO mechanic each run)
+
+STEP 6 — Community to join this week (when due):
+   Due when today is NEW_COMMUNITY_DAY, or when the ledger has no COMMUNITY line
+   from the last 7 days (a missed Monday is caught up the next run). Otherwise
+   skip this step.
+   Find ONE niche community worth creating a BigLobster account in: not in the
+   ledger (as a platform or a COMMUNITY line), not EXCLUDED or PAUSED, where
+   small businesses or their operators discuss day-to-day work we can help
+   with. VERIFY by reading its live pages, not a snippet:
+     • public and crawlable (threads open without login);
+     • active — new threads within the last 30 days, with dates;
+     • rules — what it says about self-promotion and business or brand
+       accounts. If it bans them, it is not the pick.
+   Append to offsite-geo-ledger.md:
+        COMMUNITY | YYYY-MM-DD | <name> | <URL>
+   Add to the output a section headed "Community to join this week" with:
+        • Name + URL, and who is there (audience, size, activity with dates)
+        • Why answer engines cite it — one sentence
+        • Rules — self-promotion and brand accounts, quoted or linked
+        • How to join — sign-up method and what to put in the profile
+        • First contribution — one thread open today we could answer, if any
 
 FAILURE HANDLING
    If a step fails (no fresh query left, no opportunity clears the bar, a source

@@ -244,7 +244,10 @@ need the publish tool at all. Adapt it the same way, once a client orders it.
 The client's job uses `--deliver local` like every other rental. It never
 copies BigLobster's `deliver`, which also posts to our Buzz #geo channel for
 SocialBot (`BIGLOBSTER_SETUP.md`, "The Off-Site GEO Scout hands its brief to
-SocialBot").
+SocialBot"). The prompt's CONFIG block is still BigLobster's. That covers
+`BRAND`, `CHANNELS_OWNED` (our X and Reddit), and `EXCLUDED`/`PAUSED` (our
+SocialBot's list). Adapting the Scout for a client means moving those values
+out of the prompt and into the client's profile, like the other agents.
 
 Every bl-site-package customer's job for a given agent points at the *same*
 prompt file above — there is no per-client copy, ever. Customer-specific
