@@ -148,6 +148,8 @@ _WS_AUTH_TIMEOUT = 20.0
 # leaves the gateway "connected" while inbound stops; this timeout forces the normal reconnect path instead.
 _WS_READ_IDLE_TIMEOUT = 300.0
 _WS_MAX_MESSAGE_BYTES = 2_000_000
+# The buzz CLI rejects content over 65,536 bytes; leave headroom for the "(n/m)" split indicator.
+_MAX_CONTENT_BYTES = 60_000
 _WS_MEMBERSHIP_KIND = 44100  # Buzz channel-membership event — live DM discovery
 _WS_MEMBERSHIP_SUB_ID = "hermes-buzz-membership"
 # Credentials JSON fallback when BUZZ_PRIVATE_KEY is not set; module-level so tests can point it at a tmpdir.
@@ -256,6 +258,11 @@ def hex_to_npub(pubkey_hex: str) -> Optional[str]:
 
 def _split_csv(raw):
     return raw.split(",") if isinstance(raw, str) else raw
+
+
+def _utf8_len(text: str) -> int:
+    """Length in UTF-8 bytes, the unit the relay's content limit is measured in."""
+    return len(text.encode("utf-8"))
 
 
 def _pubkey_set(raw) -> set:
@@ -505,6 +512,12 @@ _ATTACHMENT_KIND_TYPES = {"image": MessageType.PHOTO, "video": MessageType.VIDEO
 
 class BuzzAdapter(BasePlatformAdapter):
     """Buzz adapter (WebSocket push with poll fallback) for the BasePlatformAdapter interface."""
+
+    # Cron output over gateway/delivery.py's MAX_PLATFORM_OUTPUT (4000) was cut with a "full output saved
+    # to <container path>" footer nobody in the channel can open. The relay takes up to 65,536 bytes per
+    # message, so send() splits by UTF-8 bytes below that instead. MAX_MESSAGE_LENGTH is left alone: it
+    # also sizes streaming edits, which are a different behavior.
+    splits_long_messages = True  # send() chunks via truncate_message(_MAX_CONTENT_BYTES, utf-8 bytes)
 
     def __init__(self, config, **kwargs):
         super().__init__(config=config, platform=Platform("buzz"))
@@ -819,13 +832,19 @@ class BuzzAdapter(BasePlatformAdapter):
         meta = metadata or {}
         args = ["messages", "send", "--channel", str(chat_id), "--content", "-"]
         args += self._reply_args(meta.get("thread_id") or meta.get("reply_to_message_id") or reply_to)
-        mention_pubkeys = await self._mention_pubkeys_for(chat_id, content)
-        code, out, err = await self._run_message_send(args, content, mention_pubkeys)
-        result = self._send_result(chat_id, code, out, err)
-        if result.success:
+        first: Optional[SendResult] = None
+        # Chunks share the anchor; the first chunk's id is the message callers thread against.
+        for chunk in self.truncate_message(content, _MAX_CONTENT_BYTES, len_fn=_utf8_len):
+            mention_pubkeys = await self._mention_pubkeys_for(chat_id, chunk)
+            code, out, err = await self._run_message_send(args, chunk, mention_pubkeys)
+            result = self._send_result(chat_id, code, out, err)
+            if not result.success:
+                return result
             # Record event_meta so a thread reply to this send matches even if the echo never arrives.
-            self._remember_event_meta(str(chat_id), result.message_id, self._self_pubkey, content)
-        return result
+            self._remember_event_meta(str(chat_id), result.message_id, self._self_pubkey, chunk)
+            first = first or result
+        assert first is not None
+        return first
 
     def _reply_args(self, anchor: Optional[str]) -> List[str]:
         """``--reply-to`` CLI args for *anchor*, honoring ``reply_to_mode``."""

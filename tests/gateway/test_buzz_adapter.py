@@ -2066,6 +2066,59 @@ class TestBuzzAdapterSend:
         # Our own event id is marked seen for echo suppression
         assert "evt123" in adapter._channel_state[CHANNEL]["seen"]
 
+    def test_declares_long_message_splitting(self):
+        """Cron output over 4000 chars must reach Buzz whole, not cut with a container-path footer."""
+        assert BuzzAdapter.splits_long_messages is True
+
+    @pytest.mark.asyncio
+    async def test_send_long_cron_brief_in_one_message(self):
+        """A ~6 KB brief (what the GEO Scout posts) stays one message: the limit is 65,536 bytes."""
+        adapter = _make_adapter()
+        adapter._channel_state[CHANNEL] = {"chat_type": "group", "last_ts": 0, "seen": {}}
+        cli = _ScriptedCli()
+        cli.script("messages", "send", {"accepted": True, "event_id": "evt-brief", "message": ""})
+        adapter._run_cli = cli
+        brief = "## GEO Opportunity Brief\n\n" + ("Paste-ready asset línea con acentos. " * 170)
+        assert len(brief) > 4000
+
+        result = await adapter.send(CHANNEL, brief)
+
+        assert result.success is True
+        sends = [stdin for args, stdin in cli.calls if args[:2] == ["messages", "send"]]
+        assert sends == [brief]
+
+    @pytest.mark.asyncio
+    async def test_send_splits_by_utf8_bytes_and_returns_first_id(self):
+        """Over the relay limit, every chunk fits in bytes (not chars) and callers thread on chunk one."""
+        adapter = _make_adapter()
+        adapter._channel_state[CHANNEL] = {"chat_type": "group", "last_ts": 0, "seen": {}}
+        cli = _ScriptedCli()
+        cli.script("messages", "send", {"accepted": True, "event_id": "evt-1", "message": ""})
+        cli.script("messages", "send", {"accepted": True, "event_id": "evt-2", "message": ""})
+        adapter._run_cli = cli
+        content = "ñandú " * 12_000  # 72,000 chars (under a char limit) but 96,000 UTF-8 bytes (over the relay's)
+
+        result = await adapter.send(CHANNEL, content)
+
+        sends = [stdin for args, stdin in cli.calls if args[:2] == ["messages", "send"]]
+        assert len(sends) >= 2
+        assert all(len(s.encode("utf-8")) <= 65_536 for s in sends)
+        assert result.success is True
+        assert result.message_id == "evt-1"
+
+    @pytest.mark.asyncio
+    async def test_send_stops_at_first_failed_chunk(self):
+        adapter = _make_adapter()
+        adapter._channel_state[CHANNEL] = {"chat_type": "group", "last_ts": 0, "seen": {}}
+        cli = _ScriptedCli()
+        cli.script("messages", "send", "", code=2, stderr='{"error":"relay","message":"down"}')
+        adapter._run_cli = cli
+
+        result = await adapter.send(CHANNEL, "x" * 130_000)
+
+        assert result.success is False
+        assert len([1 for args, _ in cli.calls if args[:2] == ["messages", "send"]]) == 1
+
 
     @pytest.mark.asyncio
     async def test_send_uses_metadata_reply_to_message_id(self):
