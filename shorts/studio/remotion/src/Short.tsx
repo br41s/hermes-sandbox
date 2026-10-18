@@ -7,10 +7,25 @@ import {TopBar} from './components/TopBar';
 import {Karaoke} from './components/Karaoke';
 import {AvatarScene, CtaScene, HookScene, ListScene, PointScene, PresenterScene, QuoteScene, StatScene} from './components/Scenes';
 import {TipShort} from './Tip';
+import {Thumb} from './Cover';
 import './fonts';
 
-export const Short: React.FC<ShortProps> = (props) => {
-  if (props.format === 'tip') return <TipShort {...props} />;
+// The Shorts shelf shows a frame YouTube picks, not the thumbnail set through the API
+// (thumbnails.set only reaches search and the channel grid). So the first half second
+// IS the thumbnail: the frame YouTube is most likely to pick, and Brais can choose it
+// in Studio. Under 1 s, so QA's freeze check (d=1.0) does not flag it.
+export const COVER_FRAMES = 15;
+
+export const Short: React.FC<ShortProps> = (props) => (
+  <AbsoluteFill>
+    {props.format === 'tip' ? <TipShort {...props} /> : <Classic {...props} />}
+    <Sequence from={0} durationInFrames={COVER_FRAMES} name="portada">
+      <Thumb {...props} />
+    </Sequence>
+  </AbsoluteFill>
+);
+
+const Classic: React.FC<ShortProps> = (props) => {
   const pal = palette(props.palette);
   const seed = `${props.palette}-${props.motif}-${props.beats.length}`;
   return (

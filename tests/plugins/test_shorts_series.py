@@ -193,8 +193,9 @@ def test_not_configured_is_a_quiet_skip(tmp_path, monkeypatch):
 def updates(monkeypatch):
     done = []
 
-    def fake_update(video_id, social, lang, thumb=None):
-        done.append({"id": video_id, "lang": lang, "social": social, "thumb": thumb.read_bytes() if thumb else None})
+    def fake_update(video_id, social, lang, thumb=None, short=False):
+        done.append({"id": video_id, "lang": lang, "social": social, "short": short,
+                     "thumb": thumb.read_bytes() if thumb else None})
         return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "thumbnail": bool(thumb),
                 "warnings": []}
 
@@ -274,3 +275,27 @@ def test_youtube_update_rewrites_the_snippet_and_sets_the_cover(env, tmp_path, m
     assert put[2]["params"] == {"part": "snippet"} and body["id"] == "esVideoId0"
     assert body["snippet"]["title"] == "El artículo que te falta" and body["snippet"]["categoryId"]
     assert any(c[1] == youtube.THUMB_URL for c in calls) and out["thumbnail"] is True
+
+
+def _short_update(rid="es-limite-decision-ia-pymes-2026-20261017040713", vid="shortVid001"):
+    body = {"short": rid, "es": {"id": vid, "titulo": "¿Dónde pones el límite a la IA en tu pyme?",
+                                 "descripcion": "La línea de decisión que tu equipo necesita, en una tarde. #IA #pymes",
+                                 "etiquetas": ["IA", "pymes"], "portada": None}}
+    return f"{series.MARK_UPDATE}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
+
+
+def test_seodesk_optimises_a_blog_short_only_with_its_own_id(env, buzz, uploads, updates, monkeypatch):
+    monkeypatch.setattr(series, "_short_ids", lambda: {"es-limite-decision-ia-pymes-2026-20261017040713": "shortVid001"})
+    buzz["events"] = [_event(_short_update(), pubkey=SEODESK, eid="a" * 64, at=1),
+                      _event(_short_update(vid="otherVid001"), pubkey=SEODESK, eid="b" * 64, at=2)]
+    out = series.run()
+    assert out["updated"] == [{"short": "es-limite-decision-ia-pymes-2026-20261017040713", "langs": ["es"]}]
+    assert [(u["id"], u["short"]) for u in updates] == [("shortVid001", True)]
+    assert "is not a blog Short uploaded by Hermes" in out["invalid"][0]["error"]
+    replies = {a[a.index("--reply-to") + 1]: kw["input"] for a, kw in _sends(buzz)}
+    assert replies["a" * 64].startswith("Short es-limite") and "No puedo actualizar" in replies["b" * 64]
+
+
+def test_youtube_update_keeps_the_shorts_tag_for_a_short(monkeypatch):
+    social = {"youtube": {"title": "¿Dónde pones el límite a la IA?", "description": "d", "tags": []}}
+    assert "#Shorts" in youtube.build_metadata(social, "es", synthetic=False, short=True)["snippet"]["title"]
