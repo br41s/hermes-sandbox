@@ -33,6 +33,15 @@ The same run applies it with ``videos.update`` (title, description, tags) and
 ``thumbnails.set``, and replies in the thread. Only from the allowed senders, and
 only for videos this module uploaded (ids in its ledger). About 100 units each.
 
+The blog Shorts are optimised the same way: instead of "episodio" and "agente" the
+block carries ``"short": "<request_id of the Short>"`` and the one language it is in::
+
+    {"short": "es-limite-decision-ia-pymes-2026-20261017040713",
+     "es": {"id": "<YouTube id>", "titulo": "...", "descripcion": "...", "etiquetas": [...], "portada": null}}
+
+Only for ids the shorts ledger recorded as uploaded by Hermes ("short" is the label
+used in the reply; the request_id is the natural one).
+
 Config (service env of the profile that runs the shorts jobs):
 
     SERIES_BUZZ_CHANNEL     UUID of the channel episodes are requested in
@@ -173,6 +182,14 @@ def _metadata(part: Dict[str, Any], lang: str, problems: List[str]) -> Dict[str,
     return {"titulo": titulo, "descripcion": descripcion, "etiquetas": [t.strip() for t in etiquetas][:15]}
 
 
+def _short_ids() -> Dict[str, str]:
+    """request_id -> YouTube id of every blog Short already on YouTube (shorts ledger)."""
+    from plugins.shorts import ledger
+
+    return {e["request_id"]: e["published"]["youtube"]["id"] for e in ledger.entries()
+            if (((e.get("published") or {}).get("youtube") or {}).get("id")) and e.get("request_id")}
+
+
 def _episode(data: Dict[str, Any], problems: List[str]) -> Dict[str, Any]:
     agente = str(data.get("agente") or "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", agente):
@@ -211,7 +228,12 @@ def parse_update(content: str) -> Dict[str, Any]:
     """An optimisation request (new metadata and thumbnail for published videos), validated."""
     data = _json_block(content, MARK_UPDATE)
     problems: List[str] = []
-    out = _episode(data, problems)
+    if data.get("short"):
+        out: Dict[str, Any] = {"short": str(data["short"]), "agente": "", "episodio": ""}
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{4,120}", out["short"]):
+            problems.append("short: the Short's request_id, e.g. es-limite-decision-ia-pymes-2026-20261017040713")
+    else:
+        out = _episode(data, problems)
     out["langs"] = [lang for lang in LANGS if data.get(lang)]
     if not out["langs"]:
         problems.append("at least one language (es, en)")
@@ -350,22 +372,32 @@ def _update_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, A
     if thumb:
         _check_thumb(thumb)
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
-    result = youtube.update(part["id"], social, lang, thumb)
+    result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")))
     return {**result, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _what(item: Dict[str, Any]) -> str:
+    return f"el short {item['short']}" if item.get("short") else f"el episodio {item['episodio']}"
 
 
 def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
     """Apply the optimisation requests, each once; only to videos this module published."""
     ours = {(e.get(lang) or {}).get("id") for e in ledger.values() for lang in LANGS} - {None}
+    shorts = set(_short_ids().values())
     updates = _load(_updates_path())
     for item in requests(mark=MARK_UPDATE):
         key = item["event"]
         entry = updates.get(key) or {}
         if entry.get("replied"):
             continue
-        problem = item.get("error") or next(
-            (f"{lang}.id {item[lang]['id']} is not a video of the series" for lang in item["langs"]
-             if item[lang]["id"] not in ours), None)
+        if item.get("short"):
+            problem = item.get("error") or next(
+                (f"{lang}.id {item[lang]['id']} is not a blog Short uploaded by Hermes"
+                 for lang in item["langs"] if item[lang]["id"] not in shorts), None)
+        else:
+            problem = item.get("error") or next(
+                (f"{lang}.id {item[lang]['id']} is not a video of the series" for lang in item["langs"]
+                 if item[lang]["id"] not in ours), None)
         if problem:
             _reply(item, f"No puedo actualizar este vídeo: {problem}. Corrige el mensaje y vuelve a enviarlo.")
             updates[key] = {"rejected": True, "replied": True, "error": problem}
@@ -384,16 +416,18 @@ def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
         except Exception as exc:  # noqa: BLE001 - reported, and retried on the next run
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
-                _reply(item, f"No he podido actualizar el episodio {item['episodio']} tras {MAX_ATTEMPTS} intentos: "
+                _reply(item, f"No he podido actualizar {_what(item)} tras {MAX_ATTEMPTS} intentos: "
                              f"{entry['error']}. Necesita que alguien lo mire.")
                 entry["replied"] = True
             _save(updates, _updates_path())
-            report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "update": True,
+            report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "short": item.get("short"),
+                                     "update": True,
                                      "error": entry["error"], "attempt": entry["attempts"]})
             continue
         finally:
             shutil.rmtree(work, ignore_errors=True)
-        lines = [f"Episodio {item['episodio']} ({item['agente']}) actualizado en YouTube por Hermes:"]
+        lines = [f"Short {item['short']} actualizado en YouTube por Hermes:" if item.get("short") else
+                 f"Episodio {item['episodio']} ({item['agente']}) actualizado en YouTube por Hermes:"]
         for lang in item["langs"]:
             done = entry[lang]
             lines.append(f"{lang.upper()}: {done['url']} · título, descripción y etiquetas"
@@ -405,7 +439,8 @@ def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
         entry["replied"] = True
         entry.pop("error", None)
         _save(updates, _updates_path())
-        report["updated"].append({"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
+        report["updated"].append({"short": item["short"], "langs": item["langs"]} if item.get("short") else
+                                 {"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
 
 
 def run() -> Dict[str, Any]:

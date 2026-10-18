@@ -128,15 +128,17 @@ def _set_thumbnail(client, auth: Dict[str, str], video_id: str, thumb: Optional[
                             "custom thumbnails need a phone-verified channel")
 
 
-def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Path] = None) -> Dict[str, Any]:
-    """New title, description and tags for an uploaded (long) video, and its thumbnail if given.
+def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Path] = None,
+           short: bool = False) -> Dict[str, Any]:
+    """New title, description and tags for an uploaded video, and its thumbnail if given.
+    ``short=True`` keeps the #Shorts tag in the title, as ``upload`` puts it.
 
     ``videos.update`` replaces the whole snippet, so it is rebuilt complete (category, languages).
     Privacy is not touched.
     """
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
-    snippet = build_metadata(social, lang, synthetic=False, short=False)["snippet"]
+    snippet = build_metadata(social, lang, synthetic=False, short=short)["snippet"]
     warnings: List[str] = []
     with _client() as client:
         auth = {"Authorization": f"Bearer {access_token(client)}"}

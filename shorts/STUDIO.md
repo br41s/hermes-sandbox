@@ -338,6 +338,8 @@ Setup, once:
   - The same `series` run applies it with `youtube.update` (`videos.update` plus `thumbnails.set`, about 100 units) and replies in the thread.
   - Only from `SERIES_BUZZ_FROM` and only for ids in the series ledger, so it can never touch the blog Shorts or another video. Each request is applied once (`workspace/shorts/series/updates.json`), with the same 3 attempts. Privacy is never changed.
   - A custom thumbnail needs a phone-verified channel; if YouTube refuses it, the reply says so and the rest still applies.
+  - **Blog Shorts too** (Brais, 18-10): the block carries `"short": "<request_id>"` instead of `episodio`/`agente`, plus the one language the Short is in. Applied only to ids the shorts ledger recorded as uploaded by Hermes; the title keeps `#Shorts`.
+- **Shorts covers:** the Shorts shelf and tab show a frame YouTube picks, not the thumbnail set with `thumbnails.set` (that one only reaches search and the channel grid, and the Data API cannot set the shelf image). So every Short opens with its `Thumb` still for the first 15 frames (0.5 s, `COVER_FRAMES` in `remotion/src/Short.tsx`, under QA's 1 s freeze limit). It is the frame YouTube is most likely to pick and the one Brais chooses in Studio when it picks another.
 
 Setup, once:
 
