@@ -144,6 +144,22 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
    CONFIRMED is open for new replies right now; if none pass, treat it as no
    opportunity (Guardrail 3 — "Nothing worth pitching today").
 
+   REDDIT EXCEPTION. reddit.com blocks this environment, so you cannot open a
+   Reddit page. The brand account has a live Reddit session elsewhere: SocialBot,
+   who executes these briefs, opens the thread before anything is posted. So a
+   Reddit thread MAY be picked without opening it, but only when:
+       • a search result shows its subreddit, title and a post date within the
+         last 30 days (Reddit archives threads at 6 months; the brief can wait a
+         day before it is used);
+       • the subreddit is not EXCLUDED, PAUSED or in PLATFORM_COOLDOWN;
+       • you mark it in the brief, verbatim, as
+         "Status: UNVERIFIED (reddit.com is blocked here) — SocialBot opens it
+         with the brand session and checks it is open, on-topic and that the
+         subreddit allows a brand account before posting."
+   Never call a Reddit thread CONFIRMED. A thread on any other site you could
+   not open (a Cloudflare wall, a 403 or a 520) is still dropped: no session of
+   ours can check it.
+
    Pick the single best that PASSED validation. If it needs an account BigLobster
    does NOT have (only X and Reddit exist), STILL surface it but clearly flag the
    account requirement — never assume a login that doesn't exist.
@@ -154,6 +170,10 @@ STEP 4 — Draft the paste-ready asset (English, brand voice, worldwide framing)
    the question first and substantively; place the BigLobster link as supporting
    evidence, once, naturally. Include a short note on the platform's self-promo
    rules and how this asset stays within them.
+   On Reddit, write a comment, not an article: a few short paragraphs that answer
+   the question as the search result shows it. Leave out the BigLobster link
+   unless the thread asks for a tool or a provider — brand accounts that link
+   get removed. SocialBot adapts the text to the replies it finds in the thread.
 
 STEP 5 — Record & report:
    a. Append exactly one line to offsite-geo-ledger.md, in this format (no

@@ -407,6 +407,12 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
   - Every Monday, or on the next run if a Monday was missed, adds a "Community
     to join this week" section. It lands even on a "Nothing worth pitching
     today" run. SocialBot turns it into a "crear cuenta" item for Brais.
+  - Can pick Reddit threads even though reddit.com blocks Zeabur's IPs, so
+    the Scout cannot open them (since 2026-10-18). The thread must show in
+    search results with a post date in the last 30 days. It goes out marked
+    `Status: UNVERIFIED`, and SocialBot, which has the brand's Reddit session,
+    opens it and checks it before posting. Before this, the only account we
+    could post with was never picked.
   - Writes one `LEDGER | date | platform | url | query` line per run, plus a
     `COMMUNITY | date | name | url` line for the weekly pick, so the cooldown
     can be checked. Older entries stay as free-form blocks.
