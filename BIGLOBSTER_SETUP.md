@@ -415,7 +415,17 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
     could post with was never picked.
   - Writes one `LEDGER | date | platform | url | query` line per run, plus a
     `COMMUNITY | date | name | url` line for the weekly pick, so the cooldown
-    can be checked. Older entries stay as free-form blocks.
+    can be checked.
+  - **Keep the ledger small: the agent re-sends it on every iteration.**
+    - By 2026-10-18 it was 193 KB of free-form blocks, and one run used
+      4.5 M tokens.
+    - On 2026-10-19 the shared OpenRouter key hit its weekly $5 limit. That
+      run failed, and so did the Infographic Engineer and FinView's Gap Hunter.
+    - The same day the 87 old blocks were compacted into 89 `LEDGER |` lines,
+      26 KB in all, and no opportunity URL was lost.
+    - The full blocks live in the workdir's `archive/` folder, and the ledger
+      header tells the agent not to open it.
+    - Never write multi-line entries back into the ledger.
 
 ---
 
