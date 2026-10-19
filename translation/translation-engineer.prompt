@@ -194,6 +194,17 @@ STEP 5 — SEO adaptation:
    serve Spanish-market search intent. Re-derive `title`/`description`/
    `ogTitle`/`ogDescription` for the Spanish keyword space while preserving
    every factual claim established in STEP 3/4.
+   LENGTH LIMITS, checked by biglobster's CI (`scripts/seo-titles.test.mjs`,
+   `scripts/seo-descriptions.test.mjs`): `title` at most 60 characters COUNTING
+   the " | BigLobster" suffix (that leaves 47 for the title itself), and
+   `description` at most 160. Translate the meaning, not the length: Spanish
+   usually runs longer than English, so shorten — drop the second
+   clause, keep the keyword and the claim — instead of carrying the whole
+   English sentence over. On 2026-10-19 PR #713 shipped a 103-character title
+   and a 201-character description, CI on main went red and someone had to
+   trim them by hand (PR #716). `ogTitle` and `ogDescription` are not
+   measured, but keep them short too. Count the characters of the final
+   `title` and `description` before STEP 6.
 
 STEP 6 — Wire it in:
    a. Write ES_TARGET_DIR + SLUG_ES + ".html" with permalink "/es/blog/" +
@@ -201,9 +212,16 @@ STEP 6 — Wire it in:
    b. Add the pair to LANGMAP: `enToEs["/blog/" + SLUG_EN + ".html"] =
       "/es/blog/" + SLUG_ES + ".html"`, and the reverse in `esToEn`.
    c. Append one line to LEDGER: date, slug pair (EN → ES), PR branch name.
+   d. Run the same length checks CI runs, from the repo root, BEFORE you
+      commit: `node --test scripts/seo-titles.test.mjs
+      scripts/seo-descriptions.test.mjs` (plain Node, no `npm ci` needed).
+      If either fails, shorten the new post's `title`/`description` and run
+      it again. Do not open the PR with these red, and do not edit the tests
+      or other posts to make them pass.
 
 STEP 7 — Commit, PR, verify:
    - Branch: `git checkout -b BRANCH_PREFIX + SLUG_ES`
+   - Do not commit unless STEP 6d passed on the files you are about to stage.
    - Stage only the files touched in STEP 6. Commit:
        feat(i18n): translate "<English Title>" to Spanish
    - `git push -u origin BRANCH_PREFIX + SLUG_ES`
