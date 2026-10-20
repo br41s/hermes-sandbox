@@ -536,7 +536,9 @@ Two rules hold across all of them, and they are what makes unattended writing de
   public site immediately.** That is deliberate — it is why `gap-hunter`'s prompt says its
   rules are not optional, since nothing is checked afterwards — but it means a bad blog
   post is a client-visible incident, not a draft someone catches. Treat any change to what
-  those agents write as shipping straight to production.
+  those agents write as shipping straight to production. The one thing the tool checks
+  is length: it refuses a body under 1,200 words (`MIN_BLOG_POST_WORDS`, link targets
+  and tags not counted), the floor every caller's prompt asks for and none could count.
 - **Blog posts are reversible instead, as of bl-site-package 1.8.x.** Every write through
   `PUT /api/blog/posts/:id` snapshots the body it replaces, in the same transaction, and the
   client restores it from their panel under Blog → Historial. That covers the whole fleet,

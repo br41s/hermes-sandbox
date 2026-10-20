@@ -25,6 +25,8 @@ import pytest
 from tools import bl_site_publish_tool as mod
 
 SITE = "https://cliente.example"
+# create_blog_post refuses anything under MIN_BLOG_POST_WORDS.
+LONG_BODY = " ".join(["palabra"] * mod.MIN_BLOG_POST_WORDS)
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +56,7 @@ def test_a_new_post_goes_live_immediately(monkeypatch):
     sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
 
     mod.bl_site_publish(
-        action="create_blog_post", title="Una entrada", content="Cuerpo."
+        action="create_blog_post", title="Una entrada", content=LONG_BODY
     )
 
     assert sent["method"] == "POST"
@@ -71,7 +73,7 @@ def test_the_agent_is_told_the_post_is_already_live(monkeypatch):
 
     result = json.loads(
         mod.bl_site_publish(
-            action="create_blog_post", title="Una entrada", content="Cuerpo."
+            action="create_blog_post", title="Una entrada", content=LONG_BODY
         )
     )
 
@@ -97,12 +99,52 @@ def test_publication_status_is_not_the_callers_to_choose() -> None:
 
 
 def test_a_post_needs_a_title_and_a_body_before_anything_is_sent(monkeypatch):
-    """The only pre-publication check that exists on this path."""
+    """The cheapest pre-publication check on this path."""
     sent = wire(monkeypatch)
 
     assert "title" in mod.bl_site_publish(action="create_blog_post", content="Cuerpo.")
     assert "content" in mod.bl_site_publish(action="create_blog_post", title="Una entrada")
     assert sent == {}, "nothing may reach the site before the check passes"
+
+
+def test_a_short_post_is_refused_before_anything_is_sent(monkeypatch):
+    """Every caller's prompt asks for 1,200+ words and told the model to count
+    them itself. The post is live on return, so the count happens here."""
+    sent = wire(monkeypatch)
+    short = " ".join(["palabra"] * (mod.MIN_BLOG_POST_WORDS - 1))
+
+    result = mod.bl_site_publish(action="create_blog_post", title="Una entrada", content=short)
+
+    assert f"{mod.MIN_BLOG_POST_WORDS - 1} words" in result
+    assert "Nothing was published" in result
+    assert sent == {}, "a refused post must never reach the site"
+
+
+def test_link_targets_and_markup_are_not_words(monkeypatch):
+    """A body padded with URLs and tags is not a longer article."""
+    sent = wire(monkeypatch)
+    padded = " ".join(["palabra"] * (mod.MIN_BLOG_POST_WORDS - 3))
+    padded += " [la tienda](https://cliente.example/productos/categoria/papeleria-escolar-y-oficina/)"
+    padded += ' <img src="/uploads/a-very-long-file-name-with-many-words.webp" alt="x">'
+
+    # 1,197 words + "la tienda": one short, whatever the URL and tag add.
+    assert mod._markdown_word_count(padded) == mod.MIN_BLOG_POST_WORDS - 1
+    assert "refused" in mod.bl_site_publish(
+        action="create_blog_post", title="Una entrada", content=padded
+    )
+    assert sent == {}
+
+
+def test_spanish_words_with_accents_and_apostrophes_count_once():
+    assert mod._markdown_word_count("¿Qué está pasando? El año d’ahora, bien-hecho.") == 7
+
+
+def test_a_post_at_the_floor_is_published(monkeypatch):
+    sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
+
+    mod.bl_site_publish(action="create_blog_post", title="Una entrada", content=LONG_BODY)
+
+    assert sent["body"]["content"] == LONG_BODY
 
 
 # ── update_blog_post: never moves a post across the line ──────────────────────

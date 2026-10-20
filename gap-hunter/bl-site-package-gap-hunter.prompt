@@ -57,8 +57,9 @@ y un artículo del blog de BigLobster como referencia del nivel de detalle, estr
 y profundidad que se espera (no de la temática). Un post fino no vale: si no hay
 material para llegar a ese nivel con datos reales, mejor `[SILENT]` que un artículo corto.
 
-**Antes de llamar a `create_blog_post`, cuenta aproximadamente las palabras del
-borrador.** Si queda por debajo de 1200, no lo publiques así: amplía la sección
+**`create_blog_post` rechaza un cuerpo de menos de 1200 palabras** (los enlaces
+y la URL de las imágenes no cuentan) y no publica nada: te devuelve cuántas
+tiene. Si te lo rechaza, o si ya ves que el borrador no llega, no lo fuerces: amplía la sección
 más floja con más datos, ejemplos o contexto real (nunca relleno) hasta llegar
 al mínimo, o si de verdad no hay más material real que añadir, responde `[SILENT]`
 en vez de publicar un artículo corto.
