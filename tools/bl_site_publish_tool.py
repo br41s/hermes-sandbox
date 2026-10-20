@@ -17,6 +17,7 @@ client's.
 
 import base64
 import json
+import re
 from typing import Optional
 
 import urllib.error
@@ -29,6 +30,21 @@ from tools.bl_site_client import _jwt_cache, cached_token, request_json  # noqa:
 # decoded limit; this is the client-side guard so a surprise huge file doesn't
 # get read fully into memory here first.
 _MAX_IMAGE_BYTES = 12 * 1024 * 1024
+
+# create_blog_post goes live on return with nobody reading it first, and every
+# prompt that calls it (gap-hunter, product-articles, site-setup,
+# onboarding-content) asks for 1,200+ words. Those prompts told the model to
+# "count approximately" before publishing; models miscount words, so a short
+# post went out as readily as a long one. This is the count.
+MIN_BLOG_POST_WORDS = 1200
+_WORD_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*")
+
+
+def _markdown_word_count(md: str) -> int:
+    """Words a reader sees: link and image targets and HTML tags are not words."""
+    text = re.sub(r"\]\([^)]*\)", "]", md)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return len(_WORD_RE.findall(text))
 
 
 def _download_bytes(url: str) -> bytes:
@@ -172,6 +188,14 @@ def bl_site_publish(
         if action == "create_blog_post":
             if not title or not content:
                 return tool_error("create_blog_post requires 'title' and 'content'.")
+            words = _markdown_word_count(content)
+            if words < MIN_BLOG_POST_WORDS:
+                return tool_error(
+                    f"create_blog_post refused: content is {words} words, minimum "
+                    f"{MIN_BLOG_POST_WORDS}. Nothing was published. Deepen the weakest "
+                    "section with real, sourced material (never filler), or do not "
+                    "publish this run and report it as your prompt says."
+                )
             payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "published"}
             if cta_url:
                 payload["cta_url"] = cta_url
@@ -428,7 +452,7 @@ BL_SITE_PUBLISH_SCHEMA = {
                 ),
             },
             "title": {"type": "string", "description": "Blog post title. Required for create_blog_post."},
-            "content": {"type": "string", "description": "Blog post body text. Required for create_blog_post."},
+            "content": {"type": "string", "description": "Blog post body text (Markdown). Required for create_blog_post, which refuses fewer than 1,200 words."},
             "excerpt": {"type": "string", "description": "Optional short excerpt for create_blog_post."},
             "field": {
                 "type": "string",
