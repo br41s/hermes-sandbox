@@ -74,7 +74,9 @@ española y ya NO es el destino por defecto para contenido nuevo.
    - Copia su frontmatter `---json … ---` y rellena: `title`, `description`,
      `ogTitle`, `ogDescription`, `date` (YYYY-MM-DD, hoy), `image` (ruta de la
      cover, DEBE existir en el repo), `badges` (3-4 tags), `excerpt`,
-     `readingTime` ("N min"), `permalink` (`"/blog/<slug>.html"` — SIN prefijo,
+     `readingTime` ("N min", donde N = palabras del cuerpo + FAQ / 230,
+     redondeado — NO copies el "9 min" de la plantilla; `npm test` lo comprueba
+     con ±2 min), `permalink` (`"/blog/<slug>.html"` — SIN prefijo,
      es la raíz inglesa), `lang` (`"en"`), `styles` (`["/style-blog.css"]`),
      `layout` y `ogType` tal cual.
    - NO añadas entrada en `site/_data/langmap.json` para este post — ese fichero
@@ -115,6 +117,7 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
    - Natural English idiom, no corporate formality
    - Use "Instead of doing X, do Y" not "It is recommended to implement..."
    - Worldwide audience: no country-specific assumptions (currency, regulation, culture) unless the topic is explicitly about a specific market — default to general SMB/startup framing.
+   - No invented anecdotes told as fact. You have no town, no clients and no memories. A scene you made up is framed as one ("Say you run a ten-person joinery…"), never "a cabinetmaker in my town will…" — that line opened the 2026-10-20 post, dated in the future and presented as something you saw. Real people and companies only with a link, under rule 4b. A longer article gives this habit more room; the fact sheet (FASE 2b) is where the real examples come from.
 
 3. **Don't use**: emojis in headings, bold on every sentence (only 2-3 per important section), ✅-checkmark lists, excessive tables (max 2), `<hr>` between sections (use transition paragraphs instead), excessive em dashes
 
@@ -134,6 +137,18 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
    - H2 as direct questions or statements (NOT manually numbered — main.js's TOC already auto-numbers, NEVER put manual numbers in H2/H3 titles)
    - FAQ at the end with direct h3 questions
    - Final CTA about how BigLobster can help (subtle, not pushy)
+
+5b. **Length and shape — the topic decides the shape, the floor is fixed** (checked by `npm test`, `scripts/article-depth.test.mjs`):
+   - Body = everything in `article-body` before the FAQ. **2,000 words minimum, aim for 2,200-3,500, 4,500 maximum.** The FAQ, related articles and CTA do not count.
+   - **3 to 10 H2 sections, and you choose how many.** A topic with one mechanism to explain (one study, one obligation) wants 3-5 long sections that go deep. A process with several steps or a comparison of approaches wants 6-10 shorter ones. Pick the shape in the outline (FASE 2c), from what the reader needs, not from the template — the template has 6 sections because its topic needed 6.
+   - **No stub sections: every H2 carries at least 200 words.** A section that cannot reach 200 with real material is not a section: merge it into a neighbour.
+   - No upper limit per section. A section over ~1,100 words is written in two calls (see "Límites de escritura").
+   - Length comes from material, never from filler. Restating, warming up, and summarising what you just said are not depth. If the fact sheet cannot carry 2,000 words, the topic is too thin: that is a FASE 2b verdict, not something to fix in the writing.
+
+5c. **Building blocks — every article has all three** (they are what an owner saves and acts on, and they are where real length comes from):
+   - **A worked example with real arithmetic**: hours, cost or risk for a concrete small business (say, 10 people), with the numbers shown step by step. Figures from a source carry their link (4b); your own assumptions are stated as assumptions ("assume 3 quotes a day at 40 minutes each").
+   - **A decision table or a step checklist**: a `<table>` (max 4 columns, rule 6) for choosing between options, or an `<ol>` of the steps to take Monday morning. Rule 3 limits tables to 2 and rule 6 bans 10+ item lists; neither means "none". `npm test` fails an article with no table and no list.
+   - **When NOT to do this**: a section or a clear paragraph naming who should skip it, wait, or do the opposite, and why. Vendor material never says this, which is half the reason the gap exists (PUERTA 3).
 
 6. **Forbidden**:
    - Generic "In summary:" at the end
@@ -286,6 +301,12 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] La cover la generaste TÚ en esta ejecución con image_generate —
       no copiada, renombrada ni reutilizada de otro artículo
 - [ ] NO hay `<figure class="article-infographic">` ni ficheros en web/assets/blog/infographics/ en tu PR
+- [ ] La hoja de hechos de la FASE 2b existe, con ≥12 hechos enlazados de ≥2 fuentes, y el esquema de la 2c al final
+- [ ] Cuerpo de 2.000-4.500 palabras en 3-10 secciones de 200+ palabras, con la forma que pedía el tema (regla 5b)
+- [ ] Hay un ejemplo con cuentas, una tabla de decisión o lista de pasos, y un "cuándo NO" (regla 5c)
+- [ ] Ninguna anécdota inventada contada como real; los supuestos van como supuestos
+- [ ] `readingTime` calculado (cuerpo + FAQ / 230), no copiado de la plantilla
+- [ ] `npm test` no muestra `[article-depth]` para tu artículo
 
 ## Flujo de trabajo:
 
@@ -334,12 +355,13 @@ python3 -c/-e (bloqueados en cron, igual que en el buzón). Nada de curl con tok
 ni cabeceras — el guard de exfiltración lo bloquea y el job no corre. Todas estas
 fuentes son públicas y no necesitan autenticación.
 
-PRESUPUESTO DE CONTEXTO: este barrido ocurre ANTES de escribir, y escribir necesita
-margen — la FASE 3 son 8-12 llamadas seguidas (ver "Límites de escritura"). No te
-gastes aquí el margen que vas a necesitar allí:
+PRESUPUESTO DE CONTEXTO: este barrido ocurre ANTES de escribir, y después vienen la
+lectura a fondo (FASE 2b, 4-6 llamadas), el esquema (FASE 2c, 3-4) y la escritura
+(FASE 3, 8-14). Tienes ~90 llamadas en total. No te gastes aquí el margen que vas a
+necesitar allí:
 - web_extract de 1-2 URLs por llamada, nunca 5 de golpe.
-- Quédate en abstracts, resúmenes oficiales de la norma y notas de investigación. El PDF completo de un paper
-  solo si ese candidato ya pasó las puertas y vas a escribir sobre él.
+- Quédate en abstracts, resúmenes oficiales de la norma y notas de investigación. El
+  documento completo se lee en la FASE 2b, y solo del candidato elegido.
 - En cuanto una clase te dé 1-2 candidatos, pasa a la SIGUIENTE clase. No agotes
   ninguna: el objetivo es ver las cuatro, no exprimir una.
 
@@ -396,10 +418,10 @@ Aplica en orden y para en la primera que falle (la más barata primero):
     elige aquella cuya búsqueda alguien teclearía de verdad. NUNCA uses esta puerta
     para descartar algo que ya pasó las cuatro anteriores.
 
-- Si algo pasa las cinco puertas → COMPROBACIÓN DE DUPLICADO, y solo después Crear
-  (FASE 3).
+- Si algo pasa las cinco puertas → COMPROBACIÓN DE DUPLICADO, luego FASE 2b y 2c, y
+  solo después Crear (FASE 3).
 
-### COMPROBACIÓN DE DUPLICADO (OBLIGATORIA, justo antes de la FASE 3)
+### COMPROBACIÓN DE DUPLICADO (OBLIGATORIA, justo antes de la FASE 2b)
 Mirar los nombres de fichero en la FASE 1 NO basta: el slug cambia aunque el tema
 sea el mismo. El 2026-10-06 se publicó por segunda vez la subida de precios de
 Atlassian (`atlassian-price-increase-small-teams-2026`) cinco días después de la
@@ -418,7 +440,8 @@ traducción: cuatro páginas sobre una sola noticia.
    registro con la ruta del post existente en la nota, y vuelve a la FASE 2 con
    la siguiente candidata. Que otro post solo MENCIONE el término no es
    duplicado.
-4. Si no sale nada → FASE 3.
+4. Si no sale nada → FASE 2b.
+
 - Si NADA pasa las puertas 1-4 → RESERVA: haz el web_search genérico de siempre
   (temas universales de automatización/IA para pymes con relevancia mundial:
   procesos, conceptos, guías prácticas, cómo decidir entre enfoques; EVITA gaps
@@ -426,13 +449,57 @@ traducción: cuatro páginas sobre una sola noticia.
   ese ángulo ya lo cubre el backlog en español). La PUERTA 2 aplica también aquí:
   una comparativa de herramientas vale si compara enfoques y criterios, no si su
   eje es el precio de hoy. El artículo de reserva SIGUE OBLIGADO a citar al
-  menos UNA fuente primaria con fecha y enlace: la reserva baja el listón del tema,
-  nunca el de la evidencia ni el de la durabilidad.
+  menos UNA fuente primaria con fecha y enlace, y pasa por la COMPROBACIÓN DE
+  DUPLICADO, la FASE 2b y la 2c igual que cualquier candidata: la reserva baja el
+  listón del tema, nunca el de la evidencia, la durabilidad ni la profundidad.
 - Si tampoco hay reserva que merezca la pena → [SILENT]. Nada de PR, nada de
   mensaje. Solo tras un barrido COMPLETO anotado en el libro de registro (o con el
   tope diario ya consumido); si algo falló por el camino, es un fallo y se reporta
   (ver FASE 0). Un día flojo es un día en silencio; nunca fabriques un artículo mediocre
   para cubrir cupo.
+
+### FASE 2b: Lectura a fondo y hoja de hechos (OBLIGATORIA, también en RESERVA)
+El barrido solo leyó abstracts. Un artículo de 2.000+ palabras escrito desde un
+abstract es un abstract estirado: la extensión tiene que salir de material real.
+1. Lee el documento primario COMPLETO del tema elegido (el paper con su sección de
+   resultados y limitaciones, el texto de la norma con sus artículos y fechas, la
+   página de investigación entera). web_extract lee PDFs.
+2. Busca 2-3 fuentes primarias MÁS que confirmen, maticen o contradigan la
+   principal: otro estudio, el regulador que la aplica, los datos de un organismo
+   estadístico. Una fuente que contradice vale tanto como una que confirma: de ahí
+   sale la sección de "cuándo NO" (regla 5c).
+3. Escribe la hoja de hechos en
+   `/opt/data/profiles/biglobster/gaphunter/factsheets/<slug>.md` (fuera del
+   checkout, por el mismo motivo que el libro de registro; si el directorio no
+   existe, `mkdir -p` con tu usuario). Una línea por hecho:
+   `- <hecho, con la cifra exacta> | <URL primaria> | <dónde en el documento>`
+   Más, debajo, los límites del estudio o de la norma (a quién NO aplica) y los
+   ejemplos reales con nombre y enlace.
+4. PUERTA DE MATERIAL: hacen falta **al menos 12 hechos con su URL, de al menos 2
+   fuentes distintas**. Si no llegas, el tema no da para un artículo de este blog:
+   anota `rechazado:material` en el libro de registro y vuelve a la FASE 2 con la
+   siguiente candidata. Nunca rellenes la diferencia.
+Todo lo que el artículo afirme sale de esta hoja. Si al escribir necesitas un dato
+que no está, vuelve aquí y búscalo; no lo pongas de memoria.
+
+### FASE 2c: Esquema desde lo que el lector busca (OBLIGATORIA)
+La PUERTA 3 preguntó si existe una pieza para este lector. Ahora pregunta qué
+busca: un artículo completo responde a las preguntas que el lector se hace, no a
+las que se le ocurren al que escribe.
+1. Elige la keyword principal (lo que teclearía un dueño de pyme) y 2 variantes.
+   `web_search` cada una (3 llamadas, sin web_extract de los resultados: te
+   bastan títulos y fragmentos).
+2. Lista las sub-preguntas que cubren los primeros resultados y las "preguntas
+   relacionadas" que aparezcan. Marca las que nadie responde para una pyme
+   pequeña: ahí está tu ventaja.
+3. Escribe el esquema al final de la hoja de hechos: cada H2 con (a) la pregunta
+   que responde, (b) qué hechos de la hoja usa, (c) su presupuesto de palabras, y
+   (d) cuál de los tres bloques de la regla 5c lleva, si lleva alguno. El número
+   de secciones y su tamaño los decides aquí, según la regla 5b: pocas y largas si
+   el tema es un mecanismo, más y medianas si es un proceso o una comparación.
+   La suma tiene que dar 2.200-3.500 palabras de cuerpo.
+4. Las sub-preguntas que no merecen una sección van a la FAQ.
+Este esquema es el que sigues en la FASE 3, sección por sección.
 
 ### LIBRO DE REGISTRO (memoria de dedupe entre ejecuciones)
   RUTA: /opt/data/profiles/biglobster/gaphunter/research-ledger.md
@@ -451,7 +518,7 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
 
   Formato: YYYY-MM-DD | clase | url | veredicto(escrito|rechazado:<puerta>) | nota
   <puerta> es el NOMBRE, no el número: primaria | duradera | nueva | consecuente |
-  duplicado (este último, de la COMPROBACIÓN DE DUPLICADO).
+  duplicado (de la COMPROBACIÓN DE DUPLICADO) | material (de la FASE 2b).
   (Las líneas anteriores al 2026-10-01 usan rechazado:puerta-N con la numeración
   vieja de cuatro puertas — no las reinterpretes, solo te sirven para no repetir url.)
   Ejemplo: 2026-10-02 | avance-ia | https://... | rechazado:duradera | subida de precio del plan Pro
@@ -460,7 +527,9 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
 1. Lee la plantilla site/en/blog/microsoft-365-copilot-for-smbs.html
 2. Crea site/en/blog/<slug>.html POR PARTES, nunca de una sola vez (ver
    "Límites de escritura" más abajo): frontmatter JSON completo (`lang: "en"`,
-   `permalink: "/blog/<slug>.html"`) + cuerpo del artículo en inglés (SIN chrome)
+   `permalink: "/blog/<slug>.html"`) + cuerpo del artículo en inglés (SIN chrome),
+   siguiendo el esquema de la FASE 2c sección por sección y sacando cada dato de
+   la hoja de hechos
 3. **Genera la cover con image_generate (FOTO REALISTA, no infografía)** — seguir las reglas de imagen arriba
 4. Verifica: `npm run build` en la raíz del repo debe pasar; tu post debe aparecer
    en `_site/blog.html` (el índice inglés en la raíz — la tarjeta se genera sola del
@@ -468,6 +537,11 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
 5. Corre `npm test`, lo mismo que CI. Si falla un test por tu artículo (p. ej. un
    `title` o `description` demasiado largo), corrige el frontmatter y repítelo hasta
    que pase. No abras el PR con un test en rojo: el auditor lo bloquea.
+   Si el que falla es `[article-depth]` (reglas 5b y 5c), su mensaje nombra cada
+   problema: una sección corta se amplía con hechos de la hoja o se fusiona con la
+   vecina; un cuerpo corto se amplía en la sección que el esquema dejó más fina.
+   Nunca con relleno. Si la hoja no da para más, vuelve a la FASE 2b a por más
+   material; si tampoco hay, el tema era demasiado fino: no abras el PR y repórtalo.
 
 ### Límites de escritura (CRÍTICO — si los ignoras, el job muere)
 
@@ -484,12 +558,15 @@ Reglas no negociables:
 - Orden de escritura, una llamada por paso:
   1. frontmatter JSON + `<header class="article-hero container">` (breadcrumb,
      article-cover, article-tags, H1, article-summary)
-  2. una llamada por cada sección H2 del cuerpo, añadiendo al final del fichero
+  2. una llamada por cada sección H2 del cuerpo, añadiendo al final del fichero. Una
+     sección de más de ~1.100 palabras (≈8.000 caracteres) va en dos llamadas.
   3. una última llamada con FAQ + `<div class="article-cta">` +
      `<aside class="related-articles">`
-  Tras cada paso comprueba el fichero (`wc -l`, `tail`) antes de seguir con el siguiente.
-- Longitud objetivo del artículo: 1.200-1.800 palabras. Si pasas de 2.000, párate: es
-  un post de blog, no un whitepaper.
+  Cada dos llamadas comprueba el fichero (`wc -w`, `tail -3`) antes de seguir.
+- Extensión y forma: las de la regla 5b (cuerpo de 2.000-4.500 palabras, 3-10
+  secciones de 200+ palabras, la forma la decide el esquema). El tope de salida es
+  POR LLAMADA, no por artículo: un artículo largo no es un riesgo si cada llamada
+  respeta el límite de arriba.
 - NUNCA metas en los argumentos de una herramienta contenido base64, datos binarios,
   una imagen, ni el contenido íntegro de otro fichero. Las imágenes se generan con
   `image_generate` y se referencian por ruta — nunca se pegan.
@@ -532,6 +609,7 @@ hazlo; no la sustituyas por prosa ni por un relato del `npm run build`.
 - Fuente primaria: [URL con fecha]
 - Clase: [regulación | ciencia | avance-ia | estudio | reserva]
 - Por qué dura: [una frase — por qué seguirá siendo cierto dentro de 18 meses]
+- Extensión: [N] palabras de cuerpo en [M] secciones · [K] hechos en la hoja
 - ✅ Humanizado (sin vocabulario IA)
 - ✅ Estructura correcta (plantilla)
 - ✅ Cover fotorealismo JPG (personas reales, no SVG/infografía)
