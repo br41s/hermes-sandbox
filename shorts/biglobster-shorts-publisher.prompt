@@ -50,8 +50,9 @@ FLUJO
 3. No publiques nunca dos veces: la herramienta lo impide, pero no lo intentes.
 
 4. Serie "Agentes BigLobster": `shorts_studio` action:"series", UNA vez por
-   ejecución, sin argumentos. Publica en YouTube los episodios largos que
-   VideoDesk pidió en Buzz, aplica las optimizaciones que pidió SEODesk (título,
+   ejecución, sin argumentos. Publica en YouTube los episodios largos y los
+   shorts de Flow que VideoDesk pidió en Buzz (los shorts los entrega además a
+   SocialBot, no lo repitas), aplica las optimizaciones que pidió SEODesk (título,
    descripción, etiquetas y portada) y contesta allí; todo lo decide la
    herramienta (qué toca, el tope diario, no repetir). Si responde `skipped` o
    `nothing`, no cuentes nada de la serie.
@@ -73,3 +74,4 @@ detrás de otro, y al final un resumen corto:
 
 🎞️ Serie (sólo si `series` publicó, actualizó, falló o dejó algo esperando)
 - Episodio [episodio] [agente]: [enlaces ES y EN | optimizado (idiomas) | ❌ error, intento N | espera: tope diario]
+- Short Flow [short]: [enlace | optimizado | ❌ error, intento N | espera: tope diario]

@@ -339,6 +339,13 @@ Setup, once:
   - Only from `SERIES_BUZZ_FROM` and only for ids in the series ledger, so it can never touch the blog Shorts or another video. Each request is applied once (`workspace/shorts/series/updates.json`), with the same 3 attempts. Privacy is never changed.
   - A custom thumbnail needs a phone-verified channel; if YouTube refuses it, the reply says so and the rest still applies.
   - **Blog Shorts too** (Brais, 18-10): the block carries `"short": "<request_id>"` instead of `episodio`/`agente`, plus the one language the Short is in. Applied only to ids the shorts ledger recorded as uploaded by Hermes; the title keeps `#Shorts`.
+  - **Flow shorts too** (22-10): same block with `"short": "<Flow folder name>"`; they are in the series ledger, so they qualify, and the title keeps `#Shorts`.
+- **Flow shorts (`#publicar-short`, 2026-10-22):** from 22-10 no agent renders videos: Brais shoots shorts in Google Flow, VideoDesk finishes them (subtitles, logo, end card, cover) and asks Hermes to publish. They are vertical, so they have their own mark and a flat JSON block in the same series channel, from the same `SERIES_BUZZ_FROM` senders:
+  - `short` (the Flow folder name, e.g. `2026-10-21_es-ia-empleados-junior`), `idioma` (`es` or `en`), `articulo` (an https URL on biglobster.top), `video` (relay `/media/` URL of the mp4), optional `srt` and `portada` (JPEG or PNG of 2 MB at most, relay URLs), `titulo`, `descripcion`, `etiquetas` and optional `redes` (`instagram`, `facebook`, `x`).
+  - The same `series` run checks it is vertical, has audio and lasts 5–180 s, and uploads it with `youtube.upload(..., short=True, synthetic=True)` (`containsSyntheticMedia`: the scenes are AI-generated), `SERIES_YOUTUBE_PRIVACY`, the SRT as captions, the cover as thumbnail (if YouTube refuses it, the reply says so and the rest stands) and the article link tagged like the blog Shorts.
+  - It replies in the thread with the `youtube.com/shorts/` link, mentioning the sender, and hands the Short to SocialBot in the shorts channel with `buzz_share.post`, the same message as the blog Shorts: master, cover (JPEG only; the relay refuses PNG), YouTube link, and the `redes` texts, or the description where one is missing. There is no Story cut, so the message drops the Story and SocialBot posts the Reel, Facebook and X only.
+  - Same ledger (`"kind": "short"`, keyed by the message id), same 3 attempts and "sender told once". A failed hand-off is retried without uploading again; a second message for a Flow folder already on YouTube is refused. A Short costs about 2,050 units (upload, captions, cover), so `SERIES_SHORTS_MAX_PER_DAY` (default 2) is its own cap, apart from `SERIES_MAX_PER_DAY`. With the blog shorts and one episode that adds up to more than the 10,000 daily units, so lower one of the caps when they all run.
+  - Without `SHORTS_BUZZ_CHANNEL` the Short is still published and the reply says it was not handed to SocialBot.
 - **Shorts covers:** the Shorts shelf and tab show a frame YouTube picks, not the thumbnail set with `thumbnails.set` (that one only reaches search and the channel grid, and the Data API cannot set the shelf image). So every Short opens with its `Thumb` still for the first 15 frames (0.5 s, `COVER_FRAMES` in `remotion/src/Short.tsx`, under QA's 1 s freeze limit). It is the frame YouTube is most likely to pick and the one Brais chooses in Studio when it picks another.
 
 Setup, once:
@@ -347,8 +354,8 @@ Setup, once:
 2. Zeabur service env:
    - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
    - `SERIES_BUZZ_FROM` (VideoDesk's and SEODesk's hex pubkeys, comma-separated);
-   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`) and `SERIES_MAX_PER_DAY` (default 1).
-   - The Buzz credentials are the shorts hand-off's. Nothing goes in `INJECT`.
+   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`), `SERIES_MAX_PER_DAY` (default 1) and `SERIES_SHORTS_MAX_PER_DAY` (default 2, Flow shorts).
+   - The Buzz credentials and `SHORTS_BUZZ_CHANNEL` are the shorts hand-off's (Flow shorts are handed to SocialBot there). Nothing goes in `INJECT`.
 3. Deploy and sync the Publisher prompt (`scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-publisher.prompt`).
 
 ### 3.7 The presenter: Lucía and Martín (paid, optional)
