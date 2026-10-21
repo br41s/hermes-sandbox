@@ -171,12 +171,15 @@ def message(entry: Dict[str, Any], social: Dict[str, Any], youtube_url: Optional
     ]
     if entry.get("synthetic"):
         lines.append("⚠️ Lleva escenas o avatar generados con IA: márcalo como contenido IA donde la red lo pida.")
+    story = "story.mp4" in attached       # series.py hands over Flow shorts too, which have no Story cut
+    reel = "Reel con cover.jpg como portada" if "cover.jpg" in attached else "Reel"
     lines += [
-        "", "— Instagram (Reel; la Story es story.mp4, sin texto) —", social.get("instagram") or "",
+        "", "— Instagram (Reel; la Story es story.mp4, sin texto) —" if story else "— Instagram (Reel) —",
+        social.get("instagram") or "",
         "", "— Facebook —", social.get("facebook") or social.get("instagram") or "",
         "", "— X —", social.get("x") or "",
         "",
-        f"@{mention}: publícalo en Facebook, Instagram (Reel con cover.jpg como portada, y Story) "
+        f"@{mention}: publícalo en Facebook, Instagram ({reel}{', y Story' if story else ''}) "
         "y X con estos textos y tus UTM. Responde a este mensaje con los enlaces.",
     ]
     return "\n".join(lines)

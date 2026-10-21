@@ -56,7 +56,8 @@ SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
         "use against the article, enforces a fresh palette/motif, and refuses to publish "
         "anything that failed QA or while publishing is in shadow mode. series: publishes the "
         "finished episodes of the 'Agentes BigLobster' series that VideoDesk requested in Buzz "
-        "(long videos, both languages) on YouTube and replies in Buzz with the links; no arguments. "
+        "(long videos, both languages) and the Google-Flow shorts (#publicar-short) on YouTube, hands those "
+        "shorts to SocialBot and replies in Buzz with the links; no arguments. "
         "performance: read-only, how the published shorts did on YouTube — each short's views as a "
         "multiple of the channel median, and the median multiple per hook_pattern, lang and palette."
     ),
