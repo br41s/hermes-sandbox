@@ -35,15 +35,16 @@ def remote(p):
 
 cmd = args[0]
 if cmd == "copy":
+    dest = os.path.join(drive, os.path.basename(args[1]))
     if os.environ.get("FAKE_COPY_FAIL"):
         sys.exit(1)
-    shutil.copy2(args[1], os.path.join(drive, os.path.basename(args[1])))
+    if os.path.exists(dest) and not filecmp.cmp(args[1], dest, shallow=False):
+        sys.exit(1)  # --immutable: never overwrite a differing file
+    shutil.copy2(args[1], dest)
 elif cmd == "check":
-    src, names = args[1], open(args[args.index("--files-from") + 1]).read().split()
-    bad = [n for n in names
-           if not os.path.exists(os.path.join(drive, n))
-           or not filecmp.cmp(os.path.join(src, n), os.path.join(drive, n), shallow=False)]
-    sys.exit(1 if bad else 0)
+    name = args[args.index("--include") + 1].lstrip("/")
+    src, dst = os.path.join(args[1], name), os.path.join(drive, name)
+    sys.exit(0 if os.path.exists(dst) and filecmp.cmp(src, dst, shallow=False) else 1)
 elif cmd == "lsf":
     print("\n".join(sorted(os.listdir(drive))))
 elif cmd == "deletefile":
@@ -128,23 +129,36 @@ def test_verified_old_zips_are_pruned_to_two(tmp_path: Path) -> None:
     assert set(local) <= {p.name for p in drive.iterdir()}  # both are on Drive too
 
 
-def test_zip_missing_from_drive_is_kept_and_alerts(tmp_path: Path) -> None:
+def test_zip_that_missed_drive_is_uploaded_then_pruned(tmp_path: Path) -> None:
+    # A failed night left 20261018 off Drive; only the newest zip is uploaded
+    # each night, so without the retry it would block pruning forever.
     on_drive = {k: v for k, v in OLD.items() if "20261018" not in k}
     env, outdir, drive = _setup(tmp_path, OLD, on_drive)
+    proc = _run(env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (drive / "hermes-backup-20261018-130038.zip").read_bytes() == b"a"
+    assert len(_local(outdir)) == 2
+
+
+def test_mismatched_drive_copy_is_kept_locally_and_alerts(tmp_path: Path) -> None:
+    corrupt = {**OLD, "hermes-backup-20261019-130038.zip": b"truncated"}
+    env, outdir, drive = _setup(tmp_path, OLD, corrupt)
     proc = _run(env)
     assert proc.returncode == 1
     assert "DRIVE SYNC FAILED" in proc.stdout
     assert "not verified" in proc.stdout
-    assert len(_local(outdir)) == 4  # three old + tonight's, nothing deleted
-    assert "deletefile" not in Path(env["FAKE_RCLONE_LOG"]).read_text()  # Drive untouched
+    local = _local(outdir)
+    assert "hermes-backup-20261019-130038.zip" in local  # unverified: kept
+    assert "hermes-backup-20261018-130038.zip" not in local  # verified: pruned anyway
+    assert (drive / "hermes-backup-20261019-130038.zip").read_bytes() == b"truncated"
 
 
-def test_mismatched_drive_copy_is_not_trusted(tmp_path: Path) -> None:
-    corrupt = {**OLD, "hermes-backup-20261019-130038.zip": b"truncated"}
-    env, outdir, _ = _setup(tmp_path, OLD, corrupt)
-    proc = _run(env)
-    assert proc.returncode == 1
-    assert len(_local(outdir)) == 4
+def test_drive_is_pruned_to_seven_even_when_a_zip_is_unverified(tmp_path: Path) -> None:
+    extra = {f"hermes-backup-202610{d:02d}-130000.zip": b"x" for d in range(1, 9)}
+    corrupt = {**extra, **OLD, "hermes-backup-20261019-130038.zip": b"truncated"}
+    env, _, drive = _setup(tmp_path, OLD, corrupt)
+    assert _run(env).returncode == 1
+    assert len(list(drive.iterdir())) == 7
 
 
 def test_failed_upload_deletes_nothing(tmp_path: Path) -> None:

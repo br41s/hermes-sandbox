@@ -54,20 +54,29 @@ fi
 # Local retention, run after the Drive copy. Each zip past the newest LOCAL_KEEP is
 # deleted only when `rclone check --one-way` (size + MD5) finds it on Drive. Until
 # 2026-10-21 local zips were pruned before the upload, by `hermes backup` itself.
+on_drive() {
+  "$RCLONE" --config "$RCLONE_CONF" check "$OUTDIR/" "$DRIVE_REMOTE/" \
+    --one-way --include "/$1" >>"$OUTDIR/last-drive-sync.log" 2>&1
+}
+
 verify_and_prune_local() {
-  local old=("${ALL[@]:$LOCAL_KEEP}")
-  [ "${#old[@]}" -eq 0 ] && return 0
-  local list rc=1
-  list=$(mktemp) || return 1
-  printf '%s\n' "${old[@]##*/}" >"$list"
-  if "$RCLONE" --config "$RCLONE_CONF" check "$OUTDIR/" "$DRIVE_REMOTE/" \
-       --one-way --files-from "$list" >>"$OUTDIR/last-drive-sync.log" 2>&1; then
-    printf '%s\n' "${old[@]}" | xargs -r rm -f
-    rc=0
-  else
-    echo "Drive copy not verified; kept locally: ${old[*]##*/}" >>"$OUTDIR/last-drive-sync.log"
-  fi
-  rm -f "$list"
+  local f name rc=0
+  for f in "${ALL[@]:$LOCAL_KEEP}"; do
+    name=${f##*/}
+    if ! on_drive "$name"; then
+      # Only the newest zip is uploaded each night, so one that missed Drive (a failed
+      # night) would never get there: upload it now, then check again.
+      "$RCLONE" --config "$RCLONE_CONF" copy "$f" "$DRIVE_REMOTE/" \
+        --immutable --drive-chunk-size 64M --transfers 1 \
+        >>"$OUTDIR/last-drive-sync.log" 2>&1
+      if ! on_drive "$name"; then
+        echo "Drive copy not verified; kept locally: $name" >>"$OUTDIR/last-drive-sync.log"
+        rc=1
+        continue
+      fi
+    fi
+    rm -f "$f"
+  done
   return $rc
 }
 
@@ -96,11 +105,10 @@ if [ -x "$RCLONE" ] && [ -f "$RCLONE_CONF" ]; then
          --immutable --drive-chunk-size 64M --transfers 1 \
          >"$OUTDIR/last-drive-sync.log" 2>&1; then
       DRIVE_STATUS=FAIL
-    elif ! verify_and_prune_local; then
-      # A zip due for local deletion has no identical copy on Drive: keep every local
-      # zip, leave Drive untouched, and alert. A later run retries the check.
-      DRIVE_STATUS=FAIL
     else
+      # A zip with no identical copy on Drive stays local and raises the alert; the
+      # rest are pruned. A later run retries it.
+      verify_and_prune_local || DRIVE_STATUS=FAIL
       # Prune Drive to KEEP (newest first by name; zips are timestamped).
       "$RCLONE" --config "$RCLONE_CONF" lsf "$DRIVE_REMOTE/" \
         --files-only -R 2>/dev/null \

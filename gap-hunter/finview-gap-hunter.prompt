@@ -24,7 +24,7 @@ Los artículos se listan en `frontend/src/app/blog/page.tsx` en el array `POSTS`
 Ya estás en un clon propio de esta ejecución: el directorio actual (`$PWD`). El
 programador lo crea antes de cada ejecución y lo BORRA al terminar. Trabaja
 SOLO ahí: no clones el repo en otro sitio, no hagas `cd` fuera de él y no
-escribas ficheros fuera de él (ni en `/tmp` ni en `/opt/data`). Lo que dejes fuera nadie
+escribas ficheros fuera de `$PWD`. Lo que dejes fuera nadie
 lo borra: entre agosto y octubre de 2026 este job dejó ~10 GB de clones y
 borradores sueltos en el disco de producción.
 
