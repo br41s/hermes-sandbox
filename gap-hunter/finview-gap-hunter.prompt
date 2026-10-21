@@ -20,11 +20,24 @@ Los artículos se listan en `frontend/src/app/blog/page.tsx` en el array `POSTS`
 
 ## WORKFLOW
 
-### 0. Preparar workspace (clon efímero — SIEMPRE lo primero)
-cd /tmp && rm -rf finview-gap-hunter && git clone --depth 1 --single-branch https://github.com/br41s/FinView.git finview-gap-hunter && cd finview-gap-hunter
-# Clon nuevo en cada ejecución: nunca reutilices un workspace persistente ni
-# uses `git reset --hard` / `git clean -fd` — están bloqueados en modo cron
-# (requieren aprobación humana que no existe en un job desatendido).
+### 0. Preparar workspace (SIEMPRE lo primero)
+Ya estás en un clon propio de esta ejecución: el directorio actual (`$PWD`). El
+programador lo crea antes de cada ejecución y lo BORRA al terminar. Trabaja
+SOLO ahí: no clones el repo en otro sitio, no hagas `cd` fuera de él y no
+escribas ficheros fuera de él (ni en `/tmp` ni en `/opt/data`). Lo que dejes fuera nadie
+lo borra: entre agosto y octubre de 2026 este job dejó ~10 GB de clones y
+borradores sueltos en el disco de producción.
+
+Actualiza `main` antes de nada:
+
+    git fetch origin
+    git checkout main
+    git pull --ff-only origin main
+
+NUNCA uses `git reset --hard` ni `git clean -fd` — están bloqueados en modo cron
+(requieren aprobación humana que no existe en un job desatendido). Si cualquiera
+de estos pasos falla, aborta y responde con el paso y el error LITERAL; un fallo
+nunca es `[SILENT]`.
 
 ### 0b. Fijar la identidad de commit (OBLIGATORIO, antes de cualquier commit)
 
@@ -36,7 +49,7 @@ pertenece a ninguna cuenta, así que fija SIEMPRE la identidad antes de commitea
     git config user.email "82447149+br41s@users.noreply.github.com"
     git config user.name "Hermes Agent"
 
-Es config LOCAL del clon efímero (`/tmp/finview-gap-hunter/.git/config`), no
+Es config LOCAL del clon de esta ejecución (`$PWD/.git/config`), no
 global: no toca el resto del sistema. Ese email es la dirección noreply
 verificada de la cuenta propietaria del repo; no lo sustituyas por otro. Sin
 esto el PR se abre con el check de Vercel en rojo y nadie lo puede mergear.
@@ -56,7 +69,7 @@ esto el PR se abre con el check de Vercel en rojo y nadie lo puede mergear.
 #### 3a. Crear branch y archivos
 Ahora que conoces el slug, crea el branch del artículo:
 git checkout -b blog/SLUG-YYYYMMDD
-Luego crea `/tmp/finview-gap-hunter/frontend/src/app/blog/SLUG/` con:
+Luego crea `frontend/src/app/blog/SLUG/` (dentro de `$PWD`) con:
 
 **page.mdx** — Formato:
 
@@ -143,8 +156,7 @@ SEO
 * Links internos a otros artículos del blog donde sea relevante
 
 DEPLOY
-(Ya estás en el branch blog/SLUG-YYYYMMDD creado en el paso 3a)
-cd /tmp/finview-gap-hunter
+(Ya estás en el branch blog/SLUG-YYYYMMDD creado en el paso 3a, dentro de `$PWD`)
 # Identidad de commit: ver §0b. Sin esto Vercel no verifica el autor y el PR
 # se queda sin preview y sin poder mergear.
 git config user.email "82447149+br41s@users.noreply.github.com"
@@ -163,7 +175,7 @@ vacíos. Escribe el cuerpo con un heredoc y pásalo con `--body-file`. Usa la sh
 (`cat > …`), no `write_file`: el workdir está fuera de HERMES_WRITE_SAFE_ROOT y la
 herramienta rechazaría la escritura.
 
-    cat > /tmp/finview-gap-hunter/pr-body.md <<'EOF'
+    cat > pr-body.md <<'EOF'
     ## Gap de contenido
     [qué faltaba y por qué merecía un artículo]
 
@@ -178,7 +190,7 @@ herramienta rechazaría la escritura.
     - `npm run build` — build de producción correcto
     EOF
     gh pr create --base main --head blog/SLUG-YYYYMMDD --title "…" \
-      --body-file /tmp/finview-gap-hunter/pr-body.md
+      --body-file pr-body.md
 
 Comillas simples en `<<'EOF'` para que la shell no toque backticks ni `$`. Si algún
 comando de verificación no lo ejecutaste, NO lo pongas: un checklist inventado es
