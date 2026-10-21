@@ -6,7 +6,9 @@
 # reviewable; before that the script existed only on the volume.
 #
 # Daily full Hermes backup -> /opt/data/backups, then mirror newest zip to
-# Google Drive (off-host copy), prune both to last KEEP.
+# Google Drive (off-host copy). Drive keeps the last KEEP zips; local keeps the last
+# LOCAL_KEEP, and an older local zip is deleted only once `rclone check` proves Drive
+# holds an identical copy.
 # Run by Hermes cron (no_agent). Silent on full success; emits ALERT on failure.
 set -uo pipefail
 export HERMES_HOME=/opt/data
@@ -17,12 +19,15 @@ RCLONE="${BACKUP_RCLONE:-/opt/data/scripts/bin/rclone}"
 RCLONE_CONF="${BACKUP_RCLONE_CONF:-/opt/data/.config/rclone/rclone.conf}"
 DRIVE_REMOTE=hermesdrive:/HermesBackups
 KEEP=7
+LOCAL_KEEP=2
 mkdir -p "$OUTDIR"
 STAMP=$(date +%Y%m%d-%H%M%S)
 ZIP="$OUTDIR/hermes-backup-$STAMP.zip"
 LOG="$OUTDIR/last-backup.log"
 
-if "$HERMES" backup -o "$ZIP" >"$LOG" 2>&1; then
+# --keep 0: `hermes backup` would otherwise prune hermes-backup-*.zip to its default 3
+# before anything reached Drive. Local pruning happens below, after verification.
+if "$HERMES" backup -o "$ZIP" --keep 0 >"$LOG" 2>&1; then
   STATUS=OK
 elif [ -s "$ZIP" ] && grep -q "Archive kept" "$LOG" \
      && python3 -c 'import sys, zipfile; sys.exit(0 if zipfile.ZipFile(sys.argv[1]).testzip() is None else 1)' "$ZIP"; then
@@ -36,11 +41,7 @@ else
   rm -f "$ZIP"
 fi
 
-# Retention: keep newest KEEP zips locally.
 mapfile -t ALL < <(ls -1t "$OUTDIR"/hermes-backup-*.zip 2>/dev/null)
-if [ "${#ALL[@]}" -gt "$KEEP" ]; then
-  printf '%s\n' "${ALL[@]:$KEEP}" | xargs -r rm -f
-fi
 
 # If local backup failed, alert now and stop (no point syncing).
 if [ "$STATUS" = FAIL ]; then
@@ -49,6 +50,35 @@ if [ "$STATUS" = FAIL ]; then
   tail -15 "$LOG"
   exit 1
 fi
+
+# Local retention, run after the Drive copy. Each zip past the newest LOCAL_KEEP is
+# deleted only when `rclone check --one-way` (size + MD5) finds it on Drive. Until
+# 2026-10-21 local zips were pruned before the upload, by `hermes backup` itself.
+on_drive() {
+  "$RCLONE" --config "$RCLONE_CONF" check "$OUTDIR/" "$DRIVE_REMOTE/" \
+    --one-way --include "/$1" >>"$OUTDIR/last-drive-sync.log" 2>&1
+}
+
+verify_and_prune_local() {
+  local f name rc=0
+  for f in "${ALL[@]:$LOCAL_KEEP}"; do
+    name=${f##*/}
+    if ! on_drive "$name"; then
+      # Only the newest zip is uploaded each night, so one that missed Drive (a failed
+      # night) would never get there: upload it now, then check again.
+      "$RCLONE" --config "$RCLONE_CONF" copy "$f" "$DRIVE_REMOTE/" \
+        --immutable --drive-chunk-size 64M --transfers 1 \
+        >>"$OUTDIR/last-drive-sync.log" 2>&1
+      if ! on_drive "$name"; then
+        echo "Drive copy not verified; kept locally: $name" >>"$OUTDIR/last-drive-sync.log"
+        rc=1
+        continue
+      fi
+    fi
+    rm -f "$f"
+  done
+  return $rc
+}
 
 # --- Off-host mirror to Google Drive ---
 # Drive failure is critical (it's the only off-host copy) but must NOT
@@ -76,6 +106,9 @@ if [ -x "$RCLONE" ] && [ -f "$RCLONE_CONF" ]; then
          >"$OUTDIR/last-drive-sync.log" 2>&1; then
       DRIVE_STATUS=FAIL
     else
+      # A zip with no identical copy on Drive stays local and raises the alert; the
+      # rest are pruned. A later run retries it.
+      verify_and_prune_local || DRIVE_STATUS=FAIL
       # Prune Drive to KEEP (newest first by name; zips are timestamped).
       "$RCLONE" --config "$RCLONE_CONF" lsf "$DRIVE_REMOTE/" \
         --files-only -R 2>/dev/null \
@@ -96,6 +129,6 @@ if [ "$DRIVE_STATUS" = FAIL ]; then
   tail -15 "$OUTDIR/last-drive-sync.log"
   exit 1
 elif [ "$DRIVE_STATUS" = SKIP ]; then
-  echo "WARN: Drive sync skipped (rclone or config missing) at $STAMP; local backup only."
+  echo "WARN: Drive sync skipped (rclone or config missing) at $STAMP; local backup only, nothing pruned."
   exit 0
 fi

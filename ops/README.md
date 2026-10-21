@@ -27,8 +27,13 @@ Two scripts, two homes:
 - **`backup-full.sh` runs from the volume; this directory holds the versioned copy.**
   The live file is `/opt/data/scripts/backup-full.sh`, run nightly by the default
   profile's cron job `3f6f866ce1af` (no agent). It zips `/opt/data` with `hermes backup`,
-  keeps the newest zips, and mirrors the newest to Drive `hermesdrive:/HermesBackups`
-  with `/opt/data/scripts/bin/rclone`. The zip excludes `backups/` itself. After editing
+  mirrors the newest to Drive `hermesdrive:/HermesBackups`
+  with `/opt/data/scripts/bin/rclone`, and keeps 7 on Drive and 2 locally. The zip excludes `backups/` itself.
+  **2026-10-21**: a local zip past the newest 2 is deleted only after `rclone check
+  --one-way` (size + MD5) finds it on Drive. A zip missing from Drive (a failed night)
+  is uploaded again and re-checked; one that still does not verify stays local and
+  raises `DRIVE SYNC FAILED`, while the others are pruned. Before that, `hermes backup` pruned its own zips to 3 (`--keep`
+  defaults to 3) before anything was uploaded; the script now passes `--keep 0`. After editing
   `ops/backup-full.sh`, copy it to the volume path as root and keep it `10000:10000`, or
   the next run fails on permissions.
   **2026-10-06**: `hermes backup` exits non-zero when a file vanishes between its scan

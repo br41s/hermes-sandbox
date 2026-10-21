@@ -68,6 +68,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1254,6 +1255,56 @@ def openrouter_budget_incidents(*, records: Optional[List[tuple]] = None,
     return out
 
 
+DISK_ALERT_PERCENT = 85.0  # used share of the HERMES_HOME volume that starts a brief
+DISK_MIN_FREE_GB = 12  # two nightly hermes-backup zips (~6 GB each) must still fit
+
+
+def disk_space_incidents(*, usage: Optional[tuple] = None,
+                         in_deployment: Optional[bool] = None,
+                         now: Optional[datetime] = None) -> List[Incident]:
+    """Raise when the HERMES_HOME volume is filling up.
+
+    ``gateway/disk_status.py`` grades the same volume for ``/api/status``, but its
+    tiers wait until write failures are near (< 4 GB free), and nothing alerted
+    on it. By 2026-10-21 the volume held 93 GB of 118: ~10 GB of Gap Hunter clones
+    nobody deleted, plus 17 GB of local backup zips. A brief here comes early
+    enough to clean up. One per day while it lasts: the id carries the date.
+
+    ``usage`` is ``(total_bytes, free_bytes)``, injected by tests. Outside the
+    deployment (laptop, CI) the disk is not ours: return [].
+    """
+    now = now or _now()
+    if usage is None:
+        if in_deployment is None:
+            in_deployment = _BUILD_SHA_FILE.parent.is_dir()
+        if not in_deployment:
+            return []
+        try:
+            from hermes_constants import get_hermes_home
+            du = shutil.disk_usage(get_hermes_home())
+        except Exception:
+            return []
+        usage = (du.total, du.free)
+    total, free = usage
+    if not total:
+        return []
+    used_pct = (1 - free / total) * 100.0
+    free_gb = free / 1024 ** 3
+    if used_pct < DISK_ALERT_PERCENT and free_gb >= DISK_MIN_FREE_GB:
+        return []
+    return [Incident(
+        id=f"disk-space:{now.strftime('%Y-%m-%d')}",
+        kind="disk_space",
+        title=f"Hermes volume {used_pct:.0f}% full ({free_gb:.1f} GB free)",
+        detail=(f"used: {used_pct:.1f}% of {total / 1024 ** 3:.0f} GB, free: {free_gb:.1f} GB\n"
+                f"threshold: {DISK_ALERT_PERCENT:.0f}% used or under {DISK_MIN_FREE_GB} GB free\n"
+                "The nightly backup writes a ~6 GB zip; under that it fails."),
+        handoff=("in the Hermes container: `du -xsh /opt/data/* | sort -h | tail` and "
+                 "`du -sh /opt/data/backups/* /opt/data/tmp`; stray clones and old zips "
+                 "are the usual cause (ops/backup-full.sh keeps 2 locally)"),
+    )]
+
+
 def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     """Read the site-checkout drift signal and surface each one.
 
@@ -1966,6 +2017,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
           site_down: Optional[List[Incident]] = None,
           volume_backup: Optional[List[Incident]] = None,
           openrouter_budget: Optional[List[Incident]] = None,
+          disk_space: Optional[List[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -1993,6 +2045,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     vb = volume_backup if volume_backup is not None else volume_backup_incidents(now=now)
     ob = (openrouter_budget if openrouter_budget is not None
           else openrouter_budget_incidents(now=now))
+    ds = disk_space if disk_space is not None else disk_space_incidents(now=now)
 
     # Dependency advisories are handled apart from the other signals because
     # they need two things none of the others do: a baseline (the standing
@@ -2027,7 +2080,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
                  + prompt_drift_incidents(jobs)
                  + runaway_incidents(now=now)
                  + list(lf) + list(bc) + list(cd) + list(dd) + list(jl)
-                 + list(ue) + list(lb) + list(sd) + list(vb) + list(ob))
+                 + list(ue) + list(lb) + list(sd) + list(vb) + list(ob) + list(ds))
     new = [i for i in incidents if i.id not in seen] + da_new
 
     incident_text = ""
