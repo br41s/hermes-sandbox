@@ -538,6 +538,41 @@ chmod +x "$HERMES_HOME/scripts/upstream_drift.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/upstream_drift.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
 
+# ── scripts/geo_exclusiones.sh — SocialBot's exclusion list for the GEO Scout ──
+# SocialBot (Buzz fleet, br41s/fizz) keeps its pauses, exclusions and discarded
+# communities as the canvas of #shorts. The Off-Site GEO Scout (biglobster
+# profile, 03:00) reads it in STEP 0.5 of offsite-geo/geo-scout.prompt, but its
+# profile carries no Buzz identity, so this no-agent job copies the canvas into
+# the scout's workdir from the default store, which does. Silent when it works.
+# When it cannot read a dated list it deletes the old copy (the brief then says
+# "exclusiones NO VERIFICADO" instead of trusting a stale list) and exits 2, so
+# the runner alerts.
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "50 2 * * *" --no-agent --script geo_exclusiones.sh \
+#     --deliver telegram --name geo-exclusiones
+cat > "$HERMES_HOME/scripts/geo_exclusiones.sh" <<'GEOEXCL'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+dest="${HERMES_HOME:-/opt/data}/profiles/biglobster/geo-scout/salida/socialbot/exclusiones.md"
+mkdir -p "$(dirname "$dest")" || exit 2
+tmp="$dest.tmp"
+if [ -z "${SHORTS_BUZZ_CHANNEL:-}" ]; then
+    rm -f "$dest"
+    echo "geo-exclusiones: SHORTS_BUZZ_CHANNEL is not set" >&2
+    exit 2
+fi
+if ! buzz canvas get --channel "$SHORTS_BUZZ_CHANNEL" > "$tmp" 2>/dev/null \
+    || ! grep -qE '^actualizado: [0-9]{4}-[0-9]{2}-[0-9]{2}' "$tmp"; then
+    rm -f "$tmp" "$dest"
+    echo "geo-exclusiones: no dated exclusion list in the #shorts canvas; tonight's GEO Scout brief will say NO VERIFICADO" >&2
+    exit 2
+fi
+mv -f "$tmp" "$dest"
+GEOEXCL
+chmod +x "$HERMES_HOME/scripts/geo_exclusiones.sh"
+chown hermes:hermes "$HERMES_HOME/scripts/geo_exclusiones.sh" 2>/dev/null || true
+echo "[03-biglobster] Seeded scripts/geo_exclusiones.sh"
+
 # --- 5e: seed the merge-on-green cron script into the AUDITOR profile ---
 # Merges system-tier PRs the auditor has already approved, once the CEO has
 # labelled them `auto-merge` (merge_on_green/). Runs under profile=auditor for
