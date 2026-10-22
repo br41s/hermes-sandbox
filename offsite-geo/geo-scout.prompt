@@ -37,11 +37,22 @@ CONFIG  (the only project-specific block — change these to retarget)
   EXCLUDED       : never pitch these, at any date: Indie Hackers, Hacker News,
                    Menéame, WIP.
   PAUSED         : off-limits until the date shown, fair game after it:
-                   n8n Community until 2026-12-01; Make Community until
-                   2026-10-22; Airtable Community until further notice.
-                   (EXCLUDED and PAUSED mirror the "Pausas y exclusiones" list
-                   of SocialBot, who executes these briefs — change both
-                   together, or SocialBot discards the brief.)
+                   Make Community until 2026-10-22; Airtable Community until
+                   further notice. n8n Community (community.n8n.io, r/n8n) is
+                   RESTRICTED, never a pitch: only thanks and questions.
+                   (EXCLUDED and PAUSED are only a FALLBACK mirror. The
+                   AUTHORITATIVE list is EXCLUSION_SOURCE, read every run in
+                   STEP 0.5 — it is changed there, by SocialBot, not here.)
+  EXCLUSION_SOURCE : salida/socialbot/exclusiones.md in this job's workdir: the
+                   canvas of the Buzz channel #shorts, where SocialBot keeps its
+                   pauses, exclusions and discarded communities. The no-agent
+                   job "geo-exclusiones" (default store, 02:50 Asia/Bangkok)
+                   copies it here every night, and deletes the copy when the
+                   canvas cannot be read, so a stale list is never used. Its
+                   lines read "- <site> | <estado> | <hasta> | <motivo o
+                   alcance>", estado being excluido, pausa or restringido.
+                   If the file is missing, undated or stale, the brief MUST NOT
+                   print "exclusiones ok" (see STEP 0.5).
   PLATFORM_COOLDOWN : 21 days. A platform pitched in the last 21 days is
                    off-limits. Each subreddit counts as its own platform.
   NEW_COMMUNITY_DAY : Monday (Asia/Bangkok date).
@@ -79,6 +90,36 @@ STEP 0 — Read the ledger (dedup memory):
      • every community already suggested (STEP 6) and the date of the last one.
    New entries are single "LEDGER |" and "COMMUNITY |" lines (STEP 5). Older
    entries are free-form blocks: read their date and "Platform:" line.
+
+STEP 0.5 — Exclusiones de SocialBot (obligatorio, fail-closed):
+   Read salida/socialbot/exclusiones.md in the workdir (EXCLUSION_SOURCE). It
+   counts as READ only if all three hold:
+     • the file exists and is readable;
+     • it has a line "actualizado: YYYY-MM-DD" no more than 7 days before
+       today (Asia/Bangkok);
+     • it has at least one list line "- <site> | <estado> | <hasta> | ...".
+   From the list lines build the exclusion set, lowercased: every site name,
+   domain, subreddit and community named in the first field.
+     • excluido → never pitch it.
+     • pausa → never pitch it until the <hasta> date has passed; "hasta nuevo
+       aviso" or a condition (not a date) means still paused.
+     • restringido → pitch it only if the action fits the alcance written in the
+       last field, and quote that alcance in the brief; a pitch, a link or advice
+       never fits an alcance that does not say so. When in doubt, drop it.
+   Check BOTH the platform and the community of your chosen target against that
+   set, together with EXCLUDED, PAUSED and PLATFORM_COOLDOWN from STEP 0:
+     • File not READ (missing, undated, stale or without list lines) → the check
+       did NOT run. Deliver the brief (or "Status: Nothing worth pitching today")
+       and make its LAST line, verbatim: "exclusiones NO VERIFICADO — <motivo>"
+       (falta el fichero / sin fecha / lista de hace N días / sin líneas). Never
+       say ok.
+     • Target in the set → drop it and validate the next-best; if none survives,
+       output "Status: Nothing worth pitching today".
+     • File READ AND target clear → the brief's LAST line, verbatim and alone,
+       is: exclusiones ok
+   If Fizz asked for a re-send of an earlier pass, re-run THIS step for that
+   target before re-emitting it, and label the re-send with the original brief
+   date + id.
 
 STEP 1 — Ground in the brand:
    Read https://biglobster.top (home + a couple of linked service/blog pages).
@@ -190,6 +231,10 @@ STEP 5 — Record & report:
         • Compliance note — the platform's self-promo rule and how we respect it
         • Why this earns an AI citation — one plain sentence (so the CEO learns
           the GEO mechanic each run)
+        • FINAL LINE (mandatory, verbatim, nothing after it): "exclusiones ok"
+          when EXCLUSION_SOURCE was READ this run (STEP 0.5) AND the target
+          cleared it; otherwise "exclusiones NO VERIFICADO — <motivo>". Never
+          print "exclusiones ok" without having read a fresh list in THIS run.
 
 STEP 6 — Community to join this week (when due):
    Due when today is NEW_COMMUNITY_DAY, or when the ledger has no COMMUNITY line
