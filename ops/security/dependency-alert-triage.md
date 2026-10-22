@@ -172,6 +172,17 @@ the hoisted `node_modules/brace-expansion`, which now lives nested under
 | `braces` | website, never ships | 3.0.3 (no fix exists) | **Accepted until 2026-12-31**, but it only took effect once the scan passed `--config=osv-scanner.toml` (the `ci:` PR after #397). Without that flag, osv-scanner reads the toml from each lockfile's own directory, so the root file never governed `website/` or the sidecar, and the alert stayed open at `ae7173854`. 3.0.3 is the latest release, and OSV lists it as `last_affected` with no fix, so no upgrade can clear it. |
 | `http-cache-semantics` | root lock + website, **absent from the image** | 4.2.0, **left open** | OSV lists no fixed version. 4.3.0 came out on 2026-10-04, so it is inside the 14-day release-age window until 2026-10-18. Re-check then; do not suppress it in the meantime. |
 
+## 2026-10-22 — `sharp` in the WhatsApp bridge
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `sharp` | `scripts/whatsapp-bridge/package-lock.json`: a **required** peer of `@whiskeysockets/baileys` (`"*"`), so npm installs it. **Not installed in production** | 0.35.4 → 0.35.5 (`@img/sharp-libvips-*` 1.3.3 → 1.3.4) | **Unreachable, patched anyway.** CVE-2026-114111 / GHSA-wq5f-xc86-pv6w: the bundled librsvg can be driven to RCE on glibc Linux by a crafted SVG. The image ships the bridge source but never runs `npm install` for it. Checked in the pod on 2026-10-22: no `node_modules` under `/opt/hermes/scripts/whatsapp-bridge`, no `HERMES_HOME` copy, and no `bridge.js` process. 0.35.5 (2026-09-27) is past the release-age gate, and it loads `rsvg 2.63.2`, the fixed version. Relocked with `npm@12 update sharp --package-lock-only`. Only the sharp family moved; the other changed lines are npm 12's `libc` fields. |
+
+One thing to know before you rely on this lock in a container: `resolve_whatsapp_bridge_dir()`
+(`gateway/platforms/whatsapp_common.py`) copies the bridge into `HERMES_HOME` once and
+then reuses that copy. A pod that had already set up WhatsApp would keep the old lock
+until someone deleted the copy.
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
