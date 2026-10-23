@@ -777,6 +777,7 @@ class WebhookAdapter(BasePlatformAdapter):
         # the ledger cannot dedupe a provider retry or a replayed signed delivery; the route-scoped
         # in-memory guard is their only replay defence (main dedupes every route here).
         non_durable = bool(route_config.get("deliver_only") or route_config.get("cron_job")
+                           or route_config.get("trigger_cron_job_id")  # fork: no durable admission either
                            or isinstance(coalesce, dict))
         if non_durable and not self._record_delivery_id(delivery_identity, now):
             logger.info("[webhook] Skipping duplicate delivery %s on route %s", delivery_id, route_name)
