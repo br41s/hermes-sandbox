@@ -455,7 +455,10 @@ def run_delegate_in_profile(
             cwd=workdir,
             capture_output=True,
             text=True,
-            timeout=_DEFAULT_DELEGATE_TIMEOUT, check=False
+            encoding="utf-8",
+            errors="replace",
+            timeout=_DEFAULT_DELEGATE_TIMEOUT,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return {
