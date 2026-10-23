@@ -884,17 +884,20 @@ def reconcile_config(
 ) -> None:
     """§2 for one config.yaml on disk: rewritten only when something changed, never raises.
 
-    The write goes through ``atomic_config_write``, the one config.yaml writer upstream
-    allows (scripts/check_config_yaml_writers.py): atomic, so a pod killed mid-boot
-    cannot leave a truncated config, and comment-preserving. The heredoc this replaced
+    The write goes through ``atomic_config_replace``, upstream's writer for a complete
+    desired state (scripts/check_config_yaml_writers.py): atomic, so a pod killed mid-boot
+    cannot leave a truncated config, and comment-preserving. Not ``atomic_config_write``:
+    since upstream v0.22 that refuses any write that drops a key, and this function
+    deletes keys on purpose (a rental's ``image_gen``), so every pin of that profile was
+    silently not saved. The heredoc this replaced
     used a plain ``yaml.dump``; the resulting mapping is the same, keys this function
     deletes included. Importing it lays out the HERMES_HOME skeleton (and seeds a missing
     root SOUL.md) and the writer keeps bounded snapshots in backups/config/ — both exactly
     what the gateway does when it starts a moment later.
     """
-    import yaml
+    import hermes_yaml as yaml  # PyYAML left the image with upstream v0.22
 
-    from hermes_cli.config import atomic_config_write
+    from hermes_cli.config import atomic_config_replace
 
     if not config_path.exists():
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
@@ -903,7 +906,7 @@ def reconcile_config(
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         if reconcile_cfg(cfg, label, environ, is_rented=is_rented,
                          byok_images=byok_images, profiles_src=profiles_src, served=served):
-            atomic_config_write(config_path, cfg)
+            atomic_config_replace(config_path, cfg)
             print(f"[03-biglobster] {label}: reconciled config.yaml keys")
         else:
             print(f"[03-biglobster] {label}: config.yaml keys already current")
