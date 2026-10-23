@@ -298,3 +298,59 @@ def _fork_hide_bundled_plugin_toolsets(request, monkeypatch):
     real = tools_config._get_plugin_toolset_keys
     monkeypatch.setattr(tools_config, "_get_plugin_toolset_keys", lambda: set(real()) - {"shorts"})
     yield
+
+
+
+# ── Upstream's CI-layout tests (owner, 2026-10-23: keep the fork's ci.yml) ───
+#
+# The fork runs its own .github/workflows/ci.yml and keeps its own tests.yml and docker.yml;
+# upstream's orchestrator is .github/workflows/ci.yaml, which the fork does not have. These
+# upstream tests assert that layout (ci.yaml's job graph, its e2e/upgrade/release lanes,
+# upstream's tests.yml and docker.yml steps), so they cannot pass here and say nothing about
+# the fork's CI. Removed at collection by test function, with this note, instead of deleting
+# upstream's files (which would conflict on every sync). Every case of each was failing on
+# the missing ci.yaml or on the fork's own workflows (PR 489). Re-check this list on each
+# upstream merge: remove an entry upstream deleted, add one only for the same reason.
+_UPSTREAM_CI_LAYOUT_TESTS = frozenset({
+    "tests/ci/test_classify_changes.py"
+    "::test_ci_jobs_only_gate_on_detect_outputs_that_detect_actually_declares",
+    "tests/ci/test_classify_changes.py::test_real_update_suites_gate_the_merge_when_their_lane_fires",
+    "tests/ci/test_clean_worktree_check.py::test_every_checkout_job_ends_with_the_clean_worktree_step",
+    "tests/ci/test_e2e_tmux_required.py::test_the_e2e_job_requires_tmux",
+    "tests/ci/test_live_comment.py::test_the_merge_gate_never_shows_as_a_job_in_the_comment",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_call_forwards_the_commit",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_checkout_follows_the_commit_input",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_reusable_lane_accepts_a_commit",
+    "tests/ci/test_stable_release_commit_threading.py"
+    "::test_no_lane_shares_a_concurrency_group_with_pushes_to_the_default_branch",
+    "tests/ci/test_stable_release_commit_threading.py"
+    "::test_no_lane_uses_the_controller_commit_as_the_commit_under_test",
+    "tests/ci/test_stable_release_graph.py"
+    "::test_all_applicable_ci_jobs_are_aggregated_and_desktop_e2e_stays_deferred",
+    "tests/ci/test_stable_release_graph.py::test_docker_dev_stamp_checkout_has_release_history",
+    "tests/ci/test_stable_release_graph.py::test_docker_recovery_refuses_to_replace_a_divergent_version_tag",
+    "tests/ci/test_stable_release_graph.py"
+    "::test_packaged_stamp_writers_receive_versions_without_rewriting_python_metadata",
+    "tests/ci/test_stable_release_graph.py::test_release_gates_extract_consumer_facing_versions",
+    "tests/ci/test_update_ci_routing.py::test_every_detect_output_a_lane_sets_is_consumed_by_some_job",
+    "tests/ci/test_update_ci_routing.py"
+    "::test_every_set_lane_reaches_its_consumer_whatever_the_other_lanes_say",
+    "tests/ci/test_update_ci_routing.py::test_marker_corpus_change_runs_every_language_that_reads_it",
+    "tests/ci/test_update_ci_routing.py::test_pull_requests_and_main_pushes_never_run_e2e",
+    "tests/ci/test_update_ci_routing.py::test_replay_rejects_ineffective_required_step",
+    "tests/ci/test_update_ci_routing.py::test_replay_uses_executed_gate_output",
+    "tests/ci/test_update_ci_routing.py::test_selection_receipt_does_not_require_the_native_jobs_venv",
+    "tests/ci/test_update_ci_routing.py::test_strict_acceptance_dispatch_reaches_every_e2e_suite",
+    "tests/ci/test_update_ci_routing.py::test_update_owner_change_dispatches_its_suites_end_to_end",
+    "tests/ci/test_update_ci_routing.py::test_update_path_change_reaches_the_suites_that_consume_it",
+    "tests/ci/test_update_ci_routing.py::test_update_path_change_selects_every_suite_that_exercises_it",
+    "tests/ci/test_update_transitive_routing.py"
+    "::test_second_hop_update_change_dispatches_real_update_consumers",
+})
+
+
+def pytest_collection_modifyitems(config, items):
+    removed = [item for item in items if item.nodeid.split("[", 1)[0] in _UPSTREAM_CI_LAYOUT_TESTS]
+    if removed:
+        config.hook.pytest_deselected(items=removed)
+        items[:] = [item for item in items if item not in removed]
