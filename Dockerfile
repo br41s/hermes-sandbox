@@ -474,6 +474,22 @@ RUN mkdir -p /opt/hermes/bin && \
 # checkout) and /opt/data (the mutable HERMES_HOME volume).  Its `revision`
 # is read from the install stamp; the fallback stamp's all-zero commit maps
 # to null.
+# Fork: .github/workflows/ghcr-publish.yml and cloudbuild.yaml pass the commit as the
+# HERMES_GIT_SHA build-arg (short, 9 chars: the tag contract). scripts/deploy.sh --status reads
+# /opt/hermes/.hermes_build_sha to report which commit the pod serves, so it must be written
+# (tests/scripts/test_deploy_tag_contract.py). Upstream v0.22 dropped the arg for an
+# install-stamp.json its own CI writes; the fork's builds write none, so the same SHA seeds the
+# stamp below and `hermes dump` and the provenance marker carry the real commit too.
+ARG HERMES_GIT_SHA=
+RUN set -eu; \
+    if [ -n "${HERMES_GIT_SHA}" ]; then \
+        printf '%s\n' "${HERMES_GIT_SHA}" > /opt/hermes/.hermes_build_sha; \
+        if [ ! -f /opt/hermes/install-stamp.json ]; then \
+            printf '{"schemaVersion":2,"commit":"%s","distribution":"docker","source":"docker","updateMechanism":"external"}\n' \
+                "${HERMES_GIT_SHA}" > /opt/hermes/install-stamp.json; \
+        fi; \
+    fi
+
 RUN set -eu; \
     if [ ! -f /opt/hermes/install-stamp.json ]; then \
         printf '{"schemaVersion":2,"commit":"0000000000000000000000000000000000000000","distribution":"docker","source":"fallback","updateMechanism":"external"}\n' \
