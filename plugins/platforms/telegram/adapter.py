@@ -519,6 +519,17 @@ class _PollingStallError(RuntimeError):
 TOPIC_PROFILE_KEY = "fork_topic_profile"
 
 
+def _strip_topic_binding(event: MessageEvent) -> None:
+    """fork: drop the binding once ``_drop_unrouted_bound_topic`` has read it.
+
+    Upstream v0.22's native admission (gateway/session_envelope.py ``_native_metadata``) refuses
+    any non-WhatsApp event that carries metadata, with "Hermes refused this message
+    (invalid_params)". The key rides in metadata, not an attribute, because
+    ``dataclasses.replace`` copies of the event keep it; it must be gone before admission."""
+    if event.metadata and TOPIC_PROFILE_KEY in event.metadata:
+        event.metadata = {k: v for k, v in event.metadata.items() if k != TOPIC_PROFILE_KEY}
+
+
 class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BasePlatformAdapter):
     """Telegram bot adapter: users/groups, MarkdownV2 replies, forum topics, media."""
 
@@ -2893,6 +2904,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
         self._accept_update()
         if self._drop_unrouted_bound_topic(event):  # fork
             return
+        _strip_topic_binding(event)  # fork
         await apply_root_dm_topic_transfer(self, event)  # opt-in dm_topic_auto_transfer (#139136)
         await super().handle_message(event)
 
@@ -7170,14 +7182,17 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
         from plugins.platforms.telegram.telegram_context import group_identity_prompt
         _chat_id_str = str(chat.id)
         channel_prompt = resolve_channel_prompt(self.config.extra, thread_id_str or _chat_id_str, _chat_id_str if thread_id_str else None)
-        return MessageEvent(
+        event = MessageEvent(
             text=expand_link_entities(message), message_type=msg_type, source=source, raw_message=message,
             message_id=str(message.message_id), platform_update_id=update_id,
             reply_to_message_id=reply_to_id, reply_to_text=reply_to_text, auto_skill=topic_skill,
             channel_prompt=group_identity_prompt(self, message, channel_prompt),
-            edit_revision=self._edit_revision(message, update_id), timestamp=message.date,
-            # fork: the group_topics binding, read only by _drop_unrouted_bound_topic.
-            metadata={TOPIC_PROFILE_KEY: topic_profile} if topic_profile else {})
+            edit_revision=self._edit_revision(message, update_id), timestamp=message.date)
+        if topic_profile:
+            # fork: the group_topics binding, read by _drop_unrouted_bound_topic and removed by
+            # _strip_topic_binding before upstream's native admission sees the event.
+            event.metadata = {TOPIC_PROFILE_KEY: topic_profile}
+        return event
 
     @staticmethod
     def _edit_revision(message, update_id: Optional[int]) -> Optional[str]:

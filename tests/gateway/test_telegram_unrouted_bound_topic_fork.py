@@ -100,6 +100,20 @@ async def test_a_routed_bound_topic_runs_in_its_profile(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_binding_is_gone_before_native_admission(monkeypatch):
+    """Upstream v0.22 refuses a non-WhatsApp event carrying any metadata ("Hermes refused this
+    message (invalid_params)"), so a routed bound topic's message would never be answered."""
+    from gateway.session_envelope import _native_metadata
+
+    event = _event(bound="grow-shop", routed="grow-shop")
+    upstream = await _dispatch(event, monkeypatch)
+
+    passed = upstream.await_args.args[-1]
+    assert TOPIC_PROFILE_KEY not in (passed.metadata or {})
+    assert _native_metadata(passed) is not None  # admission's metadata clause accepts it
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bound", [None, "", "default", "Default"])
 async def test_an_unbound_or_default_topic_passes_through(monkeypatch, bound):
     upstream = await _dispatch(_event(bound=bound), monkeypatch)
