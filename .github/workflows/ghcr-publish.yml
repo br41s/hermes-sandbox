@@ -173,7 +173,11 @@ jobs:
           esac
           stamped=$(docker exec boot cat /opt/hermes/.hermes_build_sha)
           [ "$stamped" = "$SHORT_SHA" ] || { echo "::error::.hermes_build_sha is '$stamped', want '$SHORT_SHA'"; exit 1; }
-          docker exec -w /opt/hermes boot /opt/hermes/.venv/bin/python -m hermes_cli.main --version
+          version=$(docker exec -w /opt/hermes boot /opt/hermes/.venv/bin/python -m hermes_cli.main --version)
+          echo "$version"
+          # The stamp's baseVersion is UPSTREAM_VERSION; "unknown" means the stamp lost it.
+          want=$(sed 's/^v//' UPSTREAM_VERSION)
+          grep -qF "v$want" <<<"$version" || { echo "::error::--version does not report $want"; exit 1; }
           docker exec -w /opt/hermes boot /opt/hermes/.venv/bin/python -c "import hermes_cli.fork_ext.boot_reconcile, hermes_cli.fork_ext.process_env_scope, hermes_cli.fork_ext.web, cron.fork_ext.run_guard, cron.fork_ext.dispatch, gateway.run, plugins.shorts"
           docker exec boot sh -c 'grep -n "write_approval" /opt/data/config.yaml'
           # The baked Langfuse plugin: placed from the image (no clone), its dependency in the venv.

@@ -241,3 +241,14 @@ def test_the_default_path_still_says_the_edits_are_not_shipping() -> None:
     assert "git status --short" in default_path, (
         "show which files, so the operator can check it is nothing they wanted"
     )
+
+
+def test_the_image_stamp_carries_the_merged_upstream_version() -> None:
+    """Upstream v0.22 reads the running version only from install-stamp.json's baseVersion (no static
+    __version__). The fork's stamp takes it from UPSTREAM_VERSION, or `hermes --version`, `hermes dump`
+    and plugins' requires_hermes see "unknown" (the v0.22.5 merge's first image did)."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "/opt/hermes/UPSTREAM_VERSION" in dockerfile and '"baseVersion"' in dockerfile
+    assert "UPSTREAM_VERSION" not in (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    assert re.fullmatch(r"v\d+\.\d+\.\d+", (REPO_ROOT / "UPSTREAM_VERSION").read_text(encoding="utf-8").strip())
+

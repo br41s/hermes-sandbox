@@ -511,13 +511,15 @@ RUN mkdir -p /opt/hermes/bin && \
 # (tests/scripts/test_deploy_tag_contract.py). Upstream v0.22 dropped the arg for an
 # install-stamp.json its own CI writes; the fork's builds write none, so the same SHA seeds the
 # stamp below and `hermes dump` and the provenance marker carry the real commit too.
+# Its baseVersion is UPSTREAM_VERSION (the upstream release this fork merged, v0.22.5 -> 0.22.5):
+# upstream v0.22 dropped the static __version__ and reads the version only from this stamp, so
+# without it `hermes --version`, `hermes dump` and plugins' requires_hermes saw "unknown".
 ARG HERMES_GIT_SHA=
 RUN set -eu; \
     if [ -n "${HERMES_GIT_SHA}" ]; then \
         printf '%s\n' "${HERMES_GIT_SHA}" > /opt/hermes/.hermes_build_sha; \
         if [ ! -f /opt/hermes/install-stamp.json ]; then \
-            printf '{"schemaVersion":2,"commit":"%s","distribution":"docker","source":"docker","updateMechanism":"external"}\n' \
-                "${HERMES_GIT_SHA}" > /opt/hermes/install-stamp.json; \
+            HERMES_GIT_SHA="${HERMES_GIT_SHA}" python3 -c 'import json, os, pathlib, re; up = pathlib.Path("/opt/hermes/UPSTREAM_VERSION"); m = re.fullmatch(r"v(\d+\.\d+\.\d+)", up.read_text(encoding="utf-8-sig").strip()) if up.is_file() else None; stamp = {"schemaVersion": 2, "commit": os.environ["HERMES_GIT_SHA"], "distribution": "docker", "source": "docker", "updateMechanism": "external"}; stamp.update({"baseVersion": m.group(1)} if m else {}); pathlib.Path("/opt/hermes/install-stamp.json").write_text(json.dumps(stamp) + "\n", encoding="utf-8")'; \
         fi; \
     fi
 
