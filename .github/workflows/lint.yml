@@ -44,9 +44,12 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
 
       - name: Install ruff + ty
+        # fork: pinned to pyproject's dev group (upstream's lock). Unpinned, a new ruff release
+        # adds rules overnight and turns this blocking job red on code nobody touched
+        # (ruff 0.17's FURB192 on PR #489).
         uses: ./.github/actions/retry
         with:
-          command: uv tool install ruff && uv tool install ty
+          command: uv tool install ruff==0.15.10 && uv tool install ty==0.0.82
 
       - name: Determine base ref
         id: base
@@ -133,9 +136,10 @@ jobs:
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
 
       - name: Install ruff
+        # fork: pinned to pyproject's dev group, as in the ruff + ty diff job above.
         uses: ./.github/actions/retry
         with:
-          command: uv tool install ruff
+          command: uv tool install ruff==0.15.10
 
       - name: ruff check .
         # No --exit-zero, no || true. Exit code propagates to the job,
