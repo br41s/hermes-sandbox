@@ -42,6 +42,7 @@ import subprocess
 import sys
 import unicodedata
 from html.parser import HTMLParser
+import itertools
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 METRICS_PATH = os.path.join(HERE, "inter-metrics.json")
@@ -199,7 +200,7 @@ def length(raw, font_size, default=0.0):
 
 
 class TextRun:
-    __slots__ = ("text", "x", "y", "font_size", "weight", "anchor", "tracked")
+    __slots__ = ("anchor", "font_size", "text", "tracked", "weight", "x", "y")
 
     def __init__(self, text, x, y, font_size, weight, anchor, tracked):
         self.text = text
@@ -672,7 +673,7 @@ def check_unneeded_breaks(p, box, findings):
         return
     _x, _y, canvas_w, _h = box
     runs = [r for r in p.runs if r.tracked and r.text and r.text.strip()]
-    for a, b in zip(runs, runs[1:]):
+    for a, b in itertools.pairwise(runs):
         if a.anchor != "start" or b.anchor != "start":
             continue
         if abs(a.x - b.x) > 1 or abs(a.font_size - b.font_size) > 0.5 or a.weight != b.weight:
@@ -842,7 +843,7 @@ def check_spelling(p, findings, lang="es_ES", vocabulary=None):
         proc = subprocess.run(
             ["hunspell", "-d", lang, "-l"],
             input="\n".join(words) + "\n",
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, check=False
         )
     except (subprocess.SubprocessError, OSError) as exc:
         print(f"warning: hunspell failed ({exc}), skipping the spelling check", file=sys.stderr)
@@ -867,9 +868,9 @@ def clip(text, n=52):
 
 FIGURE_RE = re.compile(
     r"<figure[^>]*class=\"[^\"]*article-infographic[^\"]*\"[^>]*>(.*?)</figure>",
-    re.S | re.I,
+    re.DOTALL | re.IGNORECASE,
 )
-SVG_RE = re.compile(r"<svg\b.*?</svg>", re.S | re.I)
+SVG_RE = re.compile(r"<svg\b.*?</svg>", re.DOTALL | re.IGNORECASE)
 
 
 def extract_svgs(source):
@@ -888,14 +889,14 @@ def check_poster(source, box, findings):
     a little at the top, badly at the bottom, and nothing looks broken.
     """
     if "article-infographic--poster" not in source:
-        if re.search(r"<img\b", source, re.I):
+        if re.search(r"<img\b", source, re.IGNORECASE):
             findings.append(Finding(
                 "poster-class-missing",
                 "The figure has an <img> but not the article-infographic--poster class.",
                 "Without it neither stack overlays the two layers: they stack "
                 "vertically instead, artwork above and a floating data layer below."))
         return
-    img = re.search(r"<img\b[^>]*>", source, re.I)
+    img = re.search(r"<img\b[^>]*>", source, re.IGNORECASE)
     if not img:
         findings.append(Finding(
             "poster-image-missing",
@@ -935,11 +936,11 @@ def check_poster(source, box, findings):
 def validate(svg, stack, skip_spelling=False, vocabulary=None):
     parser = SvgParser()
     parser.css = parse_css_classes(
-        " ".join(re.findall(r"<style[^>]*>(.*?)</style>", svg, re.S | re.I)))
+        " ".join(re.findall(r"<style[^>]*>(.*?)</style>", svg, re.DOTALL | re.IGNORECASE)))
     try:
         parser.feed(svg)
         parser.close()
-    except Exception as exc:  # noqa: BLE001 - malformed markup is a finding, not a crash
+    except Exception as exc:
         return [Finding("parse-error", f"Could not parse the SVG: {exc}")]
     findings = []
     box = check_canvas(parser, findings)

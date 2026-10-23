@@ -144,7 +144,7 @@ def test_the_image_turns_it_on():
 
 
 def test_probe_reports_ready_and_never_prints_a_value(homes, monkeypatch, capsys):
-    launch, _ = homes
+    _launch, _ = homes
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
     monkeypatch.setenv("TELEGRAM_GROUP_ALLOWED_CHATS", "-1004224848555")
     assert pes.check() == 0
@@ -243,7 +243,7 @@ def test_the_module_entry_point_suppresses_the_real_module(homes, monkeypatch):
 
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PROBE_ONLY_KEY": "x"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.process_env_scope", "--check"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=120)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=120, check=False)
     assert "  PROBE_ONLY_KEY\n" in result.stdout, result.stdout + result.stderr
 
 
@@ -257,14 +257,14 @@ def _write_default_jobs(launch, jobs):
 
 def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes, capsys):
     launch, secondary = homes
-    (secondary / ".env").write_text("TELEGRAM_CRON_THREAD_ID=3\n", encoding="utf-8")
+    (secondary / ".env").write_text("TELEGRAM_CRON_THREAD_ID=3917\n", encoding="utf-8")
     rental = launch / "profiles" / "bl-acme"
     rental.mkdir()
     _write_default_jobs(launch, [
         {"id": "a1", "name": "own", "profile": "grow-shop", "deliver": "telegram"},
-        {"id": "a2", "name": "general", "profile": "grow-shop", "deliver": "telegram:-1001:"},
-        {"id": "a3", "name": "elsewhere", "profile": "grow-shop", "deliver": "telegram:-1001:61",
-         "failure_deliver": "telegram:-1001:3", "workdir": "/srv/x"},
+        {"id": "a2", "name": "general", "profile": "grow-shop", "deliver": "telegram:-1009876543210:"},
+        {"id": "a3", "name": "elsewhere", "profile": "grow-shop", "deliver": "telegram:-1009876543210:6143",
+         "failure_deliver": "telegram:-1009876543210:3917", "workdir": "/srv/x"},
         {"id": "a4", "name": "quiet", "profile": "grow-shop", "deliver": "local"},
         {"id": "a5", "name": "rental-bare", "profile": "bl-acme", "deliver": "telegram"},
         {"id": "a6", "name": "no-profile", "deliver": "telegram"},
@@ -280,7 +280,8 @@ def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes,
     assert "bl-acme a5 enabled deliver=General (no routing thread)" in out
     assert "no-profile" not in out
     assert "explicit-default" not in out  # runs as a plain job; nothing to move
-    for value in ("-1001", ":61", ":3"):
+    # Distinctive ids: a bare "-1001" also matches the runner uid in pytest's tmp path.
+    for value in ("-1009876543210", ":6143", ":3917"):
         assert value not in out
 
 

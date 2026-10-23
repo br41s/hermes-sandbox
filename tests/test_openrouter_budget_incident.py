@@ -7,14 +7,14 @@ neither a key nor its OpenRouter label ever reaches a brief.
 
 Hermetic: key records and .env files are injected; OpenRouter is never called.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import pytest
 
 import incidents.sweep as sw
 from incidents.sweep import OPENROUTER_LOW_FRACTION, openrouter_budget_incidents
 
-NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 
 
 def _key(limit, remaining, reset="weekly"):

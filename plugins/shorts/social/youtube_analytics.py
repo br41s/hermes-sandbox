@@ -53,11 +53,11 @@ def _epoch(stamp: str) -> Optional[int]:
         return None
 
 
-def _chunks(items: List[str], size: int) -> List[List[str]]:
+def _chunks(items: list[str], size: int) -> list[list[str]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def _public(client, auth: Dict[str, str], ids: List[str]) -> set:
+def _public(client, auth: dict[str, str], ids: list[str]) -> set:
     public = set()
     for chunk in _chunks(ids, 50):
         resp = client.get(youtube.VIDEOS_URL, params={"part": "status", "id": ",".join(chunk)}, headers=auth)
@@ -68,8 +68,8 @@ def _public(client, auth: Dict[str, str], ids: List[str]) -> set:
     return public
 
 
-def _report(client, auth: Dict[str, str], ids: List[str], start: str, end: str) -> Dict[str, Dict[str, float]]:
-    stats: Dict[str, Dict[str, float]] = {}
+def _report(client, auth: dict[str, str], ids: list[str], start: str, end: str) -> dict[str, dict[str, float]]:
+    stats: dict[str, dict[str, float]] = {}
     for chunk in _chunks(ids, 200):
         resp = client.get(REPORTS_URL, headers=auth, params={
             "ids": "channel==MINE", "startDate": start, "endDate": end,
@@ -90,8 +90,8 @@ def _report(client, auth: Dict[str, str], ids: List[str], start: str, end: str) 
     return stats
 
 
-def _trait_table(shorts: List[Dict[str, Any]], trait: str, median: float) -> Dict[str, Dict[str, Any]]:
-    groups: Dict[str, List[float]] = {}
+def _trait_table(shorts: list[dict[str, Any]], trait: str, median: float) -> dict[str, dict[str, Any]]:
+    groups: dict[str, list[float]] = {}
     for s in shorts:
         if s.get(trait):  # unrounded, so a trait's median is not a median of roundings
             groups.setdefault(s[trait], []).append(s["views"] / median)
@@ -103,7 +103,7 @@ def _trait_table(shorts: List[Dict[str, Any]], trait: str, median: float) -> Dic
     return table
 
 
-def performance(entries: List[Dict[str, Any]], *, now: Optional[float] = None) -> Dict[str, Any]:
+def performance(entries: list[dict[str, Any]], *, now: Optional[float] = None) -> dict[str, Any]:
     """The report for the ledger ``entries`` (oldest first). Raises ``YouTubeError``."""
     if not youtube.configured():
         raise youtube.YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
@@ -120,7 +120,7 @@ def performance(entries: List[Dict[str, Any]], *, now: Optional[float] = None) -
             continue
         on_youtube.append((e, yt["id"], at))
     on_youtube = on_youtube[-MAX_SHORTS:]
-    result: Dict[str, Any] = {"min_age_days": MIN_AGE_DAYS, "min_n": MIN_N, "too_young": too_young,
+    result: dict[str, Any] = {"min_age_days": MIN_AGE_DAYS, "min_n": MIN_N, "too_young": too_young,
                               "not_public": 0, "measured": 0, "baseline": None, "traits": {}, "shorts": []}
     if not on_youtube:
         return result

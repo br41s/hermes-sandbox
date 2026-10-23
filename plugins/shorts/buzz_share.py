@@ -55,7 +55,7 @@ def configured() -> bool:
     return bool(channel() and all(env(name) for name in _CREDENTIALS))
 
 
-def _child_env() -> Dict[str, str]:
+def _child_env() -> dict[str, str]:
     """Only what the CLI needs: the scoped Buzz credentials, never the whole process env."""
     child = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
     if os.environ.get("HOME"):
@@ -158,8 +158,8 @@ def canonical(path) -> Path:
     return dst
 
 
-def message(entry: Dict[str, Any], social: Dict[str, Any], youtube_url: Optional[str],
-            attached: List[str]) -> str:
+def message(entry: dict[str, Any], social: dict[str, Any], youtube_url: Optional[str],
+            attached: list[str]) -> str:
     mention = env("SHORTS_BUZZ_MENTION", "SocialBot").lstrip("@")
     lang = (entry.get("lang") or "").upper()
     lines = [
@@ -185,8 +185,8 @@ def message(entry: Dict[str, Any], social: Dict[str, Any], youtube_url: Optional
     return "\n".join(lines)
 
 
-def post(entry: Dict[str, Any], files: Dict[str, str], social: Dict[str, Any],
-         youtube_url: Optional[str]) -> Dict[str, Any]:
+def post(entry: dict[str, Any], files: dict[str, str], social: dict[str, Any],
+         youtube_url: Optional[str]) -> dict[str, Any]:
     """Post the short to the shorts channel. Raises BuzzError with the CLI's reason."""
     binary = cli()
     if not binary:

@@ -36,7 +36,7 @@ def rgb(h):
 
 
 def hexs(t):
-    return "#%02X%02X%02X" % tuple(max(0, min(255, round(v))) for v in t)
+    return "#{:02X}{:02X}{:02X}".format(*tuple(max(0, min(255, round(v))) for v in t))
 
 
 def luminance(h):
@@ -70,7 +70,7 @@ def read_page_accent(url):
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", "replace")
     found = None
-    for block in re.findall(r"<style[^>]*>(.*?)</style>", html, re.S):
+    for block in re.findall(r"<style[^>]*>(.*?)</style>", html, re.DOTALL):
         for name, value in re.findall(r"(--[\w-]+)\s*:\s*(#[0-9A-Fa-f]{3,8})", block):
             if name == "--accent":
                 found = value  # last wins: later blocks override earlier ones

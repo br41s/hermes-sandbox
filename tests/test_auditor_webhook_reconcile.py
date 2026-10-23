@@ -176,7 +176,7 @@ def _run_reconcile(webhook_block: str, home: Path) -> str:
     env = {**os.environ, "HERMES_HOME": str(home), "WEBHOOK_SECRET": "s3cr3t",
            "PYTHONPATH": str(REPO_ROOT)}
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
-                         timeout=120, cwd=str(REPO_ROOT))
+                         timeout=120, cwd=str(REPO_ROOT), check=False)
     assert out.returncode == 0, out.stderr
     return out.stdout
 
@@ -208,11 +208,11 @@ print(json.dumps(ids))
     (auditor / "config.yaml").write_text("{}\n", encoding="utf-8")
     env = {**os.environ, "HERMES_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}
     out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True,
-                         timeout=120, cwd=str(REPO_ROOT))
+                         timeout=120, cwd=str(REPO_ROOT), check=False)
     assert out.returncode == 0, out.stderr
     import json
     ids = json.loads(out.stdout.strip().splitlines()[-1])
-    import yaml
+    import hermes_yaml as yaml
     cfg = {"platforms": {"webhook": {"enabled": True, "extra": {"port": 8644, "routes": {}}}}}
     if route_target:
         cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
@@ -223,7 +223,7 @@ print(json.dumps(ids))
 
 
 def _route(home: Path) -> dict:
-    import yaml
+    import hermes_yaml as yaml
     cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
     return cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"]
 
@@ -241,7 +241,7 @@ def test_a_moved_review_job_binds_the_route_to_the_auditor_profile(tmp_path, web
     side by side in the auditor store, neither with a profile field. The route keeps the
     id it targeted and gains profile: auditor, so /p/auditor/webhooks/... accepts it."""
     ids = _seed(tmp_path, [], [("merge-on-green", "40 * * * *"), ("auditor-review", "every 6 hours")])
-    import yaml
+    import hermes_yaml as yaml
     cfg = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
     cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
         "secret": "s3cr3t", "events": ["pull_request"], "trigger_cron_job_id": ids["auditor-review"]}

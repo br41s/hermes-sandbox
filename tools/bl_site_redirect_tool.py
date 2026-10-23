@@ -71,7 +71,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -127,7 +127,7 @@ def _scan_history_path() -> Path:
 def _load_scan_history() -> dict:
     path = _scan_history_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         data = {}
     if not isinstance(data, dict):
@@ -183,7 +183,7 @@ def _scan_sitemap(site_url: str) -> dict:
     all_disappeared = sorted(newly_missing | still_missing)
     disappeared = all_disappeared[:SCAN_CANDIDATE_CAP]
 
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds")
     confirmed_dead: list[dict] = []
     pending: list[dict] = []
     now_alive: list[dict] = []
@@ -281,13 +281,13 @@ def _discover_legacy_urls(site_url: str) -> dict:
     last_run = discovery.get("last_run")
     if last_run:
         try:
-            age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(last_run)).days
+            age_days = (datetime.now(UTC) - datetime.fromisoformat(last_run)).days
             due = age_days >= LEGACY_REDISCOVERY_DAYS
         except ValueError:
             due = True
 
     domain = urllib.parse.urlparse(site_url).netloc
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds")
 
     if due:
         found = _cdx_fetch(domain)
@@ -362,7 +362,7 @@ def _find_target(site_url: str, token: str, old_path: str) -> dict:
 
     try:
         html = _fetch_snapshot(snapshot_url)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return {
             "found": False,
             "reason": f"no se pudo leer la copia archivada: {err}",
@@ -623,7 +623,7 @@ BL_SITE_REDIRECT_SCHEMA = {
     },
 }
 
-from tools.registry import registry  # noqa: E402
+from tools.registry import registry
 
 # Registered into the EXISTING bl_site_publish toolset on purpose: every
 # rented profile already has it enabled, so no client config changes and no

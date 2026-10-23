@@ -69,14 +69,14 @@ def gate_decision(path: str) -> str:
     return "PUBLIC" if _path_is_public(path) else "GATED"
 
 
-def audit_public_allowlist(paths: Iterable[str] = PUBLIC_API_PATHS) -> List[str]:
+def audit_public_allowlist(paths: Iterable[str] = PUBLIC_API_PATHS) -> list[str]:
     """Return problems with the public allowlist (empty list == locked-down).
 
     Flags any path that is unexpected (not in EXPECTED_PUBLIC) or that contains
     a sensitive marker. Accepts an explicit ``paths`` set so the regression
     test can prove the tripwire fires on a bad allowlist.
     """
-    problems: List[str] = []
+    problems: list[str] = []
     for path in paths:
         low = path.lower()
         if path not in EXPECTED_PUBLIC:

@@ -40,7 +40,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -219,7 +219,7 @@ def _fetch(url: str, method: str = "GET") -> dict:
             "headers": {},
             "body": "",
         }
-    except (urllib.error.URLError, socket.timeout, ssl.SSLError, OSError) as exc:
+    except (TimeoutError, urllib.error.URLError, ssl.SSLError, OSError) as exc:
         return {
             "url": url,
             "status": 0,
@@ -250,8 +250,8 @@ def _tls_days_remaining(site_url: str) -> Optional[dict]:
     not_after = cert.get("notAfter")
     if not not_after:
         return {"host": host, "error": "certificate carried no notAfter"}
-    expires = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-    days = (expires - datetime.now(timezone.utc)).days
+    expires = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=UTC)
+    days = (expires - datetime.now(UTC)).days
     return {"host": host, "expires": expires.date().isoformat(), "days_remaining": days}
 
 
@@ -564,7 +564,7 @@ def _check_boilerplate_descriptions(titles: dict[str, str], descriptions: dict[s
     for path, text in candidates:
         try:
             probability = _boilerplate_probability(path, titles.get(path, ""), text, api_key)
-        except Exception as exc:  # noqa: BLE001 — a partial check must not pass as a clean one
+        except Exception as exc:
             return {
                 "status": "skipped",
                 "reason": f"{type(exc).__name__}: {exc}",
@@ -867,7 +867,7 @@ def _history_path() -> Path:
 def _load_history() -> dict:
     path = _history_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {"runs": [], "reports": [], "form_checks": []}
     if not isinstance(data, dict):
@@ -950,7 +950,7 @@ def _run_form_check(
     marker = f"BL-MAINT-{period}-{int(time.time())}"
     entry = {
         "period": period,
-        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "marker": marker,
     }
     history.setdefault("form_checks", []).append(entry)
@@ -1134,7 +1134,7 @@ def _run_check(site_url: str, token: str) -> dict:
     old_site_redirects = _old_site_sweep(old_site_url, site_url) if old_site_url else None
 
     all_up = not down
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     period = now.strftime("%Y-%m")
 
     history = _load_history()
@@ -1229,12 +1229,12 @@ def bl_site_health(action: str = "check", period: Optional[str] = None, summary:
 
         if action == "record_report":
             history = _load_history()
-            stamp = period or datetime.now(timezone.utc).strftime("%Y-%m")
+            stamp = period or datetime.now(UTC).strftime("%Y-%m")
             if not _report_due(history, stamp):
                 return json.dumps({"success": True, "period": stamp, "already_recorded": True})
             history["reports"].append({
                 "period": stamp,
-                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "at": datetime.now(UTC).isoformat(timespec="seconds"),
                 "summary": (summary or "")[:2000],
             })
             _save_history(history)
@@ -1312,7 +1312,7 @@ BL_SITE_HEALTH_SCHEMA = {
     },
 }
 
-from tools.registry import registry  # noqa: E402
+from tools.registry import registry
 
 # Own toolset, deliberately separate from bl_site_publish: this tool used to
 # share that toolset, and every job whose enabled_toolsets included

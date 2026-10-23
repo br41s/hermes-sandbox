@@ -15,8 +15,8 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from mcp import ClientSession, StdioServerParameters  # noqa: E402
-from mcp.client.stdio import stdio_client  # noqa: E402
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 _SERVER = Path(__file__).resolve().parents[2] / "optional-mcps" / "gsc" / "server.py"
 

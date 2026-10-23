@@ -95,7 +95,7 @@ def _load_state(filename: str) -> dict:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data if isinstance(data, dict) else {}
     except Exception:
         _log.exception("Could not read %s; treating as empty", path)
@@ -105,7 +105,7 @@ def _load_state(filename: str) -> dict:
 def _save_state(filename: str, data: dict) -> None:
     path = _hermes_home() / filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -148,7 +148,7 @@ def _verify_signature(raw_body: bytes, signature: str, timestamp: str, secret: s
         timestamp.encode() + b"." + raw_body,
         hashlib.sha256,
     ).hexdigest()
-    provided = signature[len("sha256=") :] if signature.startswith("sha256=") else signature
+    provided = signature.removeprefix("sha256=")
     if not hmac.compare_digest(provided.encode(), expected.encode()):
         return "signature mismatch"
     return None
@@ -273,6 +273,11 @@ def _error(code: str, detail: str, order_id: str, **extra: Any) -> JSONResponse:
 
 @router.post("/api/bl/rental/provision")
 async def post_bl_rental_provision(request: Request):
+    # A request with no signature is refused before anything else, configured or not: the
+    # public route answers an anonymous caller 401, never what this engine has set up.
+    if not request.headers.get(SIGNATURE_HEADER) or not request.headers.get(TIMESTAMP_HEADER):
+        return JSONResponse(status_code=401, content={
+            "status": "failed", "code": "unauthorized", "detail": "missing signature or timestamp header"})
     secret = os.environ.get(SECRET_ENV_VAR, "").strip()
     if not secret:
         # Fail closed. An unauthenticated provisioning endpoint would let
@@ -429,7 +434,7 @@ def _run_provision(order: RentalOrder, site_url: str, panel_password: str):
         return exc.code, str(exc), None
     except ValueError as exc:
         return "invalid_order", str(exc), None
-    except Exception as exc:  # noqa: BLE001 — the buyer paid; never 500 silently
+    except Exception as exc:
         _log.exception("Rental provisioning crashed for order %s", order.order_id)
         return "internal", f"{type(exc).__name__}: {exc}", None
     return None, "", result

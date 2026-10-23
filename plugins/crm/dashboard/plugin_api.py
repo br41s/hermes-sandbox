@@ -54,7 +54,7 @@ def _load_session_entries() -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return []
     if not isinstance(data, dict):
@@ -254,7 +254,7 @@ async def conversation_messages(session_id: str, limit: int = Query(500, ge=1, l
     """Return a session's messages (role/content/timestamp) for the thread view."""
     try:
         rows = _get_session_db().get_messages(session_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("CRM: failed to load messages for %s: %s", session_id, exc)
         raise HTTPException(status_code=502, detail="could not load messages")
     messages = [

@@ -56,7 +56,7 @@ def _bash_major() -> int:
     if BASH is None:
         return 0
     out = subprocess.run([BASH, "-c", 'echo "${BASH_VERSINFO[0]}"'],
-                         capture_output=True, text=True).stdout.strip()
+                         capture_output=True, text=True, check=False).stdout.strip()
     return int(out or 0)
 
 
@@ -98,7 +98,7 @@ def _setup(tmp_path: Path, old: dict[str, bytes], on_drive: dict[str, bytes]):
 
 
 def _run(env):
-    return subprocess.run([BASH, str(BACKUP_FULL)], env=env, capture_output=True, text=True)
+    return subprocess.run([BASH, str(BACKUP_FULL)], env=env, capture_output=True, text=True, check=False)
 
 
 def _local(outdir: Path) -> list[str]:

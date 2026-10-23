@@ -13,7 +13,7 @@ useful or gets muted:
 """
 import json
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import pytest
 
@@ -251,7 +251,7 @@ def test_404_gets_its_own_explanation(monkeypatch):
 def test_blind_repeats_daily_not_once_ever():
     """One alert months ago is not a working signal; nagging hourly is noise."""
     blind = DependencyAlertBlind(403, "nope")
-    t0 = datetime(2026, 9, 18, 9, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 9, 18, 9, 0, tzinfo=UTC)
     same_day = _blind_incident(blind, "r", now=t0 + timedelta(hours=6)).id
     next_day = _blind_incident(blind, "r", now=t0 + timedelta(days=1)).id
     assert _blind_incident(blind, "r", now=t0).id == same_day

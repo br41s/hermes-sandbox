@@ -12,7 +12,7 @@ write path — human-gated and reversible). Import-time side effects are avoided
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -25,8 +25,8 @@ def _fmt_ts(ts: Optional[str]) -> str:
     except (TypeError, ValueError):
         return str(ts)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    secs = int((datetime.now(timezone.utc) - dt).total_seconds())
+        dt = dt.replace(tzinfo=UTC)
+    secs = int((datetime.now(UTC) - dt).total_seconds())
     if secs < 60:
         return f"{secs}s ago"
     if secs < 3600:
@@ -115,7 +115,7 @@ def _cmd_show(args) -> int:
     if not latest.exists():
         print("No digest yet. Run one with: hermes memory-curator run")
         return 1
-    print(latest.read_text(encoding="utf-8"))
+    print(latest.read_text(encoding="utf-8-sig"))
     return 0
 
 

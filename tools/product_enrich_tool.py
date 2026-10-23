@@ -114,7 +114,7 @@ def _iter_json_ld(html: str):
     for block in re.findall(
         r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
         html,
-        re.S | re.I,
+        re.DOTALL | re.IGNORECASE,
     ):
         try:
             data = json.loads(block.strip())
@@ -264,7 +264,7 @@ def text_mentions_reference(text: str, ref) -> bool:
     if not reference_is_distinctive(ref):
         return False
     pattern = re.escape(str(ref).strip())
-    return re.search(rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])", text, re.I) is not None
+    return re.search(rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])", text, re.IGNORECASE) is not None
 
 
 def judge_by_text(html: str, ours: dict) -> dict:
@@ -284,7 +284,7 @@ def judge_by_text(html: str, ours: dict) -> dict:
     our_ref = ours.get("mpn")
     if our_ref and text_mentions_reference(text, our_ref):
         brand = ours.get("brand")
-        if brand and not re.search(re.escape(brand), text, re.I):
+        if brand and not re.search(re.escape(brand), text, re.IGNORECASE):
             return {"verdict": "rejected", "outcome": "mismatch", "tier": None,
                     "reason": f"aparece la referencia {our_ref} pero la marca {brand} no"}
         return {"verdict": "verified", "outcome": "verified", "tier": "mpn-text",
@@ -298,13 +298,13 @@ def _meta(html: str, *names) -> Optional[str]:
     for name in names:
         m = re.search(
             rf'<meta[^>]+(?:name|property)=[\'"]{re.escape(name)}[\'"][^>]*content=[\'"]([^\'"]+)',
-            html, re.I,
+            html, re.IGNORECASE,
         )
         if m:
             return m.group(1).strip()
         m = re.search(
             rf'<meta[^>]+content=[\'"]([^\'"]+)[\'"][^>]*(?:name|property)=[\'"]{re.escape(name)}',
-            html, re.I,
+            html, re.IGNORECASE,
         )
         if m:
             return m.group(1).strip()
@@ -319,16 +319,16 @@ def extract_tables(html: str, limit: int = 40) -> dict:
     which is where a specification from a different product would come from.
     """
     specs = {}
-    rows = re.findall(r"<tr[ >].*?</tr>", html, re.S | re.I)
+    rows = re.findall(r"<tr[ >].*?</tr>", html, re.DOTALL | re.IGNORECASE)
     for row in rows:
         cells = [
             re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip()
-            for c in re.findall(r"<t[dh][ >].*?</t[dh]>", row, re.S | re.I)
+            for c in re.findall(r"<t[dh][ >].*?</t[dh]>", row, re.DOTALL | re.IGNORECASE)
         ]
         cells = [c for c in cells if c]
         if len(cells) == 2 and 1 < len(cells[0]) <= 80 and 0 < len(cells[1]) <= 200:
             specs.setdefault(cells[0], cells[1])
-    pairs = re.findall(r"<dt[ >](.*?)</dt>\s*<dd[ >](.*?)</dd>", html, re.S | re.I)
+    pairs = re.findall(r"<dt[ >](.*?)</dt>\s*<dd[ >](.*?)</dd>", html, re.DOTALL | re.IGNORECASE)
     for term, desc in pairs:
         t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", term)).strip()
         d = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", desc)).strip()
@@ -424,7 +424,7 @@ def judge_archived_snapshot(dead_url: str, ours: dict) -> dict:
             "reason": f"Wayback Machine nos rechaza el acceso a la copia (HTTP {err.status})",
             "url": dead_url, "snapshot_url": snapshot_url,
         }
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return {
             "verdict": "rejected", "outcome": "unreachable", "tier": None,
             "reason": f"no se pudo leer la copia archivada: {err}",
@@ -478,12 +478,12 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
         return tool_error(f"Acción desconocida '{action}'. Usa 'verify' o 'verify_dead_url'.")
     if not sku or not url:
         return tool_error(f"{action} requiere 'sku' y 'url'.")
-    if not re.match(r"^https?://", url, re.I):
+    if not re.match(r"^https?://", url, re.IGNORECASE):
         return tool_error("'url' debe ser una URL http(s).")
 
     try:
         ours = _our_product(sku)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return tool_error(f"No se pudo leer el producto {sku}: {err}")
 
     if action == "verify_dead_url":
@@ -524,7 +524,7 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
              "url": url},
             ensure_ascii=False,
         )
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return json.dumps(
             {"verdict": "rejected", "outcome": "unreachable", "tier": None,
              "reason": f"no se pudo leer la página: {err}", "url": url},
@@ -643,8 +643,8 @@ PRODUCT_ENRICH_SCHEMA = {
     },
 }
 
-from tools.bl_site_product_tool import _tool_call  # noqa: E402
-from tools.registry import registry  # noqa: E402
+from tools.bl_site_product_tool import _tool_call
+from tools.registry import registry
 
 registry.register(
     name="product_enrich",

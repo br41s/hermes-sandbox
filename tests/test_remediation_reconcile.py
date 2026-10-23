@@ -54,7 +54,7 @@ class TestVerification:
 
     def test_absent_job_counts_success(self, tmp_path):
         entries = [_applied("sig1", jid="gone")]
-        writes, esc = reconcile.verify_pending([], entries, now=now_fn())
+        writes, _esc = reconcile.verify_pending([], entries, now=now_fn())
         assert writes[0].event == ledger.EVENT_VERIFIED
 
     def test_already_resolved_not_reverified(self, tmp_path):
@@ -63,7 +63,7 @@ class TestVerification:
             ledger.make_entry(CLS, "sig1", "cron job id j1", "gated",
                               ledger.EVENT_VERIFIED, outcome=ledger.OUTCOME_SUCCESS),
         ]
-        writes, esc = reconcile.verify_pending([_job(err=None)], entries, now=now_fn())
+        writes, _esc = reconcile.verify_pending([_job(err=None)], entries, now=now_fn())
         assert writes == []
 
 
@@ -88,14 +88,14 @@ class TestPromotionRecommender:
         entries = self._k_clean(reconcile.K_PROMOTION)
         entries.append(ledger.make_entry(CLS, f"promote:{CLS}", CLS, "gated",
                                          ledger.EVENT_RECOMMENDED, now=now_fn() - timedelta(hours=1)))
-        writes, msgs = reconcile.promotion_recommendations(entries, modes_path=tmp_path / "m.json", now=now_fn())
+        _writes, msgs = reconcile.promotion_recommendations(entries, modes_path=tmp_path / "m.json", now=now_fn())
         assert msgs == []
 
     def test_already_auto_not_recommended(self, tmp_path):
         mp = tmp_path / "m.json"
         modes.promote(CLS, path=mp)
         entries = self._k_clean(reconcile.K_PROMOTION)
-        writes, msgs = reconcile.promotion_recommendations(entries, modes_path=mp, now=now_fn())
+        _writes, msgs = reconcile.promotion_recommendations(entries, modes_path=mp, now=now_fn())
         assert msgs == []
 
     def test_clean_run_count_distinct_gated_success(self):
@@ -158,7 +158,7 @@ class TestSweepIntegration:
 class TestPromoteDemoteCLI:
     def test_promote_flips_mode_and_logs(self, tmp_path):
         mp, lp = tmp_path / "m.json", tmp_path / "l.jsonl"
-        code, msg = cli.cmd_promote(CLS, modes_path=mp, ledger_path=lp)
+        code, _msg = cli.cmd_promote(CLS, modes_path=mp, ledger_path=lp)
         assert code == 0 and modes.is_auto(CLS, path=mp)
         assert any(r.event == ledger.EVENT_PROMOTED for r in ledger.read(path=lp))
 
@@ -169,5 +169,5 @@ class TestPromoteDemoteCLI:
     def test_demote_returns_to_gated(self, tmp_path):
         mp = tmp_path / "m.json"
         modes.promote(CLS, path=mp)
-        code, msg = cli.cmd_demote(CLS, modes_path=mp)
+        code, _msg = cli.cmd_demote(CLS, modes_path=mp)
         assert code == 0 and not modes.is_auto(CLS, path=mp)

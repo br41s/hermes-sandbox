@@ -31,23 +31,21 @@ def _install_fake_ddgs(monkeypatch, *, text_results=None, text_raises=None, text
                 _time.sleep(text_sleep)
             if text_raises is not None:
                 raise text_raises
-            for hit in (text_results or []):
-                yield hit
+            yield from (text_results or [])
 
     fake.DDGS = _FakeDDGS
     monkeypatch.setitem(sys.modules, "ddgs", fake)
     # The fake module already satisfies search()'s needs — the real
-    # tools.lazy_deps.ensure() would see no importlib.metadata distribution
-    # for "ddgs" (sys.modules injection doesn't register one) and attempt a
-    # real `pip install`. Stub it to a no-op so every test using this helper
-    # stays offline.
-    monkeypatch.setattr("tools.lazy_deps.ensure", lambda *a, **k: None)
+    # lazy_ensure() would see no installed distribution for "ddgs"
+    # (sys.modules injection doesn't register one) and ask PM to install
+    # the extra. Stub it to a no-op so every test using this helper stays offline.
+    monkeypatch.setattr("plugins.web._common.lazy_ensure", lambda *a, **k: None)
     return fake
 
 
 class TestDDGSProviderLazyInstall:
     def test_search_attempts_lazy_install_before_importing(self, monkeypatch):
-        """search() must call tools.lazy_deps.ensure("search.ddgs") so an
+        """search() must call lazy_ensure("ddgs") (PM's [ddgs] extra) so an
         explicit `web.search_backend: ddgs` config (e.g. a freshly
         provisioned rented tenant, before the package has ever been used
         on this host) can actually install itself, instead of permanently
@@ -60,12 +58,12 @@ class TestDDGSProviderLazyInstall:
         _install_fake_ddgs(monkeypatch, text_results=[
             {"title": "T", "href": "https://e.example", "body": "B"},
         ])
-        # _install_fake_ddgs already stubs tools.lazy_deps.ensure to a no-op —
+        # _install_fake_ddgs already stubs lazy_ensure to a no-op —
         # override it here with a spy so this test can assert the call shape.
         calls = []
         monkeypatch.setattr(
-            "tools.lazy_deps.ensure",
-            lambda feature, **kw: calls.append((feature, kw)),
+            "plugins.web._common.lazy_ensure",
+            lambda extra: calls.append(extra),
         )
         # import_module, not `from plugins.web.ddgs import provider`: with the
         # sys.modules entry dropped above, that form returns the package's stale
@@ -84,34 +82,11 @@ class TestDDGSProviderLazyInstall:
         result = DDGSWebSearchProvider().search("q", limit=5)
 
         assert result["success"] is True
-        assert calls == [("search.ddgs", {"prompt": False})]
+        assert calls == ["ddgs"]
 
 
-class TestDDGSWorkerSeesDurableLazyTarget:
-    def test_spawned_worker_imports_ddgs_from_lazy_install_target(self, monkeypatch, tmp_path):
-        """The Docker image lazy-installs ddgs into HERMES_LAZY_INSTALL_TARGET
-        (/opt/data/lazy-packages), which the parent appends to sys.path at
-        runtime. Since v2026.8.31 the search runs in a spawned worker (#68096)
-        that starts from a fresh sys.path, so it must activate that target
-        itself — otherwise every search fails "No module named 'ddgs'" in
-        production while the package sits installed on disk (2026-09-27).
-        """
-        import plugins.web.ddgs.provider as prov
-
-        target = tmp_path / "lazy-packages"
-        (target / "ddgs").mkdir(parents=True)
-        (target / "ddgs" / "__init__.py").write_text(
-            "class DDGS:\n"
-            "    def __init__(self, **kw): pass\n"
-            "    def __enter__(self): return self\n"
-            "    def __exit__(self, *a): return False\n"
-            "    def text(self, query, max_results=5):\n"
-            "        yield {'title': 'Hit', 'href': 'https://e.example', 'body': query}\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("HERMES_LAZY_INSTALL_TARGET", str(target))
-        monkeypatch.setattr(prov, "_test_hook", None)
-
-        results = prov._run_ddgs_search_bounded("probe", 1)
-
-        assert [r["url"] for r in results] == ["https://e.example"]
+# TestDDGSWorkerSeesDurableLazyTarget was removed with upstream v0.22: HERMES_LAZY_INSTALL_TARGET
+# and tools.lazy_deps.activate_durable_lazy_target no longer exist. PM installs extras into
+# dependency generations, and _spawn_worker merges the launcher-composed PYTHONPATH into the
+# worker's env, which is upstream's fix for the same "installed but not importable in the
+# worker" failure (2026-09-27).

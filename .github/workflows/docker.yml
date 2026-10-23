@@ -120,20 +120,13 @@ jobs:
       # than the build itself.  Reusing the existing daemon state is the
       # cheapest path to coverage on every PR that touches docker code.
       # ---------------------------------------------------------------------
-      - name: Install uv (for docker tests)
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
-
-      - name: Set up Python 3.11 (for docker tests)
-        run: uv python install 3.11
-
-      - name: Install Python dependencies (for docker tests)
-        # ``dev`` extra pulls in pytest, pytest-asyncio —
-        # everything tests/docker/ needs.  We deliberately avoid ``all``
-        # here because the docker tests only drive the container via
-        # subprocess and don't import hermes_agent's optional deps.
-        uses: ./.github/actions/retry
+      - name: Set up the locked Python test environment (for docker tests)
+        # fork: scripts/run_tests.sh runs in the checkout's PM test environment since
+        # upstream v0.22 and ignores a synced .venv; tests/docker only needs the dev group.
+        uses: ./.github/actions/setup-pm
         with:
-          command: uv sync --locked --python 3.11 --extra dev
+          extras: '[]'
+          test-environment: 'true'
 
       - name: Run docker integration tests
         env:

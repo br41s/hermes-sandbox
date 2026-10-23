@@ -18,7 +18,7 @@ from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 from cron.fork_ext.dispatch import live_adapters_for
 from cron.scheduler_preflight import SharedRouteAdapters

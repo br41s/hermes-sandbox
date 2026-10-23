@@ -32,6 +32,7 @@ import time
 import uuid
 
 import pytest
+import itertools
 
 HOLD_SECONDS = 0.05
 
@@ -112,7 +113,7 @@ class _Recorder:
         runs = sorted((self.runs[j][1], self.runs[j][2], self.runs[j][0], j) for j in job_ids)
         threads = {t for _s, _e, t, _j in runs}
         assert len(threads) == 1, f"a pool of 1 ran on more than one worker: {threads}"
-        for (_s1, end1, _t1, j1), (start2, _e2, _t2, j2) in zip(runs, runs[1:]):
+        for (_s1, end1, _t1, j1), (start2, _e2, _t2, j2) in itertools.pairwise(runs):
             assert start2 >= end1, f"{j2} started while {j1} was still running"
         assert [j for _s, _e, _t, j in runs] == list(job_ids), "submit order was not kept"
 
@@ -386,7 +387,7 @@ def test_the_fork_lane_is_gone():
     import inspect
 
     import cron.scheduler as sched
-    import cron.scheduler_tick as scheduler_tick
+    from cron import scheduler_tick
     from cron.fork_ext import dispatch
 
     for name in ("is_sequential", "get_sequential_executor", "shutdown_sequential_executor",

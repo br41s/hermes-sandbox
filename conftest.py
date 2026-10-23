@@ -23,7 +23,7 @@ _NETWORK_GUARD_BYPASS_MARK = "network_guard_bypass"
 _DEP_INSTALL_GUARD_BYPASS_MARK = "dep_install_guard_bypass"
 
 
-def pytest_configure(config):  # noqa: D401 — pytest hook
+def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         f"{_NETWORK_GUARD_BYPASS_MARK}: bypass the outbound-network guard "
@@ -82,8 +82,67 @@ def _is_local_address(address) -> bool:
                 return False
         if not isinstance(host, str):
             return False
-        return host in _LOOPBACK_HOSTS or host.startswith("127.") or _is_discard_only(host)
+        return (host in _LOOPBACK_HOSTS or host.startswith("127.") or _is_discard_only(host)
+                or host.split("%", 1)[0] in _own_interface_addresses())
     return False
+
+
+# A private-LAN address (RFC 1918, link-local, ULA) answers "no route to host", what a CI runner
+# answers for the LAN hosts upstream tests name (an Ollama box at 10.0.0.155, 192.168.1.50):
+# unreachable, not a leak. Code that handles an unreachable endpoint then behaves as it would there.
+def _is_private_lan_address(address) -> bool:
+    import ipaddress
+
+    if not (isinstance(address, tuple) and address and isinstance(address[0], str)):
+        return False
+    try:
+        ip = ipaddress.ip_address(address[0].split("%", 1)[0])
+    except ValueError:
+        return False
+    return ip.is_private and not ip.is_loopback
+
+
+# Upstream tests that use the real network in upstream's own CI, which allows it: each was
+# traced to a live call its own mocks do not cover (Nous connector service, models.dev, GitHub
+# releases, PyPI/python-build-standalone, a Debian mirror). Exempt by test id, so the rest of
+# each file stays guarded. A fork test never belongs here: mock it instead.
+_UPSTREAM_NETWORK_TESTS = frozenset({
+    "tests/tui_gateway/test_connector_accounts_rpc.py::test_account_connect_with_an_alias_mints_that_account",
+    "tests/tui_gateway/test_connector_accounts_rpc.py::test_rename_to_a_name_another_account_holds_is_alias_taken",
+    "tests/tui_gateway/test_connector_operation_rpc.py::test_panel_connect_reissues_only_a_dead_link",
+    "tests/tui_gateway/test_connector_operation_rpc.py::test_a_failed_reissue_leaves_the_row_failed_with_no_link",
+    "tests/tools/test_multiplex_tool_cache_scope.py::test_home_keyed_caches_serve_each_profile_its_own_config",
+    "tests/hermes_cli/test_model_validation.py::TestValidateRequestedModelNousPortalRecommendations"
+    "::test_non_nous_provider_does_not_consult_portal_feed",
+    "tests/hermes_cli/test_source_channel_integration.py::test_missing_channel_cannot_fall_back_to_main",
+    "tests/pm/test_pip_check.py::test_build_accepts_the_override_and_check_still_rejects_what_it_does_not_cover",
+    "tests/pm/test_pip_check.py::test_requirements_builds_from_an_overridden_lock_apply_its_overrides",
+    "tests/pm/test_pip_check.py::test_streamed_check_still_sees_failures_ahead_of_a_long_expected_report",
+    "tests/scripts/test_termux_runtime_libs.py::test_failed_download_identifies_the_pin_without_publishing",
+    "tests/hermes_cli/test_plugin_update_scan_override.py"
+    "::test_subdirectory_update_asks_before_a_caution_scan_and_never_accepts_dangerous",
+})
+
+
+# The host's own interface addresses: a connect there never leaves the machine. Upstream tests
+# reach a real non-loopback interface on purpose (tests/gateway/test_native_http_auth.py proves a
+# peer's actual socket address, not a forged one, decides admission).
+_OWN_INTERFACE_ADDRESSES = None
+
+
+def _own_interface_addresses() -> frozenset:
+    global _OWN_INTERFACE_ADDRESSES
+    if _OWN_INTERFACE_ADDRESSES is None:
+        try:
+            import psutil
+
+            _OWN_INTERFACE_ADDRESSES = frozenset(
+                info.address.split("%", 1)[0]
+                for entries in psutil.net_if_addrs().values() for info in entries
+                if isinstance(getattr(info, "address", None), str))
+        except Exception:
+            _OWN_INTERFACE_ADDRESSES = frozenset()
+    return _OWN_INTERFACE_ADDRESSES
 
 
 # RFC 6666 discard-only prefix: never routed, so a connect there can reach nothing.
@@ -111,10 +170,12 @@ def _network_guard(request, monkeypatch):
         yield
         return
     if request.node.get_closest_marker(_NETWORK_GUARD_BYPASS_MARK) or \
-            request.node.get_closest_marker("integration"):
+            request.node.get_closest_marker("integration") or \
+            request.node.nodeid.split("[", 1)[0] in _UPSTREAM_NETWORK_TESTS:
         yield
         return
 
+    import errno as _errno
     import socket as _socket_mod
 
     real_connect = _socket_mod.socket.connect
@@ -131,11 +192,15 @@ def _network_guard(request, monkeypatch):
     def guarded_connect(self, address):
         if _is_local_address(address):
             return real_connect(self, address)
+        if _is_private_lan_address(address):
+            raise OSError(_errno.EHOSTUNREACH, f"No route to host {address!r} (test suite is offline)")
         _reject(address)
 
     def guarded_connect_ex(self, address):
         if _is_local_address(address):
             return real_connect_ex(self, address)
+        if _is_private_lan_address(address):
+            return _errno.EHOSTUNREACH
         _reject(address)
 
     monkeypatch.setattr(_socket_mod.socket, "connect", guarded_connect)
@@ -210,3 +275,82 @@ def _doctor_ipv6_probe_offline(request, monkeypatch):
 
     monkeypatch.setattr(_conn, "_tcp_connect", _no_route)
     yield
+
+
+# ── The bundled shorts plugin's toolset ────────────────────────────────────
+#
+# Upstream modules that assert a session's exact default toolsets. The fork bundles the
+# ``shorts`` plugin, whose toolset is on by default like any plugin's (the rented ``shorts``
+# agent relies on that through the cron default), so these see it unless it is hidden.
+# Upstream's own test environment bundles no plugin that registers a toolset.
+_FORK_PLUGIN_TOOLSETS_OFF = frozenset({
+    "test_session_policy_coding_posture", "test_follow_profile_followups", "test_gui_surface_toolsets",
+})
+
+
+@pytest.fixture(autouse=True)
+def _fork_hide_bundled_plugin_toolsets(request, monkeypatch):
+    if request.module is None or request.module.__name__.rsplit(".", 1)[-1] not in _FORK_PLUGIN_TOOLSETS_OFF:
+        yield
+        return
+    from hermes_cli import tools_config
+
+    real = tools_config._get_plugin_toolset_keys
+    monkeypatch.setattr(tools_config, "_get_plugin_toolset_keys", lambda: set(real()) - {"shorts"})
+    yield
+
+
+
+# ── Upstream's CI-layout tests (owner, 2026-10-23: keep the fork's ci.yml) ───
+#
+# The fork runs its own .github/workflows/ci.yml and keeps its own tests.yml and docker.yml;
+# upstream's orchestrator is .github/workflows/ci.yaml, which the fork does not have. These
+# upstream tests assert that layout (ci.yaml's job graph, its e2e/upgrade/release lanes,
+# upstream's tests.yml and docker.yml steps), so they cannot pass here and say nothing about
+# the fork's CI. Removed at collection by test function, with this note, instead of deleting
+# upstream's files (which would conflict on every sync). Every case of each was failing on
+# the missing ci.yaml or on the fork's own workflows (PR 489). Re-check this list on each
+# upstream merge: remove an entry upstream deleted, add one only for the same reason.
+_UPSTREAM_CI_LAYOUT_TESTS = frozenset({
+    "tests/ci/test_classify_changes.py"
+    "::test_ci_jobs_only_gate_on_detect_outputs_that_detect_actually_declares",
+    "tests/ci/test_classify_changes.py::test_real_update_suites_gate_the_merge_when_their_lane_fires",
+    "tests/ci/test_clean_worktree_check.py::test_every_checkout_job_ends_with_the_clean_worktree_step",
+    "tests/ci/test_e2e_tmux_required.py::test_the_e2e_job_requires_tmux",
+    "tests/ci/test_live_comment.py::test_the_merge_gate_never_shows_as_a_job_in_the_comment",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_call_forwards_the_commit",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_checkout_follows_the_commit_input",
+    "tests/ci/test_stable_release_commit_threading.py::test_every_reusable_lane_accepts_a_commit",
+    "tests/ci/test_stable_release_commit_threading.py"
+    "::test_no_lane_shares_a_concurrency_group_with_pushes_to_the_default_branch",
+    "tests/ci/test_stable_release_commit_threading.py"
+    "::test_no_lane_uses_the_controller_commit_as_the_commit_under_test",
+    "tests/ci/test_stable_release_graph.py"
+    "::test_all_applicable_ci_jobs_are_aggregated_and_desktop_e2e_stays_deferred",
+    "tests/ci/test_stable_release_graph.py::test_docker_dev_stamp_checkout_has_release_history",
+    "tests/ci/test_stable_release_graph.py::test_docker_recovery_refuses_to_replace_a_divergent_version_tag",
+    "tests/ci/test_stable_release_graph.py"
+    "::test_packaged_stamp_writers_receive_versions_without_rewriting_python_metadata",
+    "tests/ci/test_stable_release_graph.py::test_release_gates_extract_consumer_facing_versions",
+    "tests/ci/test_update_ci_routing.py::test_every_detect_output_a_lane_sets_is_consumed_by_some_job",
+    "tests/ci/test_update_ci_routing.py"
+    "::test_every_set_lane_reaches_its_consumer_whatever_the_other_lanes_say",
+    "tests/ci/test_update_ci_routing.py::test_marker_corpus_change_runs_every_language_that_reads_it",
+    "tests/ci/test_update_ci_routing.py::test_pull_requests_and_main_pushes_never_run_e2e",
+    "tests/ci/test_update_ci_routing.py::test_replay_rejects_ineffective_required_step",
+    "tests/ci/test_update_ci_routing.py::test_replay_uses_executed_gate_output",
+    "tests/ci/test_update_ci_routing.py::test_selection_receipt_does_not_require_the_native_jobs_venv",
+    "tests/ci/test_update_ci_routing.py::test_strict_acceptance_dispatch_reaches_every_e2e_suite",
+    "tests/ci/test_update_ci_routing.py::test_update_owner_change_dispatches_its_suites_end_to_end",
+    "tests/ci/test_update_ci_routing.py::test_update_path_change_reaches_the_suites_that_consume_it",
+    "tests/ci/test_update_ci_routing.py::test_update_path_change_selects_every_suite_that_exercises_it",
+    "tests/ci/test_update_transitive_routing.py"
+    "::test_second_hop_update_change_dispatches_real_update_consumers",
+})
+
+
+def pytest_collection_modifyitems(config, items):
+    removed = [item for item in items if item.nodeid.split("[", 1)[0] in _UPSTREAM_CI_LAYOUT_TESTS]
+    if removed:
+        config.hook.pytest_deselected(items=removed)
+        items[:] = [item for item in items if item not in removed]

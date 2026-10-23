@@ -84,8 +84,39 @@ jobs:
           "
           fi
 
+          # fork: a maintainer can accept a flagged file at the exact content they
+          # reviewed by listing "<path> <sha256>" in .github/supply-chain-reviewed.txt
+          # (CI-sensitive, so editing it needs ci-reviewed). Any later edit changes the
+          # hash and the finding fires again.
+          REVIEWED=.github/supply-chain-reviewed.txt
+          reviewed_ok() {
+            git cat-file -e "$HEAD:$REVIEWED" 2>/dev/null || return 1
+            local sum
+            sum=$(git show "$HEAD:$1" 2>/dev/null | sha256sum | cut -d' ' -f1)
+            git show "$HEAD:$REVIEWED" | awk -v f="$1" -v s="$sum" '$1 !~ /^#/ && $1 == f && $2 == s { found = 1 } END { exit !found }'
+          }
+          # Added lines tagged "<path>: +<line>". The path comes from the "diff --git" line
+          # and header lines are skipped only up to the first hunk, so no content line can
+          # pose as a header. A tagged hit is accepted only when its file is reviewed at
+          # this exact content AND the line really is in that file; anything else stays a
+          # finding (a mislabelled path fails closed).
+          TAGGED=$(echo "$DIFF" | awk '/^diff --git /{f=$0; sub(/^diff --git a\/.* b\//, "", f); hdr=1; next} hdr && /^@@/{hdr=0; next} hdr{next} /^@@/{next} /^\+/{print f ": " $0}')
+          drop_reviewed() {
+            local line f text
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              f="${line%%: +*}"
+              text="${line#*: +}"
+              if reviewed_ok "$f" && git show "$HEAD:$f" | grep -cxF -- "$text" >/dev/null; then
+                echo "::notice::$f matches its reviewed sha256 in $REVIEWED; accepted: $text" >&2
+              else
+                printf '%s\n' "$line"
+              fi
+            done
+          }
+
           # --- base64 decode + exec/eval on the same line (the litellm attack pattern) ---
-          B64_EXEC_HITS=$(echo "$DIFF" | grep -n '^+' | grep -iE 'base64\.(b64decode|decodebytes|urlsafe_b64decode)' | grep -iE 'exec\(|eval\(' | head -10 || true)
+          B64_EXEC_HITS=$(echo "$TAGGED" | grep -iE 'base64\.(b64decode|decodebytes|urlsafe_b64decode)' | grep -iE 'exec\(|eval\(' | drop_reviewed | head -10 || true)
           if [ -n "$B64_EXEC_HITS" ]; then
             FINDINGS="${FINDINGS}
           ### 🚨 CRITICAL: base64 decode + exec/eval combo
@@ -99,7 +130,7 @@ jobs:
           fi
 
           # --- subprocess with encoded/obfuscated command argument ---
-          PROC_HITS=$(echo "$DIFF" | grep -n '^+' | grep -E 'subprocess\.(Popen|call|run)\s*\(' | grep -iE 'base64|\\x[0-9a-f]{2}|chr\(' | head -10 || true)
+          PROC_HITS=$(echo "$TAGGED" | grep -E 'subprocess\.(Popen|call|run)\s*\(' | grep -iE 'base64|\\x[0-9a-f]{2}|chr\(' | drop_reviewed | head -10 || true)
           if [ -n "$PROC_HITS" ]; then
             FINDINGS="${FINDINGS}
           ### 🚨 CRITICAL: subprocess with encoded/obfuscated command
@@ -120,18 +151,12 @@ jobs:
           # same name (e.g. hermes_cli/setup.py — the CLI setup wizard) is unrelated
           # and produced false positives that trained reviewers to ignore the scanner.
           SETUP_HITS=$(git diff --name-only "$BASE"..."$HEAD" | grep -E '^(setup\.py|setup\.cfg|sitecustomize\.py|usercustomize\.py|__init__\.pth)$' || true)
-          # fork: a maintainer can accept an install-hook change at the exact
-          # content they reviewed, by listing "<path> <sha256>" in
-          # .github/supply-chain-reviewed.txt. Any later edit changes the hash
-          # and the finding fires again; the list itself is CI-sensitive
-          # (scripts/ci/classify_changes.py), so editing it needs ci-reviewed.
-          REVIEWED=.github/supply-chain-reviewed.txt
-          if [ -n "$SETUP_HITS" ] && git cat-file -e "$HEAD:$REVIEWED" 2>/dev/null; then
+          # fork: accepted at a reviewed sha256 like the line checks above (REVIEWED).
+          if [ -n "$SETUP_HITS" ]; then
             UNREVIEWED=""
             while IFS= read -r f; do
               [ -z "$f" ] && continue
-              sum=$(git show "$HEAD:$f" 2>/dev/null | sha256sum | cut -d' ' -f1)
-              if git show "$HEAD:$REVIEWED" | awk -v f="$f" -v s="$sum" '$1 !~ /^#/ && $1 == f && $2 == s { found = 1 } END { exit !found }'; then
+              if reviewed_ok "$f"; then
                 echo "::notice::$f matches its reviewed sha256 in $REVIEWED; accepted"
               else
                 UNREVIEWED="${UNREVIEWED}${f}"$'\n'

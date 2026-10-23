@@ -27,6 +27,7 @@ from plugins.shorts.studio import genvideo
 from plugins.shorts.studio import presenter as presenter_mod
 from plugins.shorts.studio import package as pkg_mod
 from plugins.shorts.studio import voice as voice_mod
+import itertools
 
 REPO = Path(__file__).resolve().parents[2]
 SAMPLE = REPO / "shorts" / "studio" / "samples" / "en-sample.json"
@@ -99,7 +100,7 @@ def test_word_count_walls(sample):
 
 def test_palettes_and_motifs_match_the_remotion_theme():
     theme = (REPO / "shorts/studio/remotion/src/theme.ts").read_text(encoding="utf-8")
-    ts_palettes = re.findall(r"^\s+'([a-z]+(?:-[a-z]+)?)': \{", theme, re.M)
+    ts_palettes = re.findall(r"^\s+'([a-z]+(?:-[a-z]+)?)': \{", theme, re.MULTILINE)
     ts_motifs = re.search(r"MOTIFS = \[(.*?)\]", theme).group(1)
     assert tuple(ts_palettes) == pkg_mod.PALETTES
     assert tuple(re.findall(r"'([a-z]+)'", ts_motifs)) == pkg_mod.MOTIFS
@@ -152,7 +153,7 @@ def test_html_to_text_prefers_the_article_body():
 def test_spread_words_covers_the_line_in_order():
     words = voice_mod.spread_words("one two three four", 2.0)
     assert [w["text"] for w in words] == ["one", "two", "three", "four"]
-    assert all(a["end"] <= b["start"] for a, b in zip(words, words[1:]))
+    assert all(a["end"] <= b["start"] for a, b in itertools.pairwise(words))
     assert words[-1]["end"] < 2.0
 
 
@@ -867,7 +868,7 @@ def _run_scenes(sample, tmp_path, monkeypatch, fake, **env):
 
 def test_generated_scenes_fill_their_slots_and_record_the_real_cost(sample, tmp_path, monkeypatch):
     fake = _FakeOpenRouter()
-    pkg, timeline, report = _run_scenes(sample, tmp_path, monkeypatch, fake)
+    _pkg, timeline, report = _run_scenes(sample, tmp_path, monkeypatch, fake)
     assert report["generated"] == 2 and report["spent_usd"] == pytest.approx(0.24)
     assert [s["broll"] for s in timeline[:2]] == ["ai/s00.mp4", "ai/s01.mp4"]
     assert fake.posts[0]["model"] == "heygen/heygen-video-1" and fake.posts[0]["aspect_ratio"] == "9:16"
@@ -1466,7 +1467,6 @@ def test_tip_shorts_play_jazz_or_lounge(tip, tmp_path, monkeypatch):
 
     def find(mood, avoid, seed, pages=None):
         seen["pages"] = pages
-        return None
 
     monkeypatch.setattr(sources, "find_music", find)
     build_mod.gather_music(pkg_mod.validate_package(tip), tmp_path, "seed", offline=False)

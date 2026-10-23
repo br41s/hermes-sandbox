@@ -54,7 +54,7 @@ def main() -> int:
     result: dict = {}
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802 - stdlib naming
+        def do_GET(self):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             if query.get("state", [""])[0] != state:
                 self.send_response(400)

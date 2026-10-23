@@ -96,14 +96,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))
 
-from hermes_cli.profiles import (  # noqa: E402
+from hermes_cli.profiles import (
     create_profile,
     normalize_profile_name,
     profile_exists,
     validate_profile_name,
 )
-from cron.jobs import create_job  # noqa: E402
-from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa: E402
+from cron.jobs import create_job
+from scripts.bl_site_setup import apply_site_template, validate_answers
 
 # agent key -> (prompt_source relative to repo root, display name, schedule kind,
 #               enabled toolsets)
@@ -485,7 +485,7 @@ def _write_config(profile_dir: Path, model: str, image_model: str | None = None)
     minutes after provisioning — gets it immediately, without waiting for
     the next container restart.
     """
-    import yaml
+    import hermes_yaml as yaml
 
     data: dict = {
         "model": {"default": model, "provider": "openrouter"},
@@ -729,7 +729,7 @@ def provision(
                 else pick_stagger_schedule(canon, agent_key)
             )
             job = create_job(
-                prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8"),
+                prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8-sig"),
                 schedule=schedule,
                 name=f"{display_name} — {client_name}",
                 deliver=deliver,
@@ -809,7 +809,7 @@ def main() -> int:
     questionnaire = None
     if args.questionnaire:
         try:
-            with open(args.questionnaire, encoding="utf-8") as fh:
+            with open(args.questionnaire, encoding="utf-8-sig") as fh:
                 questionnaire = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"Provisioning failed: could not read --questionnaire: {exc}", file=sys.stderr)

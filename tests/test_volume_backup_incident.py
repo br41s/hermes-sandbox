@@ -7,14 +7,14 @@ is BLIND, not silence.
 
 Hermetic: rclone listings and the clock are injected; rclone never runs.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import pytest
 
 import incidents.sweep as sw
 from incidents.sweep import VOLUME_BACKUP_DUMPS, VOLUME_BACKUP_STALE_HOURS, volume_backup_incidents
 
-NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 
 
 def _folder(hours_ago):

@@ -146,6 +146,11 @@ OVERRIDES = {
     # nor by the image/video plugins; the auditor judge sends its own (auditor/llm.py).
     # Forced like the rest of this table so a profile cannot opt itself out.
     ("provider_routing", "data_collection"): "deny",
+    # Skill writes wait for a human (owner, 2026-10-23). Upstream v0.22 (e3d2e57c9e) lets the
+    # background skill review patch ANY skill, not only the ones it created; with this on, every
+    # skill write (foreground or background) is staged under <HERMES_HOME>/pending/skills/ and
+    # applied only when approved (`/skills approval`). Forced so a profile cannot opt out.
+    ("skills", "write_approval"): True,
 }
 
 # Forced on every NAMED profile, never on main (stage 3 step 5, ops/multiplex-stage3-plan.md).
@@ -207,7 +212,7 @@ GSC_SERVER = {
 
 def sync_env_file(env_path: Path, environ: Mapping[str, str], exclude=()) -> None:
     """Write every set ``INJECT`` var from ``environ`` into ``env_path``, one line each."""
-    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    content = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
     cron_tuning = sorted(k for k in environ if k.startswith(CRON_TUNING_PREFIX))
     for var in [*INJECT, *cron_tuning]:
         if var in exclude:
@@ -245,7 +250,7 @@ def _strip_vars(content: str, names) -> str:
 
 def _pin_vars(env_path: Path, values: Mapping[str, str]) -> None:
     """Replace every line of each var in ``values`` with exactly one line, appended."""
-    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    content = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
     content = _strip_vars(content, values)
     if content and not content.endswith("\n"):
         content += "\n"
@@ -257,7 +262,7 @@ def _resolve(home: Path, environ: Mapping[str, str], var: str) -> str:
     """``var`` from the process env first, then the durable main .env."""
     value = environ.get(var, "")
     if not value and (home / ".env").exists():
-        m = re.search(rf"^{var}=(.*)$", (home / ".env").read_text(encoding="utf-8"),
+        m = re.search(rf"^{var}=(.*)$", (home / ".env").read_text(encoding="utf-8-sig"),
                       flags=re.MULTILINE)
         value = m.group(1).strip() if m else ""
     return value
@@ -273,7 +278,7 @@ def is_rented_tenant(env_path: Path) -> bool:
     """
     if not env_path.exists():
         return False
-    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8"),
+    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8-sig"),
                           flags=re.MULTILINE))
 
 
@@ -290,7 +295,7 @@ def has_own_fal_key(env_path: Path) -> bool:
     """
     if not env_path.exists():
         return False
-    return bool(re.search(r"^FAL_KEY=.+", env_path.read_text(encoding="utf-8"),
+    return bool(re.search(r"^FAL_KEY=.+", env_path.read_text(encoding="utf-8-sig"),
                           flags=re.MULTILINE))
 
 
@@ -330,8 +335,8 @@ def pin_rental_passthrough(env_path: Path, home: Path, environ: Mapping[str, str
     _pin_vars(env_path, {var: val for var, val in values.items() if val})
     unset = [var for var, val in values.items() if not val]
     if unset and env_path.exists():
-        env_path.write_text(_strip_vars(env_path.read_text(encoding="utf-8"), unset),
-                            encoding="utf-8")
+        current = env_path.read_text(encoding="utf-8-sig")
+        env_path.write_text(_strip_vars(current, unset), encoding="utf-8")
 
 
 def real_profiles(home: Path):
@@ -398,7 +403,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
             # fix shipped keeps that stale line forever otherwise (no manifest of
             # already-provisioned tenants exists to backfill by hand; this loop
             # already visits every one of them, every boot).
-            content = prof_env.read_text(encoding="utf-8") if prof_env.exists() else ""
+            content = prof_env.read_text(encoding="utf-8-sig") if prof_env.exists() else ""
             stripped = _strip_vars(content, SHARED_RESEARCH_KEYS)
             if stripped != content:
                 prof_env.write_text(stripped, encoding="utf-8")
@@ -425,7 +430,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
         # exactly what let the fallback slip by unnoticed before.
         if auditor_env.exists():
             auditor_env.write_text(
-                _strip_vars(auditor_env.read_text(encoding="utf-8"), AUDITOR_EXCLUDE),
+                _strip_vars(auditor_env.read_text(encoding="utf-8-sig"), AUDITOR_EXCLUDE),
                 encoding="utf-8")
         print("[03-biglobster] WARNING: HERMES_AUDITOR_GITHUB_TOKEN not set — "
               "auditor profile has NO GitHub credential this boot (fail-closed, "
@@ -444,7 +449,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
         val = environ.get(var, "").strip()
         if val:
             knobs[var] = val
-    content = auditor_env.read_text(encoding="utf-8") if auditor_env.exists() else ""
+    content = auditor_env.read_text(encoding="utf-8-sig") if auditor_env.exists() else ""
     for var, val in knobs.items():
         content = _strip_vars(content, (var,))
         if content and not content.endswith("\n"):
@@ -490,7 +495,7 @@ def reconcile_group_topics(cfg: dict, profiles_src: Path = PROFILES_SRC) -> bool
     changed = False
     for renv in sorted(profiles_src.glob("*/routing.env")):
         pname = renv.parent.name
-        vals = _parse_env_lines(renv.read_text(encoding="utf-8"))
+        vals = _parse_env_lines(renv.read_text(encoding="utf-8-sig"))
         chat = vals.get("TELEGRAM_HOME_CHANNEL")
         thread = vals.get("TELEGRAM_HOME_CHANNEL_THREAD_ID")
         if not chat or not thread:
@@ -884,26 +889,29 @@ def reconcile_config(
 ) -> None:
     """§2 for one config.yaml on disk: rewritten only when something changed, never raises.
 
-    The write goes through ``atomic_config_write``, the one config.yaml writer upstream
-    allows (scripts/check_config_yaml_writers.py): atomic, so a pod killed mid-boot
-    cannot leave a truncated config, and comment-preserving. The heredoc this replaced
+    The write goes through ``atomic_config_replace``, upstream's writer for a complete
+    desired state (scripts/check_config_yaml_writers.py): atomic, so a pod killed mid-boot
+    cannot leave a truncated config, and comment-preserving. Not ``atomic_config_write``:
+    since upstream v0.22 that refuses any write that drops a key, and this function
+    deletes keys on purpose (a rental's ``image_gen``), so every pin of that profile was
+    silently not saved. The heredoc this replaced
     used a plain ``yaml.dump``; the resulting mapping is the same, keys this function
     deletes included. Importing it lays out the HERMES_HOME skeleton (and seeds a missing
     root SOUL.md) and the writer keeps bounded snapshots in backups/config/ — both exactly
     what the gateway does when it starts a moment later.
     """
-    import yaml
+    import hermes_yaml as yaml  # PyYAML left the image with upstream v0.22
 
-    from hermes_cli.config import atomic_config_write
+    from hermes_cli.config import atomic_config_replace
 
     if not config_path.exists():
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}
         if reconcile_cfg(cfg, label, environ, is_rented=is_rented,
                          byok_images=byok_images, profiles_src=profiles_src, served=served):
-            atomic_config_write(config_path, cfg)
+            atomic_config_replace(config_path, cfg)
             print(f"[03-biglobster] {label}: reconciled config.yaml keys")
         else:
             print(f"[03-biglobster] {label}: config.yaml keys already current")
@@ -934,10 +942,101 @@ def reconcile_configs(home: Path, environ: Mapping[str, str],
         )
 
 
+# §2c: catalog plugins baked into the image (owner, 2026-10-23). Upstream v0.22 moved Langfuse out
+# of core into the `langfuse` catalog plugin, which its left-core migration installs at gateway start
+# by cloning GitHub, so a failed fetch quietly turned tracing off. The Dockerfile's catalog_plugins
+# stage bakes the tree at plugin-catalog/<name>.yaml's sha (verified there); its Python dependency is
+# in the venv (pyproject's observability extra). Placing it here, with the same install record a
+# catalog install writes, makes upstream's migration find it installed and fetch nothing.
+VENDOR_PLUGINS = Path("/opt/hermes/vendor-plugins")
+CATALOG_DIR = Path(__file__).resolve().parents[2] / "plugin-catalog"
+BAKED_CATALOG_PLUGINS = ("langfuse",)
+
+
+def _catalog_entry(name: str, catalog_dir: Path) -> dict:
+    import hermes_yaml as yaml
+
+    entry = yaml.safe_load((catalog_dir / f"{name}.yaml").read_text(encoding="utf-8-sig")) or {}
+    return {"name": str(entry["name"]), "repo": str(entry["repo"]), "tier": str(entry.get("tier") or "community"),
+            "subdir": str(entry.get("subdir") or "") or None}
+
+
+def _place_baked_plugin(home: Path, name: str, tree: Path, sha: str, entry: dict) -> str:
+    """Place *tree* as *home*'s catalog install of *name* at *sha*. Returns what it did.
+
+    Leaves alone a home that does not use the plugin, one already at *sha*, and a tree that is not
+    the fork's bake (a user's own install, or another source). Replaces only an earlier bake, so a
+    catalog pin bump in a later image reaches every home."""
+    import shutil
+
+    from hermes_cli import plugins_cmd_git as git
+    from hermes_cli.left_core_migration import langfuse_in_use
+    from hermes_cli.plugins_cmd_catalog import write_catalog_sidecar_record
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    if name == "langfuse" and not langfuse_in_use(home):
+        return "not used"
+    source = git._canonical_source(entry["repo"], entry["subdir"])
+    token = set_hermes_home_override(home)
+    try:
+        prior = git._pc()._read_install_metadata().get(name)
+        target = home / "plugins" / name
+        if target.exists() or target.is_symlink():
+            ours = isinstance(prior, dict) and prior.get("source") == source and prior.get("pinned") is True
+            if not ours:
+                return "kept (not the fork's bake)"
+            if prior.get("revision") == sha and target.is_dir():
+                return "current"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.parent / f".{name}.baked"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(tree, staging, symlinks=True)
+        catalog = {"name": entry["name"], "repo": entry["repo"], "tier": entry["tier"]}
+        write_catalog_sidecar_record(staging, catalog, sha)
+        if target.exists() or target.is_symlink():
+            retired = target.parent / f".{name}.retired"
+            shutil.rmtree(retired, ignore_errors=True)
+            os.replace(target, retired)
+            os.replace(staging, target)
+            shutil.rmtree(retired, ignore_errors=True)
+        else:
+            os.replace(staging, target)
+        git._update_install_record(name, lambda _old: {
+            "pinned": True, "revision": sha, "source": source,
+            "catalog": {**catalog, "sha": sha, "pin": sha},
+        })
+        return "placed"
+    finally:
+        reset_hermes_home_override(token)
+
+
+def place_catalog_plugins(home: Path, vendor_root: Path = VENDOR_PLUGINS,
+                          catalog_dir: Path = CATALOG_DIR) -> None:
+    """§2c, after §2 (so each home's plugins.enabled is current): the baked catalog plugins into
+    main and every real profile that uses them. Non-fatal per home; a missing bake (a local run, an
+    image built before it) is a no-op."""
+    for name in BAKED_CATALOG_PLUGINS:
+        tree, sha_file = vendor_root / name, vendor_root / f"{name}.sha"
+        if not tree.is_dir() or not sha_file.is_file():
+            continue
+        sha = sha_file.read_text(encoding="utf-8-sig").strip()
+        entry = _catalog_entry(name, catalog_dir)
+        for target_home in [home, *real_profiles(home)]:
+            label = "main" if target_home == home else target_home.name
+            try:
+                outcome = _place_baked_plugin(target_home, name, tree, sha, entry)
+            except Exception as e:
+                print(f"[03-biglobster] Warning: baked {name} plugin not placed for {label}: {e}")
+                continue
+            if outcome == "placed":
+                print(f"[03-biglobster] {label}: placed the baked {name} plugin at {sha[:12]}")
+
+
 def main(argv: Optional[list] = None) -> int:
     home = Path(os.environ.get("HERMES_HOME", "/opt/data"))
     sync_envs(home, os.environ)
     reconcile_configs(home, os.environ)
+    place_catalog_plugins(home)
     return 0
 
 

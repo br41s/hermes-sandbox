@@ -58,7 +58,7 @@ def routing_hazard(job: dict) -> Optional[str]:
     return None
 
 
-def audit_cron_routing(jobs: Optional[Iterable[dict]] = None) -> List[Tuple[str, str]]:
+def audit_cron_routing(jobs: Optional[Iterable[dict]] = None) -> list[tuple[str, str]]:
     """Return (job_id, hazard) for every live cron job with a routing hazard."""
     if jobs is None:
         try:
@@ -66,7 +66,7 @@ def audit_cron_routing(jobs: Optional[Iterable[dict]] = None) -> List[Tuple[str,
             jobs = load_jobs()
         except Exception:
             return []
-    flagged: List[Tuple[str, str]] = []
+    flagged: list[tuple[str, str]] = []
     for job in jobs:
         if not isinstance(job, dict):
             continue
@@ -88,7 +88,7 @@ def audit_summary(jobs: Optional[Iterable[dict]] = None) -> str:
         try:
             from cron.jobs import load_jobs
             jobs = list(load_jobs())
-        except Exception as exc:  # noqa: BLE001 — a failed audit is not a pass
+        except Exception as exc:
             return (f"FAIL: could not load the live cron jobs "
                     f"({type(exc).__name__}) — nothing was audited.")
     else:

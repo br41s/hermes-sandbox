@@ -93,7 +93,8 @@ echo "  thread_id = the middle number             (e.g. 61)" >&2
 echo "" >&2
 
 EXISTING_CHAT_ID=$("$PY" - 2>/dev/null <<'PYEOF'
-import os, yaml
+import os
+import hermes_yaml as yaml
 try:
     cfg = yaml.safe_load(open(os.environ.get("HERMES_HOME", "/opt/data") + "/config.yaml"))
     topics = cfg.get("telegram", {}).get("extra", {}).get("group_topics", [])
@@ -140,7 +141,7 @@ fi
 
 echo "[2/9] Copying provider config from main..."
 as_hermes "$PY" - <<PYEOF
-import yaml
+import hermes_yaml as yaml
 from pathlib import Path
 main_cfg      = yaml.safe_load(open("$HERMES_HOME/config.yaml")) or {}
 prof_cfg_path = Path("$PROFILE_DIR") / "config.yaml"
@@ -149,7 +150,7 @@ cfg = cfg or {}
 for k in ("model", "web", "image_gen", "video_gen", "memory"):
     if k in main_cfg:
         cfg[k] = main_cfg[k]
-prof_cfg_path.write_text(yaml.dump(cfg, default_flow_style=False))
+prof_cfg_path.write_text(yaml.safe_dump(cfg, default_flow_style=False))
 print("      ✓ provider/model config copied from main")
 PYEOF
 
@@ -299,7 +300,7 @@ PYEOF
 if [ -n "$CHAT_ID" ] && [ -n "$THREAD_ID" ]; then
     echo "[8/9] Adding Telegram topic routing..."
     as_hermes "$PY" - <<PYEOF
-import yaml
+import hermes_yaml as yaml
 from pathlib import Path
 
 config_path = Path("$HERMES_HOME") / "config.yaml"
@@ -325,7 +326,7 @@ else:
     topics.append(new_entry)
     print(f"      ✓ added thread_id={thread_id} → profile=$PROFILE_NAME")
 
-config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
+config_path.write_text(yaml.safe_dump(cfg, default_flow_style=False, allow_unicode=True))
 found = yaml.safe_load(config_path.read_text()).get("telegram", {}).get("extra", {}).get("group_topics", [])
 print(f"      ✓ verified: telegram.extra.group_topics has {len(found)} chat entries")
 PYEOF

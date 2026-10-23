@@ -104,37 +104,20 @@ def test_dockerfile_bakes_code_scoped_install_method_stamp() -> None:
     assert shim_block, "install-method stamp must be in the shim-wiring RUN block"
 
 
-def test_dockerfile_redirects_lazy_installs_to_durable_target() -> None:
-    """Immutable image seals the venv but redirects lazy installs to the
-    writable data volume, so opt-in backends still install at first use
-    without being able to break the sealed core.
+def test_dockerfile_leaves_pm_installs_on_for_the_data_volume() -> None:
+    """Upstream v0.22 retired the lazy-install redirect: the venv stays sealed and PM
+    installs opt-in dependencies into generations under $HERMES_HOME (/opt/data/installs).
 
-    Guards the contract between the Dockerfile env var, the stage2-hook
-    seeding, and tools/lazy_deps.py — these three must agree on the path.
+    The fork depends on that path being open: Langfuse left core for the ``langfuse``
+    catalog plugin, which the left-core migration installs at gateway start. An image
+    that sets HERMES_DISABLE_LAZY_INSTALLS again (the pre-v0.22 seal) turns tracing off
+    on every profile with only a warning in agent.log.
     """
     text = _dockerfile_text()
-    target = "/opt/data/lazy-packages"
-
-    # The redirect target must be set AND must live under the data volume,
-    # never under the immutable /opt/hermes tree.
-    assert f"ENV HERMES_LAZY_INSTALL_TARGET={target}" in text
-    assert target.startswith("/opt/data/"), "target must be on the durable volume"
-    assert "ENV HERMES_LAZY_INSTALL_TARGET=/opt/hermes" not in text
-
-    # The seal flag must still be present — the redirect rides on top of it,
-    # it does not replace it.
-    assert "ENV HERMES_DISABLE_LAZY_INSTALLS=1" in text
-
-    # stage2-hook must seed + chown the target dir so first-use installs
-    # succeed as the unprivileged hermes runtime user.
-    stage2 = (REPO_ROOT / "docker" / "stage2-hook.sh").read_text()
-    assert '"$HERMES_HOME/lazy-packages"' in stage2, (
-        "stage2-hook.sh must create the lazy-packages dir on the data volume"
-    )
-    assert "lazy-packages" in stage2.split("for sub in", 1)[1].split(";", 1)[0], (
-        "lazy-packages must be in the per-boot chown subdir list so it stays "
-        "hermes-owned"
-    )
+    assert "HERMES_DISABLE_LAZY_INSTALLS" not in "\n".join(_dockerfile_instructions())
+    assert "ENV HERMES_HOME=/opt/data" in text
+    # The sealed core still lives outside the data volume.
+    assert "--sealed" in text and "--out /opt/hermes/.venv" in text
 
 
 def test_dockerfile_bakes_photon_sidecar_deps() -> None:

@@ -25,8 +25,8 @@ from tests.gateway.conftest import _ensure_telegram_mock
 _ensure_telegram_mock()
 sys.modules.pop("plugins.platforms.telegram.adapter", None)
 
-from plugins.platforms.telegram.adapter import TOPIC_PROFILE_KEY, TelegramAdapter  # noqa: E402
-from telegram.constants import ChatType as _ChatType  # noqa: E402
+from plugins.platforms.telegram.adapter import TOPIC_PROFILE_KEY, TelegramAdapter
+from telegram.constants import ChatType as _ChatType
 
 CHAT = -1004224848555
 
@@ -97,6 +97,20 @@ async def test_a_routed_bound_topic_runs_in_its_profile(monkeypatch):
 
     upstream.assert_awaited_once()
     assert upstream.await_args.args[-1] is event
+
+
+@pytest.mark.asyncio
+async def test_the_binding_is_gone_before_native_admission(monkeypatch):
+    """Upstream v0.22 refuses a non-WhatsApp event carrying any metadata ("Hermes refused this
+    message (invalid_params)"), so a routed bound topic's message would never be answered."""
+    from gateway.session_envelope import _native_metadata
+
+    event = _event(bound="grow-shop", routed="grow-shop")
+    upstream = await _dispatch(event, monkeypatch)
+
+    passed = upstream.await_args.args[-1]
+    assert TOPIC_PROFILE_KEY not in (passed.metadata or {})
+    assert _native_metadata(passed) is not None  # admission's metadata clause accepts it
 
 
 @pytest.mark.asyncio

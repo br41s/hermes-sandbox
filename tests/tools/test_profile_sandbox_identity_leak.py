@@ -69,7 +69,7 @@ def _run_wrapped(env_obj, command: str, spawn_home: str) -> str:
         capture_output=True,
         text=True,
         env={**os.environ, "HOME": spawn_home, "HERMES_HOME": os.path.dirname(spawn_home)},
-        cwd=str(env_obj.cwd),
+        cwd=str(env_obj.cwd), check=False
     )
     return proc.stdout
 
@@ -166,7 +166,7 @@ def test_unset_pinned_var_is_not_exported_as_empty(tmp_path):
     spawn_env["HOME"] = str(home)
     proc = subprocess.run(
         [BASH, "-c", script], capture_output=True, text=True,
-        env=spawn_env, cwd=str(workdir),
+        env=spawn_env, cwd=str(workdir), check=False
     )
     # Nothing to pin, so the snapshot value is inherited as before -- the guard
     # must not export an empty string over it.

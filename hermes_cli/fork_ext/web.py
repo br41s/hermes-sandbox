@@ -22,7 +22,7 @@ import os
 import urllib.parse
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from hermes_cli.bl_rental_webhook import router as _bl_rental_router
@@ -81,7 +81,7 @@ def _call_cron_for_profile(target_profile: Optional[str], func_name: str, *args,
     return _cron_helper("_call_cron_for_profile")(target_profile, func_name, *args, **kwargs)
 
 
-def _cron_schedule_expr(job: Dict[str, Any]) -> str:
+def _cron_schedule_expr(job: dict[str, Any]) -> str:
     """Return the raw schedule expression from a stored job dict.
 
     Reconstructs a string that parse_schedule() can re-ingest:
@@ -176,7 +176,7 @@ def _job_in_flight(home, job_id: str) -> bool:
     return row is not None
 
 
-def _trigger_cron_job_sync(job_id: str, profile: Optional[str]) -> Dict[str, Any]:
+def _trigger_cron_job_sync(job_id: str, profile: Optional[str]) -> dict[str, Any]:
     from cron.scheduler_provider import InProcessCronScheduler, resolve_cron_scheduler
     from hermes_cli.web_routers import cron as upstream_cron
 
@@ -228,8 +228,12 @@ _DELEGATE_SECRET_ENV_VAR = "HERMES_CALLBACK_SECRET"
 _DELEGATE_SECRET_HEADER = "x-hermes-secret"
 
 
-def _verify_delegate_secret(request: Request) -> Optional[Tuple[int, str]]:
-    """Return ``(status_code, detail)`` when the request should be rejected, else ``None``."""
+def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
+    """Return ``(status_code, detail)`` when the request should be rejected, else ``None``.
+
+    A request with no secret header is a 401 before anything else, configured or not."""
+    if not request.headers.get(_DELEGATE_SECRET_HEADER, ""):
+        return 401, "Unauthorized"
     secret = os.environ.get(_DELEGATE_SECRET_ENV_VAR, "").strip()
     if not secret:
         _log.error(
@@ -273,7 +277,17 @@ def _validate_delegate_webhook_url(url: str) -> Optional[str]:
     return None
 
 
-@router.post("/api/delegate", status_code=202)
+def _require_delegate_secret(request: Request) -> None:
+    """Route dependency: FastAPI runs it before validating the body, so an anonymous caller
+    gets 401 and never the request schema in a 422."""
+    rejection = _verify_delegate_secret(request)
+    if rejection is not None:
+        status_code, detail = rejection
+        _log.warning("Rejected /api/delegate request: %s", detail)
+        raise HTTPException(status_code=status_code, detail=detail)
+
+
+@router.post("/api/delegate", status_code=202, dependencies=[Depends(_require_delegate_secret)])
 async def post_delegate(request: Request, body: _DelegateRequest):
     """Accept a task from an external orchestrator and execute it asynchronously.
 

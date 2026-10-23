@@ -61,7 +61,8 @@ def probe_duration(path: str | Path) -> float:
     ]
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=PROBE_TIMEOUT, check=True,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=PROBE_TIMEOUT, check=True,
         )
     except subprocess.CalledProcessError as exc:
         raise VoiceError(f"ffprobe failed on {path}: {exc.stderr.strip()}") from exc

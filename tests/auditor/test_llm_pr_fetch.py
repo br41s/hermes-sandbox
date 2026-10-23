@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-import auditor.llm as llm
+from auditor import llm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROMPT = REPO_ROOT / "auditor" / "auditor.prompt"
@@ -36,8 +36,12 @@ META = json.dumps({"title": "Fix the thing", "body": "why", "additions": 3,
 
 
 def test_paso_2d_command_passes_the_cron_security_scanner():
-    """The bug in one assertion: the command in the prompt must be allowed."""
-    from tools.tirith_security import check_command_security
+    """The bug in one assertion: the command in the prompt must be allowed.
+
+    Cron in deny mode refuses what the hardline floor or the dangerous-command
+    detector flags (tools/approval.py ``_floor_block`` / ``_unattended_deny``);
+    upstream folded the old tirith scanner into that detector (68dd992769)."""
+    from tools.approval_detection import detect_dangerous_command, detect_hardline_command
     text = PROMPT.read_text(encoding="utf-8")
     # Match the WHOLE line any auditor.llm invocation sits on, so a reintroduced
     # `printf ... | python -m auditor.llm` is caught as a pipe rather than slipping
@@ -50,8 +54,10 @@ def test_paso_2d_command_passes_the_cron_security_scanner():
                        .replace("<number>", "247"))
         assert "|" not in concrete, (
             f"PASO 2d pipes into the interpreter again — cron blocks this: {concrete}")
-        verdict = check_command_security(concrete).get("action")
-        assert verdict == "allow", f"cron would refuse PASO 2d: {verdict} for {concrete}"
+        hardline, why = detect_hardline_command(concrete)
+        assert not hardline, f"cron would refuse PASO 2d: {why} for {concrete}"
+        dangerous, _key, why = detect_dangerous_command(concrete)
+        assert not dangerous, f"cron would refuse PASO 2d: {why} for {concrete}"
 
 
 def test_repo_path_never_reads_stdin(monkeypatch, capsys):
@@ -212,7 +218,7 @@ class TestCheckFlag:
     """
 
     def _run(self, monkeypatch, capsys, env):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "_env_value", lambda name: env.get(name, ""))
         monkeypatch.setattr(llm, "resolve_model", lambda tier: "test/model")
@@ -249,7 +255,7 @@ class TestCheckFlag:
         assert "blocklist" in out
 
     def test_check_makes_no_model_call(self, monkeypatch, capsys):
-        import auditor.llm as llm
+        from auditor import llm
 
         def _boom(*a, **k):
             raise AssertionError("--check must not call the model")
@@ -271,13 +277,13 @@ class TestJudgeDeadline:
     """
 
     def test_default_deadline(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "_env_value", lambda n: "")
         assert llm.judge_deadline_seconds() == llm.JUDGE_DEADLINE_DEFAULT
 
     def test_deadline_is_configurable(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(
             llm, "_env_value",
@@ -286,7 +292,7 @@ class TestJudgeDeadline:
         assert llm.judge_deadline_seconds() == 45
 
     def test_garbage_and_tiny_values_are_floored(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(
             llm, "_env_value",
@@ -302,7 +308,7 @@ class TestJudgeDeadline:
     def test_deadline_fires_on_a_slow_block(self):
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         started = time.monotonic()
         with pytest.raises(TimeoutError):
@@ -311,7 +317,7 @@ class TestJudgeDeadline:
         assert time.monotonic() - started < 4, "it must cut the block short, not wait it out"
 
     def test_deadline_does_not_fire_on_a_fast_block(self):
-        import auditor.llm as llm
+        from auditor import llm
 
         with llm.wall_clock_deadline(30, "test block"):
             pass  # must not raise
@@ -320,7 +326,7 @@ class TestJudgeDeadline:
         import signal
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         with llm.wall_clock_deadline(1, "test block"):
             pass
@@ -331,7 +337,7 @@ class TestJudgeDeadline:
     def test_a_hung_judge_exits_4(self, monkeypatch, capsys):
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "fetch_pr_content", lambda r, n: ("diff", None))
         # Patch the resolver, not the env: judge_deadline_seconds() floors at

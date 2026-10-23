@@ -48,7 +48,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 UPSTREAM_REPO = "NousResearch/hermes-agent"
@@ -106,7 +106,7 @@ def _have_git_repo() -> bool:
 
 def _recorded_version() -> str | None:
     try:
-        return (_REPO_ROOT / "UPSTREAM_VERSION").read_text(encoding="utf-8").strip() or None
+        return (_REPO_ROOT / "UPSTREAM_VERSION").read_text(encoding="utf-8-sig").strip() or None
     except OSError:
         return None
 
@@ -159,10 +159,10 @@ def _api_release_tags() -> list[tuple[str, str]] | None:
 
 def _days_since(iso: str) -> int | None:
     try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(iso)
     except ValueError:
         return None
-    return (datetime.now(timezone.utc) - dt).days
+    return (datetime.now(UTC) - dt).days
 
 
 def _status(current: str, unmerged: list[str], oldest_age: int | None,
@@ -197,7 +197,7 @@ def _conflict_count(target: str) -> str:
     try:
         out = subprocess.run(
             ["git", "merge-tree", "--write-tree", "--name-only", "HEAD", target],
-            capture_output=True, text=True, cwd=_REPO_ROOT,
+            capture_output=True, text=True, cwd=_REPO_ROOT, check=False
         )
     except FileNotFoundError:
         return "?"
@@ -225,7 +225,7 @@ def _newest_merged() -> int:
                   key=_version_key, reverse=True)
     for tag in tags:
         if subprocess.run(["git", "merge-base", "--is-ancestor", tag, "HEAD"],
-                          capture_output=True, cwd=_REPO_ROOT).returncode == 0:
+                          capture_output=True, cwd=_REPO_ROOT, check=False).returncode == 0:
             print(tag)
             return 0
     print("upstream-drift: no upstream release tag is merged into HEAD", file=sys.stderr)
@@ -257,7 +257,7 @@ def _full_report(threshold: int) -> int:
     # are doing the merge, and it is exactly the wrong value to write.
     merged = subprocess.run(
         ["git", "merge-base", "--is-ancestor", current, "HEAD"],
-        capture_output=True, cwd=_REPO_ROOT,
+        capture_output=True, cwd=_REPO_ROOT, check=False
     ).returncode == 0
     if not merged:
         print(f"❌ UPSTREAM_VERSION says {current}, but that tag is NOT merged "
@@ -278,7 +278,7 @@ def _full_report(threshold: int) -> int:
         if _version_key(tag) <= _version_key(current):
             break
         if subprocess.run(["git", "merge-base", "--is-ancestor", tag, "HEAD"],
-                          capture_output=True, cwd=_REPO_ROOT).returncode == 0:
+                          capture_output=True, cwd=_REPO_ROOT, check=False).returncode == 0:
             current = tag
             break
     stale = [] if current == recorded else [
@@ -354,10 +354,10 @@ def _actions_reported(window_hours: int) -> tuple[bool, str]:
         return False, "no successful run on record" if runs else "it has never run"
     started = ok[0].get("run_started_at") or ok[0].get("created_at") or ""
     try:
-        dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(started)
     except ValueError:
         return False, f"unreadable run timestamp {started!r}"
-    hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    hours = (datetime.now(UTC) - dt).total_seconds() / 3600
     if hours <= window_hours:
         return True, f"succeeded {hours:.0f}h ago"
     return False, f"last success was {started[:10]} ({hours / 24:.0f} days ago)"

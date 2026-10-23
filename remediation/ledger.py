@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import List, Optional
 
@@ -61,7 +61,7 @@ class LedgerEntry:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _ledger_path() -> Path:
@@ -76,7 +76,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         ts = datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
-    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def make_entry(cls: str, signature: str, target: str, mode: str, event: str,
@@ -100,14 +100,14 @@ def append(entry: LedgerEntry, *, path: Optional[Path] = None,
     _prune(path, cap)
 
 
-def read(*, path: Optional[Path] = None) -> List[LedgerEntry]:
+def read(*, path: Optional[Path] = None) -> list[LedgerEntry]:
     """Read all entries, skipping blank/malformed lines (best-effort)."""
     path = path or _ledger_path()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception:
         return []
-    out: List[LedgerEntry] = []
+    out: list[LedgerEntry] = []
     for raw in lines:
         raw = raw.strip()
         if not raw:
@@ -141,7 +141,7 @@ def _prune(path: Path, cap: int = _LEDGER_CAP) -> None:
 
 # --- queries the guards depend on -------------------------------------------
 
-def recently_acted(signature: str, *, entries: Optional[List[LedgerEntry]] = None,
+def recently_acted(signature: str, *, entries: Optional[list[LedgerEntry]] = None,
                    path: Optional[Path] = None, now: Optional[datetime] = None,
                    window_hours: int = DEBOUNCE_HOURS) -> bool:
     """True if this exact signature already has an ``applied`` action within the
@@ -160,7 +160,7 @@ def recently_acted(signature: str, *, entries: Optional[List[LedgerEntry]] = Non
     return False
 
 
-def act_count(cls: str, *, entries: Optional[List[LedgerEntry]] = None,
+def act_count(cls: str, *, entries: Optional[list[LedgerEntry]] = None,
               path: Optional[Path] = None, now: Optional[datetime] = None,
               window_hours: int = RATE_WINDOW_HOURS) -> int:
     """Count ``applied`` actions for a class within the rate window."""

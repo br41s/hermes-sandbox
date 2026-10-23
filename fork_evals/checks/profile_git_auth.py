@@ -187,7 +187,7 @@ def git_auth_hazard(profile_home: Path) -> Optional[str]:
     return None
 
 
-def _discover_profile_homes() -> List[Path]:
+def _discover_profile_homes() -> list[Path]:
     """Discover live ``<profile>/home`` dirs the same way the runtime resolves them.
 
     Real-profile marker is ``SOUL.md`` (sections 1/2/4/5 of the boot hook use the
@@ -200,7 +200,7 @@ def _discover_profile_homes() -> List[Path]:
         root = get_default_hermes_root()
     except Exception:
         return []
-    homes: List[Path] = []
+    homes: list[Path] = []
 
     # The DEFAULT profile's subprocess home is "$HERMES_HOME/home" — it does NOT
     # live under profiles/ (there is no profiles/default dir), so the loop below
@@ -246,7 +246,7 @@ def _profile_label(home: Path) -> str:
 
 def audit_profile_git_auth(
     homes: Optional[Iterable[Path]] = None,
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     """Return ``(profile_name, hazard)`` for every profile with a git-auth hazard.
 
     With ``homes=None`` it scans the live profile homes; the regression test
@@ -254,7 +254,7 @@ def audit_profile_git_auth(
     """
     if homes is None:
         homes = _discover_profile_homes()
-    flagged: List[Tuple[str, str]] = []
+    flagged: list[tuple[str, str]] = []
     for home in homes:
         home = Path(home)
         hz = git_auth_hazard(home)

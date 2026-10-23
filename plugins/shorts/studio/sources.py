@@ -70,7 +70,7 @@ def _client():
                         event_hooks={"response": [guard_redirect]})
 
 
-def _pick(candidates: List[Dict], avoid: Iterable[str], seed: str) -> Optional[Dict]:
+def _pick(candidates: list[dict], avoid: Iterable[str], seed: str) -> Optional[dict]:
     avoid = {str(a) for a in avoid}
     fresh = [c for c in candidates if str(c["id"]) not in avoid]
     pool = fresh or candidates
@@ -86,7 +86,7 @@ def _slug(query: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")
 
 
-def pexels_candidates(query: str) -> List[Dict]:
+def pexels_candidates(query: str) -> list[dict]:
     key = _pexels_key()
     if not key:
         return []
@@ -100,11 +100,11 @@ def pexels_candidates(query: str) -> List[Dict]:
              "duration": c.get("duration")} for c in clips]
 
 
-_STOPWORDS = {"a", "an", "the", "of", "on", "in", "at", "for", "with", "and", "to", "at", "by",
+_STOPWORDS = {"a", "an", "the", "of", "on", "in", "at", "for", "with", "and", "to", "by",
               "small", "big", "new", "person", "people", "man", "woman", "de", "la", "el", "en", "y"}
 
 
-def mixkit_slugs(query: str) -> List[str]:
+def mixkit_slugs(query: str) -> list[str]:
     """Mixkit pages are keyed by topic, not phrase: the phrase, then its strongest words.
 
     "small business owner laptop" -> small-business-owner-laptop, business-owner,
@@ -118,14 +118,14 @@ def mixkit_slugs(query: str) -> List[str]:
     if words:
         slugs.append(words[-1])
         slugs += sorted(words[:-1], key=len, reverse=True)
-    out: List[str] = []
+    out: list[str] = []
     for s in slugs:
         if s and s not in out:
             out.append(s)
     return out[:5]
 
 
-def mixkit_video_candidates(query: str) -> List[Dict]:
+def mixkit_video_candidates(query: str) -> list[dict]:
     html = ""
     try:
         with _client() as client:
@@ -152,7 +152,7 @@ def mixkit_video_candidates(query: str) -> List[Dict]:
     return out
 
 
-def find_broll(query: str, avoid: Iterable[str], seed: str) -> Optional[Dict]:
+def find_broll(query: str, avoid: Iterable[str], seed: str) -> Optional[dict]:
     """Best clip for ``query``: Pexels portrait if a key is set, else Mixkit."""
     for finder in (pexels_candidates, mixkit_video_candidates):
         choice = _pick(finder(query), avoid, seed)
@@ -162,9 +162,9 @@ def find_broll(query: str, avoid: Iterable[str], seed: str) -> Optional[Dict]:
 
 
 def find_music(mood: str, avoid: Iterable[str], seed: str,
-               pages: Optional[Iterable[str]] = None) -> Optional[Dict]:
+               pages: Optional[Iterable[str]] = None) -> Optional[dict]:
     """A Mixkit track for ``mood`` (its tag page), or from ``pages`` when given."""
-    candidates: List[Dict] = []
+    candidates: list[dict] = []
     seen: set = set()
     for page in (list(pages) if pages else [MIXKIT_MUSIC_PAGE.format(slug=_slug(mood))]):
         try:

@@ -64,15 +64,18 @@ class RenderError(RuntimeError):
     """Raised when a storyboard cannot be rendered."""
 
 
-def _run(cmd: List[str], *, cwd: Path, what: str) -> None:
+def _run(cmd: list[str], *, cwd: Path, what: str) -> None:
     """Run an ffmpeg command, raising RenderError with stderr on failure."""
     logger.debug("shorts: %s -> %s", what, " ".join(cmd))
     try:
         subprocess.run(
             cmd,
             cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=FFMPEG_TIMEOUT,
             check=True,
         )
@@ -161,7 +164,7 @@ def _validate_local_path(raw: str, what: str) -> Path:
     raise RenderError(f"{what} must stay inside {roots[0]}: {raw}")
 
 
-def _resolve_clip(scene: Dict[str, Any], index: int, workdir: Path) -> Optional[str]:
+def _resolve_clip(scene: dict[str, Any], index: int, workdir: Path) -> Optional[str]:
     """Return the local filename of this scene's B-roll, or None for none."""
     local = (scene.get("clip_path") or "").strip()
     if local:
@@ -238,7 +241,7 @@ def _build_scene_audio(
     return out
 
 
-def _write_concat_list(names: List[str], path: Path) -> None:
+def _write_concat_list(names: list[str], path: Path) -> None:
     """Write an ffmpeg concat demuxer list of bare filenames."""
     path.write_text(
         "".join(f"file '{name}'\n" for name in names), encoding="utf-8"
@@ -272,7 +275,7 @@ def _mix_music(
     return out
 
 
-def render_short(storyboard: Dict[str, Any], output_path: Path) -> Dict[str, Any]:
+def render_short(storyboard: dict[str, Any], output_path: Path) -> dict[str, Any]:
     """Render one storyboard to ``output_path``. Returns a result summary."""
     ffmpeg, _ = require_ffmpeg()
 
@@ -294,9 +297,9 @@ def render_short(storyboard: Dict[str, Any], output_path: Path) -> Dict[str, Any
 
     workdir = Path(tempfile.mkdtemp(prefix="shorts_"))
     try:
-        video_names: List[str] = []
-        audio_names: List[str] = []
-        timed_captions: List[tuple] = []
+        video_names: list[str] = []
+        audio_names: list[str] = []
+        timed_captions: list[tuple] = []
         cursor = 0.0
 
         for index, scene in enumerate(scenes):

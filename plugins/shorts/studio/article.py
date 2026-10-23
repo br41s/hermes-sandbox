@@ -42,8 +42,8 @@ class _TextExtractor(HTMLParser):
         self._skip = 0
         self._article_depth = 0
         self._article_done = False
-        self.all_parts: List[str] = []
-        self.article_parts: List[str] = []
+        self.all_parts: list[str] = []
+        self.article_parts: list[str] = []
         self.title: str = ""
         self._in_title = False
 
@@ -98,7 +98,7 @@ class _TextExtractor(HTMLParser):
             self.article_parts.append(text)
 
 
-def _tidy(parts: List[str]) -> str:
+def _tidy(parts: list[str]) -> str:
     text = "".join(parts)
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text)
@@ -115,16 +115,16 @@ def html_to_text(html: str) -> tuple[str, str]:
     return parser.title.strip(), text
 
 
-_OG_IMAGE = re.compile(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', re.I)
-_COVER_IMG = re.compile(r'<div class="article-cover">.*?<img[^>]+src=["\']([^"\']+)["\']', re.I | re.S)
-_INFOGRAPHIC = re.compile(r'<figure class="article-infographic">(.*?)</figure>', re.I | re.S)
-_IMG_SRC = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.I)
-_IMG_ALT = re.compile(r'<img[^>]+alt=["\']([^"\']*)["\']', re.I)
-_FIGCAPTION = re.compile(r'<figcaption>(.*?)</figcaption>', re.I | re.S)
+_OG_IMAGE = re.compile(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', re.IGNORECASE)
+_COVER_IMG = re.compile(r'<div class="article-cover">.*?<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE | re.DOTALL)
+_INFOGRAPHIC = re.compile(r'<figure class="article-infographic">(.*?)</figure>', re.IGNORECASE | re.DOTALL)
+_IMG_SRC = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+_IMG_ALT = re.compile(r'<img[^>]+alt=["\']([^"\']*)["\']', re.IGNORECASE)
+_FIGCAPTION = re.compile(r'<figcaption>(.*?)</figcaption>', re.IGNORECASE | re.DOTALL)
 _TAGS = re.compile(r"<[^>]+>")
 
 
-def article_images(html: str, base_url: str) -> Dict[str, Any]:
+def article_images(html: str, base_url: str) -> dict[str, Any]:
     """The article's own pictures: its cover, and its infographic when it has a raster one.
 
     The brand look (shorts/STUDIO.md §3.8, owner 2026-10-14: the picture is
@@ -137,7 +137,7 @@ def article_images(html: str, base_url: str) -> Dict[str, Any]:
     found = _OG_IMAGE.search(html) or _COVER_IMG.search(html)
     if found:
         cover = urljoin(base_url, unescape(found.group(1)).strip())
-    infographic: Optional[Dict[str, str]] = None
+    infographic: Optional[dict[str, str]] = None
     figure = _INFOGRAPHIC.search(html)
     if figure:
         src = _IMG_SRC.search(figure.group(1))

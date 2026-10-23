@@ -64,7 +64,7 @@ def test_moved_code_logs_under_the_scheduler_logger():
 
 
 def test_stack_dump_helper_never_raises(monkeypatch):
-    import hermes_cli.stackdump as stackdump
+    from hermes_cli import stackdump
     from cron.fork_ext import diagnostics
 
     def boom(*a, **k):
@@ -75,7 +75,7 @@ def test_stack_dump_helper_never_raises(monkeypatch):
 
 
 def test_jobs_backup_still_runs_on_save_and_honours_patched_clock(monkeypatch, tmp_path):
-    import cron.jobs as jobs
+    from cron import jobs
 
     monkeypatch.setattr(jobs, "CRON_DIR", tmp_path / "cron")
     monkeypatch.setattr(jobs, "JOBS_FILE", tmp_path / "cron" / "jobs.json")
@@ -94,7 +94,7 @@ def test_jobs_backup_still_runs_on_save_and_honours_patched_clock(monkeypatch, t
 
 
 def test_mark_job_interrupted_moved_out_of_cron_jobs(monkeypatch, tmp_path):
-    import cron.jobs as jobs
+    from cron import jobs
     from cron.fork_ext.interrupted import mark_job_interrupted
 
     monkeypatch.setattr(jobs, "CRON_DIR", tmp_path / "cron")

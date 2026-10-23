@@ -36,7 +36,7 @@ from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
-SHORTS_RENDER_SCHEMA: Dict[str, Any] = {
+SHORTS_RENDER_SCHEMA: dict[str, Any] = {
     "name": "shorts_render",
     "description": (
         "Build vertical short-form videos for Instagram Reels and TikTok. "
@@ -178,7 +178,7 @@ def _validate_output_path(raw: str) -> Path:
     )
 
 
-def _handle_stock_search(args: Dict[str, Any]) -> str:
+def _handle_stock_search(args: dict[str, Any]) -> str:
     from plugins.shorts.stock import StockError, search_clips
 
     try:
@@ -199,7 +199,7 @@ def _handle_stock_search(args: Dict[str, Any]) -> str:
     )
 
 
-def _handle_render(args: Dict[str, Any]) -> str:
+def _handle_render(args: dict[str, Any]) -> str:
     from plugins.shorts.render import RenderError, render_short
 
     try:
@@ -226,7 +226,7 @@ def _handle_render(args: Dict[str, Any]) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-def handle_shorts_render(args: Dict[str, Any], **_kwargs: Any) -> str:
+def handle_shorts_render(args: dict[str, Any], **_kwargs: Any) -> str:
     """Dispatch ``shorts_render``. Always returns a JSON string."""
     action = (args.get("action") or "").strip()
     if action == "stock_search":

@@ -10,14 +10,14 @@ threshold is a brief, as is a heartbeat that cannot be read.
 Hermetic: injected heartbeat and clock; the network is never touched.
 """
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import pytest
 
 import incidents.sweep as sw
 from incidents.sweep import LAPTOP_BACKUP_STALE_HOURS, laptop_backup_incidents
 
-NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 
 
 def _beat(ago_hours):
@@ -73,7 +73,7 @@ def test_refused_or_missing_gist_is_blind_not_silent(monkeypatch):
 def test_sweep_delivers_it_and_checks_by_default(tmp_path, monkeypatch):
     jobs = [{"id": "ok1", "name": "healthy", "last_error": None,
              "last_delivery_error": None,
-             "last_run_at": datetime.now(timezone.utc).isoformat()}]
+             "last_run_at": datetime.now(UTC).isoformat()}]
     stall = laptop_backup_incidents(heartbeat=_beat(80), now=NOW)
     out = sw.sweep(jobs=jobs, langfuse=[], checkout_drift=[], judge_liveness=[],
                    laptop_backup=stall, state_path=tmp_path / "a.json")

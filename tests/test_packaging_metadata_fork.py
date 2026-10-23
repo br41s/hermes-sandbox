@@ -47,6 +47,10 @@ def _lazy_deps_pinned_specs():
     tools/lazy_deps.py's runtime imports and side effects.
     """
     src = (REPO_ROOT / "tools" / "lazy_deps.py").read_text(encoding="utf-8")
+    if "LAZY_DEPS" not in src:
+        # Upstream v0.22 retired LAZY_DEPS: tools/lazy_deps.py is an old-updater stub and
+        # runtime installs resolve through PM from pyproject's extras, checked above.
+        return []
     tree = ast.parse(src)
     specs: list[str] = []
     for node in ast.walk(tree):

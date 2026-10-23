@@ -70,11 +70,11 @@ class _Side:
 class _Plan:
     source: _Side
     target: _Side
-    job_ids: List[str]
-    jobs: Dict[str, dict] = field(default_factory=dict)  # id -> source record
+    job_ids: list[str]
+    jobs: dict[str, dict] = field(default_factory=dict)  # id -> source record
     resuming: set = field(default_factory=set)            # ids paused by an earlier run
     done: set = field(default_factory=set)                # ids already only in the target
-    refusals: List[str] = field(default_factory=list)
+    refusals: list[str] = field(default_factory=list)
 
 
 # ── store access ─────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ def _in_home(home: Path) -> Iterator[None]:
         reset_hermes_home_override(token)
 
 
-def _load(home: Path) -> List[dict]:
+def _load(home: Path) -> list[dict]:
     from cron.jobs import load_jobs
 
     if not (home / "cron" / "jobs.json").is_file():
@@ -103,7 +103,7 @@ def _load(home: Path) -> List[dict]:
         return [j for j in load_jobs() if isinstance(j, dict)]
 
 
-def _rewrite(home: Path, fn: Callable[[List[dict]], Optional[Sequence[str]]]) -> None:
+def _rewrite(home: Path, fn: Callable[[list[dict]], Optional[Sequence[str]]]) -> None:
     """``fn(jobs)`` mutates the list in place under ``home``'s jobs lock and returns
     the ids it deleted, if any; the result is saved in the same critical section."""
     from cron.jobs import _jobs_lock, _save_jobs_unlocked, load_jobs
@@ -117,14 +117,14 @@ def _rewrite(home: Path, fn: Callable[[List[dict]], Optional[Sequence[str]]]) ->
 _DB_FILES = {"executions": "executions.db", "cron_notepad": "notepad.db"}
 
 
-def _rows(module, table: str, job_id: str, home: Path) -> List[dict]:
+def _rows(module, table: str, job_id: str, home: Path) -> list[dict]:
     if not (home / "cron" / _DB_FILES[table]).is_file():
         return []  # reading must not create the database
     with _in_home(home), module._transaction() as conn:
         return [dict(r) for r in conn.execute(f"SELECT * FROM {table} WHERE job_id=?", (job_id,))]
 
 
-def _insert(module, table: str, rows: List[dict], home: Path) -> int:
+def _insert(module, table: str, rows: list[dict], home: Path) -> int:
     if not rows:
         return 0
     cols = list(rows[0])
@@ -139,11 +139,11 @@ def _insert(module, table: str, rows: List[dict], home: Path) -> int:
 # ── checks ───────────────────────────────────────────────────────────────────
 
 
-def _webhook_refs(homes: Sequence[Path]) -> List[tuple]:
+def _webhook_refs(homes: Sequence[Path]) -> list[tuple]:
     """``(home, key, value)`` for every webhook route field that fires a cron job, read
     from each home's ``config.yaml`` and ``webhook_subscriptions.json``. Raises if a
     file exists and cannot be parsed: an unreadable route list must refuse the move."""
-    import yaml
+    import hermes_yaml as yaml
 
     found = []
 
@@ -161,7 +161,7 @@ def _webhook_refs(homes: Sequence[Path]) -> List[tuple]:
         for name, parse in (("config.yaml", yaml.safe_load), ("webhook_subscriptions.json", json.loads)):
             path = home / name
             if path.is_file():
-                walk(parse(path.read_text(encoding="utf-8")), home)
+                walk(parse(path.read_text(encoding="utf-8-sig")), home)
     return found
 
 
@@ -195,7 +195,7 @@ def _in_flight(job: dict, home: Path, now: datetime) -> Optional[str]:
     return None
 
 
-def _refs(job: dict) -> List[str]:
+def _refs(job: dict) -> list[str]:
     raw = job.get("context_from") or []
     return [raw] if isinstance(raw, str) else [str(r) for r in raw]
 

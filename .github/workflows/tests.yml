@@ -71,35 +71,15 @@ jobs:
           rm -rf "$RG_TARBALL" "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
           rg --version
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
+      - name: Set up locked Python and test dependencies
+        # fork: upstream v0.22's PM toolchain. scripts/run_tests.sh now runs the suite in the
+        # checkout's isolated PM test environment and ignores any .venv, so syncing a .venv
+        # here left the extras (fal, modal, ...) out of the interpreter that ran the tests.
+        uses: ./.github/actions/setup-pm
         with:
-          # Persist uv's download/wheel cache (~/.cache/uv) across runs.
-          # Keyed on the dependency manifests, so the cache is reused until
-          # pyproject.toml or uv.lock changes. `uv sync` still runs every
-          # time, but resolves from the warm cache instead of re-downloading
-          # and re-building wheels.
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            uv.lock
-
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-
-      - name: Install dependencies
-        # `uv sync --locked` installs the exact pinned set from uv.lock (and
-        # fails if the lock is out of sync with pyproject.toml), giving a
-        # reproducible env. It also creates .venv itself, so no separate
-        # `uv venv` step is needed.
-        uses: ./.github/actions/retry
-        with:
-          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --extra bedrock
-
-      - name: Minimize uv cache
-        # Optimized for CI: prunes pre-built wheels that are cheap to
-        # re-download, keeping the persisted cache small and fast to restore.
-        run: uv cache prune --ci
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web"]'
+          test-environment: 'true'
+          prune-python-cache: true
 
       - name: Run tests (slice ${{ matrix.slice.index }}/${{ inputs.slice_count }})
         # Per-file isolation via scripts/run_tests.sh: each test file runs
@@ -112,7 +92,6 @@ jobs:
         # matrix job via --files. Previously each job re-discovered files and
         # re-ran LPT independently — redundant N times.
         run: |
-          source .venv/bin/activate
           scripts/run_tests.sh --files '${{ matrix.slice.files }}'
         env:
           # fork: the flat per-file cap is 300s, sized for upstream's 32-core runners. On
@@ -177,7 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     # v2026.9.24's core e2e suites (tenancy, chaos, delivery, history, sqlite) take ~6 min
     # per-file in parallel; the old single-process run hit the 15-minute limit at 35%.
-    timeout-minutes: 40
+    # v0.22's provider catalog suites now run one file at a time (below): 60.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,58 +176,79 @@ jobs:
           rm -rf "$RG_TARBALL" "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
           rg --version
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
+      - name: Set up locked Python and test dependencies
+        # fork: upstream v0.22's PM toolchain. scripts/run_tests.sh now runs the suite in the
+        # checkout's isolated PM test environment and ignores any .venv, so syncing a .venv
+        # here left the extras (fal, modal, ...) out of the interpreter that ran the tests.
+        uses: ./.github/actions/setup-pm
         with:
-          # Persist uv's download/wheel cache (~/.cache/uv) across runs.
-          # Keyed on the dependency manifests, so the cache is reused until
-          # pyproject.toml or uv.lock changes. `uv sync` still runs every
-          # time, but resolves from the warm cache instead of re-downloading
-          # and re-building wheels.
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            uv.lock
-
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-
-      - name: Install dependencies
-        # `uv sync --locked` installs the exact pinned set from uv.lock (and
-        # fails if the lock is out of sync with pyproject.toml), giving a
-        # reproducible env. It also creates .venv itself, so no separate
-        # `uv venv` step is needed.
-        uses: ./.github/actions/retry
-        with:
-          command: uv sync --locked --python 3.11 --extra all --extra dev --extra anthropic --extra mistral --extra fal --extra modal --extra daytona --extra parallel-web --extra bedrock
-
-      - name: Minimize uv cache
-        # Optimized for CI: prunes pre-built wheels that are cheap to
-        # re-download, keeping the persisted cache small and fast to restore.
-        run: uv cache prune --ci
+          toolchain: all
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "messaging"]'
+          test-environment: 'true'
+          prune-python-cache: true
 
       - name: Require a WAL-capable SQLite
         # The state.db suites skip on a WAL-reset-vulnerable SQLite; fail
         # instead of reporting green over zero coverage. (Same step as upstream.)
         run: |
-          source .venv/bin/activate
-          python -c "import sqlite3, hermes_state_wal as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
+          "$HERMES_PYTHON" -c "import sqlite3, hermes_state_wal as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
+
+      - name: Run messaging-gated gateway cases
+        # Same step as upstream (tests/ci/test_messaging_gated_selection.py). These gateway files
+        # drive the REAL Discord/Telegram SDKs and skip when the `messaging` extra is absent, which
+        # it is in the ordinary slices; this is the only job that installs it. A skip here is a
+        # coverage hole, not a pass: fail on any.
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/messaging-gateway.log"
+          scripts/run_tests.sh -rs \
+            tests/gateway/test_native_role_reauthorization.py \
+            tests/gateway/test_native_telegram_startup_recovery.py \
+            tests/gateway/test_native_pause_notice.py \
+            tests/gateway/test_native_reply_crash_recovery.py | tee "$log"
+          summary=$(grep '^=== Summary:' "$log")
+          case "$summary" in
+            *skipped*) echo "::error::messaging-gated gateway cases skipped: $summary"; exit 1 ;;
+          esac
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
 
       - name: Run e2e tests
         # One subprocess per file, in parallel, as upstream does: the core suites spawn real
         # processes (serve, gateway, tui_gateway, MCP servers, SQLite writers) and must not
         # share interpreter state. tests/e2e/core/upgrade is excluded: it exercises
         # `hermes update` from N-1 release tags, and the fork deploys by image tag instead
-        # (scripts/deploy.sh); upstream runs it in its own 32-core job.
+        # (scripts/deploy.sh); upstream runs it in its own 32-core job. The provider catalog
+        # suites run in the next step.
         run: |
-          source .venv/bin/activate
-          mapfile -t files < <(find tests/e2e -name 'test_*.py' -not -path 'tests/e2e/core/upgrade/*' | sort)
+          mapfile -t files < <(find tests/e2e -name 'test_*.py' -not -path 'tests/e2e/core/upgrade/*' \
+            -not -path 'tests/e2e/core/providers/test_catalog_*' | sort)
           scripts/run_tests.sh --include-integration "${files[@]}"
         env:
+          # Upstream bounds these process trees at 3 workers on a 32-vCPU runner ("at 4 the PTY
+          # turn and serve-SIGTERM deadlines still starved intermittently"); this is a 4-vCPU one.
+          HERMES_TEST_WORKERS: "3"
           # Multi-process episodes legitimately run past the 300s default.
           HERMES_TEST_FILE_TIMEOUT: "900"
           # No automatic re-run: the torture chamber and exactly-once suites are race
           # detectors, and a corruption that passes on retry is still a corruption.
+          HERMES_TEST_FILE_RETRIES: "0"
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Run e2e provider catalog suites, one file at a time
+        # Each catalog file already drives 8 real CLI turns at once (_catalog_helpers.py), each
+        # with a 75s ceiling. Beside other e2e files on this 4-vCPU runner they starved into
+        # timeouts on rows that pass alone; upstream's v0.22.5 does the same under that load.
+        run: |
+          mapfile -t files < <(find tests/e2e/core/providers -name 'test_catalog_*.py' | sort)
+          scripts/run_tests.sh --include-integration "${files[@]}"
+        env:
+          HERMES_TEST_WORKERS: "1"
+          HERMES_TEST_FILE_TIMEOUT: "900"
           HERMES_TEST_FILE_RETRIES: "0"
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""

@@ -209,7 +209,7 @@ _SCENE_FORBIDDEN = re.compile(
 class PackageError(ValueError):
     """Raised with every problem found, one per line."""
 
-    def __init__(self, problems: List[str]):
+    def __init__(self, problems: list[str]):
         self.problems = problems
         super().__init__("\n".join(f"- {p}" for p in problems))
 
@@ -226,7 +226,7 @@ def _text(value: Any) -> str:
     return _CONTROL.sub(" ", text).strip()
 
 
-def _check_text(problems: List[str], where: str, text: str, *,
+def _check_text(problems: list[str], where: str, text: str, *,
                 required: bool = True, max_words: int = 0, max_chars: int = 0) -> None:
     if not text:
         if required:
@@ -238,7 +238,7 @@ def _check_text(problems: List[str], where: str, text: str, *,
         problems.append(f"{where}: {len(text)} chars, max {max_chars}: {text!r}")
 
 
-def _check_hook_lead(problems: List[str], where: str, vo: str, *, tip: bool = False) -> None:
+def _check_hook_lead(problems: list[str], where: str, vo: str, *, tip: bool = False) -> None:
     """The hook's first ~3 seconds: the promise or the pain, said at once.
 
     The tip format bounds the whole of Lucía's opening instead
@@ -278,7 +278,7 @@ def _key_words(text: str) -> set:
     return out
 
 
-def _check_promise(problems: List[str], where: str, vo: str, onscreen: str, *, tip: bool = False) -> None:
+def _check_promise(problems: list[str], where: str, vo: str, onscreen: str, *, tip: bool = False) -> None:
     """The written promise says what the first spoken sentence says (owner, 2026-10-14).
 
     The Studio's shorts named the topic on screen while the voice said
@@ -297,7 +297,7 @@ def _check_promise(problems: List[str], where: str, vo: str, onscreen: str, *, t
         )
 
 
-def _check_hook_pattern(problems: List[str], pattern: str, vo: str) -> None:
+def _check_hook_pattern(problems: list[str], pattern: str, vo: str) -> None:
     """The label must match the hook where the form is mechanical.
 
     A question and a number payoff are recognisable, so a mislabel there
@@ -322,7 +322,7 @@ def _check_hook_pattern(problems: List[str], pattern: str, vo: str) -> None:
                         f"sentence, written in digits: {lead!r}")
 
 
-def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
+def _check_opener(problems: list[str], raw: Any) -> dict[str, str]:
     """Tip format: the joke said in the setting before the hook."""
     raw = raw if isinstance(raw, dict) else {}
     opener = {"line": _text(raw.get("line")), "setting": _text(raw.get("setting")),
@@ -343,7 +343,7 @@ def _check_opener(problems: List[str], raw: Any) -> Dict[str, str]:
     return opener
 
 
-def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Dict[str, Any],
+def _check_tip_beat(problems: list[str], where: str, b: dict[str, Any], beat: dict[str, Any],
                     kind: str, i: int, n: int) -> None:
     """Tip format: what is on screen while this line is said, and the before/after."""
     show = _text(b.get("show")) or ("presenter" if kind == "hook" else "card")
@@ -379,20 +379,20 @@ def _check_tip_beat(problems: List[str], where: str, b: Dict[str, Any], beat: Di
 def _host(url: str) -> str:
     parsed = urlparse(url if "://" in url else f"https://{url}")
     host = (parsed.hostname or "").lower()
-    return host[4:] if host.startswith("www.") else host
+    return host.removeprefix("www.")
 
 
-def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
+def validate_package(raw: dict[str, Any]) -> dict[str, Any]:
     """Return a normalised copy of ``raw`` or raise :class:`PackageError`.
 
     Normalisation fills defaults (voice, version) and strips control
     characters; it never rewrites the agent's words.
     """
-    problems: List[str] = []
+    problems: list[str] = []
     if not isinstance(raw, dict):
         raise PackageError(["package must be a JSON object"])
 
-    pkg: Dict[str, Any] = {"version": PACKAGE_VERSION}
+    pkg: dict[str, Any] = {"version": PACKAGE_VERSION}
 
     lang = _text(raw.get("lang")).lower()
     if lang not in DEFAULT_VOICES:
@@ -448,7 +448,7 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         pkg["opener"] = _check_opener(problems, raw.get("opener"))
 
     beats_raw = raw.get("beats")
-    beats: List[Dict[str, Any]] = []
+    beats: list[dict[str, Any]] = []
     if not isinstance(beats_raw, list):
         problems.append("beats: must be a list")
         beats_raw = []
@@ -471,7 +471,7 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
         elif 0 < i < len(beats_raw) - 1 and kind not in middle_kinds:
             problems.append(f"{where}: middle beats are one of {list(middle_kinds)}, got {kind!r}")
 
-        beat: Dict[str, Any] = {"kind": kind, "vo": _text(b.get("vo"))}
+        beat: dict[str, Any] = {"kind": kind, "vo": _text(b.get("vo"))}
         _check_text(problems, f"{where}.vo", beat["vo"], max_words=MAX_VO_WORDS)
         if i == 0 and kind == "hook" and beat["vo"]:
             _check_hook_lead(problems, where, beat["vo"], tip=tip)
@@ -645,11 +645,11 @@ def validate_package(raw: Dict[str, Any]) -> Dict[str, Any]:
     return pkg
 
 
-def _hashtags(text: str) -> List[str]:
+def _hashtags(text: str) -> list[str]:
     return re.findall(r"(?<!\w)#\w+", text or "")
 
 
-def _validate_social(raw: Any, problems: List[str]) -> Dict[str, Any]:
+def _validate_social(raw: Any, problems: list[str]) -> dict[str, Any]:
     social = raw if isinstance(raw, dict) else {}
     yt = social.get("youtube") if isinstance(social.get("youtube"), dict) else {}
     out = {
@@ -691,7 +691,7 @@ _FIGURE = re.compile(r"[$€£]?\d[\d.,]*(?:\s?%|[kKMx](?![A-Za-z]))?")
 _BARE_COUNT_MAX = 10
 
 
-def _normalise_figure(token: str) -> Tuple[str, bool]:
+def _normalise_figure(token: str) -> tuple[str, bool]:
     """Return (digits-only core, is_claim)."""
     token = token.strip()
     decorated = bool(re.search(r"[%$€£kKMx]", token))
@@ -708,9 +708,9 @@ def _normalise_figure(token: str) -> Tuple[str, bool]:
     return core, is_claim
 
 
-def figures(text: str) -> List[str]:
+def figures(text: str) -> list[str]:
     """Figures in ``text`` that count as factual claims, normalised."""
-    out: List[str] = []
+    out: list[str] = []
     for match in _FIGURE.finditer(text or ""):
         core, is_claim = _normalise_figure(match.group(0))
         if core and is_claim:
@@ -727,7 +727,7 @@ def _article_figures(article_text: str) -> set:
     return found
 
 
-def check_grounding(pkg: Dict[str, Any], article_text: str) -> List[str]:
+def check_grounding(pkg: dict[str, Any], article_text: str) -> list[str]:
     """Return one problem per figure the short states and the article does not.
 
     Deliberately narrow: it cannot judge a paraphrase, but it can prove that
@@ -735,7 +735,7 @@ def check_grounding(pkg: Dict[str, Any], article_text: str) -> List[str]:
     would also swear it was sourced, so the check reads the article itself.
     """
     known = _article_figures(article_text)
-    problems: List[str] = []
+    problems: list[str] = []
     for i, beat in enumerate(pkg.get("beats") or []):
         fields = [("vo", beat.get("vo")), ("onscreen", beat.get("onscreen")),
                   ("value", beat.get("value")), ("label", beat.get("label")),
@@ -759,6 +759,6 @@ def check_grounding(pkg: Dict[str, Any], article_text: str) -> List[str]:
     return problems
 
 
-def spoken_text(pkg: Dict[str, Any]) -> str:
+def spoken_text(pkg: dict[str, Any]) -> str:
     """The full voiceover, beat by beat — handy for reports and the SRT."""
     return "\n".join(b.get("vo", "") for b in pkg.get("beats") or [])

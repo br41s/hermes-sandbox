@@ -43,7 +43,7 @@ from plugins.shorts.studio import media
 
 TICKS_PER_MS = 10_000  # Edge reports offsets in 100 ns ticks
 
-Word = Dict[str, float | str]  # {"text", "start", "end"} in seconds, beat-relative
+Word = dict[str, float | str]  # {"text", "start", "end"} in seconds, beat-relative
 
 
 class VoiceError(RuntimeError):
@@ -112,7 +112,7 @@ def kokoro_voice(voice: str) -> str:
     return override if _KOKORO_ID.match(override) else KOKORO_VOICES.get(lang, KOKORO_VOICES["en"])
 
 
-def host_voice(lang: str, neural: Dict[str, str]) -> str:
+def host_voice(lang: str, neural: dict[str, str]) -> str:
     """Lucía's free voice for a line without a take: Kokoro's, or the neural one under Azure."""
     if engine(lang) == "kokoro":
         return KOKORO_HOST_VOICES.get(lang, KOKORO_HOST_VOICES["en"])
@@ -138,8 +138,7 @@ def _download(url: str, dest: Path) -> Path:
     with httpx.stream("GET", url, follow_redirects=True, timeout=600.0) as resp:
         resp.raise_for_status()
         with open(part, "wb") as handle:
-            for chunk in resp.iter_bytes(1 << 20):
-                handle.write(chunk)
+            handle.writelines(resp.iter_bytes(1 << 20))
     part.replace(dest)
     return dest
 
@@ -174,7 +173,7 @@ def _kokoro(text: str, voice: str, lang: str, wav: Path) -> float:
     return len(pcm) / float(rate)
 
 
-def heard_words(wav: Path, lang: str) -> List[Word]:
+def heard_words(wav: Path, lang: str) -> list[Word]:
     """What faster-whisper hears in ``wav``, word by word, with times."""
     from faster_whisper import WhisperModel
 
@@ -182,7 +181,7 @@ def heard_words(wav: Path, lang: str) -> List[Word]:
                          download_root=str(model_dir() / "whisper"))
     segments, _info = model.transcribe(str(wav), language=lang, word_timestamps=True,
                                        beam_size=5, vad_filter=False)
-    words: List[Word] = []
+    words: list[Word] = []
     for segment in segments:
         for w in segment.words or []:
             if w.word.strip():
@@ -194,11 +193,11 @@ def _norm(token: str) -> str:
     return re.sub(r"[\W_]+", "", token.lower())
 
 
-def _even(start: float, end: float, tokens: List[str]) -> List[Tuple[float, float]]:
+def _even(start: float, end: float, tokens: list[str]) -> list[tuple[float, float]]:
     weights = [max(2, len(_norm(t))) for t in tokens]
     total = float(sum(weights)) or 1.0
     span = max(0.1, end - start)
-    out: List[Tuple[float, float]] = []
+    out: list[tuple[float, float]] = []
     cursor = start
     for weight in weights:
         length = span * weight / total
@@ -207,8 +206,8 @@ def _even(start: float, end: float, tokens: List[str]) -> List[Tuple[float, floa
     return out
 
 
-def align_words(text: str, heard: List[Word], seconds: float, *, lead: float = 0.05,
-                tail: float = 0.15) -> List[Word]:
+def align_words(text: str, heard: list[Word], seconds: float, *, lead: float = 0.05,
+                tail: float = 0.15) -> list[Word]:
     """The script's tokens at the times the recogniser heard them.
 
     Matched words take the heard time; a stretch heard differently (a figure
@@ -223,7 +222,7 @@ def align_words(text: str, heard: List[Word], seconds: float, *, lead: float = 0
         return spread_words(text, seconds, lead=lead, tail=tail)
     a = [_norm(t) for t in tokens]
     b = [_norm(str(w["text"])) for w in heard]
-    spans: List[Optional[Tuple[float, float]]] = [None] * len(tokens)
+    spans: list[Optional[tuple[float, float]]] = [None] * len(tokens)
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
         if op == "equal" or (op == "replace" and i2 - i1 == j2 - j1):
             for k in range(i2 - i1):
@@ -249,7 +248,7 @@ def align_words(text: str, heard: List[Word], seconds: float, *, lead: float = 0
         for k, span in enumerate(_even(start, end, tokens[i:j])):
             spans[i + k] = span
         i = j
-    out: List[Word] = []
+    out: list[Word] = []
     floor = 0.0
     for token, span in zip(tokens, spans):
         start = max(float(span[0]), floor)
@@ -259,7 +258,7 @@ def align_words(text: str, heard: List[Word], seconds: float, *, lead: float = 0
     return out
 
 
-def _kokoro_synthesize(text: str, voice: str, mp3: Path) -> List[Word]:
+def _kokoro_synthesize(text: str, voice: str, mp3: Path) -> list[Word]:
     lang = lang2(voice)
     wav = mp3.with_suffix(".wav")
     seconds = _kokoro(text, kokoro_voice(voice), lang, wav)
@@ -304,12 +303,13 @@ def _azure(text: str, voice: str, rate: str, mp3: Path, key: str, region: str) -
     mp3.write_bytes(resp.content)
 
 
-async def _edge_stream(text: str, voice: str, rate: str, mp3: Path) -> List[Word]:
+async def _edge_stream(text: str, voice: str, rate: str, mp3: Path) -> list[Word]:
     import edge_tts
 
-    words: List[Word] = []
+    words: list[Word] = []
     communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
-    with open(mp3, "wb") as handle:
+    # Render-runner only (GitHub Actions), one stream per process: nothing else shares this loop.
+    with open(mp3, "wb") as handle:  # noqa: ASYNC230
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 handle.write(chunk["data"])
@@ -328,7 +328,7 @@ async def _edge_stream(text: str, voice: str, rate: str, mp3: Path) -> List[Word
 BACKOFF_S = (3, 6, 12, 20, 30)
 
 
-def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = len(BACKOFF_S) + 1) -> List[Word]:
+def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = len(BACKOFF_S) + 1) -> list[Word]:
     """Speak ``text`` into ``mp3``; return its words with beat-relative times.
 
     ``voice`` is the package's neural voice name (Martín's, forced by the
@@ -370,7 +370,7 @@ def synthesize(text: str, voice: str, rate: str, mp3: Path, *, attempts: int = l
     raise VoiceError(f"Edge TTS failed after {attempts} attempts for {text[:40]!r}: {last}")
 
 
-def fake_synthesize(text: str, mp3: Path) -> List[Word]:
+def fake_synthesize(text: str, mp3: Path) -> list[Word]:
     """Offline stand-in: a quiet tone lasting ~0.36s a word. Tests and dry runs only."""
     seconds = max(1.0, 0.36 * len(text.split()))
     media.ffmpeg("-f", "lavfi", "-i", f"sine=frequency=220:sample_rate=48000:duration={seconds:.2f}",
@@ -378,7 +378,7 @@ def fake_synthesize(text: str, mp3: Path) -> List[Word]:
     return spread_words(text, seconds)
 
 
-def spread_words(text: str, seconds: float, *, lead: float = 0.05, tail: float = 0.15) -> List[Word]:
+def spread_words(text: str, seconds: float, *, lead: float = 0.05, tail: float = 0.15) -> list[Word]:
     """Even word timings across ``seconds`` (weighted by word length)."""
     tokens = [t for t in re.split(r"\s+", text.strip()) if t]
     if not tokens:
@@ -386,7 +386,7 @@ def spread_words(text: str, seconds: float, *, lead: float = 0.05, tail: float =
     span = max(0.1, seconds - lead - tail)
     weights = [max(2, len(t)) for t in tokens]
     total = float(sum(weights))
-    words: List[Word] = []
+    words: list[Word] = []
     cursor = lead
     for token, weight in zip(tokens, weights):
         length = span * weight / total
@@ -403,7 +403,7 @@ def clean_word(text: str) -> str:
     return _STRIP.sub("", text.strip())
 
 
-def attach_raw(words: List[Word], vo_text: str) -> List[Word]:
+def attach_raw(words: list[Word], vo_text: str) -> list[Word]:
     """Give each timed word its script token (with punctuation) as ``raw``.
 
     Edge reports bare words; the SRT should read like the script. Matching is
@@ -423,8 +423,8 @@ def attach_raw(words: List[Word], vo_text: str) -> List[Word]:
     return words
 
 
-def paginate(words: List[Dict], *, max_words: int = 3, max_chars: int = 18,
-             pause_ms: int = 380) -> List[Dict]:
+def paginate(words: list[dict], *, max_words: int = 3, max_chars: int = 18,
+             pause_ms: int = 380) -> list[dict]:
     """Assign a karaoke ``page`` to each word (absolute-ms words, in order).
 
     Three words a page, big, like VideoDesk's subtitles (owner, 2026-10-14).
@@ -453,16 +453,16 @@ def paginate(words: List[Dict], *, max_words: int = 3, max_chars: int = 18,
 
 
 def _srt_time(ms: float) -> str:
-    ms = max(0, int(round(ms)))
+    ms = max(0, round(ms))
     h, rem = divmod(ms, 3_600_000)
     m, rem = divmod(rem, 60_000)
     s, ms = divmod(rem, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def build_srt(words: List[Dict], *, max_words: int = 7, max_chars: int = 42) -> str:
+def build_srt(words: list[dict], *, max_words: int = 7, max_chars: int = 42) -> str:
     """Sidecar captions for YouTube: short lines, broken at sentences, pauses and beats."""
-    lines: List[List[Dict]] = []
+    lines: list[list[dict]] = []
     for w in words:
         cur = lines[-1] if lines else None
         if (

@@ -23,7 +23,7 @@ POD = "service-6a5ea5074d439e41ee4cd38c-7d9dc45d7b-qjhrs"
 
 
 def _diagnose(*args: str) -> str:
-    func = re.search(r"^rollout_diagnosis\(\) \{\n.*?^\}\n", TEXT, re.S | re.M).group(0)
+    func = re.search(r"^rollout_diagnosis\(\) \{\n.*?^\}\n", TEXT, re.DOTALL | re.MULTILINE).group(0)
     script = func + 'rollout_diagnosis "$@"\n'
     out = subprocess.run(["bash", "-c", script, "deploy.sh", *args],
                          capture_output=True, text=True, timeout=10, check=True)

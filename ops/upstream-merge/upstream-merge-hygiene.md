@@ -196,6 +196,25 @@ upstream and a watchdog that keeps saying "up to date". Check with
   profile into another and broke the incident watcher. When upstream changes
   *dispatch*, re-read every comment that says "this is safe because X runs
   sequentially".
+* **Three fork-owned test lists in the root `conftest.py`, re-checked every merge**
+  (v0.22.5, PR 489):
+  * `_UPSTREAM_CI_LAYOUT_TESTS`: upstream tests of its own `ci.yaml` / `tests.yml` /
+    `docker.yml` layout. The fork keeps `ci.yml` (owner, 2026-10-23). Drop an entry
+    upstream deleted; add one only when every case fails on that layout.
+  * `_UPSTREAM_NETWORK_TESTS`: upstream tests that use the real network in upstream's CI.
+    Add one only after tracing the live call; a fork test is mocked instead.
+  * `_FORK_PLUGIN_TOOLSETS_OFF`: upstream modules that assert exact default toolsets and
+    would see the bundled `shorts` toolset.
+* **Upstream's CI runs on Blacksmith runners (32 vCPU) the fork does not have.** A
+  workflow the fork runs goes back to `ubuntu-latest`; an upstream-only one gets
+  `if: github.repository != 'br41s/hermes-sandbox'` (never `== 'NousResearch/...'`,
+  which upstream's gate tests evaluate as false). Load-sensitive e2e suites starve on
+  4 vCPU: the provider catalogs run serially in `tests.yml`.
+* **The Langfuse catalog plugin is baked into the image** (owner, 2026-10-23). The
+  Dockerfile's `catalog_plugins` stage fetches it at `plugin-catalog/langfuse.yaml`'s sha;
+  `boot_reconcile.place_catalog_plugins` places it in every home that uses it. When upstream
+  moves that sha and the plugin's `langfuse==` pin changes, the image build stops with a
+  message: bump pyproject's `observability` extra to the plugin's pin and relock.
 
 ## Reducing the 81 (do after a couple of clean monthly merges)
 

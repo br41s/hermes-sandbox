@@ -66,8 +66,12 @@ def test_no_secret_configured_fails_closed(monkeypatch):
                         lambda *a, **kw: scheduled.append(a))
     client, pa, ph = _client()
     try:
-        resp = client.post("/api/delegate", json=_body())
+        # A caller presenting a secret learns the engine is unconfigured (retryable)...
+        resp = client.post("/api/delegate", json=_body(), headers={"x-hermes-secret": "anything"})
         assert resp.status_code == 503
+        # ...an anonymous one only that it is unauthorized, before the body is even validated.
+        assert client.post("/api/delegate", json=_body()).status_code == 401
+        assert client.post("/api/delegate", json={}).status_code == 401
         assert scheduled == []
     finally:
         _restore(pa, ph)

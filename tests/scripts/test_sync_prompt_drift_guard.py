@@ -54,7 +54,7 @@ def test_live_edited_since_last_sync_is_blocked_not_overwritten(monkeypatch, rep
     _with_jobs(monkeypatch, _job(prompt="hand-patched in production\n"))
     drift = sync.find_drift(None)
     assert drift["changed"] == []
-    (job, source, new_text, detail), = drift["blocked"]
+    (job, _source, new_text, detail), = drift["blocked"]
     assert job["id"] == "j1"
     assert new_text is None
     assert "edited since the last sync" in detail
@@ -71,7 +71,7 @@ def test_force_overrides_the_guard(monkeypatch, repo_file):
 def test_job_with_no_baseline_syncs_but_is_flagged(monkeypatch, repo_file):
     """Never synced, so nothing to judge the live side against — say so."""
     _with_jobs(monkeypatch, _job(synced_sha=None))
-    (job, source, new_text, detail), = sync.find_drift(None)["changed"]
+    (_job_row, _source, new_text, detail), = sync.find_drift(None)["changed"]
     assert new_text == REPO_TEXT
     assert "first sync" in detail
 

@@ -72,7 +72,7 @@ def main() -> int:
     existing = {j.get("name"): j for j in list_jobs(include_disabled=True)}
     schedules = {"producer": args.producer_schedule, "publisher": args.publisher_schedule}
     for spec in JOBS:
-        prompt = (REPO_ROOT / spec["prompt_source"]).read_text(encoding="utf-8")
+        prompt = (REPO_ROOT / spec["prompt_source"]).read_text(encoding="utf-8-sig")
         schedule = schedules[spec["flag"]]
         job = existing.get(spec["name"])
         if job:

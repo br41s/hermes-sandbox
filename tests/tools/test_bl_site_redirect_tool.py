@@ -206,7 +206,7 @@ def test_propose_sends_tier_and_evidence_verbatim(monkeypatch):
         evidence={"gtin": "50043859629256"},
     )
 
-    method, url, body = calls[0]
+    method, _url, body = calls[0]
     assert method == "POST"
     assert body == {
         "old_path": "/muerta",

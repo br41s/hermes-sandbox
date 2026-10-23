@@ -36,14 +36,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))
 
-from cron.fork_ext.prompt_sync import prompt_sha as _prompt_sha  # noqa: E402
-from cron.jobs import list_jobs, update_job  # noqa: E402
-from tools.cronjob_tools import _scan_cron_prompt  # noqa: E402
+from cron.fork_ext.prompt_sync import prompt_sha as _prompt_sha
+from cron.jobs import list_jobs, update_job
+from tools.cronjob_tools import _scan_cron_prompt
 
 
 def _read_source(source: str) -> str:
     path = Path(REPO_ROOT) / source
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8-sig")
 
 
 def find_drift(sources: list[str] | None, *, force: bool = False) -> dict:

@@ -8,7 +8,7 @@ session store.
 from __future__ import annotations
 
 import importlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -45,7 +45,7 @@ def mc_env(tmp_path, monkeypatch):
 class _FakeDB:
     """Minimal SessionDB stand-in."""
 
-    def __init__(self, sessions: List[Dict[str, Any]], messages: Dict[str, List[Dict]]):
+    def __init__(self, sessions: list[dict[str, Any]], messages: dict[str, list[dict]]):
         self._sessions = sessions
         self._messages = messages
 
@@ -69,7 +69,7 @@ def _install_fake_db(monkeypatch, sessions, messages):
 
 def test_disabled_by_default(mc_env, monkeypatch):
     mc = mc_env["mc"]
-    monkeypatch.setattr(mc, "_load_config", lambda: {})
+    monkeypatch.setattr(mc, "_load_config", dict)
     assert mc.is_enabled() is False
     assert mc.should_run_now() is False
 
@@ -111,14 +111,14 @@ def test_first_run_defers_and_seeds(mc_env):
 
 def test_runs_after_interval(mc_env):
     mc = mc_env["mc"]
-    old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    old = (datetime.now(UTC) - timedelta(days=8)).isoformat()
     st = mc.load_state(); st["last_run_at"] = old; mc.save_state(st)
     assert mc.should_run_now() is True
 
 
 def test_paused_blocks_run(mc_env):
     mc = mc_env["mc"]
-    old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    old = (datetime.now(UTC) - timedelta(days=8)).isoformat()
     st = mc.load_state(); st["last_run_at"] = old; mc.save_state(st)
     mc.set_paused(True)
     assert mc.should_run_now() is False
@@ -126,7 +126,7 @@ def test_paused_blocks_run(mc_env):
 
 def test_idle_gate_blocks(mc_env, monkeypatch):
     mc = mc_env["mc"]
-    old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    old = (datetime.now(UTC) - timedelta(days=8)).isoformat()
     st = mc.load_state(); st["last_run_at"] = old; mc.save_state(st)
     # Idle for 1 minute < 2h min_idle → no run.
     assert mc.maybe_run_memory_curator(idle_for_seconds=60.0) is None
@@ -138,7 +138,7 @@ def test_idle_gate_blocks(mc_env, monkeypatch):
 
 def test_digest_written_and_state_updated(mc_env, monkeypatch):
     mc = mc_env["mc"]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     sessions = [{"id": "s1", "title": "T", "last_active": now.isoformat(),
                  "message_count": 4}]
     messages = {"s1": [
@@ -186,14 +186,14 @@ def test_transcript_skips_tool_and_nonstring(mc_env):
 def test_no_sessions_writes_nothing_new(mc_env, monkeypatch):
     mc = mc_env["mc"]
     _install_fake_db(monkeypatch, [], {})
-    res = mc.run_memory_digest(now=datetime.now(timezone.utc), force=True)
+    res = mc.run_memory_digest(now=datetime.now(UTC), force=True)
     assert res["sessions"] == 0
     assert "NOTHING NEW" in Path(res["digest_path"]).read_text()
 
 
 def test_lookback_filters_old_sessions(mc_env, monkeypatch):
     mc = mc_env["mc"]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     old = (now - timedelta(days=30)).isoformat()
     sessions = [{"id": "old", "title": "", "last_active": old, "message_count": 2}]
     messages = {"old": [{"role": "user", "content": "stale"}]}
@@ -206,7 +206,7 @@ def test_force_bypasses_interval_gate(mc_env, monkeypatch):
     mc = mc_env["mc"]
     # No last_run_at → should_run_now would defer, but force runs anyway.
     _install_fake_db(monkeypatch, [], {})
-    res = mc.run_memory_digest(now=datetime.now(timezone.utc), force=True)
+    res = mc.run_memory_digest(now=datetime.now(UTC), force=True)
     assert res is not None
 
 
@@ -585,7 +585,7 @@ def _digest_env(mc, monkeypatch, auto_apply):
     if auto_apply:
         cfg["auto_apply"] = True
     monkeypatch.setattr(mc, "_load_config", lambda: cfg)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _install_fake_db(monkeypatch,
                      [{"id": "s1", "title": "T", "last_active": now.isoformat()}],
                      {"s1": [{"role": "user", "content": "x"}]})
@@ -682,7 +682,7 @@ def test_digest_notify_only_when_flag_and_proposals(mc_env, monkeypatch):
     mc = mc_env["mc"]
     sent = []
     monkeypatch.setattr(mc, "_notify_telegram", lambda text: sent.append(text) or True)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _install_fake_db(monkeypatch,
                      [{"id": "s1", "title": "T", "last_active": now.isoformat()}],
                      {"s1": [{"role": "user", "content": "x"}]})
@@ -699,5 +699,5 @@ def test_digest_notify_silent_when_no_proposals(mc_env, monkeypatch):
     sent = []
     monkeypatch.setattr(mc, "_notify_telegram", lambda text: sent.append(text) or True)
     _install_fake_db(monkeypatch, [], {})   # no sessions → no proposals
-    mc.run_memory_digest(now=datetime.now(timezone.utc), force=True, notify=True)
+    mc.run_memory_digest(now=datetime.now(UTC), force=True, notify=True)
     assert sent == []

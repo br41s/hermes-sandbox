@@ -13,7 +13,13 @@ These drive the rest of the path the way the multiplex ticker does: the real
 ``run_one_job``, which installs the launch scope itself (``_run_one_job_body``) and
 delivers through the real ``_deliver_result`` to the live adapter the ticker hands a
 default-profile tick. Only the agent run, the output file and the job-store mark are
-stubbed; the mark is where the delivery error lands, as it does in production.
+stubbed.
+
+Since upstream v0.22 a run does not send inline: ``_save_compose_deliver`` enqueues the
+notice in the profile's ``cron/deliveries.db`` and the gateway's housekeeping drains it
+through the live adapters under that profile's runtime scope
+(``gateway/run.py`` ``_drain_restart_safe_cron_deliveries``). The drain is driven here the
+same way, and a failed send is read from the queue row, where production records it.
 """
 
 from __future__ import annotations
@@ -74,11 +80,16 @@ class _LiveTelegram:
 
 
 def _fire_under_multiplex(home, job, adapter, *, during_run=None):
-    """Tick ``job`` as the multiplex ticker does for the default profile.
+    """Tick ``job`` as the multiplex ticker does for the default profile, then drain the
+    launch profile's delivery queue as the gateway's housekeeping does.
 
     Returns ``(marks, standalone)``: every ``mark_job_run`` call with its
-    ``delivery_error``, and every chat the standalone fallback was asked to send to.
+    ``delivery_error`` (the queue row's error once drained), and every chat the
+    standalone fallback was asked to send to.
     """
+    from cron import delivery_queue
+    from gateway.run import _profile_runtime_scope
+
     marks, standalone = [], []
 
     def fake_run_job_impl(job, **_kwargs):
@@ -113,6 +124,14 @@ def _fire_under_multiplex(home, job, adapter, *, during_run=None):
          _profile_cron_scope(home):
         # tick_adapters_for(default_profile) hands the tick the live adapter map.
         sched.run_one_job(job, adapters={Platform.TELEGRAM: adapter}, loop=loop)
+    with patch("tools.send_message_tool._send_to_platform", fake_standalone), \
+         patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro), \
+         _profile_runtime_scope(home):
+        sched.drain_delivery_queue({Platform.TELEGRAM: adapter}, loop)
+        for mark in marks:
+            row = delivery_queue.get_status(job.get("execution_id") or "")
+            if row is not None and mark["delivery_error"] is None:
+                mark["delivery_error"] = row.get("error")
     return marks, standalone
 
 
@@ -132,15 +151,25 @@ def test_default_profile_job_delivers_to_the_live_adapter(launch_home):
     assert standalone == []
 
 
-def test_without_the_flag_it_is_the_incident(launch_home, monkeypatch):
-    """Upstream's .env-only launch scope: the error production logged on 2026-09-28."""
+def test_without_the_flag_the_queued_drain_still_reaches_the_live_adapter(launch_home, monkeypatch):
+    """Upstream's .env-only launch scope no longer breaks cron delivery.
+
+    On 2026-09-28 this path failed ``platform 'telegram' not configured/enabled``: the
+    inline send loaded the gateway config under a scope without the token, and the
+    disabled ``telegram:`` block vetoed the live adapter. Since upstream v0.22 the notice
+    goes through the delivery queue, and its drain hands the row to the live adapter
+    whatever the scope's token says, so the cron half of the incident cannot recur this
+    way. The fork flag is still what keeps the Telegram allowlists readable
+    (tests/agent/test_process_env_scope_fork.py); this pins that delivery no longer
+    depends on it, so a future change that makes it depend again shows up here.
+    """
     monkeypatch.delenv(pes.FLAG)
     adapter = _LiveTelegram()
     marks, standalone = _fire_under_multiplex(launch_home, _job(), adapter)
 
-    assert len(marks) == 1
-    assert marks[0]["delivery_error"] == "platform 'telegram' not configured/enabled"
-    assert adapter.sent == [] and standalone == []
+    assert marks == [{"job_id": "a1b2c3d4e5f6", "success": True, "delivery_error": None}]
+    assert [s["chat_id"] for s in adapter.sent] == [CHAT]
+    assert standalone == []
 
 
 def test_a_legacy_profile_record_fails_instead_of_running_under_the_launch_scope(launch_home):

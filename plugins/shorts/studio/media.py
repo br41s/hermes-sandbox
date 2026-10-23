@@ -41,7 +41,7 @@ def binary(name: str) -> str:
     return path
 
 
-def run(cmd: List[str], what: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
+def run(cmd: list[str], what: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
@@ -58,7 +58,7 @@ def ffmpeg(*args: str, what: str, timeout: int = DEFAULT_TIMEOUT) -> subprocess.
                what, timeout)
 
 
-def probe(path: Path) -> Dict[str, Any]:
+def probe(path: Path) -> dict[str, Any]:
     out = run([binary("ffprobe"), "-v", "error", "-print_format", "json",
                "-show_format", "-show_streams", str(path)], f"ffprobe {path.name}", 60)
     return json.loads(out.stdout or "{}")
@@ -97,7 +97,7 @@ def pad_segment(src: Path, dst: Path, lead: float, total: float) -> Path:
     of frames; padding each segment to it keeps audio and video in lockstep
     by construction instead of by arithmetic.
     """
-    delay_ms = max(0, int(round(lead * 1000)))
+    delay_ms = max(0, round(lead * 1000))
     ffmpeg("-i", str(src),
            "-af", f"adelay={delay_ms}:all=1,apad",
            "-t", f"{total:.6f}", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
@@ -111,7 +111,7 @@ def silence(dst: Path, seconds: float) -> Path:
     return dst
 
 
-def concat_wavs(parts: List[Path], dst: Path) -> Path:
+def concat_wavs(parts: list[Path], dst: Path) -> Path:
     """Sample-exact concatenation of same-format WAVs (re-encoded, never -c copy)."""
     listing = dst.with_suffix(".txt")
     listing.write_text("".join(f"file '{p.resolve()}'\n" for p in parts), encoding="utf-8")
@@ -171,7 +171,7 @@ def extract_audio(src: Path, dst: Path, *, start: float = 0.0, end: Optional[flo
     return dst
 
 
-def speech_bounds(src: Path, *, floor_db: float = -38.0, min_gap: float = 0.12) -> Tuple[float, float]:
+def speech_bounds(src: Path, *, floor_db: float = -38.0, min_gap: float = 0.12) -> tuple[float, float]:
     """Where the speech in ``src`` starts and ends, in seconds.
 
     An avatar take opens and closes with a still, silent second or so; cut at
@@ -194,11 +194,11 @@ def speech_bounds(src: Path, *, floor_db: float = -38.0, min_gap: float = 0.12) 
     return begin, finish
 
 
-def _loudnorm_measure(src: Path) -> Dict[str, str]:
+def _loudnorm_measure(src: Path) -> dict[str, str]:
     out = run([binary("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(src), "-af",
                f"loudnorm=I={TARGET_I}:TP={TARGET_TP}:LRA={TARGET_LRA}:print_format=json",
                "-f", "null", "-"], "loudness measure")
-    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", out.stderr or "", re.S)
+    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", out.stderr or "", re.DOTALL)
     if not match:
         raise MediaError("loudnorm printed no measurement")
     return json.loads(match.group(0))

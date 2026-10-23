@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import hermes_yaml as yaml
 
 from hermes_cli.fork_ext import boot_reconcile as br
 
@@ -99,7 +99,7 @@ def _volume(tmp_path: Path, envs: dict[str, str]) -> Path:
         (prof / "SOUL.md").write_text("soul", encoding="utf-8")
         (prof / ".env").write_text(env, encoding="utf-8")
         (prof / "config.yaml").write_text(
-            yaml.dump({"image_gen": {"provider": "openrouter"}}), encoding="utf-8")
+            yaml.safe_dump({"image_gen": {"provider": "openrouter"}}), encoding="utf-8")
     return home
 
 

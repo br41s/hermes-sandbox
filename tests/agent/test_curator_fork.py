@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 
 import pytest
@@ -20,14 +20,14 @@ def curator_env(tmp_path, monkeypatch):
 
     import tools.skill_usage as usage
     importlib.reload(usage)
-    import agent.curator as curator
+    from agent import curator
     importlib.reload(curator)
 
     # Neutralize the real LLM pass by default — tests opt in per-case.
     monkeypatch.setattr(curator, "_run_llm_review", lambda prompt: "llm-stub")
 
     # Default: no config file → curator defaults. Tests can override.
-    monkeypatch.setattr(curator, "_load_config", lambda: {})
+    monkeypatch.setattr(curator, "_load_config", dict)
     # Pin prune_builtins OFF by default so transition tests don't pick up
     # built-ins unless they explicitly enable it. Both config-reading paths
     # are pinned (curator reads via _load_config; skill_usage reads config
@@ -62,7 +62,7 @@ def _write_skill(skills_dir: Path, name: str):
 
 def _backdate(u, name: str, days: int, *, use_count: int = 1):
     """Write an agent-created usage record whose activity is *days* old."""
-    ts = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    ts = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     data = u.load_usage()
     data[name] = u._empty_record()
     data[name]["created_by"] = "agent"
@@ -91,7 +91,7 @@ def test_candidate_list_flags_over_budget_skill_md(curator_env, monkeypatch):
     skills_dir = curator_env["home"] / "skills"
     obese = _write_skill(skills_dir, "obese")
     (obese / "SKILL.md").write_text(
-        f"---\nname: obese\ndescription: x\n---\n" + "y" * MAX_SKILL_CONTENT_CHARS,
+        "---\nname: obese\ndescription: x\n---\n" + "y" * MAX_SKILL_CONTENT_CHARS,
         encoding="utf-8",
     )
     _write_skill(skills_dir, "lean")

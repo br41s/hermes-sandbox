@@ -38,13 +38,13 @@ class FakeProvider:
     single-element list.
     """
 
-    def __init__(self, name: str, responses: List[Any], *, available: bool = True,
+    def __init__(self, name: str, responses: list[Any], *, available: bool = True,
                  supports: bool = True):
         self._name = name
         self._responses = list(responses)
         self._available = available
         self._supports = supports
-        self.calls: List[tuple] = []
+        self.calls: list[tuple] = []
 
     @property
     def name(self) -> str:
@@ -64,7 +64,7 @@ class FakeProvider:
         return item
 
 
-def ok(n: int = 1) -> Dict[str, Any]:
+def ok(n: int = 1) -> dict[str, Any]:
     return {
         "success": True,
         "data": {"web": [{"title": f"r{i}", "url": f"https://e/{i}",
@@ -72,7 +72,7 @@ def ok(n: int = 1) -> Dict[str, Any]:
     }
 
 
-def fail(msg: str) -> Dict[str, Any]:
+def fail(msg: str) -> dict[str, Any]:
     return {"success": False, "error": msg}
 
 
@@ -203,7 +203,7 @@ class TestClassifySearchFailure:
 # ---------------------------------------------------------------------------
 class TestBackoff:
     def test_transient_failure_is_retried_until_it_succeeds(self):
-        slept: List[float] = []
+        slept: list[float] = []
         provider = FakeProvider("exa", [fail(EXA_503), fail(EXA_503), ok(3)])
 
         outcome = wsr.search_with_resilience(
@@ -219,7 +219,7 @@ class TestBackoff:
         assert slept == [1.0, 2.0], "must wait between retries, not hammer"
 
     def test_permanent_failure_is_not_retried(self):
-        slept: List[float] = []
+        slept: list[float] = []
         provider = FakeProvider("exa", [fail("status code 401: unauthorized")])
 
         outcome = wsr.search_with_resilience(
@@ -245,7 +245,7 @@ class TestBackoff:
         A cron job with profile/workdir runs on a single-thread pool, so an
         unbounded tool wait blocks every other agent.
         """
-        slept: List[float] = []
+        slept: list[float] = []
         primary = FakeProvider("exa", [fail(EXA_503)])
         secondary = FakeProvider("ddgs", [fail(EXA_503)])
 
@@ -309,7 +309,7 @@ class TestBackoff:
         """Never sleep past the deadline — the wait budget alone doesn't know
         how much wall clock the provider calls already consumed."""
         clock = {"t": 0.0}
-        slept: List[float] = []
+        slept: list[float] = []
 
         class SlowProvider(FakeProvider):
             def search(self, query, limit=5):
@@ -354,7 +354,7 @@ class TestBackoff:
     def test_default_backoff_grows_and_is_jittered(self):
         """Uses agent.retry_utils.jittered_backoff rather than a fixed sleep."""
         provider = FakeProvider("exa", [fail(EXA_503)])
-        slept: List[float] = []
+        slept: list[float] = []
         wsr.search_with_resilience(
             provider, "q", 5, max_attempts=3,
             sleep_fn=lambda s: (slept.append(s), 0.0)[1],
@@ -418,7 +418,7 @@ class TestFallback:
         results from another backend. It would also mean any deterministic
         bug triggers ddgs's lazy pip-install and a live DuckDuckGo query.
         """
-        slept: List[float] = []
+        slept: list[float] = []
         primary = FakeProvider("exa", [fail("EXA_API_KEY is not set")])
         secondary = FakeProvider("ddgs", [ok(1)])
 
@@ -516,7 +516,7 @@ class TestFallback:
 
 class TestInterrupt:
     def test_interrupt_aborts_without_sleeping(self):
-        slept: List[float] = []
+        slept: list[float] = []
         provider = FakeProvider("exa", [fail(EXA_503)])
 
         outcome = wsr.search_with_resilience(

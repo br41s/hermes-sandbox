@@ -7,12 +7,12 @@ tests pin the watcher's earlier threshold and its once-a-day brief.
 
 Hermetic: injected usage and clock; the real disk is never read.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import incidents.sweep as sw
 from incidents.sweep import DISK_ALERT_PERCENT, DISK_MIN_FREE_GB, disk_space_incidents
 
-NOW = datetime(2026, 10, 21, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 21, 12, 0, 0, tzinfo=UTC)
 GB = 1024 ** 3
 
 

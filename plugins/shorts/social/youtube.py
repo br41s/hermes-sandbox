@@ -74,7 +74,7 @@ def _error(resp, what: str) -> YouTubeError:
     return YouTubeError(f"{what}: HTTP {resp.status_code} {reason} {resp.text[:300]}".strip())
 
 
-def article_link(article: Optional[Dict[str, Any]]) -> str:
+def article_link(article: Optional[dict[str, Any]]) -> str:
     """The article URL tagged for Umami, so visits from YouTube stop counting as "direct".
 
     Campaign ``short-<slug>`` tells which Short sent the visit (retro 2026-10-12 experiment).
@@ -88,9 +88,9 @@ def article_link(article: Optional[Dict[str, Any]]) -> str:
     return f"{url}{sep}utm_source=youtube&utm_medium=short&utm_campaign={campaign}"
 
 
-def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
-                   article: Optional[Dict[str, Any]] = None, short: bool = True,
-                   privacy: Optional[str] = None) -> Dict[str, Any]:
+def build_metadata(social: dict[str, Any], lang: str, *, synthetic: bool,
+                   article: Optional[dict[str, Any]] = None, short: bool = True,
+                   privacy: Optional[str] = None) -> dict[str, Any]:
     """``short=False``: a regular video (no #Shorts in the title). ``privacy`` overrides SHORTS_YOUTUBE_PRIVACY."""
     yt = social.get("youtube") or {}
     title = (yt.get("title") or "").strip()
@@ -119,7 +119,7 @@ def build_metadata(social: Dict[str, Any], lang: str, *, synthetic: bool,
     }
 
 
-def _set_thumbnail(client, auth: Dict[str, str], video_id: str, thumb: Optional[Path], warnings: List[str]) -> None:
+def _set_thumbnail(client, auth: dict[str, str], video_id: str, thumb: Optional[Path], warnings: list[str]) -> None:
     if thumb and thumb.exists():
         t = client.post(THUMB_URL, params={"videoId": video_id, "uploadType": "media"},
                         headers={**auth, "Content-Type": "image/jpeg"}, content=thumb.read_bytes())
@@ -128,8 +128,8 @@ def _set_thumbnail(client, auth: Dict[str, str], video_id: str, thumb: Optional[
                             "custom thumbnails need a phone-verified channel")
 
 
-def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Path] = None,
-           short: bool = False) -> Dict[str, Any]:
+def update(video_id: str, social: dict[str, Any], lang: str, thumb: Optional[Path] = None,
+           short: bool = False) -> dict[str, Any]:
     """New title, description and tags for an uploaded video, and its thumbnail if given.
     ``short=True`` keeps the #Shorts tag in the title, as ``upload`` puts it.
 
@@ -139,7 +139,7 @@ def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Pat
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
     snippet = build_metadata(social, lang, synthetic=False, short=short)["snippet"]
-    warnings: List[str] = []
+    warnings: list[str] = []
     with _client() as client:
         auth = {"Authorization": f"Bearer {access_token(client)}"}
         resp = client.put(VIDEOS_URL, params={"part": "snippet"},
@@ -152,15 +152,15 @@ def update(video_id: str, social: Dict[str, Any], lang: str, thumb: Optional[Pat
             "thumbnail": bool(thumb) and not any(w.startswith("thumbnail") for w in warnings), "warnings": warnings}
 
 
-def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict[str, Any],
+def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: dict[str, Any],
            lang: str, *, synthetic: bool = False,
-           article: Optional[Dict[str, Any]] = None, short: bool = True,
-           privacy: Optional[str] = None) -> Dict[str, Any]:
+           article: Optional[dict[str, Any]] = None, short: bool = True,
+           privacy: Optional[str] = None) -> dict[str, Any]:
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
     meta = build_metadata(social, lang, synthetic=synthetic, article=article, short=short, privacy=privacy)
     size = video.stat().st_size
-    warnings: List[str] = []
+    warnings: list[str] = []
     with _client() as client:
         auth = {"Authorization": f"Bearer {access_token(client)}"}
         init = client.post(
@@ -187,7 +187,7 @@ def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: Dict
                 f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
                 + json.dumps({"snippet": {"videoId": video_id, "language": lang, "name": ""}})
                 + f"\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n"
-            ).encode("utf-8") + srt.read_bytes() + f"\r\n--{boundary}--\r\n".encode("utf-8")
+            ).encode("utf-8") + srt.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
             c = client.post(CAPTIONS_URL, params={"part": "snippet", "uploadType": "multipart"},
                             headers={**auth, "Content-Type": f"multipart/related; boundary={boundary}"},
                             content=parts)

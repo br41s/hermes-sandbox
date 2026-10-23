@@ -27,7 +27,7 @@ actualizado: 2026-10-22
 
 def _script(tmp_path: Path) -> Path:
     text = INIT.read_text(encoding="utf-8")
-    body = re.search(r"<<'GEOEXCL'\n(.*?)\nGEOEXCL\n", text, re.S)
+    body = re.search(r"<<'GEOEXCL'\n(.*?)\nGEOEXCL\n", text, re.DOTALL)
     assert body, "geo_exclusiones.sh heredoc not found in 03-biglobster-config"
     script = tmp_path / "geo_exclusiones.sh"
     script.write_text(body.group(1) + "\n", encoding="utf-8")
@@ -55,7 +55,7 @@ def _run(tmp_path: Path, output: str, code: int = 0, channel: str = "42d4e93e", 
     env.pop("SHORTS_BUZZ_CHANNEL", None)
     if channel:
         env["SHORTS_BUZZ_CHANNEL"] = channel
-    result = subprocess.run(["bash", str(_script(tmp_path))], capture_output=True, text=True, env=env, timeout=30)
+    result = subprocess.run(["bash", str(_script(tmp_path))], capture_output=True, text=True, env=env, timeout=30, check=False)
     return result, dest
 
 

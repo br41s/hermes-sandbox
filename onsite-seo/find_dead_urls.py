@@ -35,7 +35,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 REQUEST_TIMEOUT = 20
 USER_AGENT = "hermes-onsite-seo-dead-url-check/1"
@@ -55,7 +55,7 @@ def _fetch_status(url: str) -> dict:
             return {"status": resp.status, "final_url": resp.geturl()}
     except urllib.error.HTTPError as exc:
         return {"status": exc.code, "final_url": url}
-    except (urllib.error.URLError, socket.timeout, ssl.SSLError, OSError) as exc:
+    except (TimeoutError, urllib.error.URLError, ssl.SSLError, OSError) as exc:
         return {"status": 0, "final_url": url, "error": str(getattr(exc, "reason", exc))}
 
 
@@ -132,7 +132,7 @@ def main(argv=None):
     candidates = full_candidates[: args.cap]
     list_capped = len(full_candidates) > args.cap
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     now_iso = now.isoformat(timespec="seconds")
     confirmed_dead = []
     pending_confirmation = []

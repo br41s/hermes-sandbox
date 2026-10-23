@@ -37,7 +37,7 @@ def _limit() -> int:
         return DEFAULT_DELETION_LIMIT
 
 
-def _pr_file_statuses(repo: str, number: int) -> Optional[List[str]]:
+def _pr_file_statuses(repo: str, number: int) -> Optional[list[str]]:
     """Per-file status strings ('added'|'removed'|'modified'|'renamed') for a PR.
 
     Uses the REST ``pulls/{n}/files`` endpoint (the ``--json files`` view from
@@ -61,7 +61,7 @@ def _pr_file_statuses(repo: str, number: int) -> Optional[List[str]]:
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
-def check_mass_deletion(repo: str, number: int) -> Tuple[bool, str]:
+def check_mass_deletion(repo: str, number: int) -> tuple[bool, str]:
     """Return ``(safe, reason)``. ``safe`` is False if the PR removes more than the
     threshold, or if the file list could not be fetched (fail-safe)."""
     statuses = _pr_file_statuses(repo, number)
@@ -81,7 +81,7 @@ def check_mass_deletion(repo: str, number: int) -> Tuple[bool, str]:
     return True, f"ok: {removed} file(s) removed (limit {limit}) — safe to auto-merge"
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         description="Merge-time mass-deletion safety check for content auto-merge."
     )

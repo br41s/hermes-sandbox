@@ -250,7 +250,7 @@ def classify(paths: Iterable[str], repo: Optional[str] = None) -> str:
     return "system"  # unknown path(s) => fail safe
 
 
-def unknown_paths(paths: Iterable[str]) -> List[str]:
+def unknown_paths(paths: Iterable[str]) -> list[str]:
     """Paths that match neither list — surfaced so the tiers can be tuned."""
     out = []
     for p in paths or []:
@@ -261,7 +261,7 @@ def unknown_paths(paths: Iterable[str]) -> List[str]:
     return out
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     """CLI so tiering never needs ``python -c``.
 
     Cron blocks ``python -c`` outright (``tools/approval.py``:

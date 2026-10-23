@@ -150,7 +150,7 @@ def run_delegate_agent(
         logger.warning("Delegate: SessionDB unavailable, session will not be persisted")
         session_db = None
 
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "platform": "api",
         "quiet_mode": True,
         "session_id": task_id or str(uuid.uuid4()),
@@ -257,7 +257,7 @@ def _token_from_git_credentials(creds_path: str) -> Optional[str]:
     just yields None and the caller falls back to the ambient env.
     """
     try:
-        with open(creds_path, "r", encoding="utf-8") as fh:
+        with open(creds_path, "r", encoding="utf-8-sig") as fh:
             lines = fh.read().splitlines()
     except OSError:
         return None
@@ -306,7 +306,7 @@ def _write_gh_hosts(subprocess_home: str, token: str) -> None:
         logger.debug("Delegate: could not write gh hosts.yml", exc_info=True)
 
 
-def _apply_profile_git_auth(env: Dict[str, str], profile_home: str) -> None:
+def _apply_profile_git_auth(env: dict[str, str], profile_home: str) -> None:
     """Make the delegate subprocess able to ``git push`` / ``gh pr create`` with
     ambient credentials, identical to the default/cron lane.
 
@@ -455,14 +455,17 @@ def run_delegate_in_profile(
             cwd=workdir,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_DEFAULT_DELEGATE_TIMEOUT,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return {
             "final_response": "",
             "error": f"Delegate task timed out after {_DEFAULT_DELEGATE_TIMEOUT}s (profile {profile!r})",
         }
-    except Exception as exc:  # noqa: BLE001 - surface any spawn failure to the orchestrator
+    except Exception as exc:
         return {"final_response": "", "error": f"Delegate subprocess failed: {exc}"}
 
     result = _parse_runner_output(proc.stdout)
@@ -484,7 +487,7 @@ def run_delegate_in_profile(
     return result
 
 
-_SIGNAL_NAMES: Dict[int, str] = {
+_SIGNAL_NAMES: dict[int, str] = {
     int(_s): _name
     for _name in ("SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGABRT", "SIGSEGV")
     if (_s := getattr(signal, _name, None)) is not None

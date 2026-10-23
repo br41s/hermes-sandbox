@@ -7,7 +7,7 @@ heartbeat per HEARTBEAT_HOURS, and an escalation resets the clock (touch).
 import json
 from datetime import timedelta
 
-import auditor.pending as pending
+from auditor import pending
 from auditor.pending import HEARTBEAT_HOURS
 
 

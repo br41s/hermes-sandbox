@@ -18,14 +18,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 
-import yaml
+import hermes_yaml as yaml
 
 from fork_evals.judge import JudgeResult, judge
 
 _CASES_DIR = Path(__file__).resolve().parent / "cases"
 
 
-def load_case(name: str) -> Dict[str, Any]:
+def load_case(name: str) -> dict[str, Any]:
     """Load a case by bare name (``fallback_switch_notice``) or explicit path."""
     path = Path(name)
     if not path.exists():
@@ -36,7 +36,7 @@ def load_case(name: str) -> Dict[str, Any]:
         return yaml.safe_load(fh)
 
 
-def run_scenario(scenario: Dict[str, Any]) -> str:
+def run_scenario(scenario: dict[str, Any]) -> str:
     """Produce the user-facing output string for a case scenario."""
     kind = scenario.get("kind")
     if kind == "function_call":
@@ -55,13 +55,13 @@ def run_scenario(scenario: Dict[str, Any]) -> str:
 
 
 def evaluate(
-    case: Dict[str, Any],
+    case: dict[str, Any],
     *,
     use_typesafe: bool = False,
     use_llm: bool = False,
     model: str | None = None,
     provider: str | None = None,
-) -> Tuple[str, List[Tuple[Dict[str, Any], JudgeResult]]]:
+) -> tuple[str, list[tuple[dict[str, Any], JudgeResult]]]:
     """Run the case and judge every assertion. Returns (output, results)."""
     output = run_scenario(case["scenario"])
     results = [
@@ -72,7 +72,7 @@ def evaluate(
     return output, results
 
 
-def _print_report(case: Dict[str, Any], output: str, results) -> bool:
+def _print_report(case: dict[str, Any], output: str, results) -> bool:
     print(f"\n=== eval: {case['name']} ===")
     print(f"--- output ---\n{output}\n--------------")
     all_passed = True
@@ -86,7 +86,7 @@ def _print_report(case: Dict[str, Any], output: str, results) -> bool:
     return all_passed
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m fork_evals.run")
     parser.add_argument("case", help="case name (e.g. fallback_switch_notice) or path")
     parser.add_argument("--typesafe-judge", action="store_true", help="use TypeSafe System One as judge (needs TYPESAFE_API_KEY)")

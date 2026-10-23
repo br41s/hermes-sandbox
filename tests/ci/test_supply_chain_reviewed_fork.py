@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 _REPO = Path(__file__).resolve().parents[2]
 _WORKFLOW = _REPO / ".github" / "workflows" / "supply-chain-audit.yml"
@@ -61,7 +61,7 @@ def _run_scan(tmp_path: Path, setup_py: str, reviewed: str | None) -> tuple[str,
     out = tmp_path / "github_output"
     proc = subprocess.run(
         ["bash", "-c", _scan_script()], cwd=repo, capture_output=True, text=True,
-        env={**os.environ, "T_BASE": base, "T_HEAD": head, "GITHUB_OUTPUT": str(out)},
+        env={**os.environ, "T_BASE": base, "T_HEAD": head, "GITHUB_OUTPUT": str(out)}, check=False
     )
     assert proc.returncode == 0, proc.stderr
     return out.read_text(encoding="utf-8"), proc.stdout

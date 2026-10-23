@@ -61,7 +61,7 @@ def enabled() -> bool:
     return os.environ.get(FLAG, "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def process_env_fallback() -> Dict[str, str]:
+def process_env_fallback() -> dict[str, str]:
     """Non-global launch env keys for the launch profile's scope; ``{}`` when the flag is off.
 
     Read through upstream's ``tui_gateway.launch_profile_policy._launch_env``: once multiplex
@@ -98,7 +98,7 @@ def _profile_store_jobs(home: Path):
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             rows.append((prof.name, "?", "(unreadable jobs.json)", None, ""))
             continue
@@ -211,7 +211,7 @@ def _default_store_profile_jobs(home: Path) -> list:
 
     path = home / "cron" / "jobs.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return []
     jobs = data.get("jobs", data) if isinstance(data, dict) else data
@@ -266,7 +266,7 @@ def _print_move_report(home: Path) -> None:
             print(f"  {name}: {verdict}")
 
 
-def _upstream_scope(home: Path) -> Dict[str, str]:
+def _upstream_scope(home: Path) -> dict[str, str]:
     """``home``'s scope as upstream builds it (flag off): ``.env`` plus external sources."""
     from agent.secret_scope import build_profile_secret_scope
     token = _SUPPRESSED.set(True)
@@ -343,7 +343,7 @@ if __name__ == "__main__":
         # consults ``hermes_cli.fork_ext.process_env_scope._SUPPRESSED``, so suppressing a
         # second copy's ContextVar left the fallback on in the "upstream" build and the
         # fallback-only list came back empty in production.
-        from hermes_cli.fork_ext import process_env_scope as _module
+        from hermes_cli.fork_ext import process_env_scope as _module  # noqa: PLW0406 — deliberate, see above
         sys.exit(_module.check())
     print("usage: python -m hermes_cli.fork_ext.process_env_scope --check", file=sys.stderr)
     sys.exit(2)

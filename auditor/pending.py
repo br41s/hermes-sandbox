@@ -37,7 +37,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import List, Optional
 
@@ -80,7 +80,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def review_repos() -> List[str]:
+def review_repos() -> list[str]:
     """The union repo set the auditor reviews: every ``docker/profiles/*/repos.txt``
     entry plus the engine repo. Read from the auditor's own engine clone, so the
     review set is itself version-controlled and reviewed. Always includes
@@ -117,7 +117,7 @@ def _pr_id(repo: str, number: int, head_sha: str) -> str:
     return f"{repo}#{number}@{head_sha}"
 
 
-def _gh_list_open_prs(repo: Optional[str]) -> List[dict]:
+def _gh_list_open_prs(repo: Optional[str]) -> list[dict]:
     """Return open PRs via ``gh``. Empty list if gh fails (degrade quietly)."""
     cmd = ["gh", "pr", "list", "--state", "open", "--limit", "100", "--json", _PR_FIELDS]
     if repo:
@@ -135,7 +135,7 @@ def _gh_list_open_prs(repo: Optional[str]) -> List[dict]:
         return []
 
 
-def pending_prs(repo: Optional[str], state_path: Path, include_drafts: bool = False) -> List[dict]:
+def pending_prs(repo: Optional[str], state_path: Path, include_drafts: bool = False) -> list[dict]:
     """Open PRs whose current head SHA has not been reviewed yet.
 
     With ``repo`` set, only that repo is polled; with ``repo`` ``None`` the whole
@@ -235,7 +235,7 @@ def mark_reviewed(repo: str, number: int, head_sha: str, state_path: Path) -> No
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -245,7 +245,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
     if ts is None:
         return None
-    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def _heartbeat_line(now: datetime) -> str:
@@ -279,7 +279,7 @@ def heartbeat(state_path: Path, *, now: Optional[datetime] = None,
     return _heartbeat_line(now)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="List PRs the auditor must review.")
     ap.add_argument("--repo", help="owner/name (default: gh infers from cwd)")
     ap.add_argument("--include-drafts", action="store_true")

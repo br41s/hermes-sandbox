@@ -311,7 +311,7 @@ BL_SITE_PRODUCT_SCHEMA = {
     },
 }
 
-from tools.registry import registry  # noqa: E402
+from tools.registry import registry
 
 registry.register(
     name="bl_site_product",

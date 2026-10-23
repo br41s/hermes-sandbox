@@ -60,7 +60,7 @@ MOTION = ("Speaks warmly and calmly straight to the camera with a genuine smile,
           "hand gestures, steady posture, no fast or abrupt movements.")
 
 
-def config() -> Dict[str, Any]:
+def config() -> dict[str, Any]:
     return {
         "model": (os.environ.get("SHORTS_PRESENTER_MODEL") or "heygen/avatar-iv").strip(),
         "price_per_s": genvideo._env_float("SHORTS_PRESENTER_PRICE_PER_SECOND", 0.05),
@@ -87,7 +87,7 @@ def photo_data_url(slug: str) -> Optional[str]:
     return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def request_body(cfg: Dict[str, Any], script: str, photo: str, lang: str) -> Dict[str, Any]:
+def request_body(cfg: dict[str, Any], script: str, photo: str, lang: str) -> dict[str, Any]:
     # Options sit directly under provider.options.heygen: that is where
     # OpenRouter looks for voice_id (its 400 names the path).
     heygen = {"voice_id": cfg["voice"][lang], "motion_prompt": MOTION, "expressiveness": "medium"}
@@ -100,7 +100,7 @@ def request_body(cfg: Dict[str, Any], script: str, photo: str, lang: str) -> Dic
     }
 
 
-def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
+def render(pkg: dict[str, Any], work: Path, budget: dict[str, Any], *, offline: bool) -> dict[str, Any]:
     """Generate the presenter clips. Returns {"clips": {beat: Path}, "report": {...}}.
 
     Classic format only: one clip per beat marked ``presenter``, voiced by
@@ -111,9 +111,9 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
     scripts = {i: b["vo"] for i, b in enumerate(pkg["beats"]) if b.get("presenter")}
     wanted = list(scripts)
     person = who(pkg["lang"])
-    report: Dict[str, Any] = {"model": cfg["model"], "presenter": person[1] if person else None,
+    report: dict[str, Any] = {"model": cfg["model"], "presenter": person[1] if person else None,
                               "requested": len(wanted), "generated": 0, "spent_usd": 0.0, "beats": []}
-    clips: Dict[int, Path] = {}
+    clips: dict[int, Path] = {}
     if not wanted:
         return {"clips": clips, "report": report}
     photo = photo_data_url(person[0]) if person else None
@@ -129,7 +129,7 @@ def render(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: 
     import httpx
 
     gcfg = budget["cfg"]
-    jobs: List[Dict[str, Any]] = []
+    jobs: list[dict[str, Any]] = []
     for i in wanted:
         script = scripts[i]
         seconds = estimate_seconds(script, pkg["lang"])
@@ -248,7 +248,7 @@ LOOP_FRAMING = {"martin": {"scale": 0.34, "x": 0.40, "y": 0.24},
 SETTING_FACE_Y = 0.3
 
 
-def tip_config() -> Dict[str, Any]:
+def tip_config() -> dict[str, Any]:
     return {
         "setting_models": [m.strip() for m in (os.environ.get("SHORTS_SETTING_IMAGE_MODEL") or "").split(",")
                            if m.strip()] or list(SETTING_MODELS),
@@ -265,8 +265,8 @@ def _file_data_url(path: Path) -> str:
     return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-def setting_image(client, budget: Dict[str, Any], setting: str, dest: Path,
-                  report: Dict[str, Any]) -> Optional[Path]:
+def setting_image(client, budget: dict[str, Any], setting: str, dest: Path,
+                  report: dict[str, Any]) -> Optional[Path]:
     """Lucía in front and Martín at work behind her, in the article's world; or None.
 
     One image request through OpenRouter's chat API with both photos as the
@@ -300,7 +300,7 @@ def setting_image(client, budget: Dict[str, Any], setting: str, dest: Path,
     return None
 
 
-def _setting_attempt(client, budget: Dict[str, Any], model: str, prompt: str, photos: List[str],
+def _setting_attempt(client, budget: dict[str, Any], model: str, prompt: str, photos: list[str],
                      estimate: float):
     """One model's try: (image bytes, outcome) or (None, outcome with the reason)."""
     budget["committed"] += estimate
@@ -330,8 +330,8 @@ def _setting_attempt(client, budget: Dict[str, Any], model: str, prompt: str, ph
         budget["committed"] += spent - estimate
 
 
-def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str], lang: str,
-               handoff: Optional[int], work: Path, report: Dict[str, Any]) -> Dict[int, Path]:
+def host_takes(client, budget: dict[str, Any], image: Path, lines: dict[int, str], lang: str,
+               handoff: Optional[int], work: Path, report: dict[str, Any]) -> dict[int, Path]:
     """Lucía says each line to camera, one Avatar IV take per line, in her HeyGen voice.
 
     The tip format sends ONE line: joke + hook + handoff together, so a short
@@ -342,7 +342,7 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
     cfg, tcfg = config(), tip_config()
     voice = tcfg["host_voice"].get(lang)
     image_url = _file_data_url(image)
-    jobs: List[Dict[str, Any]] = []
+    jobs: list[dict[str, Any]] = []
     total = 0.0
     for i, line in lines.items():
         seconds = estimate_seconds(line, lang)
@@ -375,7 +375,7 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
             job.update(state="failed", reason=str(exc))
             continue
         genvideo.wait_for(client, budget["cfg"]["key"], [job], time.time() + cfg["timeout_s"], work, prefix="take")
-    takes: Dict[int, Path] = {}
+    takes: dict[int, Path] = {}
     report["takes"] = []
     for job in jobs:
         spent = genvideo.settle(job, budget)
@@ -391,7 +391,7 @@ def host_takes(client, budget: Dict[str, Any], image: Path, lines: Dict[int, str
     return takes
 
 
-def bubble_loop(report: Dict[str, Any], slug: str = PARTNER[0]) -> Optional[Path]:
+def bubble_loop(report: dict[str, Any], slug: str = PARTNER[0]) -> Optional[Path]:
     """The narrator's loop for the bubble, recorded once by the owner and committed.
 
     Never generated here (owner, 2026-10-12): the image-to-video models that

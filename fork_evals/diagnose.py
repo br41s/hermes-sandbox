@@ -26,7 +26,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MAX_SOURCE_CHARS = 16000
 
 
-def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[Dict[str, Any]]:
+def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[dict[str, Any]]:
     """Fetch a trace's span tree via the Langfuse public read API, or None.
 
     Uses the same env credentials as the Langfuse tracing plugin. The plugin
@@ -58,7 +58,7 @@ def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[Dict[s
     token = base64.b64encode(f"{public}:{secret}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (trusted Langfuse host)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode())
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -75,8 +75,8 @@ def fetch_langfuse_trace(trace_id: str, *, timeout: int = 15) -> Optional[Dict[s
     }
 
 
-def _read_source(rel_paths: List[str]) -> str:
-    chunks: List[str] = []
+def _read_source(rel_paths: list[str]) -> str:
+    chunks: list[str] = []
     for rel in rel_paths:
         path = (_REPO_ROOT / rel).resolve()
         if _REPO_ROOT not in path.parents and path != _REPO_ROOT:
@@ -92,11 +92,11 @@ def _read_source(rel_paths: List[str]) -> str:
 
 
 def build_diagnose_prompt(
-    case: Dict[str, Any],
+    case: dict[str, Any],
     output: str,
-    failures: List[str],
+    failures: list[str],
     *,
-    trace: Optional[Dict[str, Any]] = None,
+    trace: Optional[dict[str, Any]] = None,
 ) -> str:
     sources = _read_source(case.get("source_hints", []))
     trace_block = ""
@@ -130,9 +130,9 @@ Do not run any commands. Do not modify files. Only propose the diff for human re
 
 
 def run_diagnose(
-    case: Dict[str, Any],
+    case: dict[str, Any],
     output: str,
-    failures: List[str],
+    failures: list[str],
     *,
     trace_id: Optional[str] = None,
     model: Optional[str] = None,
@@ -157,7 +157,7 @@ def run_diagnose(
     if provider:
         cmd += ["--provider", provider]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return f"[diagnose] sub-agent call failed: {exc}\n\nPrompt was:\n\n{prompt}"
     if proc.returncode != 0:

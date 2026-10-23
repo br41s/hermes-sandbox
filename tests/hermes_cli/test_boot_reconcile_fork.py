@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 from hermes_cli.fork_ext import boot_reconcile as br
 
@@ -28,7 +28,7 @@ def _profile(home: Path, name: str, env: str = "", cfg: dict | None = None) -> P
     (prof / "SOUL.md").write_text("soul", encoding="utf-8")
     (prof / ".env").write_text(env, encoding="utf-8")
     if cfg is not None:
-        (prof / "config.yaml").write_text(yaml.dump(cfg), encoding="utf-8")
+        (prof / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return prof
 
 
@@ -172,6 +172,19 @@ def test_a_current_config_is_not_rewritten(home):
     assert path.stat().st_mtime == 0 and path.read_text(encoding="utf-8") == first
 
 
+def test_skill_writes_wait_for_approval_everywhere(home):
+    """Owner, 2026-10-23: every skill write is staged for a human, on main and every profile,
+    even one that set it off (upstream e3d2e57c9e lets background review patch any skill)."""
+    (home / "config.yaml").write_text(yaml.safe_dump({}), encoding="utf-8")
+    _profile(home, "grow-shop", cfg={"skills": {"write_approval": False}})
+    br.reconcile_configs(home, {}, profiles_src=home / "none")
+    assert _cfg(home / "config.yaml")["skills"]["write_approval"] is True
+    assert _cfg(home / "profiles" / "grow-shop" / "config.yaml")["skills"]["write_approval"] is True
+    from tools import write_approval as wa
+    seed = yaml.safe_load((REPO_ROOT / "docker" / "config.yaml").read_text(encoding="utf-8"))
+    assert wa._normalize_enabled(seed["skills"]["write_approval"]) is True
+
+
 def test_a_broken_config_warns_and_the_rest_still_reconcile(home, capsys):
     (home / "config.yaml").write_text("- not\n- a mapping\n", encoding="utf-8")
     _profile(home, "biglobster", cfg={})
@@ -190,7 +203,7 @@ def test_runs_as_the_boot_hook_invokes_it(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "biglobster: reconciled config.yaml keys" in result.stdout
     assert "OPENROUTER_API_KEY=k\n" in _env(prof / ".env")
@@ -207,7 +220,7 @@ def test_boot_keeps_an_existing_multiplex_flag(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
 
@@ -221,7 +234,7 @@ def test_boot_rewrites_a_retired_explicit_false(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "Rewrote retired gateway.multiplex_profiles" in result.stdout
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True

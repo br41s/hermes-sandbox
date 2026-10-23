@@ -43,15 +43,15 @@ def _run_standalone(coro_factory):
             pool.shutdown(wait=False)
 
 
-def send_to_targets(job: dict, targets: List[dict], text: str, media_files: list,
-                    config, adapters=None, loop=None) -> List[str]:
+def send_to_targets(job: dict, targets: list[dict], text: str, media_files: list,
+                    config, adapters=None, loop=None) -> list[str]:
     """Send a short text to each resolved target; returns error strings."""
     from cron import scheduler as sched
     from cron.scheduler_delivery import _resolve_target_transport
     from gateway.config import Platform
     from tools.send_message_tool import _send_to_platform
 
-    errors: List[str] = []
+    errors: list[str] = []
     for target in targets:
         platform_name = target["platform"]
         chat_id = target["chat_id"]

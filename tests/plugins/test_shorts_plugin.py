@@ -20,6 +20,7 @@ from plugins.shorts import (
 from plugins.shorts import captions as captions_mod
 from plugins.shorts import render as render_mod
 from plugins.shorts import stock as stock_mod
+import itertools
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@ def test_cue_durations_partition_the_scene_exactly():
     # would accumulate across scenes and desync every caption after it.
     assert lines[-1].split(",")[2] == "0:00:06.00"
     # And cues must be contiguous: each starts where the previous ended.
-    for previous, current in zip(lines, lines[1:]):
+    for previous, current in itertools.pairwise(lines):
         assert previous.split(",")[2] == current.split(",")[1]
 
 
