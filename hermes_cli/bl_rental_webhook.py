@@ -95,7 +95,7 @@ def _load_state(filename: str) -> dict:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data if isinstance(data, dict) else {}
     except Exception:
         _log.exception("Could not read %s; treating as empty", path)

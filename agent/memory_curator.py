@@ -90,7 +90,7 @@ def load_state() -> dict[str, Any]:
     if not path.exists():
         return _default_state()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict):
             base = _default_state()
             base.update({k: v for k, v in data.items() if k in base or k.startswith("_")})
@@ -345,7 +345,7 @@ def _read_current_memory() -> str:
         from tools.memory_tool import get_memory_dir
         path = get_memory_dir() / "MEMORY.md"
         if path.exists():
-            return path.read_text(encoding="utf-8")
+            return path.read_text(encoding="utf-8-sig")
     except Exception as e:
         logger.debug("memory-curator: could not read MEMORY.md: %s", e)
     return ""
@@ -359,7 +359,7 @@ def _current_entries(target: str) -> list[str]:
         path = get_memory_dir() / fname
         if not path.exists():
             return []
-        raw = path.read_text(encoding="utf-8").strip()
+        raw = path.read_text(encoding="utf-8-sig").strip()
         if not raw:
             return []
         return [e.strip() for e in raw.split(ENTRY_DELIMITER) if e.strip()]
@@ -627,7 +627,7 @@ def load_proposals() -> dict[str, Any]:
     if not path.exists():
         return {"ts": None, "meta": {}, "proposals": []}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict) and isinstance(data.get("proposals"), list):
             return data
     except (OSError, json.JSONDecodeError):
@@ -748,7 +748,7 @@ def _memory_store():
 def _append_ledger(entry: dict[str, Any]) -> None:
     try:
         _digest_dir().mkdir(parents=True, exist_ok=True)
-        with open(_ledger_path(), "a", encoding="utf-8") as f:
+        with open(_ledger_path(), "a", encoding="utf-8-sig") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         logger.debug("memory-curator: ledger append failed: %s", e)
@@ -883,7 +883,7 @@ def revert_last() -> dict[str, Any]:
     if not path.exists():
         return {"reverted": None, "error": "no applied entries to revert"}
     try:
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        lines = [ln for ln in path.read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
     except OSError as e:
         return {"reverted": None, "error": f"ledger unreadable: {e}"}
 

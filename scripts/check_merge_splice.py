@@ -179,7 +179,7 @@ def _repeated_statements(fn) -> list[tuple[str, int, int]]:
 def scan(path: Path, *, statements: bool = False) -> list[str]:
     """Return human-readable findings for one Python file."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     except (SyntaxError, UnicodeDecodeError, OSError) as exc:
         return [f"{path}: could not parse ({exc.__class__.__name__}: {exc})"]
 

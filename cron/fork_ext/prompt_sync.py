@@ -42,7 +42,7 @@ def sync_prompt(job: dict[str, Any], prompt_source: Optional[str], force: bool) 
         )
     file_path = REPO_ROOT / source
     try:
-        file_text = file_path.read_text(encoding="utf-8")
+        file_text = file_path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         return ct.tool_error(f"Could not read prompt_source '{source}': {exc}", success=False)
     scan_error = ct._scan_cron_prompt(file_text)

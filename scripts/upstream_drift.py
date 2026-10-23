@@ -106,7 +106,7 @@ def _have_git_repo() -> bool:
 
 def _recorded_version() -> str | None:
     try:
-        return (_REPO_ROOT / "UPSTREAM_VERSION").read_text(encoding="utf-8").strip() or None
+        return (_REPO_ROOT / "UPSTREAM_VERSION").read_text(encoding="utf-8-sig").strip() or None
     except OSError:
         return None
 

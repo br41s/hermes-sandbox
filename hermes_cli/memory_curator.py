@@ -115,7 +115,7 @@ def _cmd_show(args) -> int:
     if not latest.exists():
         print("No digest yet. Run one with: hermes memory-curator run")
         return 1
-    print(latest.read_text(encoding="utf-8"))
+    print(latest.read_text(encoding="utf-8-sig"))
     return 0
 
 

@@ -877,7 +877,7 @@ def _skill_size_metrics(name: str) -> dict[str, Any]:
         skill_dir = found["path"]
         skill_md = skill_dir / "SKILL.md"
         if skill_md.exists():
-            metrics["skill_md_chars"] = len(skill_md.read_text(encoding="utf-8", errors="replace"))
+            metrics["skill_md_chars"] = len(skill_md.read_text(encoding="utf-8-sig", errors="replace"))
         for sub in ("references", "templates", "scripts"):
             sub_dir = skill_dir / sub
             if not sub_dir.is_dir():

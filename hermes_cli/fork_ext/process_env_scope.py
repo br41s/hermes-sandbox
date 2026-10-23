@@ -98,7 +98,7 @@ def _profile_store_jobs(home: Path):
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             rows.append((prof.name, "?", "(unreadable jobs.json)", None, ""))
             continue
@@ -211,7 +211,7 @@ def _default_store_profile_jobs(home: Path) -> list:
 
     path = home / "cron" / "jobs.json"
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return []
     jobs = data.get("jobs", data) if isinstance(data, dict) else data

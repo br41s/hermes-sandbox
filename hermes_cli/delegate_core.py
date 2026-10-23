@@ -257,7 +257,7 @@ def _token_from_git_credentials(creds_path: str) -> Optional[str]:
     just yields None and the caller falls back to the ambient env.
     """
     try:
-        with open(creds_path, "r", encoding="utf-8") as fh:
+        with open(creds_path, "r", encoding="utf-8-sig") as fh:
             lines = fh.read().splitlines()
     except OSError:
         return None

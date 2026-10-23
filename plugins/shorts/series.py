@@ -145,7 +145,7 @@ def _updates_path() -> Path:
 
 def _load(path: Optional[Path] = None) -> dict[str, Any]:
     path = path or _ledger_path()
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
 
 
 def _save(data: dict[str, Any], path: Optional[Path] = None) -> None:

@@ -327,7 +327,7 @@ def _load_bundled_snapshot() -> dict[str, Any]:
     if _bundled_snapshot is not None:
         return _bundled_snapshot
     try:
-        with open(_SNAPSHOT_PATH, encoding="utf-8") as f:
+        with open(_SNAPSHOT_PATH, encoding="utf-8-sig") as f:
             data = json.load(f)
         _bundled_snapshot = data if isinstance(data, dict) else {}
     except Exception as e:

@@ -867,7 +867,7 @@ def _history_path() -> Path:
 def _load_history() -> dict:
     path = _history_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {"runs": [], "reports": [], "form_checks": []}
     if not isinstance(data, dict):

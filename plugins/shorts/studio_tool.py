@@ -375,7 +375,7 @@ def _collect(entry: dict[str, Any]) -> dict[str, Any]:
     if not got or not manifest_path.exists():
         fields.update(state="render_failed", note=f"render {run.get('conclusion')}: no deliverables; see {run.get('html_url')}")
         return fields
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     qa_report = manifest.get("qa") or {}
     paid = [r for r in (manifest.get("ai_video"), manifest.get("presenter")) if r]
     spend = [r["spent_usd"] for r in paid if r.get("spent_usd") is not None]
@@ -478,7 +478,7 @@ def _action_status(args: dict[str, Any]) -> str:
                 item["files"] = _files(entry)
                 pkg_path = Path(entry["dir"]) / "package.json"
                 if pkg_path.exists():
-                    item["social"] = json.loads(pkg_path.read_text(encoding="utf-8")).get("social")
+                    item["social"] = json.loads(pkg_path.read_text(encoding="utf-8-sig")).get("social")
             report.append(item)
     try:
         _prune()
@@ -537,7 +537,7 @@ def _action_publish(args: dict[str, Any]) -> str:
         return _fail(f"the rendered files for {request_id} are missing; run status first")
     if target == "instagram_story" and "story" not in files:
         return _fail(f"the Story cut for {request_id} is missing; run status first")
-    pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8"))
+    pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8-sig"))
     social = pkg.get("social") or {}
     # A render that predates the manifest's own flag still counts its avatars.
     synthetic = bool(entry.get("synthetic") or entry.get("avatars"))
@@ -660,7 +660,7 @@ def _action_handoff(args: dict[str, Any]) -> str:
     files = _files(entry)
     if "master" not in files:
         return _fail("rendered files missing; run status first")
-    pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8"))
+    pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8-sig"))
     social = pkg.get("social") or {}
     lang = entry.get("lang", "").upper()
     lines: list[str] = []

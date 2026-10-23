@@ -207,7 +207,7 @@ GSC_SERVER = {
 
 def sync_env_file(env_path: Path, environ: Mapping[str, str], exclude=()) -> None:
     """Write every set ``INJECT`` var from ``environ`` into ``env_path``, one line each."""
-    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    content = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
     cron_tuning = sorted(k for k in environ if k.startswith(CRON_TUNING_PREFIX))
     for var in [*INJECT, *cron_tuning]:
         if var in exclude:
@@ -245,7 +245,7 @@ def _strip_vars(content: str, names) -> str:
 
 def _pin_vars(env_path: Path, values: Mapping[str, str]) -> None:
     """Replace every line of each var in ``values`` with exactly one line, appended."""
-    content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    content = env_path.read_text(encoding="utf-8-sig") if env_path.exists() else ""
     content = _strip_vars(content, values)
     if content and not content.endswith("\n"):
         content += "\n"
@@ -257,7 +257,7 @@ def _resolve(home: Path, environ: Mapping[str, str], var: str) -> str:
     """``var`` from the process env first, then the durable main .env."""
     value = environ.get(var, "")
     if not value and (home / ".env").exists():
-        m = re.search(rf"^{var}=(.*)$", (home / ".env").read_text(encoding="utf-8"),
+        m = re.search(rf"^{var}=(.*)$", (home / ".env").read_text(encoding="utf-8-sig"),
                       flags=re.MULTILINE)
         value = m.group(1).strip() if m else ""
     return value
@@ -273,7 +273,7 @@ def is_rented_tenant(env_path: Path) -> bool:
     """
     if not env_path.exists():
         return False
-    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8"),
+    return bool(re.search(r"^BL_SITE_URL=", env_path.read_text(encoding="utf-8-sig"),
                           flags=re.MULTILINE))
 
 
@@ -290,7 +290,7 @@ def has_own_fal_key(env_path: Path) -> bool:
     """
     if not env_path.exists():
         return False
-    return bool(re.search(r"^FAL_KEY=.+", env_path.read_text(encoding="utf-8"),
+    return bool(re.search(r"^FAL_KEY=.+", env_path.read_text(encoding="utf-8-sig"),
                           flags=re.MULTILINE))
 
 
@@ -330,8 +330,8 @@ def pin_rental_passthrough(env_path: Path, home: Path, environ: Mapping[str, str
     _pin_vars(env_path, {var: val for var, val in values.items() if val})
     unset = [var for var, val in values.items() if not val]
     if unset and env_path.exists():
-        env_path.write_text(_strip_vars(env_path.read_text(encoding="utf-8"), unset),
-                            encoding="utf-8")
+        current = env_path.read_text(encoding="utf-8-sig")
+        env_path.write_text(_strip_vars(current, unset), encoding="utf-8")
 
 
 def real_profiles(home: Path):
@@ -398,7 +398,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
             # fix shipped keeps that stale line forever otherwise (no manifest of
             # already-provisioned tenants exists to backfill by hand; this loop
             # already visits every one of them, every boot).
-            content = prof_env.read_text(encoding="utf-8") if prof_env.exists() else ""
+            content = prof_env.read_text(encoding="utf-8-sig") if prof_env.exists() else ""
             stripped = _strip_vars(content, SHARED_RESEARCH_KEYS)
             if stripped != content:
                 prof_env.write_text(stripped, encoding="utf-8")
@@ -425,7 +425,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
         # exactly what let the fallback slip by unnoticed before.
         if auditor_env.exists():
             auditor_env.write_text(
-                _strip_vars(auditor_env.read_text(encoding="utf-8"), AUDITOR_EXCLUDE),
+                _strip_vars(auditor_env.read_text(encoding="utf-8-sig"), AUDITOR_EXCLUDE),
                 encoding="utf-8")
         print("[03-biglobster] WARNING: HERMES_AUDITOR_GITHUB_TOKEN not set — "
               "auditor profile has NO GitHub credential this boot (fail-closed, "
@@ -444,7 +444,7 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
         val = environ.get(var, "").strip()
         if val:
             knobs[var] = val
-    content = auditor_env.read_text(encoding="utf-8") if auditor_env.exists() else ""
+    content = auditor_env.read_text(encoding="utf-8-sig") if auditor_env.exists() else ""
     for var, val in knobs.items():
         content = _strip_vars(content, (var,))
         if content and not content.endswith("\n"):
@@ -490,7 +490,7 @@ def reconcile_group_topics(cfg: dict, profiles_src: Path = PROFILES_SRC) -> bool
     changed = False
     for renv in sorted(profiles_src.glob("*/routing.env")):
         pname = renv.parent.name
-        vals = _parse_env_lines(renv.read_text(encoding="utf-8"))
+        vals = _parse_env_lines(renv.read_text(encoding="utf-8-sig"))
         chat = vals.get("TELEGRAM_HOME_CHANNEL")
         thread = vals.get("TELEGRAM_HOME_CHANNEL_THREAD_ID")
         if not chat or not thread:
@@ -903,7 +903,7 @@ def reconcile_config(
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}
         if reconcile_cfg(cfg, label, environ, is_rented=is_rented,
                          byok_images=byok_images, profiles_src=profiles_src, served=served):
             atomic_config_replace(config_path, cfg)

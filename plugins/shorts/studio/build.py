@@ -589,7 +589,7 @@ def story_cut_point(timeline: list[dict[str, Any]], total_seconds: float) -> flo
 
 def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool = False,
           offline: bool = False) -> int:
-    raw = json.loads(package_path.read_text(encoding="utf-8"))
+    raw = json.loads(package_path.read_text(encoding="utf-8-sig"))
     try:
         pkg = validate_package(raw)
     except PackageError as exc:

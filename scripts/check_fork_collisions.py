@@ -55,7 +55,7 @@ def _dockerignore_rules() -> tuple[list[str], list[str]]:
     excluded: list[str] = []
     reincluded: list[str] = []
     try:
-        lines = open(".dockerignore", encoding="utf-8").read().splitlines()
+        lines = open(".dockerignore", encoding="utf-8-sig").read().splitlines()
     except OSError:
         return excluded, reincluded
     for raw in lines:

@@ -70,7 +70,7 @@ def locked(write: bool = True) -> Iterator[dict[str, Any]]:
         if fcntl is not None:
             fcntl.flock(lock_handle, fcntl.LOCK_EX)
         try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else _empty()
+            data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else _empty()
         except (OSError, ValueError):
             # A corrupt ledger must not silently become "nothing was ever
             # made" — that would re-publish every post. Keep it aside, fail.
@@ -203,7 +203,7 @@ def avatars() -> list[dict[str, Any]]:
     path = avatars_path()
     if not path.exists():
         return []
-    return json.loads(path.read_text(encoding="utf-8")).get("clips", [])
+    return json.loads(path.read_text(encoding="utf-8-sig")).get("clips", [])
 
 
 def add_avatar(clip: dict[str, Any]) -> dict[str, Any]:

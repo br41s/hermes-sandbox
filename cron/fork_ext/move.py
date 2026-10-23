@@ -161,7 +161,7 @@ def _webhook_refs(homes: Sequence[Path]) -> list[tuple]:
         for name, parse in (("config.yaml", yaml.safe_load), ("webhook_subscriptions.json", json.loads)):
             path = home / name
             if path.is_file():
-                walk(parse(path.read_text(encoding="utf-8")), home)
+                walk(parse(path.read_text(encoding="utf-8-sig")), home)
     return found
 
 

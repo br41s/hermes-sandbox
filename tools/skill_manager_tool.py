@@ -538,7 +538,7 @@ def _edit_skill(name: str, content: str) -> dict[str, Any]:
         return guard
     # fork: size is judged against the current SKILL.md so an over-budget skill can still shrink.
     skill_md = skill_dir / "SKILL.md"
-    previous = skill_md.read_text(encoding="utf-8") if skill_md.exists() else None
+    previous = skill_md.read_text(encoding="utf-8-sig") if skill_md.exists() else None
     if err := _validate_content_size(content, previous=previous):
         return _err(err)
     # SKILL.md always exists here (_find_skill requires it), so a blocked scan restores it.

@@ -43,7 +43,7 @@ from tools.cronjob_tools import _scan_cron_prompt
 
 def _read_source(source: str) -> str:
     path = Path(REPO_ROOT) / source
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8-sig")
 
 
 def find_drift(sources: list[str] | None, *, force: bool = False) -> dict:

@@ -380,7 +380,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        with open(args.answers, encoding="utf-8") as fh:
+        with open(args.answers, encoding="utf-8-sig") as fh:
             answers = json.load(fh)
         result = apply_site_template(
             args.site_url,

@@ -127,7 +127,7 @@ def _scan_history_path() -> Path:
 def _load_scan_history() -> dict:
     path = _scan_history_path()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         data = {}
     if not isinstance(data, dict):

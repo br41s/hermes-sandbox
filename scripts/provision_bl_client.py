@@ -729,7 +729,7 @@ def provision(
                 else pick_stagger_schedule(canon, agent_key)
             )
             job = create_job(
-                prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8"),
+                prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8-sig"),
                 schedule=schedule,
                 name=f"{display_name} — {client_name}",
                 deliver=deliver,
@@ -809,7 +809,7 @@ def main() -> int:
     questionnaire = None
     if args.questionnaire:
         try:
-            with open(args.questionnaire, encoding="utf-8") as fh:
+            with open(args.questionnaire, encoding="utf-8-sig") as fh:
                 questionnaire = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"Provisioning failed: could not read --questionnaire: {exc}", file=sys.stderr)
