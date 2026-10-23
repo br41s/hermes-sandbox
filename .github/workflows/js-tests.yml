@@ -72,6 +72,15 @@ jobs:
         # Node 26's bundled npm can fall in the range package.json's engines excludes
         # (<11.10 || >=11.17), and .npmrc sets engine-strict. Same step as upstream.
         run: npm --version | grep -q '^12\.' || npm i -g npm@12
+      - name: Set up the locked Python test environment
+        # fork: upstream v0.22's tests-js and desktop contracts drive real hermes_cli/pm
+        # code through HERMES_PYTHON, which needs the application dependencies (a bare
+        # interpreter fails `import ruamel`). Python only: node stays setup-node's 26.
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: '[]'
+          test-environment: 'true'
       - uses: ./.github/actions/retry
         with:
           command: npm ci
