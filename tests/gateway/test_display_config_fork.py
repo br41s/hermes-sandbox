@@ -17,8 +17,12 @@ class TestTurnStartAck:
 
     def test_off_by_default_for_non_interactive_platforms(self):
         from gateway.display_config import resolve_display_setting
+        from hermes_cli.plugins import discover_plugins
 
-        for plat in ("email", "sms", "webhook", "homeassistant", "api_server"):
+        # email and sms became plugin platforms in upstream v0.22: their "minimal" tier ships on
+        # the PlatformEntry. homeassistant left core for a catalog plugin, so it is not listed.
+        discover_plugins()
+        for plat in ("email", "sms", "webhook", "api_server"):
             assert resolve_display_setting({}, plat, "turn_start_ack") is False, plat
 
     def test_default_text_is_spanish(self):

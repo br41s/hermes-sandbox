@@ -41,10 +41,10 @@ def agent():
     """Minimal AIAgent with mocked OpenAI client and tool loading."""
     with (
         patch(
-            "run_agent.get_tool_definitions", return_value=_make_tool_defs("web_search")
+            "model_tools.get_tool_definitions", return_value=_make_tool_defs("web_search")
         ),
-        patch("run_agent.check_toolset_requirements", return_value={}),
-        patch("run_agent.OpenAI"),
+        patch("model_tools.check_toolset_requirements", return_value={}),
+        patch("agent.process_bootstrap.OpenAI"),
     ):
         a = AIAgent(
             api_key="test-key-1234567890",
@@ -188,7 +188,7 @@ class TestTruncatedToolArgsRecovery:
 
         assert result["completed"] is False
         assert result["partial"] is True
-        assert "output length limit" in result["error"]
+        assert "cut off partway" in result["error"]  # upstream v0.22 copy (agent/turn_failure_copy.py)
         mock_handle_function_call.assert_not_called()
         # One initial call + exactly 2 recovery attempts, not an unbounded loop.
         assert agent.client.chat.completions.create.call_count == 3

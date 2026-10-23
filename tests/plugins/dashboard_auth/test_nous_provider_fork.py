@@ -136,7 +136,7 @@ class TestPortalPostsSendExplicitUserAgent:
             {"access_token": _mint_token(rsa_keypair), "token_type": "Bearer"},
         )
         with patch(
-            "plugins.dashboard_auth.nous.httpx.post", return_value=mock_resp
+            "plugins.dashboard_auth._shared.httpx.post", return_value=mock_resp
         ) as mock_post:
             provider.complete_login(
                 code="abc",
@@ -162,7 +162,7 @@ class TestPortalPostsSendExplicitUserAgent:
             },
         )
         with patch(
-            "plugins.dashboard_auth.nous.httpx.post", return_value=mock_resp
+            "plugins.dashboard_auth._shared.httpx.post", return_value=mock_resp
         ) as mock_post:
             provider.refresh_session(refresh_token="rt_old_value")
         _, kwargs = mock_post.call_args

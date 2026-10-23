@@ -212,15 +212,14 @@ class TestOverBudgetSkillRemediation:
 class TestUnrecordedSkillOwnership:
     """A skill with no usage record is not provably agent-created.
 
-    The guard used to require a record to EXIST before refusing, so the first
-    curator write against an unrecorded skill went through — and unrecorded is
-    exactly the state of the manually authored skills the guard protects, since
-    only mark_agent_created() (review-fork creations) ever writes the marker.
-    It was self-inconsistent too: that first write calls bump_patch(), which
-    creates a bare record, so every write after it was refused.
+    Until upstream v0.22 that refused every background-review WRITE to it (#67140, which the
+    fork's version of this guard fixed first: requiring a record to exist let the first write
+    through). Upstream e3d2e57c9e narrowed ownership to delete/archive: the review may improve
+    any skill it learns from (read-before-write, ledgered, staged when skills.write_approval is
+    on), while removing one still needs curator ownership. These pin that split.
     """
 
-    def test_first_write_to_unrecorded_skill_is_refused(self, tmp_path, monkeypatch):
+    def test_first_write_to_unrecorded_skill_is_allowed_but_not_its_delete(self, tmp_path, monkeypatch):
         from tools.skills_tool import skill_view
         from tools.skill_manager_guards import _reset_background_review_read_marks
 
@@ -235,16 +234,17 @@ class TestUnrecordedSkillOwnership:
             )
 
             assert json.loads(skill_view("handwritten"))["success"] is True
-            blocked = json.loads(skill_manage(
+            patched = json.loads(skill_manage(
                 action="patch",
                 name="handwritten",
                 old_string="Step 1: Do the thing.",
-                new_string="Step 1: Curated without permission.",
+                new_string="Step 1: Curated by the review.",
             ))
-            assert blocked["success"] is False
-            assert "no usage record" in blocked["error"]
-            # Untouched on disk.
-            assert "Do the thing." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+            assert patched["success"] is True, patched
+            deleted = json.loads(skill_manage(action="delete", name="handwritten"))
+            assert deleted["success"] is False
+            assert "not curator-managed" in deleted["error"]
+            assert (skill_dir / "SKILL.md").exists()
 
         _reset_background_review_read_marks()
 
