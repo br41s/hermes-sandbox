@@ -72,6 +72,9 @@ memory:
   user_char_limit: 3000
   nudge_interval: 10
   flush_min_turns: 6
+skills:
+  # Every skill write is staged for human approval (boot_reconcile.py OVERRIDES forces it).
+  write_approval: true
 delegation:
   max_iterations: 50
   child_timeout_seconds: 600

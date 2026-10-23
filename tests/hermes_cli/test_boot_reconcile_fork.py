@@ -172,6 +172,19 @@ def test_a_current_config_is_not_rewritten(home):
     assert path.stat().st_mtime == 0 and path.read_text(encoding="utf-8") == first
 
 
+def test_skill_writes_wait_for_approval_everywhere(home):
+    """Owner, 2026-10-23: every skill write is staged for a human, on main and every profile,
+    even one that set it off (upstream e3d2e57c9e lets background review patch any skill)."""
+    (home / "config.yaml").write_text(yaml.safe_dump({}), encoding="utf-8")
+    _profile(home, "grow-shop", cfg={"skills": {"write_approval": False}})
+    br.reconcile_configs(home, {}, profiles_src=home / "none")
+    assert _cfg(home / "config.yaml")["skills"]["write_approval"] is True
+    assert _cfg(home / "profiles" / "grow-shop" / "config.yaml")["skills"]["write_approval"] is True
+    from tools import write_approval as wa
+    seed = yaml.safe_load((REPO_ROOT / "docker" / "config.yaml").read_text(encoding="utf-8"))
+    assert wa._normalize_enabled(seed["skills"]["write_approval"]) is True
+
+
 def test_a_broken_config_warns_and_the_rest_still_reconcile(home, capsys):
     (home / "config.yaml").write_text("- not\n- a mapping\n", encoding="utf-8")
     _profile(home, "biglobster", cfg={})

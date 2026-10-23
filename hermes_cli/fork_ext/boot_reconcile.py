@@ -146,6 +146,11 @@ OVERRIDES = {
     # nor by the image/video plugins; the auditor judge sends its own (auditor/llm.py).
     # Forced like the rest of this table so a profile cannot opt itself out.
     ("provider_routing", "data_collection"): "deny",
+    # Skill writes wait for a human (owner, 2026-10-23). Upstream v0.22 (e3d2e57c9e) lets the
+    # background skill review patch ANY skill, not only the ones it created; with this on, every
+    # skill write (foreground or background) is staged under <HERMES_HOME>/pending/skills/ and
+    # applied only when approved (`/skills approval`). Forced so a profile cannot opt out.
+    ("skills", "write_approval"): True,
 }
 
 # Forced on every NAMED profile, never on main (stage 3 step 5, ops/multiplex-stage3-plan.md).
