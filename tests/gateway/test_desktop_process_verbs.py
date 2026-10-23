@@ -32,7 +32,7 @@ def test_desktop_process_kill_stop_and_mcp_reload_reach_only_this_session(tmp_pa
     assert set(receipt['tools_show']) == {'sections', 'total'}, receipt
     assert receipt['tools_show']['total'] == sum(len(s['tools']) for s in receipt['tools_show']['sections']), receipt
     # Scoped to THIS session's toolsets (created with toolsets=[]), not the launch profile's catalog.
-    # fork: the bundled shorts plugin's toolset is on by default like any plugin's (tests/gateway/conftest.py
+    # fork: the bundled shorts plugin's toolset is on by default like any plugin's (root conftest.py
     # _FORK_PLUGIN_TOOLSETS_OFF); this peer runs in a subprocess the fixture cannot reach, so discount it here.
     fork_plugin_tools = sum(len(s['tools']) for s in receipt['tools_show']['sections'] if s['name'] == 'shorts')
     assert receipt['tools_show']['total'] - fork_plugin_tools == 0, receipt

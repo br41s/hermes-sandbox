@@ -112,24 +112,6 @@ def _fork_silence_turn_start_ack(request, monkeypatch):
     yield
 
 
-# fork: upstream modules that assert a session's exact default toolsets. The fork bundles the
-# ``shorts`` plugin, whose toolset is on by default like any plugin's (the rented ``shorts``
-# agent relies on that through the cron default), so these see it unless it is hidden.
-_FORK_PLUGIN_TOOLSETS_OFF = frozenset({"test_session_policy_coding_posture", "test_follow_profile_followups"})
-
-
-@pytest.fixture(autouse=True)
-def _fork_hide_bundled_plugin_toolsets(request, monkeypatch):
-    if request.module.__name__.rsplit(".", 1)[-1] not in _FORK_PLUGIN_TOOLSETS_OFF:
-        yield
-        return
-    from hermes_cli import tools_config
-
-    real = tools_config._get_plugin_toolset_keys
-    monkeypatch.setattr(tools_config, "_get_plugin_toolset_keys", lambda: set(real()) - {"shorts"})
-    yield
-
-
 def make_async_session_db(sync_mock=None):
     """Wrap a sync mock SessionDB in AsyncSessionDB so gateway code that awaits
     the facade works in tests. Returns (facade, sync_mock); configure return

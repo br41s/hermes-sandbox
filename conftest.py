@@ -82,8 +82,65 @@ def _is_local_address(address) -> bool:
                 return False
         if not isinstance(host, str):
             return False
-        return host in _LOOPBACK_HOSTS or host.startswith("127.") or _is_discard_only(host)
+        return (host in _LOOPBACK_HOSTS or host.startswith("127.") or _is_discard_only(host)
+                or host.split("%", 1)[0] in _own_interface_addresses())
     return False
+
+
+# A private-LAN address (RFC 1918, link-local, ULA) answers "no route to host", what a CI runner
+# answers for the LAN hosts upstream tests name (an Ollama box at 10.0.0.155, 192.168.1.50):
+# unreachable, not a leak. Code that handles an unreachable endpoint then behaves as it would there.
+def _is_private_lan_address(address) -> bool:
+    import ipaddress
+
+    if not (isinstance(address, tuple) and address and isinstance(address[0], str)):
+        return False
+    try:
+        ip = ipaddress.ip_address(address[0].split("%", 1)[0])
+    except ValueError:
+        return False
+    return ip.is_private and not ip.is_loopback
+
+
+# Upstream tests that use the real network in upstream's own CI, which allows it: each was
+# traced to a live call its own mocks do not cover (Nous connector service, models.dev, GitHub
+# releases, PyPI/python-build-standalone, a Debian mirror). Exempt by test id, so the rest of
+# each file stays guarded. A fork test never belongs here: mock it instead.
+_UPSTREAM_NETWORK_TESTS = frozenset({
+    "tests/tui_gateway/test_connector_accounts_rpc.py::test_account_connect_with_an_alias_mints_that_account",
+    "tests/tui_gateway/test_connector_accounts_rpc.py::test_rename_to_a_name_another_account_holds_is_alias_taken",
+    "tests/tui_gateway/test_connector_operation_rpc.py::test_panel_connect_reissues_only_a_dead_link",
+    "tests/tui_gateway/test_connector_operation_rpc.py::test_a_failed_reissue_leaves_the_row_failed_with_no_link",
+    "tests/tools/test_multiplex_tool_cache_scope.py::test_home_keyed_caches_serve_each_profile_its_own_config",
+    "tests/hermes_cli/test_model_validation.py::TestValidateRequestedModelNousPortalRecommendations"
+    "::test_non_nous_provider_does_not_consult_portal_feed",
+    "tests/hermes_cli/test_source_channel_integration.py::test_missing_channel_cannot_fall_back_to_main",
+    "tests/pm/test_pip_check.py::test_build_accepts_the_override_and_check_still_rejects_what_it_does_not_cover",
+    "tests/pm/test_pip_check.py::test_requirements_builds_from_an_overridden_lock_apply_its_overrides",
+    "tests/pm/test_pip_check.py::test_streamed_check_still_sees_failures_ahead_of_a_long_expected_report",
+    "tests/scripts/test_termux_runtime_libs.py::test_failed_download_identifies_the_pin_without_publishing",
+})
+
+
+# The host's own interface addresses: a connect there never leaves the machine. Upstream tests
+# reach a real non-loopback interface on purpose (tests/gateway/test_native_http_auth.py proves a
+# peer's actual socket address, not a forged one, decides admission).
+_OWN_INTERFACE_ADDRESSES = None
+
+
+def _own_interface_addresses() -> frozenset:
+    global _OWN_INTERFACE_ADDRESSES
+    if _OWN_INTERFACE_ADDRESSES is None:
+        try:
+            import psutil
+
+            _OWN_INTERFACE_ADDRESSES = frozenset(
+                info.address.split("%", 1)[0]
+                for entries in psutil.net_if_addrs().values() for info in entries
+                if isinstance(getattr(info, "address", None), str))
+        except Exception:
+            _OWN_INTERFACE_ADDRESSES = frozenset()
+    return _OWN_INTERFACE_ADDRESSES
 
 
 # RFC 6666 discard-only prefix: never routed, so a connect there can reach nothing.
@@ -111,10 +168,12 @@ def _network_guard(request, monkeypatch):
         yield
         return
     if request.node.get_closest_marker(_NETWORK_GUARD_BYPASS_MARK) or \
-            request.node.get_closest_marker("integration"):
+            request.node.get_closest_marker("integration") or \
+            request.node.nodeid.split("[", 1)[0] in _UPSTREAM_NETWORK_TESTS:
         yield
         return
 
+    import errno as _errno
     import socket as _socket_mod
 
     real_connect = _socket_mod.socket.connect
@@ -131,11 +190,15 @@ def _network_guard(request, monkeypatch):
     def guarded_connect(self, address):
         if _is_local_address(address):
             return real_connect(self, address)
+        if _is_private_lan_address(address):
+            raise OSError(_errno.EHOSTUNREACH, f"No route to host {address!r} (test suite is offline)")
         _reject(address)
 
     def guarded_connect_ex(self, address):
         if _is_local_address(address):
             return real_connect_ex(self, address)
+        if _is_private_lan_address(address):
+            return _errno.EHOSTUNREACH
         _reject(address)
 
     monkeypatch.setattr(_socket_mod.socket, "connect", guarded_connect)
@@ -209,4 +272,27 @@ def _doctor_ipv6_probe_offline(request, monkeypatch):
         raise OSError(_errno.ENETUNREACH, "Network is unreachable (test suite is offline)")
 
     monkeypatch.setattr(_conn, "_tcp_connect", _no_route)
+    yield
+
+
+# ── The bundled shorts plugin's toolset ────────────────────────────────────
+#
+# Upstream modules that assert a session's exact default toolsets. The fork bundles the
+# ``shorts`` plugin, whose toolset is on by default like any plugin's (the rented ``shorts``
+# agent relies on that through the cron default), so these see it unless it is hidden.
+# Upstream's own test environment bundles no plugin that registers a toolset.
+_FORK_PLUGIN_TOOLSETS_OFF = frozenset({
+    "test_session_policy_coding_posture", "test_follow_profile_followups", "test_gui_surface_toolsets",
+})
+
+
+@pytest.fixture(autouse=True)
+def _fork_hide_bundled_plugin_toolsets(request, monkeypatch):
+    if request.module is None or request.module.__name__.rsplit(".", 1)[-1] not in _FORK_PLUGIN_TOOLSETS_OFF:
+        yield
+        return
+    from hermes_cli import tools_config
+
+    real = tools_config._get_plugin_toolset_keys
+    monkeypatch.setattr(tools_config, "_get_plugin_toolset_keys", lambda: set(real()) - {"shorts"})
     yield
