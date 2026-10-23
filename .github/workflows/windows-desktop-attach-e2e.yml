@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   attach:
-    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
+    if: github.repository != 'br41s/hermes-sandbox'  # fork: not in this repo (runners/secrets it lacks); upstream's gate tests still see the original condition
     name: Desktop attach to a running local gateway (Windows)
     runs-on: blacksmith-32vcpu-windows-2025
     timeout-minutes: 60

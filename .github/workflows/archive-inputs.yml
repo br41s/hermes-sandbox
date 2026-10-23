@@ -23,7 +23,7 @@ permissions:
 jobs:
   archive-inputs:
     name: Preserve every pinned HTTP input
-    if: github.repository == 'NousResearch/hermes-agent' && (github.event_name != 'pull_request' && github.event_name != 'pull_request_target')  # fork: upstream-only
+    if: github.repository != 'br41s/hermes-sandbox' && (github.event_name != 'pull_request' && github.event_name != 'pull_request_target')  # fork: upstream-only
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: release-signing
     timeout-minutes: 60

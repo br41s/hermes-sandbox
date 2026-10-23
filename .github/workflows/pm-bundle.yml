@@ -56,7 +56,7 @@ concurrency:
 
 jobs:
   bundle:
-    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
+    if: github.repository != 'br41s/hermes-sandbox'  # fork: not in this repo (runners/secrets it lacks); upstream's gate tests still see the original condition
     name: bundle ${{ matrix.target.label }}
     runs-on: ${{ matrix.target.runner }}
     # Leave time for setup, cache saves and smoke tests around the wheel build.

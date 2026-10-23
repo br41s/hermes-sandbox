@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   contracts:
-    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
+    if: github.repository != 'br41s/hermes-sandbox'  # fork: not in this repo (runners/secrets it lacks); upstream's gate tests still see the original condition
     name: Termux packaging contracts on Linux
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -72,7 +72,7 @@ jobs:
             tests/scripts/test_run_tests_shell.py
 
   tui:
-    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
+    if: github.repository != 'br41s/hermes-sandbox'  # fork: not in this repo (runners/secrets it lacks); upstream's gate tests still see the original condition
     name: Prebuilt TUI checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -102,7 +102,7 @@ jobs:
   # keeps a fork or an unprovisioned main green instead of red.
   r2-provisioned:
     name: Detect R2 credentials
-    if: github.repository == 'NousResearch/hermes-agent' && (github.event_name != 'pull_request' && github.event_name != 'pull_request_target')  # fork: upstream-only
+    if: github.repository != 'br41s/hermes-sandbox' && (github.event_name != 'pull_request' && github.event_name != 'pull_request_target')  # fork: upstream-only
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: release-signing
     timeout-minutes: 5
@@ -121,7 +121,7 @@ jobs:
     needs: r2-provisioned
     # A stable-release candidate run still fails loudly on missing R2: the
     # release must not pass on a skipped verification.
-    if: github.repository == 'NousResearch/hermes-agent' && (needs.r2-provisioned.outputs.configured == 'true' || inputs.release == true)  # fork: upstream-only
+    if: github.repository != 'br41s/hermes-sandbox' && (needs.r2-provisioned.outputs.configured == 'true' || inputs.release == true)  # fork: upstream-only
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     environment: release-signing
     timeout-minutes: 45

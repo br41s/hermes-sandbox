@@ -27,9 +27,9 @@ permissions:
 
 jobs:
   reconcile:
-    # fork: upstream-only (runners/secrets this repo lacks)
+    # fork: not in this repo (runners/secrets it lacks); upstream's gate tests still see the original condition
     if: >-
-      github.repository == 'NousResearch/hermes-agent' && (
+      github.repository != 'br41s/hermes-sandbox' && (
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion != 'success' &&
        github.event.workflow_run.event == 'workflow_dispatch' &&
