@@ -254,8 +254,12 @@ TOOLSET_SESSION_PLATFORMS = {name: spec["platforms"] for name, spec in TOOLSETS.
 
 # Captured before create_custom_toolset() can add user-named tools: shared metrics may export only
 # these names, so a plugin, MCP server or custom toolset name never leaves the machine.
-BUILTIN_TOOL_NAMES = frozenset(tool for spec in TOOLSETS.values() for tool in spec["tools"])
-BUILTIN_TOOLSET_NAMES = frozenset(TOOLSETS)
+# fork: the fork's own toolsets are not upstream's names either; they report as custom.
+_FORK_TOOLSETS = frozenset({"shorts"})
+BUILTIN_TOOL_NAMES = frozenset(
+    tool for name, spec in TOOLSETS.items() if name not in _FORK_TOOLSETS for tool in spec["tools"]
+)
+BUILTIN_TOOLSET_NAMES = frozenset(TOOLSETS) - _FORK_TOOLSETS
 
 
 def _registry():
