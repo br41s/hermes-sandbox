@@ -148,8 +148,10 @@ jobs:
           SHORT_SHA: ${{ steps.sha.outputs.short }}
         run: |
           set -euo pipefail
-          # No tokens: the boot hook's repo sync must fail fast, never prompt.
-          docker run -d --name boot -e GIT_TERMINAL_PROMPT=0 "$IMAGE"
+          # No tokens: the boot hook's repo sync must fail fast, never prompt. Dummy Langfuse keys make
+          # the boot hook enable the plugin, so it places the baked catalog plugin (checked below).
+          docker run -d --name boot -e GIT_TERMINAL_PROMPT=0 \
+            -e HERMES_LANGFUSE_PUBLIC_KEY=pk-lf-pr-smoke -e HERMES_LANGFUSE_SECRET_KEY=sk-lf-pr-smoke "$IMAGE"
           verdict=""
           for _ in $(seq 120); do
             logs=$(docker logs boot 2>&1 || true)
@@ -174,4 +176,8 @@ jobs:
           docker exec -w /opt/hermes boot /opt/hermes/.venv/bin/python -m hermes_cli.main --version
           docker exec -w /opt/hermes boot /opt/hermes/.venv/bin/python -c "import hermes_cli.fork_ext.boot_reconcile, hermes_cli.fork_ext.process_env_scope, hermes_cli.fork_ext.web, cron.fork_ext.run_guard, cron.fork_ext.dispatch, gateway.run, plugins.shorts"
           docker exec boot sh -c 'grep -n "write_approval" /opt/data/config.yaml'
+          # The baked Langfuse plugin: placed from the image (no clone), its dependency in the venv.
+          docker logs boot 2>&1 | grep -F 'main: placed the baked langfuse plugin'
+          docker exec boot test -f /opt/data/plugins/langfuse/plugin.yaml
+          docker exec boot /opt/hermes/.venv/bin/python -c "import langfuse, importlib.metadata as m; print('langfuse', m.version('langfuse'))"
 

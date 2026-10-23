@@ -314,6 +314,8 @@ FROM runtime_base AS python_deps
 # The [otlp] extra contains the SDK/exporter imported by Hermes when Gateway
 # Health export is enabled. Collector and observability-backend dependencies
 # remain external and are not part of the Hermes production image.
+# fork: except Langfuse's client, the [observability] extra, which the baked
+# Langfuse catalog plugin needs (see the catalog_plugins stage).
 #
 # The Matrix gateway's deps ([matrix] extra) are baked in because
 # python-olm (transitive via mautrix[encryption]) builds from source on
@@ -345,7 +347,8 @@ RUN python3 -m pm.build_env --source /opt/hermes --python /usr/local/bin/python3
     --cache /opt/hermes/uv-cache \
     --out /opt/hermes/.venv --no-install-project --sealed --record-selection \
     --extra all --extra messaging --extra otlp --extra anthropic --extra bedrock \
-    --extra azure-identity --extra matrix --extra google-chat
+    --extra azure-identity --extra matrix --extra google-chat \
+    --extra observability
 
 # Icons render on the runtime environment: Pillow and resvg-py are core
 # dependencies. A stage of its own so the frontend stage keeps building its
@@ -376,6 +379,31 @@ COPY --from=icons /tmp/hermes-icons /tmp/hermes-icons
 RUN node scripts/build/tui.mjs --source /opt/hermes --out /opt/products/tui && \
     node scripts/build/web.mjs --source /opt/hermes --icons /tmp/hermes-icons --out /opt/products/web
 
+# fork: the Langfuse catalog plugin, baked in at its reviewed pin (owner, 2026-10-23). Upstream v0.22
+# moved Langfuse out of core into this catalog plugin and installs it at gateway start, a network
+# fetch whose failure quietly turns tracing off. The tree is fetched at plugin-catalog/langfuse.yaml's
+# sha and the checkout is verified against it; its one dependency is in the venv (the observability
+# extra above). hermes_cli/fork_ext/boot_reconcile.py places it in every home that uses it.
+FROM runtime_base AS catalog_plugins
+COPY plugin-catalog/langfuse.yaml /tmp/catalog/langfuse.yaml
+COPY pyproject.toml /tmp/catalog/pyproject.toml
+RUN set -eu; \
+    entry=/tmp/catalog/langfuse.yaml; \
+    repo=$(sed -n 's/^repo: *//p' "$entry"); sha=$(sed -n 's/^sha: *//p' "$entry"); \
+    sub=$(sed -n 's/^subdir: *//p' "$entry"); \
+    git init -q /tmp/src; \
+    git -C /tmp/src fetch -q --depth 1 "$repo" "$sha"; \
+    git -C /tmp/src checkout -q FETCH_HEAD; \
+    test "$(git -C /tmp/src rev-parse HEAD)" = "$sha"; \
+    pin=$(sed -n 's/^observability = \["\(langfuse==[^"]*\)"\]$/\1/p' /tmp/catalog/pyproject.toml); \
+    test -n "$pin"; \
+    grep -qF "\"$pin\"" "/tmp/src/$sub/pyproject.toml" \
+      || { echo "plugin-catalog/langfuse.yaml's plugin no longer requires $pin: update pyproject's observability extra" >&2; exit 1; }; \
+    mkdir -p /opt/vendor-plugins; \
+    cp -a "/tmp/src/$sub" /opt/vendor-plugins/langfuse; \
+    printf '%s\n' "$sha" > /opt/vendor-plugins/langfuse.sha; \
+    rm -rf /tmp/src
+
 FROM python_deps AS runtime
 # Standalone TypeScript linting is a runtime feature; Vite/esbuild are not.
 COPY --from=frontend_build /opt/hermes/node_modules/typescript /opt/hermes/node_modules/typescript
@@ -397,6 +425,9 @@ COPY plugins/platforms/photon/sidecar/package.json \
 RUN cd plugins/platforms/photon/sidecar && \
     npm ci --no-audit --fetch-retries=5 && \
     npm cache clean --force
+
+# fork: the baked catalog plugins (catalog_plugins stage above).
+COPY --chmod=a+rX,go-w --from=catalog_plugins /opt/vendor-plugins /opt/hermes/vendor-plugins
 
 # Shared product outputs are independent of application dependency assembly.
 COPY --from=frontend_build /opt/products/tui /opt/hermes/ui-tui

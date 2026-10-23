@@ -210,6 +210,11 @@ upstream and a watchdog that keeps saying "up to date". Check with
   `if: github.repository != 'br41s/hermes-sandbox'` (never `== 'NousResearch/...'`,
   which upstream's gate tests evaluate as false). Load-sensitive e2e suites starve on
   4 vCPU: the provider catalogs run serially in `tests.yml`.
+* **The Langfuse catalog plugin is baked into the image** (owner, 2026-10-23). The
+  Dockerfile's `catalog_plugins` stage fetches it at `plugin-catalog/langfuse.yaml`'s sha;
+  `boot_reconcile.place_catalog_plugins` places it in every home that uses it. When upstream
+  moves that sha and the plugin's `langfuse==` pin changes, the image build stops with a
+  message: bump pyproject's `observability` extra to the plugin's pin and relock.
 
 ## Reducing the 81 (do after a couple of clean monthly merges)
 

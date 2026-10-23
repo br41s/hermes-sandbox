@@ -942,10 +942,101 @@ def reconcile_configs(home: Path, environ: Mapping[str, str],
         )
 
 
+# §2c: catalog plugins baked into the image (owner, 2026-10-23). Upstream v0.22 moved Langfuse out
+# of core into the `langfuse` catalog plugin, which its left-core migration installs at gateway start
+# by cloning GitHub, so a failed fetch quietly turned tracing off. The Dockerfile's catalog_plugins
+# stage bakes the tree at plugin-catalog/<name>.yaml's sha (verified there); its Python dependency is
+# in the venv (pyproject's observability extra). Placing it here, with the same install record a
+# catalog install writes, makes upstream's migration find it installed and fetch nothing.
+VENDOR_PLUGINS = Path("/opt/hermes/vendor-plugins")
+CATALOG_DIR = Path(__file__).resolve().parents[2] / "plugin-catalog"
+BAKED_CATALOG_PLUGINS = ("langfuse",)
+
+
+def _catalog_entry(name: str, catalog_dir: Path) -> dict:
+    import hermes_yaml as yaml
+
+    entry = yaml.safe_load((catalog_dir / f"{name}.yaml").read_text(encoding="utf-8-sig")) or {}
+    return {"name": str(entry["name"]), "repo": str(entry["repo"]), "tier": str(entry.get("tier") or "community"),
+            "subdir": str(entry.get("subdir") or "") or None}
+
+
+def _place_baked_plugin(home: Path, name: str, tree: Path, sha: str, entry: dict) -> str:
+    """Place *tree* as *home*'s catalog install of *name* at *sha*. Returns what it did.
+
+    Leaves alone a home that does not use the plugin, one already at *sha*, and a tree that is not
+    the fork's bake (a user's own install, or another source). Replaces only an earlier bake, so a
+    catalog pin bump in a later image reaches every home."""
+    import shutil
+
+    from hermes_cli import plugins_cmd_git as git
+    from hermes_cli.left_core_migration import langfuse_in_use
+    from hermes_cli.plugins_cmd_catalog import write_catalog_sidecar_record
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    if name == "langfuse" and not langfuse_in_use(home):
+        return "not used"
+    source = git._canonical_source(entry["repo"], entry["subdir"])
+    token = set_hermes_home_override(home)
+    try:
+        prior = git._pc()._read_install_metadata().get(name)
+        target = home / "plugins" / name
+        if target.exists() or target.is_symlink():
+            ours = isinstance(prior, dict) and prior.get("source") == source and prior.get("pinned") is True
+            if not ours:
+                return "kept (not the fork's bake)"
+            if prior.get("revision") == sha and target.is_dir():
+                return "current"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.parent / f".{name}.baked"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(tree, staging, symlinks=True)
+        catalog = {"name": entry["name"], "repo": entry["repo"], "tier": entry["tier"]}
+        write_catalog_sidecar_record(staging, catalog, sha)
+        if target.exists() or target.is_symlink():
+            retired = target.parent / f".{name}.retired"
+            shutil.rmtree(retired, ignore_errors=True)
+            os.replace(target, retired)
+            os.replace(staging, target)
+            shutil.rmtree(retired, ignore_errors=True)
+        else:
+            os.replace(staging, target)
+        git._update_install_record(name, lambda _old: {
+            "pinned": True, "revision": sha, "source": source,
+            "catalog": {**catalog, "sha": sha, "pin": sha},
+        })
+        return "placed"
+    finally:
+        reset_hermes_home_override(token)
+
+
+def place_catalog_plugins(home: Path, vendor_root: Path = VENDOR_PLUGINS,
+                          catalog_dir: Path = CATALOG_DIR) -> None:
+    """§2c, after §2 (so each home's plugins.enabled is current): the baked catalog plugins into
+    main and every real profile that uses them. Non-fatal per home; a missing bake (a local run, an
+    image built before it) is a no-op."""
+    for name in BAKED_CATALOG_PLUGINS:
+        tree, sha_file = vendor_root / name, vendor_root / f"{name}.sha"
+        if not tree.is_dir() or not sha_file.is_file():
+            continue
+        sha = sha_file.read_text(encoding="utf-8-sig").strip()
+        entry = _catalog_entry(name, catalog_dir)
+        for target_home in [home, *real_profiles(home)]:
+            label = "main" if target_home == home else target_home.name
+            try:
+                outcome = _place_baked_plugin(target_home, name, tree, sha, entry)
+            except Exception as e:
+                print(f"[03-biglobster] Warning: baked {name} plugin not placed for {label}: {e}")
+                continue
+            if outcome == "placed":
+                print(f"[03-biglobster] {label}: placed the baked {name} plugin at {sha[:12]}")
+
+
 def main(argv: Optional[list] = None) -> int:
     home = Path(os.environ.get("HERMES_HOME", "/opt/data"))
     sync_envs(home, os.environ)
     reconcile_configs(home, os.environ)
+    place_catalog_plugins(home)
     return 0
 
 
