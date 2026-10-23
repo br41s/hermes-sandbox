@@ -123,8 +123,8 @@ jobs:
       - name: Install uv (for docker tests)
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # 10.3.0
 
-      - name: Set up Python 3.11 (for docker tests)
-        run: uv python install 3.11
+      - name: Set up Python 3.14 (for docker tests)
+        run: uv python install 3.14
 
       - name: Install Python dependencies (for docker tests)
         # ``dev`` extra pulls in pytest, pytest-asyncio —
@@ -133,7 +133,7 @@ jobs:
         # subprocess and don't import hermes_agent's optional deps.
         uses: ./.github/actions/retry
         with:
-          command: uv sync --locked --python 3.11 --extra dev
+          command: uv sync --locked --python 3.14 --group dev
 
       - name: Run docker integration tests
         env:
