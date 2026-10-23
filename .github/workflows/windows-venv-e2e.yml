@@ -41,6 +41,7 @@ concurrency:
 
 jobs:
   venv-holder-e2e:
+    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
     name: venv-holder live E2E (windows-latest)
     runs-on: blacksmith-32vcpu-windows-2025
     timeout-minutes: 25

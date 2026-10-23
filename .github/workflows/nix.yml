@@ -56,6 +56,7 @@ jobs:
   # fails open and every lane is true, so a product change that breaks the
   # flake turns main red after the merge.
   detect:
+    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
     name: Detect affected areas
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -78,7 +79,7 @@ jobs:
     needs: [detect]
     # Release runs force the lane: a stable candidate must build the flake
     # no matter what its diff touches.
-    if: needs.detect.outputs.nix == 'true' || inputs.release == true
+    if: github.repository == 'NousResearch/hermes-agent' && (needs.detect.outputs.nix == 'true' || inputs.release == true)  # fork: upstream-only
     # The build compiles the package and its whole dependency closure, so this
     # takes minutes and not seconds when the cache misses. `nix flake check`
     # builds 21 checks, and --max-jobs defaults to the core count. It uses the

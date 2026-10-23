@@ -48,6 +48,7 @@ concurrency:
 
 jobs:
   install-update:
+    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
     name: Windows install.ps1 + hermes update E2E
     runs-on: blacksmith-32vcpu-windows-2025
     # A typical run is ~17 min; one slow runner took 28 min for the same work (run 36295230146).

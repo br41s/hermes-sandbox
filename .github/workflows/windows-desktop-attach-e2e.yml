@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   attach:
+    if: github.repository == 'NousResearch/hermes-agent'  # fork: upstream-only (runners/secrets this repo lacks)
     name: Desktop attach to a running local gateway (Windows)
     runs-on: blacksmith-32vcpu-windows-2025
     timeout-minutes: 60
