@@ -1,5 +1,10 @@
-# Install-hook files (root setup.py, setup.cfg, sitecustomize.py, usercustomize.py,
-# __init__.pth) that a maintainer reviewed and accepted, pinned to the exact content.
-# The supply-chain scan skips a flagged file only while its sha256 matches here.
+# Files a maintainer reviewed and accepted, pinned to the exact content. The supply-chain
+# scan skips a flagged install-hook file (root setup.py, setup.cfg, sitecustomize.py,
+# usercustomize.py, __init__.pth), or a flagged base64+exec / encoded-subprocess line, only
+# while the file's sha256 matches here (and, for a line, only if the line is in that file).
 # Format: <path> <sha256> [note]. Editing this file needs the ci-reviewed label.
-setup.py d476dd1c28d707acd72f1d0551d7178123832ae18b6e201ca1ac48cd040653ae upstream 283c4f058c root py_modules from the tree (os.listdir only; no network/exec), byte-identical to v2026.9.24 (PR 344)
+setup.py 23b2453c734661af9b4d9998171dc794e555c22f554d44cd4a625ea74d348d5d upstream v0.22.5: help text only (uv sync -> source ./activate), byte-identical to v0.22.5 (owner, PR 489)
+hermes_cli/_launchers.py f45dbb4bcf1582e82d90b7425bb1480756f85234defe9269785603735546c9b4 upstream v0.22.5 (e49073ecf3): the Windows .cmd launcher base64-encodes Hermes's own in-tree launcher script so cmd quoting cannot mangle it; nothing embedded; byte-identical to v0.22.5 (owner, PR 489)
+tools/file_operations.py 2867e7207852e36e19635e74a1510063f839dd86221ad990da913977def81dd2 upstream v0.22.5: _exec_python_snippet base64-encodes an in-tree snippet built at runtime so shell quoting cannot corrupt it; nothing embedded; byte-identical to v0.22.5 (owner, PR 489)
+tests/gateway/test_gateway_inline_bootstrap_identity.py d4c50b070ae8e2e7871862d7fab703498bd7012b2cbfcb2cb0bb9b161ee07c8a upstream v0.22.5 test: mirrors the launcher shape above on the test's own _SCRIPT; byte-identical to v0.22.5 (owner, PR 489)
+tests-js/scripts/desktop-smoke.test.ts 3319e80df4d1b178e929a1d3ca36f421740453463343f6f870beab841bc4b553 upstream v0.22.5 test: fake launcher stub, the payload is 'eA==' (the letter x); byte-identical to v0.22.5 (owner, PR 489)
