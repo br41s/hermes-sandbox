@@ -71,8 +71,11 @@ def _run(cmd: list[str], *, cwd: Path, what: str) -> None:
         subprocess.run(
             cmd,
             cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=FFMPEG_TIMEOUT,
             check=True,
         )
