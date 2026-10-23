@@ -51,7 +51,7 @@ class TestVersionOrdering:
         ]
 
     def test_unparseable_tag_sorts_last_and_does_not_raise(self, drift):
-        assert drift._version_key("not-a-version") == (0, 0, 0, 0)
+        assert drift._version_key("not-a-version") == (0, 0, 0, 0, 0)
         assert drift._version_key("v2026.7.7") > drift._version_key("not-a-version")
 
 
@@ -124,6 +124,99 @@ class TestFourPartTags:
     def test_fourth_component_parses_and_orders(self, drift):
         assert drift._version_key("v2026.8.16.2") > drift._version_key("v2026.8.16")
         assert drift._version_key("v2026.8.18") > drift._version_key("v2026.8.16.2")
+
+
+class TestSemverTags:
+    """Upstream switched from vYYYY.M.D to semver after v2026.9.24.
+
+    Regression: the tag pattern matched the calendar scheme only, so the
+    watchdog and the weekly sync both reported "up to date on v2026.9.24"
+    from 2026-10-08 while seven semver releases (v0.21.6 .. v0.22.4) went
+    unmerged. ``git tag --sort=-v:refname`` would also rank v2026.9.24 first.
+    """
+
+    # The real mix on upstream, 2026-10-23.
+    UPSTREAM = ["v2026.9.21", "v2026.9.24", "v0.21.6", "v0.22.4", "v0.22.10",
+                "v0.22.4+canary.20261022T070155Z", "rc.5-v0.22.3",
+                "abandoned-rc.1-v0.22.5", "inputs-0", "backup/precopystrip-20260616-2058"]
+
+    def test_only_releases_are_release_tags(self, drift):
+        assert [t for t in self.UPSTREAM if drift._is_release_tag(t)] == [
+            "v2026.9.21", "v2026.9.24", "v0.21.6", "v0.22.4", "v0.22.10"]
+
+    def test_semver_outranks_every_calendar_tag(self, drift):
+        assert drift._version_key("v0.21.6") > drift._version_key("v2026.9.24")
+        assert drift._version_key("v0.0.1") > drift._version_key("v2099.12.31.9")
+
+    def test_semver_orders_numerically(self, drift):
+        assert drift._version_key("v0.22.10") > drift._version_key("v0.22.4")
+        assert drift._version_key("v1.0.0") > drift._version_key("v0.99.99")
+
+    def test_remote_mode_sees_semver_releases(self, drift, monkeypatch, capsys):
+        payload = [{"name": n, "commit": {"url": f"https://api.test/commits/{n}"}}
+                   for n in self.UPSTREAM]
+        monkeypatch.setattr(drift, "_api_get", lambda url: payload)
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.9.24")
+        monkeypatch.setattr(drift, "_api_tag_date", lambda url: _ago(15))
+        assert drift._remote_report(30) == 0
+        out = capsys.readouterr().out
+        assert "3 releases behind" in out and "newest is v0.22.10" in out
+        assert "Oldest unmerged, v0.21.6" in out
+
+    def test_api_tags_are_paged_to_the_end(self, drift, monkeypatch):
+        """220 tags upstream; the releases need not be on page one."""
+        pages = {1: [{"name": f"v0.22.4+canary.{i}"} for i in range(100)],
+                 2: [{"name": f"rc.{i}-v0.22.3"} for i in range(100)],
+                 3: [{"name": "v0.22.4", "commit": {"url": "u"}}]}
+        seen = []
+
+        def get(url):
+            page = int(url.rsplit("page=", 1)[1])
+            seen.append(page)
+            return pages[page]
+
+        monkeypatch.setattr(drift, "_api_get", get)
+        assert drift._api_release_tags() == [("v0.22.4", "u")]
+        assert seen == [1, 2, 3]
+
+    def test_full_mode_finds_semver_releases(self, drift, monkeypatch, capsys):
+        merged = {"v2026.9.21", "v2026.9.24"}
+        monkeypatch.setattr(drift, "_recorded_version", lambda: "v2026.9.24")
+
+        def run(*args, **kw):
+            if args[:3] == ("git", "tag", "-l"):
+                return "\n".join(self.UPSTREAM)
+            if args[:2] == ("git", "log"):
+                return _ago(15)
+            if args[:2] == ("git", "rev-list"):
+                return "15970"
+            return ""
+
+        class _Proc:
+            def __init__(self, rc):
+                self.returncode = rc
+
+        monkeypatch.setattr(drift, "_run", run)
+        monkeypatch.setattr(drift, "_conflict_count", lambda target: "82")
+        monkeypatch.setattr(drift.subprocess, "run",
+                            lambda cmd, **k: _Proc(0 if cmd[-2] in merged else 1))
+        assert drift._full_report(30) == 0
+        out = capsys.readouterr().out
+        assert "3 releases behind" in out and "newest is v0.22.10" in out
+        assert "merging v0.22.10" in out
+
+    def test_newest_merged_prefers_semver(self, drift, monkeypatch, capsys):
+        merged = {"v2026.9.21", "v2026.9.24", "v0.21.6"}
+        monkeypatch.setattr(drift, "_run", lambda *a, **k: "\n".join(self.UPSTREAM))
+
+        class _Proc:
+            def __init__(self, rc):
+                self.returncode = rc
+
+        monkeypatch.setattr(drift.subprocess, "run",
+                            lambda cmd, **k: _Proc(0 if cmd[-2] in merged else 1))
+        assert drift._newest_merged() == 0
+        assert capsys.readouterr().out.strip() == "v0.21.6"
 
 
 class TestDeferToActions:
