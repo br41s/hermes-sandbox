@@ -119,6 +119,8 @@ _UPSTREAM_NETWORK_TESTS = frozenset({
     "tests/pm/test_pip_check.py::test_requirements_builds_from_an_overridden_lock_apply_its_overrides",
     "tests/pm/test_pip_check.py::test_streamed_check_still_sees_failures_ahead_of_a_long_expected_report",
     "tests/scripts/test_termux_runtime_libs.py::test_failed_download_identifies_the_pin_without_publishing",
+    "tests/hermes_cli/test_plugin_update_scan_override.py"
+    "::test_subdirectory_update_asks_before_a_caution_scan_and_never_accepts_dangerous",
 })
 
 
