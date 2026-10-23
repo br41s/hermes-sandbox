@@ -135,7 +135,10 @@ def rig_fixtures(driver_cls: type) -> tuple[Any, Any]:
         name = driver_cls.name
         r = _make(tmp_path_factory, "b", {
             "streaming": {"enabled": True, "edit_interval": 0.3},
-            "display": {"platforms": {name: {"streaming": True}}},
+            # fork: turn_start_ack off. The ack is one more send into the chat, and Telegram's shared
+            # per-chat send+edit slot (1s) then skips this rig's previews: its scripted answers stream
+            # in ~1.5s, so a rejected finalize could land on a 12-character preview.
+            "display": {"platforms": {name: {"streaming": True, "turn_start_ack": False}}},
             "platform_toolsets": {name: ["file"]},
         }, {})
         yield r
