@@ -2771,6 +2771,12 @@ class _StreamingCall(StreamingWaitMonitor):
     State shared between the request worker and the poll-loop monitor (heartbeat,
     stale kill, interrupt abort) lives on the instance, mutated from both threads."""
 
+    # fork: the overall-deadline state (``_kill_at_deadline``), set per instance in __init__.
+    # Class defaults keep calls built without __init__ (upstream's tests use __new__) on the
+    # no-deadline path instead of raising AttributeError.
+    _call_deadline: Optional[float] = None
+    _deadline_error: Optional[BaseException] = None
+
     def __init__(self, agent, api_kwargs: dict, on_first_delta):
         self.agent = agent
         self.api_kwargs = api_kwargs

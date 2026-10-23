@@ -90,7 +90,12 @@ def _bind_lark_sdk_globals_when_installed():
 # fork: upstream modules that assert the exact sends of a turn, which the turn-start ack
 # (GatewayRunner._maybe_send_turn_start_ack) adds one to. Everything else runs with the ack live.
 # A module that starts failing on "✅ Mensaje recibido" after an upstream merge belongs here.
-_TURN_START_ACK_OFF = frozenset({"test_base_warning_owner_scope", "test_incomplete_gateway_turns"})
+_TURN_START_ACK_OFF = frozenset({
+    "test_base_warning_owner_scope", "test_incomplete_gateway_turns",
+    # upstream v0.22
+    "test_busy_followup_marker_handoff", "test_mattermost_native_admission",
+    "test_native_admission_metadata", "test_native_execution_secret_scope_off_loop",
+})
 
 
 @pytest.fixture(autouse=True)
@@ -104,6 +109,24 @@ def _fork_silence_turn_start_ack(request, monkeypatch):
         return None
 
     monkeypatch.setattr(GatewayRunner, "_maybe_send_turn_start_ack", _no_ack)
+    yield
+
+
+# fork: upstream modules that assert a session's exact default toolsets. The fork bundles the
+# ``shorts`` plugin, whose toolset is on by default like any plugin's (the rented ``shorts``
+# agent relies on that through the cron default), so these see it unless it is hidden.
+_FORK_PLUGIN_TOOLSETS_OFF = frozenset({"test_session_policy_coding_posture", "test_follow_profile_followups"})
+
+
+@pytest.fixture(autouse=True)
+def _fork_hide_bundled_plugin_toolsets(request, monkeypatch):
+    if request.module.__name__.rsplit(".", 1)[-1] not in _FORK_PLUGIN_TOOLSETS_OFF:
+        yield
+        return
+    from hermes_cli import tools_config
+
+    real = tools_config._get_plugin_toolset_keys
+    monkeypatch.setattr(tools_config, "_get_plugin_toolset_keys", lambda: set(real()) - {"shorts"})
     yield
 
 

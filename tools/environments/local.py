@@ -322,7 +322,10 @@ def _scrubbed_env(parts, plugin_strip: frozenset, fix_path) -> dict:
     # force-unwrapped extras, scope additions) -- a name guarantee, not a blocklist/passthrough
     # outcome. A container GITHUB_TOKEN reaching `gh` overrides its on-disk identity (biglobster#408),
     # and no-agent cron scripts must never see GitHub or bot tokens (CLAUDE.md "Secrets").
-    for key in [k for k in out if k.upper() in _ALWAYS_STRIP_KEYS]:
+    # Upstream v0.22 folds every adapter secret (BUZZ_* included) into Tier 1 and carves the
+    # context-entitled first-party BUZZ_* names back out for a Buzz agent's own terminal; honour
+    # that carve-out, which _filter_secret_env already applied, instead of undoing it here.
+    for key in [k for k in out if k.upper() in _ALWAYS_STRIP_KEYS and not _is_terminal_first_party_env(k)]:
         del out[key]
     path_key = _path_env_key(out)
     # Keep bare ``hermes`` invocations available to child jobs even when the gateway was launched by a
