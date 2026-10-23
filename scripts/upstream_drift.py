@@ -56,21 +56,39 @@ FORK_REPO = os.environ.get("HERMES_FORK_REPO", "br41s/hermes-sandbox")
 ACTIONS_WORKFLOW = "upstream-drift.yml"
 RUNBOOK = "ops/upstream-merge/upstream-merge-hygiene.md"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-# Upstream cuts same-day re-releases as a fourth component (v2026.8.16.2).
-_TAG_RE = re.compile(r"^v(\d{4})\.(\d+)\.(\d+)(?:\.(\d+))?$")
+# Two release schemes. Calendar tags ran to v2026.9.24, with same-day
+# re-releases as a fourth component (v2026.8.16.2). From v0.21.6 (2026-10-08)
+# upstream tags plain semver. Nightly ``v0.22.2+canary.<stamp>`` builds and
+# ``rc.N-…`` / ``abandoned-rc.N-…`` candidates are not releases and match neither.
+_CALVER_RE = re.compile(r"^v(\d{4})\.(\d+)\.(\d+)(?:\.(\d+))?$")
+_SEMVER_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 
-def _version_key(tag: str) -> tuple[int, int, int, int]:
-    """Sort key for a vYYYY.M.D[.N] tag.
+def _is_release_tag(tag: str) -> bool:
+    return bool(_CALVER_RE.match(tag) or _SEMVER_RE.match(tag))
+
+
+def _version_key(tag: str) -> tuple[int, int, int, int, int]:
+    """Sort key for a release tag: (scheme, numbers...), unparseable lowest.
 
     MUST be numeric. Sorting these as strings puts v2026.7.7 above v2026.7.30
     because '7' > '3' character-wise — which is exactly what this script got
     wrong on its first run in the container, reporting a tag three weeks stale
-    as the newest. ``git tag --sort=-v:refname`` (full mode) already does this
-    correctly; only the GitHub API path needed it.
+    as the newest.
+
+    Every semver tag outranks every calendar tag: semver is the newer scheme
+    (v0.21.6 contains v2026.9.24). ``git tag --sort=-v:refname`` gets this
+    backwards, ranking v2026.9.24 above v0.22.4, and only matching the calendar
+    scheme kept this check reporting "up to date on v2026.9.24" through seven
+    semver releases (2026-10-08 to 2026-10-23).
     """
-    m = _TAG_RE.match(tag)
-    return tuple(int(g or 0) for g in m.groups()) if m else (0, 0, 0, 0)
+    m = _CALVER_RE.match(tag)
+    if m:
+        return (1, *(int(g or 0) for g in m.groups()))
+    m = _SEMVER_RE.match(tag)
+    if m:
+        return (2, *(int(g) for g in m.groups()), 0)
+    return (0, 0, 0, 0, 0)
 
 
 def _run(*args: str, check: bool = True) -> str:
@@ -118,14 +136,24 @@ def _api_tag_date(commit_url: str) -> str:
 
 
 def _api_release_tags() -> list[tuple[str, str]] | None:
-    """Upstream's release tags as (name, commit_url), newest first."""
+    """Upstream's release tags as (name, commit_url), newest first.
+
+    Pages through every tag: canary and rc tags push upstream past 200, so
+    the releases are not all on the first page.
+    """
+    tags: list = []
     try:
-        tags = _api_get(f"https://api.github.com/repos/{UPSTREAM_REPO}/tags?per_page=100")
+        for page in range(1, 21):
+            batch = _api_get(f"https://api.github.com/repos/{UPSTREAM_REPO}/tags"
+                             f"?per_page=100&page={page}")
+            tags.extend(batch)
+            if len(batch) < 100:
+                break
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
         print(f"upstream-drift: could not reach the GitHub API: {exc}", file=sys.stderr)
         return None
     found = [(t["name"], (t.get("commit") or {}).get("url", "")) for t in tags
-             if isinstance(t, dict) and _TAG_RE.match(t.get("name") or "")]
+             if isinstance(t, dict) and _is_release_tag(t.get("name") or "")]
     return sorted(found, key=lambda t: _version_key(t[0]), reverse=True)
 
 
@@ -187,6 +215,23 @@ def _conflict_count(target: str) -> str:
     return str(len(files)) if files else "?"
 
 
+def _newest_merged() -> int:
+    """Print the newest release tag merged into HEAD: the UPSTREAM_VERSION value.
+
+    Runbook step 7 calls this rather than a shell loop over
+    ``git tag --sort=-v:refname``, which ranks calendar tags above semver ones.
+    """
+    tags = sorted((t for t in _run("git", "tag", "-l").splitlines() if _is_release_tag(t)),
+                  key=_version_key, reverse=True)
+    for tag in tags:
+        if subprocess.run(["git", "merge-base", "--is-ancestor", tag, "HEAD"],
+                          capture_output=True, cwd=_REPO_ROOT).returncode == 0:
+            print(tag)
+            return 0
+    print("upstream-drift: no upstream release tag is merged into HEAD", file=sys.stderr)
+    return 2
+
+
 def _full_report(threshold: int) -> int:
     try:
         _run("git", "fetch", "--tags", "--quiet", "upstream")
@@ -196,8 +241,8 @@ def _full_report(threshold: int) -> int:
               file=sys.stderr)
         return 2
 
-    tags = [t for t in _run("git", "tag", "-l", "--sort=-v:refname").splitlines()
-            if _TAG_RE.match(t)]
+    tags = sorted((t for t in _run("git", "tag", "-l").splitlines() if _is_release_tag(t)),
+                  key=_version_key, reverse=True)
     if not tags:
         print("upstream-drift: no upstream release tags found", file=sys.stderr)
         return 2
@@ -220,9 +265,7 @@ def _full_report(threshold: int) -> int:
         print("    The drift check is meaningless until this is corrected — it "
               "would report\n    up to date through real drift. Set it to the newest "
               "tag that IS an ancestor of HEAD:")
-        print("      for t in $(git tag -l --sort=-v:refname); do "
-              "git merge-base --is-ancestor $t HEAD 2>/dev/null && "
-              "{ echo $t; break; }; done")
+        print("      python3 scripts/upstream_drift.py --newest-merged")
         return 1
 
     # The opposite slip: the merge landed but UPSTREAM_VERSION was never bumped
@@ -330,7 +373,13 @@ def main() -> int:
                          "drift workflow succeeded recently, else report")
     ap.add_argument("--defer-window-hours", type=int, default=72,
                     help="how recent that Actions success must be (default: 72)")
+    ap.add_argument("--newest-merged", action="store_true",
+                    help="print the newest upstream release tag merged into HEAD "
+                         "(the value UPSTREAM_VERSION must hold) and exit")
     args = ap.parse_args()
+
+    if args.newest_merged:
+        return _newest_merged()
 
     if args.defer_to_actions:
         reported, why = _actions_reported(args.defer_window_hours)

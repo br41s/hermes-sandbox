@@ -124,11 +124,13 @@ rewrites that file it becomes "re-apply our intent onto unfamiliar code". So:
    makes the drift watcher report "up to date" through real drift.
 
    ```bash
-   for t in $(git tag -l --sort=-v:refname); do \
-     git merge-base --is-ancestor $t HEAD 2>/dev/null && { echo $t > UPSTREAM_VERSION; break; }; done
+   python3 scripts/upstream_drift.py --newest-merged > UPSTREAM_VERSION
    cat UPSTREAM_VERSION
    python3 scripts/upstream_drift.py   # must exit 0: "up to date", or "not due yet"
    ```
+
+   Never derive it with `git tag --sort=-v:refname`: it ranks `v2026.9.24`
+   above `v0.22.4` (see "Upstream's tag schemes" below).
 
    `upstream_drift.py` now refuses to run if the recorded tag is not an ancestor
    of HEAD, so this is caught rather than silently believed.
@@ -153,6 +155,22 @@ Three things static analysis cannot see, so **the suite is the only real gate**:
 * two code paths registering the same name (the CLI break — no duplicate symbol
   exists; only importing the module reveals it)
 * a file silently dropped from the image by an auto-merged `.dockerignore`
+
+## Upstream's tag schemes
+
+Upstream tagged releases `vYYYY.M.D[.N]` through `v2026.9.24`, then switched
+to semver from `v0.21.6` (2026-10-08). Every semver release is newer than
+every calendar one. Only plain `vX.Y.Z` and `vYYYY.M.D[.N]` are releases:
+`v0.22.4+canary.<stamp>` (nightly), `rc.N-v…` and `abandoned-rc.N-v…` are not,
+and nor is anything else in upstream's 200+ tags. `scripts/upstream_drift.py`
+owns this rule (`_is_release_tag`, `_version_key`); go through it rather than
+sorting tags in the shell.
+
+Until 2026-10-23 the script matched the calendar scheme only, so both it and
+the weekly sync reported "up to date on v2026.9.24" through seven semver
+releases. If upstream changes scheme again, the symptom is the same: a busy
+upstream and a watchdog that keeps saying "up to date". Check with
+`git ls-remote --tags upstream` when that happens.
 
 ## Traps that cost real time
 

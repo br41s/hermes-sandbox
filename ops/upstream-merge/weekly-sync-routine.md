@@ -25,7 +25,15 @@ python3 scripts/upstream_drift.py
 ```
 
 - Merge **release tags only**, never `upstream/main`. The target is the newest
-  upstream tag that is not an ancestor of `origin/main`.
+  upstream release tag that is not an ancestor of `origin/main`, as
+  `upstream_drift.py` names it ("upstream's newest is …"). Upstream switched
+  from `vYYYY.M.D` to semver (`v0.x.y`) after `v2026.9.24`, and semver is
+  newer; canary, `rc.*` and `abandoned-rc.*` tags are not releases. Don't pick
+  the target with `git tag --sort=-v:refname` or a `v2026.*` pattern: both
+  miss the semver releases (runbook, "Upstream's tag schemes").
+- Sanity check before reporting "up to date": if `upstream/main` is thousands
+  of commits ahead of the tag you think is newest, list
+  `git ls-remote --tags upstream` and look for a new scheme.
 - If an open PR titled `Upstream merge: …` already exists, don't open a second one.
   Bring that one up to the newest tag, or leave it and report why. If it has fallen
   behind `main` or conflicts with it, merge `origin/main` into its branch first (a
@@ -43,7 +51,8 @@ order:
 - run `scripts/check_merge_splice.py --base <tag>` after each batch;
 - regenerate `uv lock` and the model catalog, never hand-merging them;
 - run `scripts/check_fork_collisions.py --ref <tag>` and `scripts/gate.sh`;
-- **derive** `UPSTREAM_VERSION` from ancestry (runbook step 7);
+- **derive** `UPSTREAM_VERSION` with `python3 scripts/upstream_drift.py --newest-merged`
+  (runbook step 7);
   `python3 scripts/upstream_drift.py` must then print "up to date".
 
 Fork rules (see `CLAUDE.md`):
