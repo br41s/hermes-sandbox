@@ -91,7 +91,7 @@ def test_the_effective_cron_drain_stays_inside_the_kill_grace():
 
 
 def test_the_seed_config_agrees_with_the_boot_pins():
-    import yaml
+    import hermes_yaml as yaml
 
     from hermes_cli.fork_ext.boot_reconcile import OVERRIDES
 

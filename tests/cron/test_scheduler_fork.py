@@ -554,7 +554,7 @@ class TestKickoffPingFromAProfileStore:
 
     @staticmethod
     def _satellite(tmp_path, monkeypatch, routes):
-        import yaml
+        import hermes_yaml as yaml
 
         root = tmp_path / "root"
         home = root / "profiles" / "fitness"

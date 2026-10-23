@@ -18,7 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 
-import yaml
+import hermes_yaml as yaml
 
 from fork_evals.judge import JudgeResult, judge
 

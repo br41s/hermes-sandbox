@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 from hermes_cli.fork_ext import boot_reconcile as br
 
@@ -28,7 +28,7 @@ def _profile(home: Path, name: str, env: str = "", cfg: dict | None = None) -> P
     (prof / "SOUL.md").write_text("soul", encoding="utf-8")
     (prof / ".env").write_text(env, encoding="utf-8")
     if cfg is not None:
-        (prof / "config.yaml").write_text(yaml.dump(cfg), encoding="utf-8")
+        (prof / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return prof
 
 

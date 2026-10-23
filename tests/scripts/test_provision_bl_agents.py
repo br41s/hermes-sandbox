@@ -9,7 +9,7 @@ for one-shot agents (they auto-remove after their single run).
 from pathlib import Path
 
 import pytest
-import yaml
+import hermes_yaml as yaml
 
 from scripts.provision_bl_client import (
     AGENT_SOURCES,

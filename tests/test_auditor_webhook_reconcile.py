@@ -212,7 +212,7 @@ print(json.dumps(ids))
     assert out.returncode == 0, out.stderr
     import json
     ids = json.loads(out.stdout.strip().splitlines()[-1])
-    import yaml
+    import hermes_yaml as yaml
     cfg = {"platforms": {"webhook": {"enabled": True, "extra": {"port": 8644, "routes": {}}}}}
     if route_target:
         cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
@@ -223,7 +223,7 @@ print(json.dumps(ids))
 
 
 def _route(home: Path) -> dict:
-    import yaml
+    import hermes_yaml as yaml
     cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
     return cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"]
 
@@ -241,7 +241,7 @@ def test_a_moved_review_job_binds_the_route_to_the_auditor_profile(tmp_path, web
     side by side in the auditor store, neither with a profile field. The route keeps the
     id it targeted and gains profile: auditor, so /p/auditor/webhooks/... accepts it."""
     ids = _seed(tmp_path, [], [("merge-on-green", "40 * * * *"), ("auditor-review", "every 6 hours")])
-    import yaml
+    import hermes_yaml as yaml
     cfg = yaml.safe_load((tmp_path / "config.yaml").read_text(encoding="utf-8"))
     cfg["platforms"]["webhook"]["extra"]["routes"]["auditor-pr-trigger"] = {
         "secret": "s3cr3t", "events": ["pull_request"], "trigger_cron_job_id": ids["auditor-review"]}

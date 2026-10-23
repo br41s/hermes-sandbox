@@ -143,7 +143,7 @@ def _webhook_refs(homes: Sequence[Path]) -> List[tuple]:
     """``(home, key, value)`` for every webhook route field that fires a cron job, read
     from each home's ``config.yaml`` and ``webhook_subscriptions.json``. Raises if a
     file exists and cannot be parsed: an unreadable route list must refuse the move."""
-    import yaml
+    import hermes_yaml as yaml
 
     found = []
 

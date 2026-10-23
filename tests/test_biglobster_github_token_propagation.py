@@ -267,7 +267,7 @@ def test_ddgs_reconcile_on_sample_configs() -> None:
 
 def test_profile_loop_marks_rentals_by_their_env_marker(tmp_path) -> None:
     """is_rented comes from BL_SITE_URL in the profile's .env, not from its name."""
-    import yaml
+    import hermes_yaml as yaml
 
     home = _home_with(tmp_path, {"client-without-prefix": "BL_SITE_URL=https://c\n",
                                  "biglobster": "A=1\n"})

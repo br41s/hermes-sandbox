@@ -485,7 +485,7 @@ def _write_config(profile_dir: Path, model: str, image_model: str | None = None)
     minutes after provisioning — gets it immediately, without waiting for
     the next container restart.
     """
-    import yaml
+    import hermes_yaml as yaml
 
     data: dict = {
         "model": {"default": model, "provider": "openrouter"},
