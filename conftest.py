@@ -23,7 +23,7 @@ _NETWORK_GUARD_BYPASS_MARK = "network_guard_bypass"
 _DEP_INSTALL_GUARD_BYPASS_MARK = "dep_install_guard_bypass"
 
 
-def pytest_configure(config):  # noqa: D401 — pytest hook
+def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         f"{_NETWORK_GUARD_BYPASS_MARK}: bypass the outbound-network guard "

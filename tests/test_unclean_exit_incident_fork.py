@@ -9,11 +9,11 @@ tells us whether it was enough.
 Hermetic: synthetic exit-diag files, an injected clock and state path.
 """
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from incidents.sweep import sweep, unclean_exit_incidents
 
-NOW = datetime(2026, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 29, 12, 0, 0, tzinfo=UTC)
 
 
 def _record(ago_hours=1, prior_pid=4242, integrity="ok", oom=False, tag="gateway.previous_unclean_exit"):

@@ -79,7 +79,7 @@ async def test_routed_cron_job_resolves_from_the_profiles_store_and_runs_on_its_
     If the module constants were re-pointed (``CRON_DIR`` and friends), that
     fallback is skipped and the lookup lands in the DEFAULT store, quietly. This
     is the test that notices."""
-    import cron.jobs as jobs
+    from cron import jobs
     from hermes_cli.profiles import get_profile_dir
 
     satellite = get_profile_dir("grow-shop")

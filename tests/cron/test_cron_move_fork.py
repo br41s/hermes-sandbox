@@ -110,7 +110,7 @@ def test_apply_moves_the_record_and_its_state(stores):
 
 
 def test_steps_run_in_the_planned_order(stores, monkeypatch):
-    default, shop = stores
+    default, _shop = stores
     jid = _make(default, profile="grow-shop", next_run_at=_future(60))
     _seed_state(default, jid)
     events = []
@@ -209,7 +209,7 @@ def test_the_moved_record_drops_the_retired_profile_field(stores):
 
 
 def test_an_already_moved_job_is_a_no_op(stores, capsys):
-    default, shop = stores
+    default, _shop = stores
     jid = _make(default, profile="grow-shop", next_run_at=_future(60))
     assert mv.move([jid], to_profile="grow-shop", apply=True) == 0
     assert mv.move([jid], to_profile="grow-shop", apply=True) == 0
@@ -312,7 +312,7 @@ def test_refuses_to_split_a_context_from_edge(stores, capsys):
 
 
 def test_refuses_a_webhook_triggered_job_until_the_route_is_disabled(stores, capsys):
-    default, shop = stores
+    default, _shop = stores
     jid = _make(default, profile="grow-shop", next_run_at=_future(60))
     (default / "config.yaml").write_text(
         "platforms:\n  webhook:\n    extra:\n      routes:\n"

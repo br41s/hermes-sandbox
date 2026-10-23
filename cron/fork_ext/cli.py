@@ -36,7 +36,7 @@ JOB_ARG_FIELDS = (
 )
 
 
-def job_api_kwargs(args) -> Dict[str, Any]:
+def job_api_kwargs(args) -> dict[str, Any]:
     """The fork's extra ``cronjob`` kwargs for ``cron create`` / ``cron edit``."""
     return {api_key: getattr(args, attr, None) for api_key, attr in JOB_ARG_FIELDS}
 
@@ -44,7 +44,7 @@ def job_api_kwargs(args) -> Dict[str, Any]:
 # ------------------------------------------------------------------ output
 
 
-def list_rows(job: Dict[str, Any]) -> List[Tuple[str, str]]:
+def list_rows(job: dict[str, Any]) -> list[tuple[str, str]]:
     """The fork's ``cron list`` rows for *job*, as upstream ``_job_rows`` ``(label, value)``
     pairs; ``hermes_cli/cron.py`` places them right after Workdir.
 
@@ -53,7 +53,7 @@ def list_rows(job: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
     from cron.fork_ext.profile_scope import legacy_profile
 
-    rows: List[Tuple[str, str]] = []
+    rows: list[tuple[str, str]] = []
     profile = legacy_profile(job)
     if profile:  # retired field (stage 3 step 2): the scheduler refuses this record
         rows.append((color("⚠ Profile", Colors.RED),
@@ -73,18 +73,18 @@ def list_rows(job: Dict[str, Any]) -> List[Tuple[str, str]]:
     return rows
 
 
-def replaces_last_run(job: Dict[str, Any]) -> bool:
+def replaces_last_run(job: dict[str, Any]) -> bool:
     """True when :func:`list_rows` prints this job's "Last run" rows itself."""
     return job.get("last_status") == "interrupted"
 
 
-def print_kickoff_ping(job: Dict[str, Any]) -> None:
+def print_kickoff_ping(job: dict[str, Any]) -> None:
     """``cron edit``'s kickoff-ping line; printed before Workdir."""
     if job.get("progress_ping") is False:
         print("  Kickoff ping: off (silent on start)")
 
 
-def print_job_details(job: Dict[str, Any]) -> None:
+def print_job_details(job: dict[str, Any]) -> None:
     """The fork's detail lines for ``cron create`` / ``cron edit``; printed after Workdir."""
     if job.get("prompt_source"):
         print(f"  Prompt source: {job['prompt_source']}")

@@ -68,7 +68,7 @@ def handle_crm_find_contact(args: dict, **_kw) -> str:
                 "total": res["total"],
             }
         )
-    except Exception as exc:  # noqa: BLE001 — surface as tool error
+    except Exception as exc:
         return tool_error(f"crm_find_contact failed: {type(exc).__name__}: {exc}")
 
 
@@ -89,7 +89,7 @@ def handle_crm_create_contact(args: dict, **_kw) -> str:
         return tool_result({"created": True, "contact": _summarize(c)})
     except ValueError as exc:
         return tool_error(str(exc))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return tool_error(f"crm_create_contact failed: {type(exc).__name__}: {exc}")
 
 
@@ -126,5 +126,5 @@ def handle_crm_update_contact(args: dict, **_kw) -> str:
         return tool_result({"updated": True, "contact": _summarize(c)})
     except ValueError as exc:
         return tool_error(str(exc))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return tool_error(f"crm_update_contact failed: {type(exc).__name__}: {exc}")

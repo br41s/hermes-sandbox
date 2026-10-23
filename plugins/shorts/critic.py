@@ -56,7 +56,7 @@ Return exactly this JSON object, with "problems" and the rewrite written in the 
 """
 
 
-def config() -> Dict[str, Any]:
+def config() -> dict[str, Any]:
     raw_min = env("SHORTS_CRITIC_MIN")
     try:
         minimum = int(raw_min) if raw_min else DEFAULT_MIN
@@ -71,7 +71,7 @@ def config() -> Dict[str, Any]:
     }
 
 
-def script_view(pkg: Dict[str, Any]) -> str:
+def script_view(pkg: dict[str, Any]) -> str:
     """The script as a scriptwriter reads it: who says what, and what is on screen."""
     lines = [f"LANGUAGE: {pkg.get('lang')}", f"ARTICLE TITLE: {pkg.get('article', {}).get('title', '')}"]
     opener = pkg.get("opener") or {}
@@ -99,10 +99,10 @@ def script_view(pkg: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
-def _json_block(text: str) -> Dict[str, Any]:
+def _json_block(text: str) -> dict[str, Any]:
     text = text.strip()
     fenced = _FENCE.search(text)
     if fenced:
@@ -118,7 +118,7 @@ def _json_block(text: str) -> Dict[str, Any]:
     return data
 
 
-def review(pkg: Dict[str, Any], article_text: str, *, client=None) -> List[str]:
+def review(pkg: dict[str, Any], article_text: str, *, client=None) -> list[str]:
     """Problems with the opening, as ``submit`` reports them, or [] when it passes or the critic cannot answer."""
     cfg = config()
     if not cfg["enabled"]:

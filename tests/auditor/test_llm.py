@@ -7,7 +7,7 @@ here (no network); request construction is checked separately.
 """
 import json
 
-import auditor.llm as llm
+from auditor import llm
 
 
 def test_env_vars_win(monkeypatch):

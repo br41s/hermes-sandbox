@@ -78,12 +78,12 @@ def main() -> int:
 
     try:
         token = _get_jwt(site_url, password)
-    except Exception as err:  # noqa: BLE001 — any failure here is worth reporting verbatim
+    except Exception as err:
         return _fail(f"⚠️ No se pudo autenticar contra {site_url}: {err}")
 
     try:
         before = _status(site_url, token)
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return _fail(f"⚠️ No se pudo leer el estado del sync en {site_url}: {err}")
 
     if not before.get("hasPassword") or not before.get("supplierCode"):
@@ -100,7 +100,7 @@ def main() -> int:
     except urllib.error.HTTPError as err:
         detail = err.read().decode("utf-8", errors="replace")
         return _fail(f"⚠️ El sync de Liderpapel falló en {site_url}: HTTP {err.code} — {detail}")
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Timeout or dropped connection. The sync keeps running server-side, so
         # this is not an outcome — fall through to polling for the real one.
         pass
@@ -109,7 +109,7 @@ def main() -> int:
     while True:
         try:
             current = _status(site_url, token)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             return _fail(f"⚠️ Se perdió el contacto con {site_url} durante el sync: {err}")
 
         state = current.get("lastSyncStatus")

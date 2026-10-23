@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-import auditor.llm as llm
+from auditor import llm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROMPT = REPO_ROOT / "auditor" / "auditor.prompt"
@@ -212,7 +212,7 @@ class TestCheckFlag:
     """
 
     def _run(self, monkeypatch, capsys, env):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "_env_value", lambda name: env.get(name, ""))
         monkeypatch.setattr(llm, "resolve_model", lambda tier: "test/model")
@@ -249,7 +249,7 @@ class TestCheckFlag:
         assert "blocklist" in out
 
     def test_check_makes_no_model_call(self, monkeypatch, capsys):
-        import auditor.llm as llm
+        from auditor import llm
 
         def _boom(*a, **k):
             raise AssertionError("--check must not call the model")
@@ -271,13 +271,13 @@ class TestJudgeDeadline:
     """
 
     def test_default_deadline(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "_env_value", lambda n: "")
         assert llm.judge_deadline_seconds() == llm.JUDGE_DEADLINE_DEFAULT
 
     def test_deadline_is_configurable(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(
             llm, "_env_value",
@@ -286,7 +286,7 @@ class TestJudgeDeadline:
         assert llm.judge_deadline_seconds() == 45
 
     def test_garbage_and_tiny_values_are_floored(self, monkeypatch):
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(
             llm, "_env_value",
@@ -302,7 +302,7 @@ class TestJudgeDeadline:
     def test_deadline_fires_on_a_slow_block(self):
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         started = time.monotonic()
         with pytest.raises(TimeoutError):
@@ -311,7 +311,7 @@ class TestJudgeDeadline:
         assert time.monotonic() - started < 4, "it must cut the block short, not wait it out"
 
     def test_deadline_does_not_fire_on_a_fast_block(self):
-        import auditor.llm as llm
+        from auditor import llm
 
         with llm.wall_clock_deadline(30, "test block"):
             pass  # must not raise
@@ -320,7 +320,7 @@ class TestJudgeDeadline:
         import signal
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         with llm.wall_clock_deadline(1, "test block"):
             pass
@@ -331,7 +331,7 @@ class TestJudgeDeadline:
     def test_a_hung_judge_exits_4(self, monkeypatch, capsys):
         import time
 
-        import auditor.llm as llm
+        from auditor import llm
 
         monkeypatch.setattr(llm, "fetch_pr_content", lambda r, n: ("diff", None))
         # Patch the resolver, not the env: judge_deadline_seconds() floors at

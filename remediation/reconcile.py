@@ -23,7 +23,7 @@ module only *recommends* — hybrid trust, never auto-promotion.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -35,7 +35,7 @@ _FAILING_WINDOW_HOURS = 26     # matches incidents CRON_FAILURE_WINDOW_HOURS
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -45,7 +45,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         ts = datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
-    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def _job_id_from_target(target: str) -> Optional[str]:
@@ -65,25 +65,25 @@ def _is_failing_now(job: dict, now: datetime) -> bool:
     return ts is not None and (now - ts) <= timedelta(hours=_FAILING_WINDOW_HOURS)
 
 
-def _unresolved_applied(entries: List[ledger.LedgerEntry]) -> List[ledger.LedgerEntry]:
+def _unresolved_applied(entries: list[ledger.LedgerEntry]) -> list[ledger.LedgerEntry]:
     """``applied`` entries that have no later ``verified``/``failed`` for the same signature."""
     resolved = {e.signature for e in entries
                 if e.event in (ledger.EVENT_VERIFIED, ledger.EVENT_FAILED)}
     return [e for e in entries if e.event == ledger.EVENT_APPLIED and e.signature not in resolved]
 
 
-def verify_pending(jobs: List[dict], entries: List[ledger.LedgerEntry], *,
+def verify_pending(jobs: list[dict], entries: list[ledger.LedgerEntry], *,
                    now: Optional[datetime] = None,
-                   ) -> Tuple[List[ledger.LedgerEntry], List[str]]:
+                   ) -> tuple[list[ledger.LedgerEntry], list[str]]:
     """Return (new ledger entries, escalation messages) for resolvable applied fixes.
 
     Pure: caller persists the new entries. Jobs that haven't re-run since the apply
     are left pending (no entry produced).
     """
     now = now or _now()
-    by_id: Dict[str, dict] = {str(j.get("id")): j for j in jobs if isinstance(j, dict)}
-    writes: List[ledger.LedgerEntry] = []
-    escalations: List[str] = []
+    by_id: dict[str, dict] = {str(j.get("id")): j for j in jobs if isinstance(j, dict)}
+    writes: list[ledger.LedgerEntry] = []
+    escalations: list[str] = []
 
     for e in _unresolved_applied(entries):
         jid = _job_id_from_target(e.target)
@@ -117,14 +117,14 @@ def verify_pending(jobs: List[dict], entries: List[ledger.LedgerEntry], *,
     return writes, escalations
 
 
-def clean_run_count(cls: str, entries: List[ledger.LedgerEntry]) -> int:
+def clean_run_count(cls: str, entries: list[ledger.LedgerEntry]) -> int:
     """Distinct gated occurrences that verified successfully — the promotion metric."""
     return len({e.signature for e in entries
                 if e.cls == cls and e.event == ledger.EVENT_VERIFIED
                 and e.outcome == ledger.OUTCOME_SUCCESS and e.mode == modes.MODE_GATED})
 
 
-def _recommended_recently(cls: str, entries: List[ledger.LedgerEntry], now: datetime) -> bool:
+def _recommended_recently(cls: str, entries: list[ledger.LedgerEntry], now: datetime) -> bool:
     cutoff = now - timedelta(hours=RECOMMEND_COOLDOWN_HOURS)
     for e in entries:
         if e.cls != cls or e.event != ledger.EVENT_RECOMMENDED:
@@ -135,15 +135,15 @@ def _recommended_recently(cls: str, entries: List[ledger.LedgerEntry], now: date
     return False
 
 
-def promotion_recommendations(entries: List[ledger.LedgerEntry], *,
+def promotion_recommendations(entries: list[ledger.LedgerEntry], *,
                               modes_path: Optional[Path] = None,
                               now: Optional[datetime] = None, k: int = K_PROMOTION,
-                              ) -> Tuple[List[ledger.LedgerEntry], List[str]]:
+                              ) -> tuple[list[ledger.LedgerEntry], list[str]]:
     """Suggest promotion for gated classes that have earned it (deduped)."""
     now = now or _now()
     from remediation.registry import REGISTRY
-    writes: List[ledger.LedgerEntry] = []
-    msgs: List[str] = []
+    writes: list[ledger.LedgerEntry] = []
+    msgs: list[str] = []
     for rc in REGISTRY:
         if not rc.auto_eligible:
             continue  # gated-only class — never suggest promotion (destructive fix)
@@ -161,7 +161,7 @@ def promotion_recommendations(entries: List[ledger.LedgerEntry], *,
     return writes, msgs
 
 
-def reconcile(jobs: List[dict], *, ledger_path: Optional[Path] = None,
+def reconcile(jobs: list[dict], *, ledger_path: Optional[Path] = None,
               modes_path: Optional[Path] = None, now: Optional[datetime] = None,
               dry_run: bool = False) -> str:
     """One reconciliation pass. Returns text to deliver ("" = nothing to say).

@@ -81,7 +81,7 @@ def _call_cron_for_profile(target_profile: Optional[str], func_name: str, *args,
     return _cron_helper("_call_cron_for_profile")(target_profile, func_name, *args, **kwargs)
 
 
-def _cron_schedule_expr(job: Dict[str, Any]) -> str:
+def _cron_schedule_expr(job: dict[str, Any]) -> str:
     """Return the raw schedule expression from a stored job dict.
 
     Reconstructs a string that parse_schedule() can re-ingest:
@@ -176,7 +176,7 @@ def _job_in_flight(home, job_id: str) -> bool:
     return row is not None
 
 
-def _trigger_cron_job_sync(job_id: str, profile: Optional[str]) -> Dict[str, Any]:
+def _trigger_cron_job_sync(job_id: str, profile: Optional[str]) -> dict[str, Any]:
     from cron.scheduler_provider import InProcessCronScheduler, resolve_cron_scheduler
     from hermes_cli.web_routers import cron as upstream_cron
 
@@ -228,7 +228,7 @@ _DELEGATE_SECRET_ENV_VAR = "HERMES_CALLBACK_SECRET"
 _DELEGATE_SECRET_HEADER = "x-hermes-secret"
 
 
-def _verify_delegate_secret(request: Request) -> Optional[Tuple[int, str]]:
+def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
     """Return ``(status_code, detail)`` when the request should be rejected, else ``None``."""
     secret = os.environ.get(_DELEGATE_SECRET_ENV_VAR, "").strip()
     if not secret:

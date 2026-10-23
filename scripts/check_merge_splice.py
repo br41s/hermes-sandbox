@@ -57,6 +57,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+import itertools
 
 # Assignments that are legitimately rebound at module level in this codebase.
 _ALLOWED_REBIND = {"__all__", "logger", "log", "__version__"}
@@ -168,7 +169,7 @@ def _repeated_statements(fn) -> list[tuple[str, int, int]]:
         if len(lines) < 2:
             continue
         lines.sort()
-        for first, dup in zip(lines, lines[1:]):
+        for first, dup in itertools.pairwise(lines):
             if dup - first <= _PROXIMITY_LINES:
                 out.append((src, first, dup))
                 break

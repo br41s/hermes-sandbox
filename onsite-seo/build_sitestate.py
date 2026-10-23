@@ -21,7 +21,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from html.parser import HTMLParser
 
 
@@ -85,7 +85,7 @@ def build_graph(web_dir, site_base):
                 ex.feed(html)
                 graph[url] = {"outbound": sorted(set(ex.links)), "inbound": [],
                               "word_count": ex.word_count()}
-            except Exception as e:  # noqa: BLE001 — log and continue
+            except Exception as e:
                 errors.append(f"{url}: {e}")
                 graph[url] = {"outbound": [], "inbound": [], "word_count": 0}
     # inbound = inverse of outbound, restricted to edges whose target is a page
@@ -119,10 +119,10 @@ def git_head(repo):
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=repo, capture_output=True, text=True, timeout=30,
+            cwd=repo, capture_output=True, text=True, timeout=30, check=False
         )
         return out.stdout.strip() or None
-    except Exception:  # noqa: BLE001 — commit is best-effort metadata
+    except Exception:
         return None
 
 
@@ -157,11 +157,11 @@ def main(argv=None):
                 prev = json.load(fh)
             keyword_url_map = prev.get("keyword_url_map", {}) or {}
             cannibalization = prev.get("cannibalization", []) or []
-        except Exception as e:  # noqa: BLE001 — fall back to empty, don't abort
+        except Exception as e:
             print(f"WARN: could not merge prior site-state: {e}", file=sys.stderr)
 
     state = {
-        "updated": datetime.now(timezone.utc).isoformat(),
+        "updated": datetime.now(UTC).isoformat(),
         "built_against_commit": commit,
         "internal_link_graph": graph,
         "keyword_url_map": keyword_url_map,

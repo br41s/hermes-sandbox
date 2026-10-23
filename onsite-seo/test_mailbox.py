@@ -54,7 +54,7 @@ def test():
     # page-lock: a second LIVE request on the same url cannot be claimed
     assert run(mbx, "enqueue", "--type", "other", "--from", "x", "--to", "content",
                "--url", "https://x/a.html") == 0
-    rid2 = [r for r in _load(mbx) if r["id"] != rid][0]["id"]
+    rid2 = next(r for r in _load(mbx) if r["id"] != rid)["id"]
     assert run(mbx, "claim", "--id", rid2, "--agent", "content") == 6, "page-lock failed"
 
     # inbox: rid2 still open and addressed to content
@@ -62,7 +62,7 @@ def test():
 
     # done
     assert run(mbx, "done", "--id", rid, "--pr", "https://gh/pr/1") == 0
-    t = [r for r in _load(mbx) if r["id"] == rid][0]
+    t = next(r for r in _load(mbx) if r["id"] == rid)
     assert t["status"] == "done" and t["result_pr"].endswith("/1")
 
     # TTL: an old open request gets expired by the sweep
@@ -75,7 +75,7 @@ def test():
     with open(mbx, "w", encoding="utf-8") as f:
         json.dump(items, f)
     assert run(mbx, "expire-sweep") == 0
-    assert [r for r in _load(mbx) if r["id"] == "old"][0]["status"] == "expired", "TTL sweep failed"
+    assert next(r for r in _load(mbx) if r["id"] == "old")["status"] == "expired", "TTL sweep failed"
 
     print("ALL TESTS PASSED")
 

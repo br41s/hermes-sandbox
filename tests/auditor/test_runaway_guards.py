@@ -27,8 +27,8 @@ from pathlib import Path
 
 import pytest
 
-import auditor.pending as pending
-import auditor.tiers as tiers
+from auditor import pending
+from auditor import tiers
 from tests.auditor.test_pending import _patch_repos, _pr
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +45,7 @@ def test_tiers_has_a_module_cli():
     cron agent has, because ``python -c`` is blocked before it ever runs."""
     out = subprocess.run(
         [sys.executable, "-m", "auditor.tiers", "hermes/x.py", "--repo", pending.ENGINE_REPO],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60, check=False
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "system"
@@ -54,7 +54,7 @@ def test_tiers_has_a_module_cli():
 def test_tiers_cli_reads_stdin_and_honours_repo():
     out = subprocess.run(
         [sys.executable, "-m", "auditor.tiers", "--repo", "br41s/biglobster"],
-        cwd=REPO_ROOT, input="site/blog/post.html\n", capture_output=True, text=True, timeout=60,
+        cwd=REPO_ROOT, input="site/blog/post.html\n", capture_output=True, text=True, timeout=60, check=False
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "content"

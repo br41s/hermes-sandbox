@@ -297,7 +297,7 @@ class TestJobRunLock:
             sched, "_run_job_impl",
             lambda job, **kw: (calls.__setitem__("n", calls["n"] + 1), (True, "out", "resp", None))[1],
         )
-        ok, out, resp, err = sched.run_job({"id": "testjob2"})
+        ok, _out, resp, _err = sched.run_job({"id": "testjob2"})
         assert calls["n"] == 1
         assert (ok, resp) == (True, "resp")
 

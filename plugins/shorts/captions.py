@@ -59,7 +59,7 @@ def format_time(seconds: float) -> str:
     """Format seconds as the ASS ``H:MM:SS.cc`` timestamp form."""
     if seconds < 0:
         seconds = 0.0
-    centis = int(round(seconds * 100))
+    centis = round(seconds * 100)
     hours, rem = divmod(centis, 360000)
     minutes, rem = divmod(rem, 6000)
     secs, cs = divmod(rem, 100)
@@ -77,10 +77,10 @@ def escape_text(text: str) -> str:
     )
 
 
-def wrap_lines(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> List[str]:
+def wrap_lines(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> list[str]:
     """Greedy word wrap. Words longer than ``max_chars`` get their own line."""
     words = [w for w in re.split(r"\s+", text.strip()) if w]
-    lines: List[str] = []
+    lines: list[str] = []
     current = ""
     for word in words:
         candidate = f"{current} {word}".strip()
@@ -94,16 +94,16 @@ def wrap_lines(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> List[str]:
     return lines
 
 
-def split_into_cues(text: str) -> List[str]:
+def split_into_cues(text: str) -> list[str]:
     """Split caption text into cues of at most two wrapped lines each."""
     lines = wrap_lines(text)
-    cues: List[str] = []
+    cues: list[str] = []
     for index in range(0, len(lines), MAX_LINES_PER_CUE):
         cues.append("\\N".join(lines[index : index + MAX_LINES_PER_CUE]))
     return cues
 
 
-def _cue_weights(cues: Sequence[str]) -> List[float]:
+def _cue_weights(cues: Sequence[str]) -> list[float]:
     """Relative time share per cue, by visible character count."""
     lengths = [max(len(cue.replace("\\N", " ")), 1) for cue in cues]
     total = float(sum(lengths))
@@ -111,7 +111,7 @@ def _cue_weights(cues: Sequence[str]) -> List[float]:
 
 
 def build_ass(
-    timed_captions: Iterable[Tuple[float, float, str]],
+    timed_captions: Iterable[tuple[float, float, str]],
     *,
     font: str = DEFAULT_FONT,
 ) -> str:
@@ -121,7 +121,7 @@ def build_ass(
     one entry per scene. Each scene's text is split into at most-two-line
     cues that share the scene's duration proportionally.
     """
-    body: List[str] = []
+    body: list[str] = []
     for start, duration, text in timed_captions:
         clean = escape_text(text or "")
         if not clean or duration <= 0:

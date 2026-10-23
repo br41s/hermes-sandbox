@@ -861,7 +861,7 @@ def _render_report_markdown(p: dict[str, Any]) -> str:
 
 # --- Orchestrator — spawn a forked AIAgent for the LLM review pass ---
 
-def _skill_size_metrics(name: str) -> Dict[str, Any]:
+def _skill_size_metrics(name: str) -> dict[str, Any]:
     """SKILL.md size and support-file counts for one skill.
 
     Consolidation has always been scored skill-to-skill, so a single skill
@@ -932,7 +932,7 @@ def _render_candidate_list() -> str:
     except Exception:
         _cap = 100_000
     lines = [f"Agent-created skills ({len(rows)}):\n"]
-    bloated: List[str] = []
+    bloated: list[str] = []
     for r in rows:
         m = _skill_size_metrics(r["name"])
         flags = []

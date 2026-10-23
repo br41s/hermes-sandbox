@@ -12,6 +12,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from datetime import UTC
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "upstream_drift.py"
 
@@ -58,7 +59,7 @@ class TestVersionOrdering:
 def _ago(days: int) -> str:
     from datetime import datetime, timedelta, timezone
 
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
 def _tags(*names: str) -> list[tuple[str, str]]:

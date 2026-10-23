@@ -71,7 +71,7 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import List, Optional
 
@@ -106,7 +106,7 @@ class Incident:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _state_path() -> Path:
@@ -148,7 +148,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         ts = datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
-    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+    return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
 def _within(iso: Optional[str], hours: int, now: datetime) -> bool:
@@ -194,7 +194,7 @@ def _handoff_ref(job: dict) -> str:
     return f"profile {profile} cron job id {jid}" if profile else f"cron job id {jid}"
 
 
-def load_served_store_jobs() -> List[dict]:
+def load_served_store_jobs() -> list[dict]:
     """Every job the gateway ticks: the default store, plus each served profile's
     own ``cron/jobs.json`` (stage 3 step 0d, ``ops/multiplex-stage3-plan.md``).
 
@@ -228,8 +228,8 @@ def load_served_store_jobs() -> List[dict]:
     return jobs
 
 
-def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
-                           window_hours: int = CRON_FAILURE_WINDOW_HOURS) -> List[Incident]:
+def cron_failure_incidents(jobs: list[dict], *, now: Optional[datetime] = None,
+                           window_hours: int = CRON_FAILURE_WINDOW_HOURS) -> list[Incident]:
     """Flag jobs whose most recent run recorded an error within the window.
 
     Also covers runs killed mid-flight by a container restart. Those never
@@ -246,7 +246,7 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
     pruned, or the process died before it could claim).
     """
     now = now or _now()
-    out: List[Incident] = []
+    out: list[Incident] = []
     for job in jobs:
         if not isinstance(job, dict):
             continue
@@ -281,8 +281,8 @@ def cron_failure_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
     return out
 
 
-def cron_stale_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
-                         grace_hours: float = STALE_GRACE_HOURS) -> List[Incident]:
+def cron_stale_incidents(jobs: list[dict], *, now: Optional[datetime] = None,
+                         grace_hours: float = STALE_GRACE_HOURS) -> list[Incident]:
     """Flag enabled recurring jobs that silently stopped completing runs.
 
     Closes the watcher's known blind spot: a run that aborts before
@@ -303,7 +303,7 @@ def cron_stale_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
     except Exception:
         return []
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for job in jobs:
         if not isinstance(job, dict):
             continue
@@ -340,8 +340,8 @@ def cron_stale_incidents(jobs: List[dict], *, now: Optional[datetime] = None,
     return out
 
 
-def prompt_drift_incidents(jobs: List[dict], *,
-                           repo_root: Optional[Path] = None) -> List[Incident]:
+def prompt_drift_incidents(jobs: list[dict], *,
+                           repo_root: Optional[Path] = None) -> list[Incident]:
     """Flag agent jobs whose live prompt has drifted from its repo source.
 
     Repo ``.prompt`` files and live job prompts (jobs.json on the volume) are
@@ -358,7 +358,7 @@ def prompt_drift_incidents(jobs: List[dict], *,
     import hashlib
 
     root = repo_root or Path(__file__).resolve().parent.parent
-    out: List[Incident] = []
+    out: list[Incident] = []
     for job in jobs:
         if not isinstance(job, dict):
             continue
@@ -399,7 +399,7 @@ def prompt_drift_incidents(jobs: List[dict], *,
 
 
 def langfuse_error_incidents(*, now: Optional[datetime] = None,
-                             window_hours: int = LANGFUSE_WINDOW_HOURS) -> List[Incident]:
+                             window_hours: int = LANGFUSE_WINDOW_HOURS) -> list[Incident]:
     """Best-effort: ERROR-level Langfuse observations grouped by trace.
 
     Returns [] on any problem (missing keys, network, schema) — the cron signal
@@ -425,7 +425,7 @@ def langfuse_error_incidents(*, now: Optional[datetime] = None,
     token = base64.b64encode(f"{pub}:{sec}".encode()).decode()
     req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 (trusted Langfuse host)
+        with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode())
     except Exception:
         return []
@@ -436,7 +436,7 @@ def langfuse_error_incidents(*, now: Optional[datetime] = None,
         if tid and tid not in by_trace:
             by_trace[tid] = obs
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for tid, obs in by_trace.items():
         msg = obs.get("statusMessage") or obs.get("name") or "error-level observation"
         out.append(Incident(
@@ -449,7 +449,7 @@ def langfuse_error_incidents(*, now: Optional[datetime] = None,
     return out
 
 
-def _session_dbs(home: Optional[Path] = None) -> List[Path]:
+def _session_dbs(home: Optional[Path] = None) -> list[Path]:
     """Every session DB an agent cron run could have written to.
 
     A profile-scoped job runs under ``HERMES_HOME=<profile>``, so its session
@@ -468,7 +468,7 @@ def _session_dbs(home: Optional[Path] = None) -> List[Path]:
     return [d for d in dbs if d.exists()]
 
 
-def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
+def _recent_runs(dbs: list[Path], *, since_epoch: float) -> tuple:
     """((session_id, started_at, api_call_count, model, end_reason, cap_hit) rows,
     unreadable_dbs).
 
@@ -494,8 +494,8 @@ def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
     (Raised by the auditor reviewing PR #237 — the review this signal's own fix
     made possible.)
     """
-    rows: List[tuple] = []
-    unreadable: List[str] = []
+    rows: list[tuple] = []
+    unreadable: list[str] = []
     for db in dbs:
         try:
             import sqlite3
@@ -519,9 +519,9 @@ def _recent_runs(dbs: List[Path], *, since_epoch: float) -> tuple:
 
 
 def runaway_incidents(*, now: Optional[datetime] = None,
-                      rows: Optional[List[tuple]] = None,
+                      rows: Optional[list[tuple]] = None,
                       max_turns: int = RUNAWAY_DEFAULT_MAX_TURNS,
-                      home: Optional[Path] = None) -> List[Incident]:
+                      home: Optional[Path] = None) -> list[Incident]:
     """Agent cron runs that exhausted their iteration budget instead of finishing.
 
     This is the blind spot that let the auditor die unnoticed for four days
@@ -557,7 +557,7 @@ def runaway_incidents(*, now: Optional[datetime] = None,
     """
     now = now or _now()
     threshold = max(1, int(max_turns * RUNAWAY_FRACTION))
-    out: List[Incident] = []
+    out: list[Incident] = []
     if rows is None:
         since = (now - timedelta(hours=RUNAWAY_WINDOW_HOURS)).timestamp()
         dbs = _session_dbs(home)
@@ -629,7 +629,7 @@ def runaway_incidents(*, now: Optional[datetime] = None,
     return out
 
 
-def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
+def blocked_commit_incidents(path: Optional[Path] = None) -> list[Incident]:
     """Read the git-guard signal file and surface each blocked agent commit.
 
     The managed pre-commit hook (scripts/git-guard/pre-commit) appends one JSON
@@ -646,7 +646,7 @@ def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
     except Exception:
         return []
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for raw in lines:
         raw = raw.strip()
         if not raw:
@@ -672,7 +672,7 @@ def blocked_commit_incidents(path: Optional[Path] = None) -> List[Incident]:
 JUDGE_LIVENESS_HOURS = 48
 
 
-def _judge_liveness_paths() -> List[Path]:
+def _judge_liveness_paths() -> list[Path]:
     """The stamp in the main home and in every profile home.
 
     The judge stamps whichever home its run is in. ``auditor-review`` lives in
@@ -701,7 +701,7 @@ def _read_judge_stamp(path: Path) -> Optional[datetime]:
 
 def judge_liveness_incidents(
     path: Optional[Path] = None, *, now: Optional[datetime] = None
-) -> List[Incident]:
+) -> list[Incident]:
     """Raise when the auditor's second-LLM judge has not SUCCEEDED recently.
 
     This is a liveness check, not an error check, and the distinction is the
@@ -723,7 +723,7 @@ def judge_liveness_incidents(
     recovery is a new incident rather than being swallowed as already-seen.
     """
     paths = [path] if path else _judge_liveness_paths()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     stamps = [s for s in map(_read_judge_stamp, paths) if s is not None]
     last = max(stamps) if stamps else None
@@ -778,7 +778,7 @@ def _fetch_gist_file(gist_id: str, filename: str) -> Optional[str]:
         headers={"Accept": "application/vnd.github+json",
                  "X-GitHub-Api-Version": "2022-11-28"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+        with urllib.request.urlopen(req, timeout=20) as resp:
             gist = json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         if exc.code in _BLIND_STATUSES:
@@ -794,7 +794,7 @@ def _fetch_gist_file(gist_id: str, filename: str) -> Optional[str]:
 
 def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
                             in_deployment: Optional[bool] = None,
-                            now: Optional[datetime] = None) -> List[Incident]:
+                            now: Optional[datetime] = None) -> list[Incident]:
     """Raise when ChatMemo's nightly backup on the Mac has not reported in.
 
     The backup posts its own notification when it fails, but from May to October
@@ -892,7 +892,7 @@ def _probe_site(url: str, timeout: float = SITE_TIMEOUT_SECONDS) -> tuple:
     req = urllib.request.Request(url, headers={"User-Agent": _WATCHER_USER_AGENT})
     start = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed https list)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, time.monotonic() - start, ""
     except urllib.error.HTTPError as exc:
         return exc.code, time.monotonic() - start, ""
@@ -923,7 +923,7 @@ def probe_verdict(status: Optional[int], seconds: float, error: str) -> Optional
 def site_down_incidents(*, probes=SITE_PROBES, probe=None,
                         in_deployment: Optional[bool] = None,
                         now: Optional[datetime] = None,
-                        sleep=None) -> List[Incident]:
+                        sleep=None) -> list[Incident]:
     """Raise when a product's public address stops answering.
 
     Every site is probed at once, so the sweep's other signals wait at most one
@@ -1010,7 +1010,7 @@ def _rclone_lsjson(remote_path: str) -> Optional[list]:
     try:
         res = subprocess.run([str(rclone), "--config", str(conf), "lsjson", remote_path],
                              capture_output=True, encoding="utf-8", errors="replace",
-                             timeout=120)
+                             timeout=120, check=False)
     except subprocess.TimeoutExpired:
         return None
     except OSError as exc:  # present but not executable, or the like
@@ -1030,7 +1030,7 @@ def _rclone_lsjson(remote_path: str) -> Optional[list]:
 def volume_backup_incidents(*, folders: Optional[list] = None,
                             newest_files: Optional[list] = None,
                             in_deployment: Optional[bool] = None,
-                            now: Optional[datetime] = None) -> List[Incident]:
+                            now: Optional[datetime] = None) -> list[Incident]:
     """Raise when the host's nightly volume dump has not landed in Drive.
 
     The cron wrapper writes OK/FAILED to /var/log/backup-volumes.log on the host and
@@ -1077,7 +1077,7 @@ def volume_backup_incidents(*, folders: Optional[list] = None,
             when = datetime.strptime(str(entry.get("Name")), _STAMP_FORMAT)
         except ValueError:
             continue
-        stamps.append((when.replace(tzinfo=timezone.utc), entry["Name"]))
+        stamps.append((when.replace(tzinfo=UTC), entry["Name"]))
     handoff = ("on the host: `sudo tail -n 20 /var/log/backup-volumes.log` and "
                "`sudo cat /etc/cron.d/backup-volumes`; ops/README.md, backup-volumes.sh")
     if not stamps:
@@ -1164,7 +1164,7 @@ def _fetch_openrouter_key(key: str) -> Optional[dict]:
                                  headers={"Authorization": f"Bearer {key}",
                                           "User-Agent": _WATCHER_USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 (openrouter.ai)
+        with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
@@ -1194,9 +1194,9 @@ def _limit_period(reset: Optional[str], now: datetime) -> str:
     return "cap"
 
 
-def openrouter_budget_incidents(*, records: Optional[List[tuple]] = None,
+def openrouter_budget_incidents(*, records: Optional[list[tuple]] = None,
                                 in_deployment: Optional[bool] = None,
-                                now: Optional[datetime] = None) -> List[Incident]:
+                                now: Optional[datetime] = None) -> list[Incident]:
     """Raise when an OpenRouter key Hermes holds is refused, exhausted or nearly so.
 
     ``records`` is ``[(holders, data_or_status)]``: the key's ``data`` dict, or the HTTP
@@ -1219,7 +1219,7 @@ def openrouter_budget_incidents(*, records: Optional[List[tuple]] = None,
             if data is not None:
                 records.append((holders, data))
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for holders, data in records:
         who = ", ".join(holders[:3]) + (f" and {len(holders) - 3} more" if len(holders) > 3 else "")
         ref = "+".join(sorted(holders))
@@ -1261,7 +1261,7 @@ DISK_MIN_FREE_GB = 12  # two nightly hermes-backup zips (~6 GB each) must still 
 
 def disk_space_incidents(*, usage: Optional[tuple] = None,
                          in_deployment: Optional[bool] = None,
-                         now: Optional[datetime] = None) -> List[Incident]:
+                         now: Optional[datetime] = None) -> list[Incident]:
     """Raise when the HERMES_HOME volume is filling up.
 
     ``gateway/disk_status.py`` grades the same volume for ``/api/status``, but its
@@ -1305,7 +1305,7 @@ def disk_space_incidents(*, usage: Optional[tuple] = None,
     )]
 
 
-def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
+def checkout_drift_incidents(path: Optional[Path] = None) -> list[Incident]:
     """Read the site-checkout drift signal and surface each one.
 
     docker/cont-init.d/03-biglobster-config section 6b appends one JSON line to
@@ -1330,7 +1330,7 @@ def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
     except Exception:
         return []
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for raw in lines:
         raw = raw.strip()
         if not raw:
@@ -1359,7 +1359,7 @@ def checkout_drift_incidents(path: Optional[Path] = None) -> List[Incident]:
 
 def unclean_exit_incidents(path: Optional[Path] = None, *,
                            now: Optional[datetime] = None,
-                           window_hours: int = UNCLEAN_EXIT_WINDOW_HOURS) -> List[Incident]:
+                           window_hours: int = UNCLEAN_EXIT_WINDOW_HOURS) -> list[Incident]:
     """One incident per ``gateway.previous_unclean_exit`` record in the window.
 
     An unclean exit costs more than the crash itself: the next boot runs
@@ -1382,7 +1382,7 @@ def unclean_exit_incidents(path: Optional[Path] = None, *,
     except Exception:
         return []
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for raw in lines:
         try:
             rec = json.loads(raw)
@@ -1520,7 +1520,7 @@ def _fetch_deploy_compare(repo: str, base: str, token: str) -> Optional[dict]:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+        with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         if exc.code in _BLIND_STATUSES:
@@ -1556,7 +1556,7 @@ def deploy_drift_incidents(*, compare: Optional[dict] = None,
                            token: Optional[str] = None,
                            now: Optional[datetime] = None,
                            grace_hours: Optional[float] = None,
-                           build_sha_path: Optional[Path] = None) -> List[Incident]:
+                           build_sha_path: Optional[Path] = None) -> list[Incident]:
     """Flag production running meaningfully behind ``main``.
 
     Fires only when ALL of these hold, so a normal merge-then-deploy is silent:
@@ -1646,7 +1646,7 @@ def deploy_drift_incidents(*, compare: Optional[dict] = None,
     commits = compare.get("commits") or []
     oldest = None
     for c in commits:
-        ts = _parse_iso((((c.get("commit") or {}).get("committer") or {}).get("date")))
+        ts = _parse_iso(((c.get("commit") or {}).get("committer") or {}).get("date"))
         if ts is not None and (oldest is None or ts < oldest):
             oldest = ts
     if oldest is not None and (now - oldest) < timedelta(hours=grace_hours):
@@ -1670,7 +1670,7 @@ def deploy_drift_incidents(*, compare: Optional[dict] = None,
     )]
 
 
-def _dep_alert_lockfiles(alert: dict) -> List[str]:
+def _dep_alert_lockfiles(alert: dict) -> list[str]:
     """Lockfile paths an osv-scanner alert names in its Affected Packages table.
 
     osv-scanner raises one alert per (advisory x lockfile), and the only place
@@ -1678,7 +1678,7 @@ def _dep_alert_lockfiles(alert: dict) -> List[str]:
     is no structured field for it, so this parses the table it documents.
     """
     help_text = (alert.get("rule") or {}).get("help") or ""
-    out: List[str] = []
+    out: list[str] = []
     for line in help_text.splitlines():
         cell = line.strip().strip("|").split("|")[0].strip()
         if cell.startswith("lockfile:"):
@@ -1688,10 +1688,10 @@ def _dep_alert_lockfiles(alert: dict) -> List[str]:
     return out
 
 
-def _dep_alert_packages(alert: dict) -> List[tuple]:
+def _dep_alert_packages(alert: dict) -> list[tuple]:
     """(package, version) pairs from the alert's Affected Packages table."""
     help_text = (alert.get("rule") or {}).get("help") or ""
-    out: List[tuple] = []
+    out: list[tuple] = []
     in_table = False
     for line in help_text.splitlines():
         if line.startswith("### Affected Packages"):
@@ -1727,7 +1727,7 @@ class DependencyAlertBlind(Exception):
 _BLIND_STATUSES = {401, 403, 404}
 
 
-def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
+def _fetch_dependency_alerts(repo: str, token: str) -> Optional[list[dict]]:
     """Every OPEN code-scanning alert, following pagination.
 
     Three outcomes, and the difference between them is the whole point:
@@ -1744,7 +1744,7 @@ def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
     import urllib.error
     import urllib.request
 
-    alerts: List[dict] = []
+    alerts: list[dict] = []
     for page in range(1, 21):  # 20 pages x 100 = 2000 alert ceiling
         url = (f"https://api.github.com/repos/{repo}/code-scanning/alerts"
                f"?state=open&per_page=100&page={page}")
@@ -1754,7 +1754,7 @@ def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
             "X-GitHub-Api-Version": "2022-11-28",
         })
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (api.github.com)
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 batch = json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             if exc.code in _BLIND_STATUSES:
@@ -1775,7 +1775,7 @@ def _fetch_dependency_alerts(repo: str, token: str) -> Optional[List[dict]]:
     return alerts
 
 
-def _blind_incident(blind: "DependencyAlertBlind", repo: str, *,
+def _blind_incident(blind: DependencyAlertBlind, repo: str, *,
                     now: Optional[datetime] = None) -> Incident:
     """One incident saying the signal cannot see, not that there is nothing.
 
@@ -1811,10 +1811,10 @@ def _blind_incident(blind: "DependencyAlertBlind", repo: str, *,
     )
 
 
-def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
+def dependency_alert_incidents(*, alerts: Optional[list[dict]] = None,
                                repo: Optional[str] = None,
                                token: Optional[str] = None,
-                               now: Optional[datetime] = None) -> List[Incident]:
+                               now: Optional[datetime] = None) -> list[Incident]:
     """Open critical/high dependency advisories, grouped by package.
 
     Best-effort in the same sense as ``langfuse_error_incidents``: returns []
@@ -1883,7 +1883,7 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
             for pkg, version in packages:
                 grouped.setdefault((lockfile, pkg, version), {})[advisory] = sev
 
-    out: List[Incident] = []
+    out: list[Incident] = []
     for (lockfile, pkg, version), advisories in sorted(grouped.items()):
         ids = sorted(advisories)
         worst = "critical" if "critical" in advisories.values() else "high"
@@ -1908,7 +1908,7 @@ def dependency_alert_incidents(*, alerts: Optional[List[dict]] = None,
     return out
 
 
-def _dep_rollup(incidents: List[Incident]) -> List[Incident]:
+def _dep_rollup(incidents: list[Incident]) -> list[Incident]:
     """Collapse a large batch into one brief.
 
     A single osv-scanner run publishes every alert for a lockfile at once, so
@@ -1992,7 +1992,7 @@ def _heartbeat_due(last_hb: Optional[str], now: datetime) -> bool:
     return ts is None or (now - ts) >= timedelta(hours=HEARTBEAT_HOURS)
 
 
-def _reconcile_text(jobs: List[dict], *, now: datetime, dry_run: bool,
+def _reconcile_text(jobs: list[dict], *, now: datetime, dry_run: bool,
                     ledger_path: Optional[Path], modes_path: Optional[Path]) -> str:
     """Run the remediation reconcile pass (verify prior fixes + recommend
     promotions). Best-effort: any failure degrades to "" so the watcher's core
@@ -2005,19 +2005,19 @@ def _reconcile_text(jobs: List[dict], *, now: datetime, dry_run: bool,
         return ""
 
 
-def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
-          langfuse: Optional[List[Incident]] = None,
-          blocked: Optional[List[Incident]] = None,
-          checkout_drift: Optional[List[Incident]] = None,
-          deploy_drift: Optional[List[Incident]] = None,
-          judge_liveness: Optional[List[Incident]] = None,
-          dependency_alerts: Optional[List[Incident]] = None,
-          unclean_exits: Optional[List[Incident]] = None,
-          laptop_backup: Optional[List[Incident]] = None,
-          site_down: Optional[List[Incident]] = None,
-          volume_backup: Optional[List[Incident]] = None,
-          openrouter_budget: Optional[List[Incident]] = None,
-          disk_space: Optional[List[Incident]] = None,
+def sweep(*, now: Optional[datetime] = None, jobs: Optional[list[dict]] = None,
+          langfuse: Optional[list[Incident]] = None,
+          blocked: Optional[list[Incident]] = None,
+          checkout_drift: Optional[list[Incident]] = None,
+          deploy_drift: Optional[list[Incident]] = None,
+          judge_liveness: Optional[list[Incident]] = None,
+          dependency_alerts: Optional[list[Incident]] = None,
+          unclean_exits: Optional[list[Incident]] = None,
+          laptop_backup: Optional[list[Incident]] = None,
+          site_down: Optional[list[Incident]] = None,
+          volume_backup: Optional[list[Incident]] = None,
+          openrouter_budget: Optional[list[Incident]] = None,
+          disk_space: Optional[list[Incident]] = None,
           state_path: Optional[Path] = None,
           dry_run: bool = False, ledger_path: Optional[Path] = None,
           modes_path: Optional[Path] = None) -> str:
@@ -2128,7 +2128,7 @@ def sweep(*, now: Optional[datetime] = None, jobs: Optional[List[dict]] = None,
     return output
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m incidents.sweep")
     parser.add_argument("--dry-run", action="store_true",
                         help="detect + print, do NOT update state")

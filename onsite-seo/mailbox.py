@@ -22,17 +22,17 @@ import hashlib
 import json
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, UTC
 
 LIVE = ("open", "claimed")
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _parse_iso(s):
-    return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    return datetime.fromisoformat(str(s))
 
 
 def _load(path):
@@ -57,7 +57,7 @@ def _save(path, items):
 
 
 def _content_hash(frm, to, typ, url):
-    return hashlib.sha256(f"{frm}|{to}|{typ}|{url}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(f"{frm}|{to}|{typ}|{url}".encode()).hexdigest()[:16]
 
 
 def _is_expired(req, now):

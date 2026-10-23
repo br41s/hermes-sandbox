@@ -62,7 +62,7 @@ def _client():
     return httpx.Client(timeout=TIMEOUT, follow_redirects=True)
 
 
-def _json(resp, what: str) -> Dict[str, Any]:
+def _json(resp, what: str) -> dict[str, Any]:
     try:
         body = resp.json()
     except Exception:
@@ -73,7 +73,7 @@ def _json(resp, what: str) -> Dict[str, Any]:
     return body
 
 
-def _rupload(client, url: str, video: Path) -> Dict[str, Any]:
+def _rupload(client, url: str, video: Path) -> dict[str, Any]:
     data = video.read_bytes()
     resp = client.post(url, content=data, headers={
         "Authorization": f"OAuth {_token()}",
@@ -88,7 +88,7 @@ def _rupload(client, url: str, video: Path) -> Dict[str, Any]:
 # Facebook Page Reel
 # ---------------------------------------------------------------------------
 
-def facebook_reel(video: Path, description: str) -> Dict[str, Any]:
+def facebook_reel(video: Path, description: str) -> dict[str, Any]:
     if not configured():
         raise MetaError("Meta is not configured (META_PAGE_ID / META_PAGE_ACCESS_TOKEN)")
     page = env("META_PAGE_ID")
@@ -144,7 +144,7 @@ def _wait_container(client, container_id: str, budget: float) -> str:
     return status or "IN_PROGRESS"
 
 
-def _publish_container(client, container_id: str) -> Dict[str, Any]:
+def _publish_container(client, container_id: str) -> dict[str, Any]:
     ig = env("META_IG_USER_ID")
     media = _json(client.post(f"{graph()}/{ig}/media_publish",
                               data={"creation_id": container_id, "access_token": _token()}),
@@ -155,7 +155,7 @@ def _publish_container(client, container_id: str) -> Dict[str, Any]:
 
 
 def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path] = None,
-              pending_container: Optional[str] = None) -> Dict[str, Any]:
+              pending_container: Optional[str] = None) -> dict[str, Any]:
     """Publish a Reel (``kind='reel'``) or Story (``kind='story'``).
 
     Returns ``{"id", "url"}`` when live, or ``{"pending": container_id}`` when

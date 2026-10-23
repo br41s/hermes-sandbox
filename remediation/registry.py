@@ -141,7 +141,7 @@ def _cron_job_id(inc: Incident) -> Optional[str]:
 # `remediate apply` (Phase 1, gated) or a promoted auto-act past the guards
 # (Phase 3) — never on import.
 
-def _retry_cron(inc: Incident) -> Tuple[bool, str]:
+def _retry_cron(inc: Incident) -> tuple[bool, str]:
     """Bounded fix: re-schedule the failed job for the next scheduler tick."""
     jid = _cron_job_id(inc)
     if not jid:
@@ -153,7 +153,7 @@ def _retry_cron(inc: Incident) -> Tuple[bool, str]:
     return True, f"re-scheduled job '{jid}' for next tick"
 
 
-def _realign_shared_clone(inc: Incident) -> Tuple[bool, str]:
+def _realign_shared_clone(inc: Incident) -> tuple[bool, str]:
     """Destructive fix (gated-only): realign the job's shared clone to origin/main
     and re-pin the agent identity. Delegates the actual git work — and, crucially,
     the pre-fix cover-wipe safety net — to ``remediation.clone_safety``."""
@@ -176,10 +176,10 @@ def _realign_shared_clone(inc: Incident) -> Tuple[bool, str]:
 class RemediationClass:
     name: str
     matches: Callable[[Incident], bool]       # does this incident belong here?
-    fix: Callable[[Incident], Tuple[bool, str]]
+    fix: Callable[[Incident], tuple[bool, str]]
     proposal: Callable[[Incident], str]       # human-readable action for the gated brief
     default_mode: str                          # "gated" | "auto"
-    reversal: Optional[Callable[[Incident], Tuple[bool, str]]] = None
+    reversal: Optional[Callable[[Incident], tuple[bool, str]]] = None
     rationale: str = ""                        # why Tier-0 (reversible/idempotent)
     auto_eligible: bool = True                 # may this class EVER be promoted to auto?
 
@@ -224,7 +224,7 @@ SHARED_CLONE_BRANCH_CONFUSION = RemediationClass(
 # Registry order = match priority (first match wins in `classify`). Keep the
 # non-destructive retry class FIRST: if an error ever carried both a transient and
 # a branch-confusion marker, the harmless retry should win over the reset.
-REGISTRY: List[RemediationClass] = [
+REGISTRY: list[RemediationClass] = [
     CRON_TRANSIENT_FAILURE,
     SHARED_CLONE_BRANCH_CONFUSION,
 ]

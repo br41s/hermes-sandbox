@@ -176,7 +176,7 @@ def _run_reconcile(webhook_block: str, home: Path) -> str:
     env = {**os.environ, "HERMES_HOME": str(home), "WEBHOOK_SECRET": "s3cr3t",
            "PYTHONPATH": str(REPO_ROOT)}
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
-                         timeout=120, cwd=str(REPO_ROOT))
+                         timeout=120, cwd=str(REPO_ROOT), check=False)
     assert out.returncode == 0, out.stderr
     return out.stdout
 
@@ -208,7 +208,7 @@ print(json.dumps(ids))
     (auditor / "config.yaml").write_text("{}\n", encoding="utf-8")
     env = {**os.environ, "HERMES_HOME": str(home), "PYTHONPATH": str(REPO_ROOT)}
     out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True,
-                         timeout=120, cwd=str(REPO_ROOT))
+                         timeout=120, cwd=str(REPO_ROOT), check=False)
     assert out.returncode == 0, out.stderr
     import json
     ids = json.loads(out.stdout.strip().splitlines()[-1])

@@ -50,7 +50,7 @@ def autonomy_paused(env: Optional[dict] = None) -> bool:
 
 
 def may_auto_act(cls: str, signature: str, *,
-                 entries: Optional[List[ledger.LedgerEntry]] = None,
+                 entries: Optional[list[ledger.LedgerEntry]] = None,
                  path: Optional[Path] = None, now: Optional[datetime] = None,
                  env: Optional[dict] = None,
                  debounce_hours: int = ledger.DEBOUNCE_HOURS,

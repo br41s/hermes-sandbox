@@ -213,13 +213,13 @@ class OpenRouterVideoGenProvider(VideoGenProvider):
         # fork: the fork's own backend took OPENROUTER_VIDEO_MODEL (escape hatch) and then
         # video_gen.openrouter.model -- what docker/config.yaml sets -- ahead of video_gen.model.
         # Keep both, or production silently moves to DEFAULT_MODEL. The env read is scope-aware.
-        candidates: List[Any] = []
+        candidates: list[Any] = []
         try:
             from hermes_cli.config import cfg_get, get_env_value, load_config
             cfg = load_config()
             candidates = [get_env_value("OPENROUTER_VIDEO_MODEL"), cfg_get(cfg, "video_gen", "openrouter", "model"),
                           cfg_get(cfg, "video_gen", "model")]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("Could not read video_gen.model: %s", exc)
         value = next((c for c in candidates if isinstance(c, str) and c.strip()), None)
         return value.strip() if value else DEFAULT_MODEL

@@ -58,7 +58,7 @@ def test_hermes_subcommand_dispatch_goes_through_it(monkeypatch, tmp_path):
 
 
 def test_the_devnull_descriptor_is_closed_after_the_redirect(monkeypatch):
-    import hermes_cli.fork_ext.cli_pipes as cli_pipes
+    from hermes_cli.fork_ext import cli_pipes
 
     opened, closed = [], []
     real_open = cli_pipes.os.open

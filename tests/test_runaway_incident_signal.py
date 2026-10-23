@@ -22,7 +22,7 @@ the count alone is wrong: between 2026-09-29 and 2026-10-13 the signal paged it
 12 times, 5 of which were full reports delivered by choice at 85–86 of 90.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from agent.context_compressor import MAX_ITERATIONS_SUMMARY_REQUEST
 from incidents.sweep import (
@@ -34,7 +34,7 @@ from incidents.sweep import (
 )
 
 
-NOW = datetime(2026, 9, 13, 4, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 13, 4, 0, tzinfo=UTC)
 
 
 def _row(sid="cron_c19bb95c0a62_20260913_011704", calls=90,

@@ -8,14 +8,14 @@ not, a site that stays down is one brief a day, and FinView's API is probed ever
 
 Hermetic: probes and the clock are injected; the network is never touched.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 import pytest
 
 import incidents.sweep as sw
 from incidents.sweep import probe_verdict, site_down_incidents
 
-NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 SITES = (("Alpha", "https://alpha.example/health", "Zeabur alpha"),
          ("Beta", "https://beta.example/", "Vercel beta"))
 

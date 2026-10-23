@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
 # A git runner: (args, cwd) -> (returncode, stdout, stderr). Injected in tests.
-GitRunner = Callable[[List[str], str], Tuple[int, str, str]]
+GitRunner = Callable[[list[str], str], tuple[int, str, str]]
 
 DEFAULT_DELETION_LIMIT = 10
 
@@ -46,13 +46,13 @@ def _limit() -> int:
         return DEFAULT_DELETION_LIMIT
 
 
-def _git(args: List[str], cwd: str) -> Tuple[int, str, str]:
+def _git(args: list[str], cwd: str) -> tuple[int, str, str]:
     """Default runner: run ``git -C <cwd> <args>``. Any failure to even launch
     git is returned as a non-zero rc so callers fail safe (refuse)."""
     try:
         p = subprocess.run(
             ["git", "-C", cwd, *args],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=120, check=False
         )
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
@@ -129,7 +129,7 @@ def assess_reset(clone_dir: str, *, limit: Optional[int] = None,
                        files_lost, uncommitted, ahead)
 
 
-def realign_clone(clone_dir: str, *, git: GitRunner = _git) -> Tuple[bool, str]:
+def realign_clone(clone_dir: str, *, git: GitRunner = _git) -> tuple[bool, str]:
     """The bounded fix: fetch -> checkout main -> SAFETY NET -> reset --hard ->
     re-pin identity. Returns ``(ok, detail)``. Never resets without a clean
     ``assess_reset`` verdict. Order matters: ``git checkout`` is git-protected

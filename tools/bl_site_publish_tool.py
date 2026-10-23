@@ -23,7 +23,7 @@ from typing import Optional
 import urllib.error
 import urllib.request
 
-from tools.bl_site_client import _jwt_cache, cached_token, request_json  # noqa: F401 — tests clear the cache here
+from tools.bl_site_client import _jwt_cache, cached_token, request_json
 
 # Cap on the image we'll pull from FAL before base64-ing it into the upload
 # body. The bl-site endpoint re-encodes to WebP and enforces its own 10 MB
@@ -535,7 +535,7 @@ BL_SITE_PUBLISH_SCHEMA = {
     },
 }
 
-from tools.registry import registry  # noqa: E402
+from tools.registry import registry
 
 registry.register(
     name="bl_site_publish",

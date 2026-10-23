@@ -14,7 +14,7 @@ import threading
 
 import pytest
 
-import cron.scheduler as scheduler
+from cron import scheduler
 from cron.fork_ext import max_runtime as mr
 
 

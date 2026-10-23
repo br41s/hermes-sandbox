@@ -46,7 +46,7 @@ _models_dev_refresh_in_flight = False
 # fork: provider-metadata snapshot shipped inside the package (see module docstring).
 _SNAPSHOT_PATH = Path(__file__).resolve().parent / "models_dev_snapshot.json"
 # Memoised bundled snapshot. None = not yet read; {} = read and unusable.
-_bundled_snapshot: Optional[Dict[str, Any]] = None
+_bundled_snapshot: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -316,7 +316,7 @@ def _disk_cache_age_seconds() -> Optional[float]:
     return _quietly("stat models.dev disk cache", stat)
 
 
-def _load_bundled_snapshot() -> Dict[str, Any]:
+def _load_bundled_snapshot() -> dict[str, Any]:
     """fork: the package-bundled provider snapshot, memoised for the process.
 
     ``{provider_id: {name, env, api, doc}}``, or ``{}`` when the file is missing
@@ -336,7 +336,7 @@ def _load_bundled_snapshot() -> Dict[str, Any]:
     return _bundled_snapshot
 
 
-def _bundled_snapshot_floor() -> Dict[str, Any]:
+def _bundled_snapshot_floor() -> dict[str, Any]:
     """fork: the bundled snapshot as a last-resort answer, never cached in memory.
 
     A top-level copy, not an alias, so a stray ``data[provider] = ...`` cannot

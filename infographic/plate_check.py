@@ -32,7 +32,7 @@ from PIL import Image
 # Pillow only: the production image has PIL but no numpy, and this has to run
 # inside a cron agent with nothing to install.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from palettize import load_palette, palette_image  # noqa: E402
+from palettize import load_palette, palette_image
 
 # What this actually guards is BREATHING ROOM, so it measures the largest flat
 # field — the single most common colour — and not the ground colour specifically.
@@ -115,7 +115,7 @@ def check_textless(plate, findings):
     try:
         r = json.load(urllib.request.urlopen(req, timeout=120))
         answer = (r["choices"][0]["message"]["content"] or "").strip()
-    except Exception as exc:                                   # noqa: BLE001 — advisory
+    except Exception as exc:
         print(f"note: the advisory text probe could not run ({exc}).", file=sys.stderr)
         return
     if not answer.upper().startswith("NO"):

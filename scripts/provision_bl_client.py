@@ -96,14 +96,14 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))
 
-from hermes_cli.profiles import (  # noqa: E402
+from hermes_cli.profiles import (
     create_profile,
     normalize_profile_name,
     profile_exists,
     validate_profile_name,
 )
-from cron.jobs import create_job  # noqa: E402
-from scripts.bl_site_setup import apply_site_template, validate_answers  # noqa: E402
+from cron.jobs import create_job
+from scripts.bl_site_setup import apply_site_template, validate_answers
 
 # agent key -> (prompt_source relative to repo root, display name, schedule kind,
 #               enabled toolsets)

@@ -77,12 +77,12 @@ def _check(resp, what: str) -> None:
         raise StudioError(f"{what}: HTTP {resp.status_code} {body}")
 
 
-def encode_package(pkg: Dict[str, Any]) -> str:
+def encode_package(pkg: dict[str, Any]) -> str:
     raw = json.dumps(pkg, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")
 
 
-def dispatch(request_id: str, pkg: Dict[str, Any]) -> Dict[str, Any]:
+def dispatch(request_id: str, pkg: dict[str, Any]) -> dict[str, Any]:
     """Start a render. Returns ``{"run_id", "run_url"}`` when GitHub reports them."""
     payload = {
         "ref": ref(),
@@ -92,14 +92,14 @@ def dispatch(request_id: str, pkg: Dict[str, Any]) -> Dict[str, Any]:
     with _client() as client:
         resp = client.post(f"{API}/repos/{repo()}/actions/workflows/{WORKFLOW}/dispatches", json=payload)
     _check(resp, "dispatch render")
-    details: Dict[str, Any] = {}
+    details: dict[str, Any] = {}
     if resp.status_code == 200 and resp.content:
         body = resp.json()
         details = {"run_id": body.get("workflow_run_id"), "run_url": body.get("html_url")}
     return details
 
 
-def find_run(request_id: str) -> Optional[Dict[str, Any]]:
+def find_run(request_id: str) -> Optional[dict[str, Any]]:
     """The most recent run titled ``shorts <request_id>``, or None."""
     title = f"shorts {request_id}"
     with _client() as client:
@@ -114,7 +114,7 @@ def find_run(request_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_run(run_id: int) -> Dict[str, Any]:
+def get_run(run_id: int) -> dict[str, Any]:
     with _client() as client:
         resp = client.get(f"{API}/repos/{repo()}/actions/runs/{run_id}")
     _check(resp, f"get run {run_id}")
@@ -155,7 +155,7 @@ def download_artifact(run_id: int, name: str, dest: Path) -> Optional[Path]:
 # Avatar clips — stored as release assets so the render farm can fetch them
 # ---------------------------------------------------------------------------
 
-def _avatar_release(client) -> Dict[str, Any]:
+def _avatar_release(client) -> dict[str, Any]:
     resp = client.get(f"{API}/repos/{repo()}/releases/tags/{AVATAR_RELEASE_TAG}")
     if resp.status_code == 200:
         return resp.json()
@@ -171,7 +171,7 @@ def _avatar_release(client) -> Dict[str, Any]:
     return resp.json()
 
 
-def upload_avatar_clip(path: Path, name: str) -> Dict[str, Any]:
+def upload_avatar_clip(path: Path, name: str) -> dict[str, Any]:
     """Upload a local MP4 as a release asset; returns its API download URL."""
     data = path.read_bytes()
     with _client(timeout=300) as client:

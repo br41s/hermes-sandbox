@@ -79,7 +79,7 @@ import json
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -106,7 +106,7 @@ def channel() -> str:
     return env("SERIES_BUZZ_CHANNEL")
 
 
-def allowed() -> List[str]:
+def allowed() -> list[str]:
     return [p.strip().lower() for p in env("SERIES_BUZZ_FROM").split(",") if re.fullmatch(r"[0-9a-fA-F]{64}", p.strip())]
 
 
@@ -143,12 +143,12 @@ def _updates_path() -> Path:
     return _root() / "updates.json"
 
 
-def _load(path: Optional[Path] = None) -> Dict[str, Any]:
+def _load(path: Optional[Path] = None) -> dict[str, Any]:
     path = path or _ledger_path()
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
-def _save(data: Dict[str, Any], path: Optional[Path] = None) -> None:
+def _save(data: dict[str, Any], path: Optional[Path] = None) -> None:
     path = path or _ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -157,7 +157,7 @@ def _save(data: Dict[str, Any], path: Optional[Path] = None) -> None:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
@@ -179,11 +179,11 @@ def _media_url(value: Any, what: str) -> str:
     return url
 
 
-def _json_block(content: str, mark: str) -> Dict[str, Any]:
+def _json_block(content: str, mark: str) -> dict[str, Any]:
     text = (content or "").strip()
     if not text.startswith(mark):
         raise SeriesError(f"the message does not start with {mark}")
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     raw = fenced.group(1) if fenced else text[len(mark):].strip()
     try:
         data = json.loads(raw)
@@ -194,7 +194,7 @@ def _json_block(content: str, mark: str) -> Dict[str, Any]:
     return data
 
 
-def _metadata(part: Dict[str, Any], lang: str, problems: List[str]) -> Dict[str, Any]:
+def _metadata(part: dict[str, Any], lang: str, problems: list[str]) -> dict[str, Any]:
     """Title, description and tags of one language (``lang`` empty for a flat block), as YouTube accepts them."""
     at = f"{lang}." if lang else ""
     titulo = " ".join(str(part.get("titulo") or "").split())
@@ -215,7 +215,7 @@ def _metadata(part: Dict[str, Any], lang: str, problems: List[str]) -> Dict[str,
 SHORT_ID = r"[a-z0-9][a-z0-9_-]{4,120}"
 
 
-def _short_ids() -> Dict[str, str]:
+def _short_ids() -> dict[str, str]:
     """request_id -> YouTube id of every blog Short already on YouTube (shorts ledger)."""
     from plugins.shorts import ledger
 
@@ -223,7 +223,7 @@ def _short_ids() -> Dict[str, str]:
             if (((e.get("published") or {}).get("youtube") or {}).get("id")) and e.get("request_id")}
 
 
-def _episode(data: Dict[str, Any], problems: List[str]) -> Dict[str, Any]:
+def _episode(data: dict[str, Any], problems: list[str]) -> dict[str, Any]:
     agente = str(data.get("agente") or "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", agente):
         problems.append("agente: the agent's page slug, e.g. content-gap-hunter")
@@ -233,10 +233,10 @@ def _episode(data: Dict[str, Any], problems: List[str]) -> Dict[str, Any]:
     return {"agente": agente, "episodio": episodio}
 
 
-def parse(content: str) -> Dict[str, Any]:
+def parse(content: str) -> dict[str, Any]:
     """The episode request in a message, validated. Raises SeriesError with every problem."""
     data = _json_block(content, MARK)
-    problems: List[str] = []
+    problems: list[str] = []
     out = _episode(data, problems)
     for lang in LANGS:
         part = data.get(lang) or {}
@@ -257,7 +257,7 @@ def parse(content: str) -> Dict[str, Any]:
     return out
 
 
-def _article_url(value: Any, problems: List[str]) -> str:
+def _article_url(value: Any, problems: list[str]) -> str:
     url = str(value or "").strip()
     try:
         parts = urlparse(url)
@@ -269,17 +269,17 @@ def _article_url(value: Any, problems: List[str]) -> str:
     return url
 
 
-def parse_short(content: str) -> Dict[str, Any]:
+def parse_short(content: str) -> dict[str, Any]:
     """A Flow short request, validated. Raises SeriesError with every problem."""
     data = _json_block(content, MARK_SHORT)
-    problems: List[str] = []
+    problems: list[str] = []
     short = str(data.get("short") or "")
     if not re.fullmatch(SHORT_ID, short):
         problems.append("short: the Flow folder name, e.g. 2026-10-21_es-ia-empleados-junior")
     idioma = str(data.get("idioma") or "")
     if idioma not in LANGS:
         problems.append("idioma: es or en")
-    out: Dict[str, Any] = {"short": short, "idioma": idioma, "articulo": _article_url(data.get("articulo"), problems)}
+    out: dict[str, Any] = {"short": short, "idioma": idioma, "articulo": _article_url(data.get("articulo"), problems)}
     for field in ("video", "srt", "portada"):
         out[field] = None
         if field == "video" or data.get(field):
@@ -298,12 +298,12 @@ def parse_short(content: str) -> Dict[str, Any]:
     return out
 
 
-def parse_update(content: str) -> Dict[str, Any]:
+def parse_update(content: str) -> dict[str, Any]:
     """An optimisation request (new metadata and thumbnail for published videos), validated."""
     data = _json_block(content, MARK_UPDATE)
-    problems: List[str] = []
+    problems: list[str] = []
     if data.get("short"):
-        out: Dict[str, Any] = {"short": str(data["short"]), "agente": "", "episodio": ""}
+        out: dict[str, Any] = {"short": str(data["short"]), "agente": "", "episodio": ""}
         if not re.fullmatch(SHORT_ID, out["short"]):
             problems.append("short: the Short's id (a blog request_id, e.g. es-limite-decision-ia-pymes-2026-20261017040713, "
                             "or a Flow folder name, e.g. 2026-10-21_es-ia-empleados-junior)")
@@ -333,7 +333,7 @@ def parse_update(content: str) -> Dict[str, Any]:
 # Buzz
 # ---------------------------------------------------------------------------
 
-def _buzz(args: List[str], content: Optional[str] = None) -> str:
+def _buzz(args: list[str], content: Optional[str] = None) -> str:
     binary = buzz_share.cli()
     if not binary:
         raise SeriesError("the buzz CLI is not installed in this image")
@@ -348,7 +348,7 @@ def _buzz(args: List[str], content: Optional[str] = None) -> str:
     return done.stdout or ""
 
 
-def requests(limit: int = 200, mark: str = MARK) -> List[Dict[str, Any]]:
+def requests(limit: int = 200, mark: str = MARK) -> list[dict[str, Any]]:
     """Requests with ``mark`` in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
     parser = {MARK_UPDATE: parse_update, MARK_SHORT: parse_short}.get(mark, parse)
     raw = _buzz(["messages", "get", "--channel", channel(), "--limit", str(limit)])
@@ -419,7 +419,7 @@ def _check_thumb(path: Path) -> None:
         raise SeriesError(f"the cover weighs {path.stat().st_size // 1000} KB; YouTube takes up to 2 MB")
 
 
-def _reply(item: Dict[str, Any], text: str) -> None:
+def _reply(item: dict[str, Any], text: str) -> None:
     _buzz(["messages", "send", "--channel", channel(), "--reply-to", item["event"],
            "--mention", item["from"], "--content", "-"], content=text)
 
@@ -428,7 +428,7 @@ def _reply(item: Dict[str, Any], text: str) -> None:
 # Publishing
 # ---------------------------------------------------------------------------
 
-def _publish_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, Any]:
+def _publish_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, Any]:
     from plugins.shorts.social import youtube
 
     part = item[lang]
@@ -438,10 +438,10 @@ def _publish_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, 
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
     result = youtube.upload(video, None, srt, social, lang, synthetic=False, short=False,
                             privacy=env("SERIES_YOUTUBE_PRIVACY", "public") or "public")
-    return {**result, "seconds": round(seconds, 1), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return {**result, "seconds": round(seconds, 1), "at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
-def _summary(item: Dict[str, Any], entry: Dict[str, Any]) -> str:
+def _summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     lines = [f"Episodio {item['episodio']} ({item['agente']}) publicado en YouTube por Hermes:"]
     for lang in LANGS:
         done = entry.get(lang) or {}
@@ -454,7 +454,7 @@ def _summary(item: Dict[str, Any], entry: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _update_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, Any]:
+def _update_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, Any]:
     from plugins.shorts.social import youtube
 
     part = item[lang]
@@ -463,15 +463,15 @@ def _update_language(item: Dict[str, Any], lang: str, work: Path) -> Dict[str, A
         _check_thumb(thumb)
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
     result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")))
-    return {**result, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
-def _save_entry(ledger: Dict[str, Any], key: str, entry: Dict[str, Any]) -> None:
+def _save_entry(ledger: dict[str, Any], key: str, entry: dict[str, Any]) -> None:
     ledger[key] = entry
     _save(ledger)
 
 
-def _hand_off(item: Dict[str, Any], video: Path, cover: Optional[Path], youtube_url: str) -> List[str]:
+def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_url: str) -> list[str]:
     """Post the Short to SocialBot in the shorts channel, as the blog Shorts are. Returns the attachments."""
     files = {"master": str(video)}
     if cover and cover.read_bytes()[:2] == b"\xff\xd8":      # the relay refuses a PNG
@@ -485,7 +485,7 @@ def _hand_off(item: Dict[str, Any], video: Path, cover: Optional[Path], youtube_
         raise SeriesError(f"could not hand the short to SocialBot: {exc}") from exc
 
 
-def _publish_short(item: Dict[str, Any], entry: Dict[str, Any], work: Path, ledger: Dict[str, Any], key: str) -> None:
+def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any], key: str) -> None:
     """Upload the Short and hand it to SocialBot; each step is recorded, so a retry does only what is left."""
     from plugins.shorts.social import youtube
 
@@ -501,15 +501,15 @@ def _publish_short(item: Dict[str, Any], entry: Dict[str, Any], work: Path, ledg
         result = youtube.upload(video, cover, srt, social, item["idioma"], synthetic=True, short=True, article=article,
                                 privacy=env("SERIES_YOUTUBE_PRIVACY", "public") or "public")
         entry["youtube"] = {**result, "seconds": round(seconds, 1),
-                            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                            "at": datetime.now(UTC).isoformat(timespec="seconds")}
         _save_entry(ledger, key, entry)
     if not entry.get("handoff_at") and buzz_share.configured():
         entry["handoff"] = _hand_off(item, video, cover, entry["youtube"]["url"])
-        entry["handoff_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry["handoff_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         _save_entry(ledger, key, entry)
 
 
-def _short_summary(item: Dict[str, Any], entry: Dict[str, Any]) -> str:
+def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     done = entry["youtube"]
     lines = [f"Short {item['short']} publicado en YouTube por Hermes:",
              f"{done.get('url')} (id {done.get('id')}, {done.get('privacy') or '?'})"]
@@ -525,7 +525,7 @@ def _short_summary(item: Dict[str, Any], entry: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _publish_shorts(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
+def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
     """Publish the pending Flow shorts this run may take, under their own daily cap."""
     shorts = {k: e for k, e in ledger.items() if e.get("kind") == "short"}
     started_today = sum(1 for e in shorts.values() if e.get("started") == _today())
@@ -559,7 +559,7 @@ def _publish_shorts(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
         work = _root() / key[:16]
         try:
             _publish_short(item, entry, work, ledger, key)
-        except Exception as exc:  # noqa: BLE001 - reported, and retried on the next run
+        except Exception as exc:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
                 where = (f"El short {item['short']} está en YouTube ({entry['youtube']['url']}) pero no he podido "
@@ -580,11 +580,11 @@ def _publish_shorts(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
                                     **{k: entry["youtube"].get(k) for k in ("id", "url", "privacy")}})
 
 
-def _what(item: Dict[str, Any]) -> str:
+def _what(item: dict[str, Any]) -> str:
     return f"el short {item['short']}" if item.get("short") else f"el episodio {item['episodio']}"
 
 
-def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
+def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
     """Apply the optimisation requests, each once; only to videos this module published."""
     ours = {(e.get(lang) or {}).get("id") for e in ledger.values() for lang in LANGS} - {None}
     shorts = set(_short_ids().values()) | {e["youtube"]["id"] for e in ledger.values()
@@ -618,7 +618,7 @@ def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
                 if not (entry.get(lang) or {}).get("id"):
                     entry[lang] = _update_language(item, lang, work)
                     _save(updates, _updates_path())
-        except Exception as exc:  # noqa: BLE001 - reported, and retried on the next run
+        except Exception as exc:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
                 _reply(item, f"No he podido actualizar {_what(item)} tras {MAX_ATTEMPTS} intentos: "
@@ -648,7 +648,7 @@ def _apply_updates(ledger: Dict[str, Any], report: Dict[str, Any]) -> None:
                                  {"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
 
 
-def run() -> Dict[str, Any]:
+def run() -> dict[str, Any]:
     """Publish the pending episodes this run may take. Returns what happened, for the Publisher's report."""
     if not configured():
         return {"skipped": "series not configured (SERIES_BUZZ_CHANNEL, SERIES_BUZZ_FROM, Buzz credentials)"}
@@ -661,7 +661,7 @@ def run() -> Dict[str, Any]:
         return {"skipped": "YouTube is not configured"}
     ledger = _load()
     started_today = sum(1 for e in ledger.values() if e.get("kind") != "short" and e.get("started") == _today())
-    report: Dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": []}
+    report: dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": []}
     for item in requests():
         key = item["event"]
         entry = ledger.get(key) or {}
@@ -691,7 +691,7 @@ def run() -> Dict[str, Any]:
                     entry[lang] = _publish_language(item, lang, work)
                     ledger[key] = entry
                     _save(ledger)
-        except Exception as exc:  # noqa: BLE001 - reported, and retried on the next run
+        except Exception as exc:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
                 _reply(item, f"No he podido publicar el episodio {item['episodio']} tras {MAX_ATTEMPTS} intentos: "

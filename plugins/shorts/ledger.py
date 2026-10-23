@@ -56,12 +56,12 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _empty() -> Dict[str, Any]:
+def _empty() -> dict[str, Any]:
     return {"version": LEDGER_VERSION, "entries": {}}
 
 
 @contextlib.contextmanager
-def locked(write: bool = True) -> Iterator[Dict[str, Any]]:
+def locked(write: bool = True) -> Iterator[dict[str, Any]]:
     """Load the ledger under an exclusive lock; save it on exit if ``write``."""
     path = ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,12 +83,12 @@ def locked(write: bool = True) -> Iterator[Dict[str, Any]]:
             os.replace(tmp, path)
 
 
-def read() -> Dict[str, Any]:
+def read() -> dict[str, Any]:
     with locked(write=False) as data:
         return json.loads(json.dumps(data))
 
 
-def entries(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def entries(data: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     data = data if data is not None else read()
     return sorted(data["entries"].values(), key=lambda e: e.get("created_at", ""))
 
@@ -99,7 +99,7 @@ def entries(data: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
 MAX_FAILED_ATTEMPTS = 1
 
 
-def done_urls(data: Optional[Dict[str, Any]] = None) -> set:
+def done_urls(data: Optional[dict[str, Any]] = None) -> set:
     done, failures = set(), {}
     for e in entries(data):
         if e.get("state") in DONE_STATES:
@@ -109,7 +109,7 @@ def done_urls(data: Optional[Dict[str, Any]] = None) -> set:
     return done | {url for url, n in failures.items() if n >= MAX_FAILED_ATTEMPTS}
 
 
-def recent_style(data: Optional[Dict[str, Any]] = None, n: int = 2) -> Dict[str, List[str]]:
+def recent_style(data: Optional[dict[str, Any]] = None, n: int = 2) -> dict[str, list[str]]:
     """Palettes and motifs of the last ``n`` shorts — the next one must differ."""
     recent = [e for e in entries(data) if e.get("state") != "render_failed"][-n:]
     return {
@@ -122,8 +122,8 @@ def recent_style(data: Optional[Dict[str, Any]] = None, n: int = 2) -> Dict[str,
 HOOK_PATTERN_WINDOW = 3
 
 
-def recent_hook_patterns(data: Optional[Dict[str, Any]] = None, lang: str = "",
-                         n: int = HOOK_PATTERN_WINDOW) -> List[str]:
+def recent_hook_patterns(data: Optional[dict[str, Any]] = None, lang: str = "",
+                         n: int = HOOK_PATTERN_WINDOW) -> list[str]:
     """Hook patterns of the last ``n`` shorts in ``lang`` — the next one there must differ.
 
     Counted per language: each language has its own audience. Shorts made
@@ -134,11 +134,11 @@ def recent_hook_patterns(data: Optional[Dict[str, Any]] = None, lang: str = "",
     return [e["hook_pattern"] for e in recent]
 
 
-def used_assets(data: Optional[Dict[str, Any]] = None, n: int = 40) -> Dict[str, List[str]]:
+def used_assets(data: Optional[dict[str, Any]] = None, n: int = 40) -> dict[str, list[str]]:
     """Footage and music used by the last ``n`` shorts, to pass as avoid-lists."""
     recent = entries(data)[-n:]
-    broll: List[str] = []
-    music: List[str] = []
+    broll: list[str] = []
+    music: list[str] = []
     for e in recent:
         broll += [str(x) for x in e.get("broll_ids") or []]
         if e.get("music_id"):
@@ -146,7 +146,7 @@ def used_assets(data: Optional[Dict[str, Any]] = None, n: int = 40) -> Dict[str,
     return {"broll": broll, "music": music[-12:]}
 
 
-def add(entry: Dict[str, Any]) -> Dict[str, Any]:
+def add(entry: dict[str, Any]) -> dict[str, Any]:
     with locked() as data:
         rid = entry["request_id"]
         if rid in data["entries"]:
@@ -157,7 +157,7 @@ def add(entry: Dict[str, Any]) -> Dict[str, Any]:
         return dict(entry)
 
 
-def update(request_id: str, **fields: Any) -> Dict[str, Any]:
+def update(request_id: str, **fields: Any) -> dict[str, Any]:
     with locked() as data:
         entry = data["entries"].get(request_id)
         if entry is None:
@@ -173,7 +173,7 @@ def update(request_id: str, **fields: Any) -> Dict[str, Any]:
         return dict(entry)
 
 
-def record_publish(request_id: str, target: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def record_publish(request_id: str, target: str, result: dict[str, Any]) -> dict[str, Any]:
     """Store a target's result; the short becomes ``published`` once all enabled targets are."""
     if target not in TARGETS:
         raise ValueError(f"unknown target {target!r}")
@@ -184,7 +184,7 @@ def record_publish(request_id: str, target: str, result: Dict[str, Any]) -> Dict
         return dict(entry)
 
 
-def get(request_id: str) -> Dict[str, Any]:
+def get(request_id: str) -> dict[str, Any]:
     entry = read()["entries"].get(request_id)
     if entry is None:
         raise KeyError(f"no short {request_id!r} in the ledger")
@@ -199,14 +199,14 @@ def avatars_path() -> Path:
     return shorts_root() / "avatars.json"
 
 
-def avatars() -> List[Dict[str, Any]]:
+def avatars() -> list[dict[str, Any]]:
     path = avatars_path()
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8")).get("clips", [])
 
 
-def add_avatar(clip: Dict[str, Any]) -> Dict[str, Any]:
+def add_avatar(clip: dict[str, Any]) -> dict[str, Any]:
     with locked(write=False):  # same lock file serialises library writes too
         clips = [c for c in avatars() if c.get("clip_url") != clip["clip_url"]]
         clip = {**clip, "uploaded_at": _now()}

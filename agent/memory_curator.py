@@ -44,7 +44,7 @@ import os
 import re
 import tempfile
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -72,7 +72,7 @@ def _state_file() -> Path:
     return get_hermes_home() / "memory-curator" / ".memory_curator_state"
 
 
-def _default_state() -> Dict[str, Any]:
+def _default_state() -> dict[str, Any]:
     return {
         "last_run_at": None,
         "last_run_summary": None,
@@ -85,7 +85,7 @@ def _default_state() -> Dict[str, Any]:
     }
 
 
-def load_state() -> Dict[str, Any]:
+def load_state() -> dict[str, Any]:
     path = _state_file()
     if not path.exists():
         return _default_state()
@@ -100,7 +100,7 @@ def load_state() -> Dict[str, Any]:
     return _default_state()
 
 
-def save_state(data: Dict[str, Any]) -> None:
+def save_state(data: dict[str, Any]) -> None:
     path = _state_file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +137,7 @@ def is_paused() -> bool:
 # Config access
 # ---------------------------------------------------------------------------
 
-def _load_config() -> Dict[str, Any]:
+def _load_config() -> dict[str, Any]:
     """Read ``memory_curator.*`` from config.yaml. Tolerates a missing file."""
     try:
         from hermes_cli.config import load_config
@@ -199,7 +199,7 @@ def get_graduation_k() -> int:
     return _int_cfg("graduation_k", DEFAULT_GRADUATION_K)
 
 
-def get_graduatable_actions() -> List[str]:
+def get_graduatable_actions() -> list[str]:
     """Actions eligible for auto-apply. Default: adds only — auto-evicting or
     auto-merging (deleting existing memory) stays human-gated."""
     cfg = _load_config().get("graduatable_actions", DEFAULT_GRADUATABLE_ACTIONS)
@@ -259,7 +259,7 @@ def should_run_now(now: Optional[datetime] = None) -> bool:
     state = load_state()
     last = _parse_iso(state.get("last_run_at"))
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if last is None:
         try:
             state["last_run_at"] = now.isoformat()
@@ -272,7 +272,7 @@ def should_run_now(now: Optional[datetime] = None) -> bool:
         return False
 
     if last.tzinfo is None:
-        last = last.replace(tzinfo=timezone.utc)
+        last = last.replace(tzinfo=UTC)
     return (now - last) >= timedelta(hours=get_interval_hours())
 
 
@@ -280,7 +280,7 @@ def should_run_now(now: Optional[datetime] = None) -> bool:
 # Data gathering (pure I/O, no LLM)
 # ---------------------------------------------------------------------------
 
-def _recent_sessions(db, since: datetime, limit: int) -> List[Dict[str, Any]]:
+def _recent_sessions(db, since: datetime, limit: int) -> list[dict[str, Any]]:
     """Root sessions active since ``since``, most-recent first, noise excluded."""
     try:
         rows = db.list_sessions_rich(
@@ -292,7 +292,7 @@ def _recent_sessions(db, since: datetime, limit: int) -> List[Dict[str, Any]]:
         logger.debug("memory-curator: list_sessions_rich failed: %s", e)
         return []
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for s in rows:
         if s.get("parent_session_id"):
             continue  # skip child / delegation sessions
@@ -301,7 +301,7 @@ def _recent_sessions(db, since: datetime, limit: int) -> List[Dict[str, Any]]:
         )
         if last_active is not None:
             if last_active.tzinfo is None:
-                last_active = last_active.replace(tzinfo=timezone.utc)
+                last_active = last_active.replace(tzinfo=UTC)
             if last_active < since:
                 continue
         out.append(s)
@@ -319,7 +319,7 @@ def _session_transcript(db, session_id: str, char_budget: int) -> str:
                      session_id, e)
         return ""
 
-    lines: List[str] = []
+    lines: list[str] = []
     for m in msgs:
         role = m.get("role")
         if role not in ("user", "assistant"):
@@ -351,7 +351,7 @@ def _read_current_memory() -> str:
     return ""
 
 
-def _current_entries(target: str) -> List[str]:
+def _current_entries(target: str) -> list[str]:
     """Return the individual entries of a memory store (split on the § delimiter)."""
     try:
         from tools.memory_tool import get_memory_dir, ENTRY_DELIMITER
@@ -403,7 +403,7 @@ _DIGEST_INSTRUCTIONS = (
 )
 
 
-def _build_extraction_prompt(current_memory: str, transcripts: List[Dict[str, str]]) -> str:
+def _build_extraction_prompt(current_memory: str, transcripts: list[dict[str, str]]) -> str:
     parts = [_DIGEST_INSTRUCTIONS, "\n===== CURRENT MEMORY (do not duplicate) =====\n"]
     parts.append(current_memory.strip() or "(memory is empty)")
     parts.append("\n\n===== RECENT SESSIONS =====\n")
@@ -451,7 +451,7 @@ _CONSOLIDATION_INSTRUCTIONS = (
 )
 
 
-def _build_consolidation_prompt(mem_entries: List[str], user_entries: List[str]) -> str:
+def _build_consolidation_prompt(mem_entries: list[str], user_entries: list[str]) -> str:
     parts = [_CONSOLIDATION_INSTRUCTIONS]
     for target, entries in (("memory", mem_entries), ("user", user_entries)):
         parts.append(f"\n===== CURRENT {target.upper()} ENTRIES (target: {target}) =====\n")
@@ -463,7 +463,7 @@ def _build_consolidation_prompt(mem_entries: List[str], user_entries: List[str])
     return "".join(parts)
 
 
-def _run_extraction(prompt: str) -> Dict[str, Any]:
+def _run_extraction(prompt: str) -> dict[str, Any]:
     """Spawn an auxiliary AIAgent fork to produce the digest. Never raises.
 
     Mirrors ``agent.curator._run_llm_review`` but uses this task's own aux slot
@@ -472,7 +472,7 @@ def _run_extraction(prompt: str) -> Dict[str, Any]:
     """
     import contextlib
 
-    result: Dict[str, Any] = {"final": "", "summary": "", "model": "", "provider": "", "error": None}
+    result: dict[str, Any] = {"final": "", "summary": "", "model": "", "provider": "", "error": None}
     try:
         from run_agent import AIAgent
     except Exception as e:
@@ -535,7 +535,7 @@ def _run_extraction(prompt: str) -> Dict[str, Any]:
     return result
 
 
-def _resolve_extraction_runtime(cfg: Dict[str, Any]) -> tuple[str, str]:
+def _resolve_extraction_runtime(cfg: dict[str, Any]) -> tuple[str, str]:
     """Pick (provider, model): memory_curator aux slot → curator slot → main."""
     aux = cfg.get("auxiliary", {}) if isinstance(cfg.get("auxiliary"), dict) else {}
     for slot in ("memory_curator", "curator"):
@@ -564,7 +564,7 @@ def _ledger_path() -> Path:
     return _digest_dir() / "applied.jsonl"
 
 
-def _parse_proposals(text: str) -> List[Dict[str, Any]]:
+def _parse_proposals(text: str) -> list[dict[str, Any]]:
     """Extract a proposals list from the LLM response. Returns [] on any failure.
 
     Prefers a ```json fenced block; falls back to the outermost {...} span.
@@ -589,7 +589,7 @@ def _parse_proposals(text: str) -> List[Dict[str, Any]]:
     items = data.get("proposals") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -621,7 +621,7 @@ def _parse_proposals(text: str) -> List[Dict[str, Any]]:
     return out
 
 
-def load_proposals() -> Dict[str, Any]:
+def load_proposals() -> dict[str, Any]:
     """Load the last run's proposals (source of truth for apply). Never raises."""
     path = _proposals_path()
     if not path.exists():
@@ -635,7 +635,7 @@ def load_proposals() -> Dict[str, Any]:
     return {"ts": None, "meta": {}, "proposals": []}
 
 
-def _render_digest_md(proposals: List[Dict[str, Any]], meta: Dict[str, Any], ts: str) -> str:
+def _render_digest_md(proposals: list[dict[str, Any]], meta: dict[str, Any], ts: str) -> str:
     consolidation = meta.get("mode") == "consolidation"
     title = "Memory consolidation" if consolidation else "Memory digest"
     scope = (f"- entries scanned: {meta.get('entries', 0)}" if consolidation
@@ -683,7 +683,7 @@ def _render_digest_md(proposals: List[Dict[str, Any]], meta: Dict[str, Any], ts:
     return "\n".join(lines) + "\n"
 
 
-def _save_proposals(data: Dict[str, Any]) -> None:
+def _save_proposals(data: dict[str, Any]) -> None:
     """Persist proposals.json and re-render latest.md (to reflect applied flags)."""
     try:
         _digest_dir().mkdir(parents=True, exist_ok=True)
@@ -698,12 +698,12 @@ def _save_proposals(data: Dict[str, Any]) -> None:
         logger.debug("memory-curator: failed to save proposals: %s", e)
 
 
-def _persist_run(proposals: List[Dict[str, Any]], meta: Dict[str, Any]) -> Optional[str]:
+def _persist_run(proposals: list[dict[str, Any]], meta: dict[str, Any]) -> Optional[str]:
     """Write proposals.json + a timestamped digest + latest.md. Returns digest path."""
     try:
         root = _digest_dir()
         root.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         _proposals_path().write_text(
             json.dumps({"ts": ts, "meta": meta, "proposals": proposals},
                        indent=2, ensure_ascii=False), encoding="utf-8")
@@ -745,7 +745,7 @@ def _memory_store():
     return MemoryStore(memory_char_limit=mlim, user_char_limit=ulim)
 
 
-def _append_ledger(entry: Dict[str, Any]) -> None:
+def _append_ledger(entry: dict[str, Any]) -> None:
     try:
         _digest_dir().mkdir(parents=True, exist_ok=True)
         with open(_ledger_path(), "a", encoding="utf-8") as f:
@@ -754,7 +754,7 @@ def _append_ledger(entry: Dict[str, Any]) -> None:
         logger.debug("memory-curator: ledger append failed: %s", e)
 
 
-def _apply_merge(store, target: str, sources: List[str], merged: str) -> tuple[bool, str, List[str]]:
+def _apply_merge(store, target: str, sources: list[str], merged: str) -> tuple[bool, str, list[str]]:
     """Remove all sources then add the merged entry, rolling back on failure.
 
     Returns (success, error, removed_sources). Pre-validates that every source
@@ -767,7 +767,7 @@ def _apply_merge(store, target: str, sources: List[str], merged: str) -> tuple[b
     for s in sources:
         if not any(s in e or e in s for e in existing):
             return False, f"source not found: {s[:50]}", []
-    removed: List[str] = []
+    removed: list[str] = []
     for s in sources:
         r = store.remove(target, s)
         if r.get("success"):
@@ -784,8 +784,8 @@ def _apply_merge(store, target: str, sources: List[str], merged: str) -> tuple[b
     return True, "", removed
 
 
-def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False,
-                    auto: bool = False) -> Dict[str, Any]:
+def apply_proposals(ids: Optional[list[str]] = None, *, apply_all: bool = False,
+                    auto: bool = False) -> dict[str, Any]:
     """Apply approved proposals to memory via the memory tool. Never raises.
 
     ``add`` → ``MemoryStore.add`` (dedup/cap/scan-guarded); ``evict`` →
@@ -816,9 +816,9 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False,
     if not isinstance(grad, dict):
         grad = {}
 
-    applied: List[str] = []
-    skipped: List[str] = []
-    errors: List[str] = []
+    applied: list[str] = []
+    skipped: list[str] = []
+    errors: list[str] = []
     for p in proposals:
         if not apply_all and p["id"] not in wanted:
             continue
@@ -827,7 +827,7 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False,
             continue
         action = p.get("action", "add")
         ledger_rec = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "id": p["id"], "action": action,
             "target": p["target"], "entry": p["entry"],
         }
@@ -872,7 +872,7 @@ def apply_proposals(ids: Optional[List[str]] = None, *, apply_all: bool = False,
     return {"applied": applied, "skipped": skipped, "errors": errors}
 
 
-def revert_last() -> Dict[str, Any]:
+def revert_last() -> dict[str, Any]:
     """Invert the most recently applied op. Never raises.
 
     Undo an ``add`` by removing the entry, an ``evict`` by re-adding it, and a
@@ -956,7 +956,7 @@ def revert_last() -> Dict[str, Any]:
 # Telegram notification — a heads-up that memory decisions are waiting
 # ---------------------------------------------------------------------------
 
-def _http_post_json(url: str, payload: Dict[str, Any], timeout: float = 15.0) -> int:
+def _http_post_json(url: str, payload: dict[str, Any], timeout: float = 15.0) -> int:
     """POST JSON and return the HTTP status. Stdlib only; monkeypatched in tests."""
     import urllib.request
     data = json.dumps(payload).encode("utf-8")
@@ -967,7 +967,7 @@ def _http_post_json(url: str, payload: Dict[str, Any], timeout: float = 15.0) ->
         return int(getattr(resp, "status", 0) or resp.getcode())
 
 
-def _build_telegram_message(proposals: List[Dict[str, Any]], auto_applied: List[str],
+def _build_telegram_message(proposals: list[dict[str, Any]], auto_applied: list[str],
                             mode: str) -> str:
     """Compose the notification body. ``mode`` is 'digest' or 'consolidation'."""
     kind = "consolidación" if mode == "consolidation" else "aprendizaje"
@@ -1000,7 +1000,7 @@ def _notify_telegram(text: str) -> bool:
     chat_id = get_telegram_chat_id()
     if not token or not chat_id:
         return False
-    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text,
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text,
                                "disable_web_page_preview": True}
     try:
         thread_id = get_telegram_thread_id()
@@ -1030,7 +1030,7 @@ def run_memory_digest(
     now: Optional[datetime] = None,
     force: bool = False,
     notify: bool = False,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """Run one read-only digest pass. Returns a result dict, or None if nothing
     to do. Never raises. ``force=True`` bypasses the interval gate (CLI/tests).
 
@@ -1039,7 +1039,7 @@ def run_memory_digest(
     unless a bot token + ``telegram_chat_id`` are configured.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if not force and not should_run_now(now):
         return None
 
@@ -1052,7 +1052,7 @@ def run_memory_digest(
 
     since = now - timedelta(days=get_lookback_days())
     sessions = _recent_sessions(db, since, get_max_sessions())
-    transcripts: List[Dict[str, str]] = []
+    transcripts: list[dict[str, str]] = []
     for s in sessions:
         text = _session_transcript(db, s.get("id", ""), DEFAULT_PER_SESSION_CHARS)
         if text:
@@ -1061,7 +1061,7 @@ def run_memory_digest(
             )
 
     if not transcripts:
-        proposals: List[Dict[str, Any]] = []
+        proposals: list[dict[str, Any]] = []
         meta = {"sessions": 0}
         summary = "no recent sessions to mine"
     else:
@@ -1090,7 +1090,7 @@ def run_memory_digest(
     # Auto-apply graduated classes (slice 4). Off unless the master switch is on;
     # only classes with K clean approvals and a graduatable action qualify. The
     # rest stay proposed for human review. A later revert demotes the class.
-    auto_applied: List[str] = []
+    auto_applied: list[str] = []
     if proposals and is_auto_apply_enabled():
         auto_ids = [p["id"] for p in proposals
                     if is_graduated(p.get("action", "add"), p["target"])]
@@ -1119,14 +1119,14 @@ def run_memory_digest(
             "auto_applied": auto_applied}
 
 
-def run_consolidation(*, on_digest: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+def run_consolidation(*, on_digest: Optional[Callable[[str], None]] = None) -> dict[str, Any]:
     """Propose evictions to keep the bounded store high-signal (slice 3).
 
     Read-only: reads the current entries, asks the aux fork which are transient,
     duplicate, or obsolete, and persists eviction proposals. Nothing is removed
     until ``apply``. On-demand only (not scheduled). Never raises.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     mem_entries = _current_entries("memory")
     user_entries = _current_entries("user")
     existing = mem_entries + user_entries
@@ -1135,7 +1135,7 @@ def run_consolidation(*, on_digest: Optional[Callable[[str], None]] = None) -> D
         meta = {"mode": "consolidation", "entries": 0}
         digest_path = _persist_run([], meta)
         summary = "memory is empty — nothing to consolidate"
-        proposals: List[Dict[str, Any]] = []
+        proposals: list[dict[str, Any]] = []
     else:
         prompt = _build_consolidation_prompt(mem_entries, user_entries)
         res = _run_extraction(prompt)
@@ -1191,7 +1191,7 @@ def maybe_run_memory_curator(
     idle_for_seconds: Optional[float] = None,
     on_digest: Optional[Callable[[str], None]] = None,
     background: bool = True,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """Best-effort: run a digest pass if all gates pass. Never raises.
 
     Gated by ``should_run_now`` (enabled + interval) and, when the caller

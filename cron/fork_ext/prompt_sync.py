@@ -26,7 +26,7 @@ def prompt_sha(text: str) -> str:
     return hashlib.sha256(text.strip().encode()).hexdigest()
 
 
-def sync_prompt(job: Dict[str, Any], prompt_source: Optional[str], force: bool) -> str:
+def sync_prompt(job: dict[str, Any], prompt_source: Optional[str], force: bool) -> str:
     """Sync *job*'s live prompt from its repo file; returns the tool's JSON string."""
     # Late-bound so monkeypatches of tools.cronjob_tools (update_job, the
     # prompt scanner) apply here exactly as they did when this lived inline.
@@ -90,7 +90,7 @@ def sync_prompt(job: Dict[str, Any], prompt_source: Optional[str], force: bool) 
             success=False,
         )
 
-    updates: Dict[str, Any] = {
+    updates: dict[str, Any] = {
         "prompt": file_text,
         "prompt_synced_sha": prompt_sha(file_text),
     }

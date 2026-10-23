@@ -190,7 +190,7 @@ def test_runs_as_the_boot_hook_invokes_it(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "biglobster: reconciled config.yaml keys" in result.stdout
     assert "OPENROUTER_API_KEY=k\n" in _env(prof / ".env")
@@ -207,7 +207,7 @@ def test_boot_keeps_an_existing_multiplex_flag(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True
 
@@ -221,7 +221,7 @@ def test_boot_rewrites_a_retired_explicit_false(home):
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(REPO_ROOT),
            "HERMES_HOME": str(home), "OPENROUTER_API_KEY": "k"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.boot_reconcile"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=60)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "Rewrote retired gateway.multiplex_profiles" in result.stdout
     assert _cfg(home / "config.yaml")["gateway"]["multiplex_profiles"] is True

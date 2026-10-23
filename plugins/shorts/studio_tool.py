@@ -47,7 +47,7 @@ STATUS_BUDGET = 240.0            # seconds a single status call may spend downlo
 PUBLISH_TARGETS = ("youtube", "facebook", "instagram_reel", "instagram_story")
 KEEP_DAYS = 21                   # downloaded renders of finished shorts are pruned after this
 
-SHORTS_STUDIO_SCHEMA: Dict[str, Any] = {
+SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
     "name": "shorts_studio",
     "description": (
         "BigLobster Shorts Studio: turn blog posts into branded vertical videos and publish them. "
@@ -112,7 +112,7 @@ def publish_mode() -> str:
     return "live" if env("SHORTS_PUBLISH_MODE").lower() == "live" else "shadow"
 
 
-def _feeds() -> Dict[str, str]:
+def _feeds() -> dict[str, str]:
     raw = env("SHORTS_FEEDS")
     if raw:
         try:
@@ -137,7 +137,7 @@ def _http_get(url: str) -> str:
         return resp.text
 
 
-def parse_feed(xml_text: str) -> List[Dict[str, str]]:
+def parse_feed(xml_text: str) -> list[dict[str, str]]:
     """RSS items → ``[{title, url, slug, date}]`` in feed order (newest first)."""
     root = ET.fromstring(xml_text)
     items = []
@@ -160,7 +160,7 @@ def parse_feed(xml_text: str) -> List[Dict[str, str]]:
 # posts / article / ledger
 # ---------------------------------------------------------------------------
 
-def _action_posts(args: Dict[str, Any]) -> str:
+def _action_posts(args: dict[str, Any]) -> str:
     from plugins.shorts import ledger
 
     lang = (args.get("lang") or "").strip()
@@ -191,7 +191,7 @@ def _action_posts(args: Dict[str, Any]) -> str:
     return _ok(lang=lang, feed=feeds[lang], total_in_feed=len(items), without_short=len(todo), posts=todo)
 
 
-def _action_article(args: Dict[str, Any]) -> str:
+def _action_article(args: dict[str, Any]) -> str:
     from plugins.shorts.studio.article import article_images, fetch_html, html_to_text
     from plugins.shorts.studio.package import figures
 
@@ -215,7 +215,7 @@ def _action_article(args: Dict[str, Any]) -> str:
                             "caption": info.get("caption", "")})
 
 
-def _action_ledger(args: Dict[str, Any]) -> str:
+def _action_ledger(args: dict[str, Any]) -> str:
     from plugins.shorts import ledger
 
     limit = max(1, min(int(args.get("limit") or 10), 50))
@@ -232,14 +232,14 @@ def _action_ledger(args: Dict[str, Any]) -> str:
 # submit
 # ---------------------------------------------------------------------------
 
-def _request_id(pkg: Dict[str, Any]) -> str:
+def _request_id(pkg: dict[str, Any]) -> str:
     # Second resolution: two submits of one slug inside a minute would
     # otherwise share an id, dispatch a render, then fail to record it.
     stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime())
     return f"{pkg['lang']}-{pkg['article']['slug'][:60].strip('-')}-{stamp}"
 
 
-def _action_submit(args: Dict[str, Any]) -> str:
+def _action_submit(args: dict[str, Any]) -> str:
     from plugins.shorts import github_studio, ledger
     from plugins.shorts import critic
     from plugins.shorts.studio.article import fetch_article
@@ -258,7 +258,7 @@ def _action_submit(args: Dict[str, Any]) -> str:
         return _fail("the package has problems — fix every one and submit again",
                      problems=exc.problems)
 
-    problems: List[str] = []
+    problems: list[str] = []
     if pkg.get("format") != "tip":
         # Every short is the presenter's, in their one voice (owner's rule,
         # 2026-10-10); the classic narrator format stays for the renderer only.
@@ -350,7 +350,7 @@ def _action_submit(args: Dict[str, Any]) -> str:
 # status
 # ---------------------------------------------------------------------------
 
-def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
+def _collect(entry: dict[str, Any]) -> dict[str, Any]:
     """Advance one ``rendering`` short. Returns the fields to update."""
     from plugins.shorts import github_studio
 
@@ -364,7 +364,7 @@ def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
         if age > 3600:
             return {"state": "render_failed", "note": "no render run found an hour after submit"}
         return {}
-    fields: Dict[str, Any] = {"run_id": run["id"], "run_url": run.get("html_url")}
+    fields: dict[str, Any] = {"run_id": run["id"], "run_url": run.get("html_url")}
     if run.get("status") != "completed":
         return fields
     out = Path(entry["dir"]) / "out"
@@ -395,7 +395,7 @@ def _collect(entry: Dict[str, Any]) -> Dict[str, Any]:
     return fields
 
 
-def _files(entry: Dict[str, Any]) -> Dict[str, str]:
+def _files(entry: dict[str, Any]) -> dict[str, str]:
     out = Path(entry["dir"]) / "out"
     names = {"master": "master.mp4", "story": "story.mp4", "cover": "cover.jpg",
              "thumb": "thumb.jpg", "srt": "captions.srt"}
@@ -427,7 +427,7 @@ def _prune() -> None:
 LIVE_CATCHUP_DAYS = 3
 
 
-def _shadow_to_ready(entry: Dict[str, Any]) -> Dict[str, Any]:
+def _shadow_to_ready(entry: dict[str, Any]) -> dict[str, Any]:
     from plugins.shorts import ledger
 
     try:
@@ -440,7 +440,7 @@ def _shadow_to_ready(entry: Dict[str, Any]) -> Dict[str, Any]:
                          note="handed to a human in shadow mode; the mode is live now, so it publishes")
 
 
-def _action_status(args: Dict[str, Any]) -> str:
+def _action_status(args: dict[str, Any]) -> str:
     from plugins.shorts import github_studio, ledger
 
     started = time.time()
@@ -491,7 +491,7 @@ def _action_status(args: Dict[str, Any]) -> str:
 # publish
 # ---------------------------------------------------------------------------
 
-def _enabled_targets() -> List[str]:
+def _enabled_targets() -> list[str]:
     from plugins.shorts import buzz_share
     from plugins.shorts.social import meta, youtube
 
@@ -509,7 +509,7 @@ def _enabled_targets() -> List[str]:
     return targets
 
 
-def _action_publish(args: Dict[str, Any]) -> str:
+def _action_publish(args: dict[str, Any]) -> str:
     from plugins.shorts import ledger
     from plugins.shorts.social import meta, youtube
 
@@ -571,7 +571,7 @@ def _action_publish(args: Dict[str, Any]) -> str:
 # avatar_upload / mark
 # ---------------------------------------------------------------------------
 
-def _action_avatar_upload(args: Dict[str, Any]) -> str:
+def _action_avatar_upload(args: dict[str, Any]) -> str:
     from hermes_constants import get_hermes_home
     from plugins.shorts import github_studio
     from plugins.shorts.studio import media
@@ -618,7 +618,7 @@ def _action_avatar_upload(args: Dict[str, Any]) -> str:
     return _ok(**clip, use="Use it as an avatar beat: clip_url as given, vo = the line, word for word.")
 
 
-def _action_avatars(args: Dict[str, Any]) -> str:
+def _action_avatars(args: dict[str, Any]) -> str:
     from plugins.shorts import ledger
 
     lang = (args.get("lang") or "").strip()
@@ -628,7 +628,7 @@ def _action_avatars(args: Dict[str, Any]) -> str:
                else "No avatar clips yet — make the short without an avatar beat.")
 
 
-def _action_handoff(args: Dict[str, Any]) -> str:
+def _action_handoff(args: dict[str, Any]) -> str:
     """Build the human hand-off message for a finished short.
 
     Live mode, Buzz configured: the files and every network's copy go to
@@ -663,7 +663,7 @@ def _action_handoff(args: Dict[str, Any]) -> str:
     pkg = json.loads((Path(entry["dir"]) / "package.json").read_text(encoding="utf-8"))
     social = pkg.get("social") or {}
     lang = entry.get("lang", "").upper()
-    lines: List[str] = []
+    lines: list[str] = []
     if live and buzz_share.configured():
         youtube_url = ((entry.get("published") or {}).get("youtube") or {}).get("url")
         try:
@@ -707,7 +707,7 @@ def _action_handoff(args: Dict[str, Any]) -> str:
     return _ok(request_id=request_id, message="\n".join(lines))
 
 
-def _action_mark(args: Dict[str, Any]) -> str:
+def _action_mark(args: dict[str, Any]) -> str:
     from plugins.shorts import ledger
 
     request_id = (args.get("request_id") or "").strip()
@@ -721,7 +721,7 @@ def _action_mark(args: Dict[str, Any]) -> str:
     return _ok(request_id=request_id, state=entry["state"])
 
 
-def _action_series(args: Dict[str, Any]) -> str:
+def _action_series(args: dict[str, Any]) -> str:
     from plugins.shorts import series
 
     try:
@@ -730,7 +730,7 @@ def _action_series(args: Dict[str, Any]) -> str:
         return _fail(f"series: {exc}")
 
 
-def _action_performance(args: Dict[str, Any]) -> str:
+def _action_performance(args: dict[str, Any]) -> str:
     """Read-only. The data reaches the Producer as this result, never in its prompt."""
     from plugins.shorts import ledger
     from plugins.shorts.social import youtube, youtube_analytics
@@ -761,7 +761,7 @@ _ACTIONS = {
 }
 
 
-def handle_shorts_studio(args: Dict[str, Any], **_kwargs: Any) -> str:
+def handle_shorts_studio(args: dict[str, Any], **_kwargs: Any) -> str:
     action = (args.get("action") or "").strip()
     handler = _ACTIONS.get(action)
     if handler is None:

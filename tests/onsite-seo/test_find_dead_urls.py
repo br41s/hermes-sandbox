@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from datetime import UTC
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "onsite-seo" / "find_dead_urls.py"
 _spec = importlib.util.spec_from_file_location("find_dead_urls", _MODULE_PATH)
@@ -100,7 +101,7 @@ def test_dead_on_two_separate_runs_is_confirmed(tmp_path, monkeypatch):
 
 def test_a_5xx_is_inconclusive_and_does_not_touch_the_confirmation_counter(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
-    recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+    recent = (datetime.now(UTC) - timedelta(days=1)).isoformat(timespec="seconds")
     prior_history = {"dead_urls": {"https://x/flaky": {
         "last_status": 404, "last_checked": recent, "first_seen_dead": recent,
     }}}

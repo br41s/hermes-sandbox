@@ -1440,7 +1440,7 @@ def load_jobs() -> list[dict[str, Any]]:
 
 
 # Two-tier pre-write backup (fork): see cron/fork_ext/jobs_backup.py.
-from cron.fork_ext.jobs_backup import _backup_jobs_file  # noqa: E402
+from cron.fork_ext.jobs_backup import _backup_jobs_file
 
 
 def _peek_jobs_unlocked() -> Optional[list[dict[str, Any]]]:

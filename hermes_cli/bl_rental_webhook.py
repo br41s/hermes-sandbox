@@ -148,7 +148,7 @@ def _verify_signature(raw_body: bytes, signature: str, timestamp: str, secret: s
         timestamp.encode() + b"." + raw_body,
         hashlib.sha256,
     ).hexdigest()
-    provided = signature[len("sha256=") :] if signature.startswith("sha256=") else signature
+    provided = signature.removeprefix("sha256=")
     if not hmac.compare_digest(provided.encode(), expected.encode()):
         return "signature mismatch"
     return None
@@ -429,7 +429,7 @@ def _run_provision(order: RentalOrder, site_url: str, panel_password: str):
         return exc.code, str(exc), None
     except ValueError as exc:
         return "invalid_order", str(exc), None
-    except Exception as exc:  # noqa: BLE001 — the buyer paid; never 500 silently
+    except Exception as exc:
         _log.exception("Rental provisioning crashed for order %s", order.order_id)
         return "internal", f"{type(exc).__name__}: {exc}", None
     return None, "", result

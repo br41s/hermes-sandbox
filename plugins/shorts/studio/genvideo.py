@@ -72,7 +72,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def config() -> Dict[str, Any]:
+def config() -> dict[str, Any]:
     return {
         "key": (os.environ.get("SHORTS_OPENROUTER_API_KEY") or "").strip(),
         "model": (os.environ.get("SHORTS_AI_VIDEO_MODEL") or "heygen/heygen-video-1").strip(),
@@ -98,7 +98,7 @@ def numeric_seed(seed: str) -> int:
     return int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16)
 
 
-def over_budget(budget: Dict[str, Any], estimate: float) -> Optional[str]:
+def over_budget(budget: dict[str, Any], estimate: float) -> Optional[str]:
     """Why ``estimate`` more would break a cap, or None when it fits."""
     cfg, committed, used = budget["cfg"], budget["committed"], budget["daily_used"]
     if committed + estimate > cfg["short_budget"] + 1e-9:
@@ -108,15 +108,15 @@ def over_budget(budget: Dict[str, Any], estimate: float) -> Optional[str]:
     return None
 
 
-def plan(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], budget: Dict[str, Any],
-         fps: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def plan(pkg: dict[str, Any], timeline: list[dict[str, Any]], budget: dict[str, Any],
+         fps: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Decide which scenes fit the budget, in the order they appear (the hook first).
 
     A beat that already has a presenter clip needs no background, so its scene
     (kept in the package as the fallback) is not generated.
     """
-    jobs: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, Any]] = []
+    jobs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     for i, (beat, slot) in enumerate(zip(pkg["beats"], timeline)):
         if not beat.get("scene") or slot.get("presenter"):
             continue
@@ -132,7 +132,7 @@ def plan(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], budget: Dict[str, 
     return jobs, skipped
 
 
-def _headers(url: str, key: str) -> Dict[str, str]:
+def _headers(url: str, key: str) -> dict[str, str]:
     """The key goes to OpenRouter only — never to the storage host a result URL points at."""
     parts = urllib.parse.urlsplit(url)
     if parts.scheme == "https" and (parts.hostname or "").lower() in _AUTH_HOSTS:
@@ -159,10 +159,10 @@ def daily_spend(client, key: str) -> Optional[float]:
         return None
 
 
-def open_budget(*, offline: bool) -> Dict[str, Any]:
+def open_budget(*, offline: bool) -> dict[str, Any]:
     """The short's one budget: config, today's spend (read once) and what is committed."""
     cfg = config()
-    budget: Dict[str, Any] = {"cfg": cfg, "daily_used": None, "committed": 0.0}
+    budget: dict[str, Any] = {"cfg": cfg, "daily_used": None, "committed": 0.0}
     if offline or not cfg["key"]:
         return budget
     import httpx
@@ -174,7 +174,7 @@ def open_budget(*, offline: bool) -> Dict[str, Any]:
     return budget
 
 
-def settle(job: Dict[str, Any], budget: Dict[str, Any]) -> float:
+def settle(job: dict[str, Any], budget: dict[str, Any]) -> float:
     """What a finished job cost, with the budget's estimate swapped for it.
 
     A clip we paid for but could not use still counts; an unreported cost is
@@ -187,13 +187,13 @@ def settle(job: Dict[str, Any], budget: Dict[str, Any]) -> float:
     return spent
 
 
-def _submit(client, cfg: Dict[str, Any], job: Dict[str, Any], seed: int) -> None:
+def _submit(client, cfg: dict[str, Any], job: dict[str, Any], seed: int) -> None:
     submit_body(client, cfg["key"], job, {
         "model": cfg["model"], "prompt": job["prompt"], "duration": job["seconds"],
         "aspect_ratio": "9:16", "resolution": cfg["resolution"], "seed": seed})
 
 
-def submit_body(client, key: str, job: Dict[str, Any], body: Dict[str, Any]) -> None:
+def submit_body(client, key: str, job: dict[str, Any], body: dict[str, Any]) -> None:
     resp = client.post(API, headers=_headers(API, key), json=body)
     if resp.status_code == 402:
         # Keep OpenRouter's own words: "no credit" was assumed once while the
@@ -225,7 +225,7 @@ def _download(client, url: str, key: str, dest: Path) -> Path:
     return dest
 
 
-def _cost(status: Dict[str, Any]) -> Optional[float]:
+def _cost(status: dict[str, Any]) -> Optional[float]:
     value = (status.get("usage") or {}).get("cost")
     try:
         return float(value) if value is not None else None
@@ -233,8 +233,8 @@ def _cost(status: Dict[str, Any]) -> Optional[float]:
         return None
 
 
-def wait_for(client, key: str, jobs: List[Dict[str, Any]], deadline: float, work: Path, *,
-             prefix: str, finish: Optional[Callable[[Dict[str, Any], Path], None]] = None) -> float:
+def wait_for(client, key: str, jobs: list[dict[str, Any]], deadline: float, work: Path, *,
+             prefix: str, finish: Optional[Callable[[dict[str, Any], Path], None]] = None) -> float:
     """Poll every pending job until done or ``deadline``; download each finished clip.
 
     A clip lands in ``job["src"]`` and, after ``finish`` (which may raise),
@@ -272,9 +272,9 @@ def wait_for(client, key: str, jobs: List[Dict[str, Any]], deadline: float, work
     return observed_price
 
 
-def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path, public: Path,
+def render_scenes(pkg: dict[str, Any], timeline: list[dict[str, Any]], work: Path, public: Path,
                   seed: str, *, fps: int, offline: bool,
-                  budget: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  budget: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Generate the planned scenes and point their timeline slots at the clips.
 
     Sets ``slot["broll"]`` for every beat that got a clip, so the stock pass
@@ -288,7 +288,7 @@ def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Pat
     cfg = budget["cfg"]
     wanted = [i for i, (b, slot) in enumerate(zip(pkg["beats"], timeline))
               if b.get("scene") and not slot.get("presenter")]
-    report: Dict[str, Any] = {"model": cfg["model"], "requested": len(wanted), "generated": 0,
+    report: dict[str, Any] = {"model": cfg["model"], "requested": len(wanted), "generated": 0,
                               "spent_usd": 0.0, "scenes": []}
     if not wanted:
         return report
@@ -305,7 +305,7 @@ def render_scenes(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Pat
     report["scenes"].extend(skipped)
     base_seed = numeric_seed(seed)
 
-    def place(job: Dict[str, Any], src: Path) -> None:
+    def place(job: dict[str, Any], src: Path) -> None:
         rel = f"ai/s{job['beat']:02d}.mp4"
         (public / "ai").mkdir(parents=True, exist_ok=True)
         slot = timeline[job["beat"]]

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # Model catalog
 # ---------------------------------------------------------------------------
 
-_MODELS: Dict[str, Dict[str, Any]] = {
+_MODELS: dict[str, dict[str, Any]] = {
     "bytedance-seed/seedream-4.5": {
         "display": "SeedDream 4.5",
         "speed": "~10-30s",
@@ -73,7 +73,7 @@ _HF_API_URL = "https://router.huggingface.co/hf-inference/models/{model}/v1"
 # ---------------------------------------------------------------------------
 
 
-def _load_hf_config() -> Dict[str, Any]:
+def _load_hf_config() -> dict[str, Any]:
     try:
         from hermes_cli.config import load_config
 
@@ -85,7 +85,7 @@ def _load_hf_config() -> Dict[str, Any]:
         return {}
 
 
-def _resolve_model() -> Tuple[str, Dict[str, Any]]:
+def _resolve_model() -> tuple[str, dict[str, Any]]:
     env_override = os.environ.get("HUGGINGFACE_IMAGE_MODEL", "").strip()
     if env_override and env_override in _MODELS:
         return env_override, _MODELS[env_override]
@@ -125,13 +125,13 @@ class HuggingFaceImageGenProvider(ImageGenProvider):
             logger.debug("image_gen/huggingface: HUGGINGFACE_API_KEY not set — provider unavailable")
             return False
         try:
-            import requests  # noqa: F401
+            import requests
         except ImportError:
             logger.debug("image_gen/huggingface: requests package not installed")
             return False
         return True
 
-    def list_models(self) -> List[Dict[str, Any]]:
+    def list_models(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": model_id,
@@ -146,7 +146,7 @@ class HuggingFaceImageGenProvider(ImageGenProvider):
     def default_model(self) -> Optional[str]:
         return DEFAULT_MODEL
 
-    def get_setup_schema(self) -> Dict[str, Any]:
+    def get_setup_schema(self) -> dict[str, Any]:
         return {
             "name": "HuggingFace",
             "badge": "free",
@@ -165,7 +165,7 @@ class HuggingFaceImageGenProvider(ImageGenProvider):
         prompt: str,
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         prompt = (prompt or "").strip()
         aspect = resolve_aspect_ratio(aspect_ratio)
 
@@ -203,10 +203,10 @@ class HuggingFaceImageGenProvider(ImageGenProvider):
                 aspect_ratio=aspect,
             )
 
-        model_id, meta = _resolve_model()
+        model_id, _meta = _resolve_model()
         url = _HF_API_URL.format(model=model_id)
         headers = {"Authorization": f"Bearer {api_key}"}
-        payload: Dict[str, Any] = {"inputs": prompt}
+        payload: dict[str, Any] = {"inputs": prompt}
 
         try:
             logger.debug("image_gen/huggingface: POST %s", url)

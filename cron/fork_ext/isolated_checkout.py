@@ -92,6 +92,7 @@ def _git(args: list, cwd: Optional[str] = None, timeout: int = 300) -> subproces
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
         **popen_kwargs,
     )
 

@@ -72,7 +72,7 @@ def test_ci_review_files_returns_only_sensitive_paths_sorted_and_unique():
 def test_main_emits_the_ci_review_files_output(monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.setattr(_mod.sys, "stdin", __import__("io").StringIO("web/eslint.config.js\n"))
-    monkeypatch.setattr(_mod, "pull_request_labels", lambda: [])
+    monkeypatch.setattr(_mod, "pull_request_labels", list)
     assert _mod.main() == 0
     out = capsys.readouterr().out.splitlines()
     assert "ci_review=true" in out

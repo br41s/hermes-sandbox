@@ -209,7 +209,7 @@ class DDGSWebSearchProvider(BaseWebSearchProvider):
         try:
             from plugins.web._common import lazy_ensure
             lazy_ensure("ddgs")
-        except Exception as exc:  # noqa: BLE001 — fall through to the availability check below
+        except Exception as exc:
             logger.warning("ddgs lazy-install failed: %s", exc)
         if not self.is_available():
             return search_fail("ddgs package is not installed — run `pip install ddgs`")

@@ -77,7 +77,7 @@ def profile_layout(tmp_path, monkeypatch):
 def test_skill_view_resolves_overridden_profile(profile_layout):
     import tools.skills_tool as st
 
-    root, profile_home = profile_layout
+    _root, profile_home = profile_layout
 
     # Without the override the skill lives in another profile -> not found.
     res = json.loads(st.skill_view("seo-geo-audit"))
@@ -95,7 +95,7 @@ def test_skill_view_resolves_overridden_profile(profile_layout):
 def test_skill_manage_edit_resolves_overridden_profile(profile_layout):
     import tools.skill_manager_tool as sm
 
-    root, profile_home = profile_layout
+    _root, profile_home = profile_layout
     valid = "---\nname: seo-geo-audit\ndescription: audit v2\n---\nupdated body\n"
 
     # Without the override: the helpful cross-profile error names biglobster.

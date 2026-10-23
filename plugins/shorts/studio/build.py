@@ -73,7 +73,7 @@ def _log(msg: str) -> None:
 
 
 def _frames(seconds: float) -> int:
-    return int(round(seconds * FPS))
+    return round(seconds * FPS)
 
 
 # Hosts that may receive the workflow token. Exact match on the parsed host —
@@ -83,7 +83,7 @@ def _frames(seconds: float) -> int:
 _GITHUB_TOKEN_HOSTS = {"api.github.com", "github.com"}
 
 
-def _github_headers(url: str) -> Dict[str, str]:
+def _github_headers(url: str) -> dict[str, str]:
     """Private-repo release assets need the workflow token to download."""
     token = os.environ.get("GITHUB_TOKEN", "")
     parsed = urllib.parse.urlparse(url)
@@ -114,14 +114,14 @@ def _download_avatar(url: str, dest: Path) -> Path:
 # 1. Voice and timeline
 # ---------------------------------------------------------------------------
 
-def prevoice(pkg: Dict[str, Any], work: Path, *, fake_voice: bool, skip: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+def prevoice(pkg: dict[str, Any], work: Path, *, fake_voice: bool, skip: list[int]) -> dict[int, list[dict[str, Any]]]:
     """Synthesize the free voice-over of every beat not in ``skip``, ahead of the timeline.
 
     The tip format calls it before paying for Lucía's takes: if Edge is down,
     the render stops having spent nothing. Returns {beat: words}; the audio
     is left at ``work/vo_NN.mp3`` for ``build_timeline``.
     """
-    voiced: Dict[int, List[Dict[str, Any]]] = {}
+    voiced: dict[int, list[dict[str, Any]]] = {}
     for i, beat in enumerate(pkg["beats"]):
         if i in skip or beat.get("silent") or beat["kind"] == "avatar":
             continue
@@ -131,9 +131,9 @@ def prevoice(pkg: Dict[str, Any], work: Path, *, fake_voice: bool, skip: List[in
     return voiced
 
 
-def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice: bool,
-                   presenter_clips: Optional[Dict[int, Path]] = None,
-                   voiced: Optional[Dict[int, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+def build_timeline(pkg: dict[str, Any], work: Path, public: Path, *, fake_voice: bool,
+                   presenter_clips: Optional[dict[int, Path]] = None,
+                   voiced: Optional[dict[int, list[dict[str, Any]]]] = None) -> dict[str, Any]:
     """Synthesize every beat and lay them end to end on frame boundaries.
 
     A beat in ``presenter_clips`` is voiced by its clip; its video runs from
@@ -142,9 +142,9 @@ def build_timeline(pkg: Dict[str, Any], work: Path, public: Path, *, fake_voice:
     """
     presenter_clips = presenter_clips or {}
     beats = pkg["beats"]
-    segments: List[Path] = []
-    timeline: List[Dict[str, Any]] = []
-    words: List[Dict[str, Any]] = []
+    segments: list[Path] = []
+    timeline: list[dict[str, Any]] = []
+    words: list[dict[str, Any]] = []
     cursor_frames = 0
 
     for i, beat in enumerate(beats):
@@ -240,7 +240,7 @@ def _sentence(text: str) -> str:
     return text if not text or text[-1] in ".!?…" else text + "."
 
 
-def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
+def tip_beats(pkg: dict[str, Any]) -> list[dict[str, Any]]:
     """The tip short as rendered.
 
     Lucía on camera (``show`` "presenter") in ONE take: the opener joke, the
@@ -261,18 +261,18 @@ def tip_beats(pkg: Dict[str, Any]) -> List[Dict[str, Any]]:
     said = " ".join(_sentence(part) for part in (line, hook["vo"], handoff) if part.strip())
     take = {**hook, "vo": said, "show": "presenter", "speaker": "host", "voice": host_voice,
             "opener_line": line, "hook_vo": hook["vo"], "handoff": handoff}
-    beats: List[Dict[str, Any]] = [take, *rest]
+    beats: list[dict[str, Any]] = [take, *rest]
     beats.append({"kind": "outro", "vo": OUTRO_VO.get(pkg["lang"], OUTRO_VO["en"]), "show": "outro",
                   "url": pkg["beats"][-1].get("url", "")})
     return beats
 
 
-def on_camera(beats: List[Dict[str, Any]]) -> List[int]:
+def on_camera(beats: list[dict[str, Any]]) -> list[int]:
     return [i for i, b in enumerate(beats) if b.get("show") == "presenter"]
 
 
-def presenter_missing_warning(tip: bool, missing: List[int], real_dispatch: bool,
-                              presenter_report: Dict[str, Any]) -> Optional[str]:
+def presenter_missing_warning(tip: bool, missing: list[int], real_dispatch: bool,
+                              presenter_report: dict[str, Any]) -> Optional[str]:
     """The QA warning for a tip short whose take of Lucía's was not made, or None.
 
     The short goes out without her on camera, her lines in her free voice
@@ -290,7 +290,7 @@ def presenter_missing_warning(tip: bool, missing: List[int], real_dispatch: bool
             "published without her on camera")
 
 
-def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline: bool) -> Dict[str, Any]:
+def tip_cast(pkg: dict[str, Any], work: Path, budget: dict[str, Any], *, offline: bool) -> dict[str, Any]:
     """Make what the tip short shows: the setting and Lucía's takes; find Martín's loop.
 
     Runs before the timeline: each take carries its own voice, so its length
@@ -298,13 +298,13 @@ def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline
     """
     beats = pkg["beats"]
     tcfg = presenter.tip_config()
-    report: Dict[str, Any] = {"model": presenter.config()["model"], "presenter": presenter.HOST[1],
+    report: dict[str, Any] = {"model": presenter.config()["model"], "presenter": presenter.HOST[1],
                               "partner": presenter.PARTNER[1], "voice": pkg.get("voice"),
                               "host_voice": tcfg["host_voice"].get(pkg["lang"]), "spent_usd": 0.0, "used": []}
     # Martín's turn is free: Lucía turns to him in her handoff take, and his
     # loop is the owner's recording. A paid nod cost $0.65 (Hailuo 3,
     # 2026-10-12), more than all of Lucía's lines.
-    out: Dict[str, Any] = {"report": report, "takes": {}, "image": None, "loop": presenter.bubble_loop(report)}
+    out: dict[str, Any] = {"report": report, "takes": {}, "image": None, "loop": presenter.bubble_loop(report)}
     live = not offline and bool(budget["cfg"]["key"])
     if not live:
         report["reason"] = "offline render" if offline else "SHORTS_OPENROUTER_API_KEY is not set"
@@ -326,18 +326,18 @@ def tip_cast(pkg: Dict[str, Any], work: Path, budget: Dict[str, Any], *, offline
     return out
 
 
-def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], public: Path) -> Dict[str, Any]:
+def place_cast(pkg: dict[str, Any], tl: dict[str, Any], cast: dict[str, Any], public: Path) -> dict[str, Any]:
     """Mark what each beat shows and copy the loop and stills; returns the props' presenter fields."""
     beats = pkg["beats"]
     (public / "presenter").mkdir(parents=True, exist_ok=True)
     for slot, beat in zip(tl["timeline"], beats):
         slot["show"] = beat.get("show")
-    fields: Dict[str, Any] = {"loop": None, "loop_frames": 0, "photo": None, "partner_photo": None}
+    fields: dict[str, Any] = {"loop": None, "loop_frames": 0, "photo": None, "partner_photo": None}
     loop = cast.get("loop")
     if loop is not None:
         shutil.copyfile(loop, public / "presenter" / "loop.mp4")
         fields["loop"] = "presenter/loop.mp4"
-        fields["loop_frames"] = max(1, int(round(media.duration(loop) * FPS)))
+        fields["loop_frames"] = max(1, round(media.duration(loop) * FPS))
     image = cast.get("image")
     photo = image or presenter.PHOTO_DIR / f"{presenter.HOST[0]}.jpg"
     if photo.exists():           # the cover: who opens the short, and where
@@ -365,14 +365,14 @@ def place_cast(pkg: Dict[str, Any], tl: Dict[str, Any], cast: Dict[str, Any], pu
 # 2. Footage and music
 # ---------------------------------------------------------------------------
 
-def gather_broll(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path, public: Path,
-                 seed: str, *, offline: bool) -> List[Dict[str, Any]]:
+def gather_broll(pkg: dict[str, Any], timeline: list[dict[str, Any]], work: Path, public: Path,
+                 seed: str, *, offline: bool) -> list[dict[str, Any]]:
     """One clip per distinct query; beats that share a query continue the clip.
 
     A beat that already has a generated scene keeps it.
     """
-    used: List[Dict[str, Any]] = []
-    by_query: Dict[str, Dict[str, Any]] = {}
+    used: list[dict[str, Any]] = []
+    by_query: dict[str, dict[str, Any]] = {}
     avoid = list(pkg.get("avoid_broll_ids") or [])
     query: Optional[str] = None
     (public / "broll").mkdir(parents=True, exist_ok=True)
@@ -415,7 +415,7 @@ def gather_broll(pkg: Dict[str, Any], timeline: List[Dict[str, Any]], work: Path
     return used
 
 
-def gather_music(pkg: Dict[str, Any], work: Path, seed: str, *, offline: bool) -> Optional[Dict[str, Any]]:
+def gather_music(pkg: dict[str, Any], work: Path, seed: str, *, offline: bool) -> Optional[dict[str, Any]]:
     if offline:
         return None
     music = pkg.get("music") or {}
@@ -439,7 +439,7 @@ def gather_music(pkg: Dict[str, Any], work: Path, seed: str, *, offline: bool) -
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
 
 
-def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offline: bool) -> Dict[str, Any]:
+def gather_article_images(pkg: dict[str, Any], work: Path, public: Path, *, offline: bool) -> dict[str, Any]:
     """The article's own pictures for the brand look: its cover behind the cards, its infographic as a card.
 
     VideoDesk's shorts in Buzz show the article's cover and its figures and
@@ -447,7 +447,7 @@ def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offl
     Only pictures on the article's own host are taken, and a missing one is
     a log line, never a failed render.
     """
-    out: Dict[str, Any] = {"cover": None, "infographic": None, "infographic_alt": ""}
+    out: dict[str, Any] = {"cover": None, "infographic": None, "infographic_alt": ""}
     if offline:
         return out
     url = pkg["article"]["url"]
@@ -479,7 +479,7 @@ def gather_article_images(pkg: Dict[str, Any], work: Path, public: Path, *, offl
     return out
 
 
-def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
+def remotion_props(pkg: dict[str, Any], tl: dict[str, Any]) -> dict[str, Any]:
     beats = []
     number = 0
     for beat, slot in zip(pkg["beats"], tl["timeline"]):
@@ -497,7 +497,7 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
             if beat.get("opener_line"):
                 # One take: the promise card comes in when her joke ends (by word share).
                 joke, said = len(beat["opener_line"].split()), max(1, len(beat["vo"].split()))
-                entry["overlayFrom"] = int(round(slot["duration"] * joke / said))
+                entry["overlayFrom"] = round(slot["duration"] * joke / said)
         if slot.get("show"):
             entry["show"] = slot["show"]
         for key in ("onscreen", "kicker", "value", "label", "items", "url", "before", "after", "visual"):
@@ -535,7 +535,7 @@ def remotion_props(pkg: Dict[str, Any], tl: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _remotion(remotion_dir: Path, args: List[str], what: str, timeout: int = 1800) -> None:
+def _remotion(remotion_dir: Path, args: list[str], what: str, timeout: int = 1800) -> None:
     npx = shutil.which("npx")
     if not npx:
         raise BuildError("npx not found — the render side needs Node")
@@ -545,14 +545,14 @@ def _remotion(remotion_dir: Path, args: List[str], what: str, timeout: int = 180
         cmd.append(f"--browser-executable={browser}")
     started = time.time()
     proc = subprocess.run(cmd, cwd=str(remotion_dir), stdin=subprocess.DEVNULL,
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout, check=False)
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or proc.stdout or "").strip().splitlines()[-25:])
         raise BuildError(f"remotion {what} failed:\n{tail}")
     _log(f"remotion {what}: {time.time() - started:.0f}s")
 
 
-def render_visuals(remotion_dir: Path, props_path: Path, public: Path, out: Path) -> Dict[str, Path]:
+def render_visuals(remotion_dir: Path, props_path: Path, public: Path, out: Path) -> dict[str, Path]:
     common = [f"--props={props_path}", f"--public-dir={public}", "--log=error"]
     # Remotion defaults to half the cores — one on a 2-vCPU Actions runner.
     concurrency = os.environ.get("REMOTION_CONCURRENCY", "100%")
@@ -573,7 +573,7 @@ def render_visuals(remotion_dir: Path, props_path: Path, public: Path, out: Path
 # 4. Story cut
 # ---------------------------------------------------------------------------
 
-def story_cut_point(timeline: List[Dict[str, Any]], total_seconds: float) -> float:
+def story_cut_point(timeline: list[dict[str, Any]], total_seconds: float) -> float:
     """Whole video when it fits; else the last beat boundary under the limit."""
     if total_seconds <= STORY_LIMIT:
         return total_seconds
@@ -709,7 +709,7 @@ def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool
     return 0 if report["passed"] else 2
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)

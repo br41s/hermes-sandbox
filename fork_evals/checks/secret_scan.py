@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 # (label, compiled pattern). Patterns target concrete token shapes only.
-_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
+_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("github_pat_finegrained", re.compile(r"github_pat_[A-Za-z0-9_]{22,}")),
     ("github_token", re.compile(r"gh[posru]_[A-Za-z0-9]{36,}")),
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
@@ -55,12 +55,12 @@ def _redact(match: str) -> str:
     return f"{head}…(len {len(match)})"
 
 
-def scan_for_credentials(text: str) -> List[Finding]:
+def scan_for_credentials(text: str) -> list[Finding]:
     """Return de-duplicated credential findings in ``text`` (empty if clean)."""
     if not text:
         return []
-    seen: set[Tuple[str, str]] = set()
-    findings: List[Finding] = []
+    seen: set[tuple[str, str]] = set()
+    findings: list[Finding] = []
     for label, pattern in _PATTERNS:
         for match in pattern.findall(text):
             value = match if isinstance(match, str) else match[0]
@@ -82,13 +82,13 @@ def scan_text_summary(text: str) -> str:
     return f"FOUND: {joined}"
 
 
-def scan_cron_jobs() -> List[Tuple[str, List[Finding]]]:
+def scan_cron_jobs() -> list[tuple[str, list[Finding]]]:
     """Scan every live cron job's prompt/name. Returns only jobs with findings."""
     try:
         from cron.jobs import load_jobs
     except Exception:
         return []
-    flagged: List[Tuple[str, List[Finding]]] = []
+    flagged: list[tuple[str, list[Finding]]] = []
     for job in load_jobs():
         blob = "\n".join(str(job.get(k, "")) for k in ("prompt", "name", "workdir"))
         findings = scan_for_credentials(blob)
@@ -97,7 +97,7 @@ def scan_cron_jobs() -> List[Tuple[str, List[Finding]]]:
     return flagged
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m fork_evals.checks.secret_scan")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--cron", action="store_true", help="scan live cron jobs (default)")

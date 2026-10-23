@@ -44,7 +44,7 @@ def _skill_content(name: str) -> str:
     )
 
 
-def _create_curated_skill(name: str, content: str = None):
+def _create_curated_skill(name: str, content: str | None = None):
     """Create a skill AND mark it curator-managed, as production does.
 
     ``skill_manage(action="create")`` calls ``mark_agent_created()`` when the

@@ -13,11 +13,11 @@ that went unnoticed.
 Hermetic: synthetic paths and an injected clock, no real HERMES_HOME.
 """
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from incidents.sweep import JUDGE_LIVENESS_HOURS, judge_liveness_incidents
 
-NOW = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
 
 
 def _stamp(tmp_path, ago_hours):
@@ -104,7 +104,7 @@ def test_no_stamp_in_any_home_alerts(tmp_path, monkeypatch):
 
 
 def test_record_judge_success_round_trips(tmp_path, monkeypatch):
-    import auditor.llm as llm
+    from auditor import llm
 
     monkeypatch.setattr(llm, "_liveness_path", lambda: tmp_path / "judge-liveness.json")
     llm.record_judge_success(now=NOW.isoformat())
@@ -114,7 +114,7 @@ def test_record_judge_success_round_trips(tmp_path, monkeypatch):
 
 def test_record_judge_success_never_raises(monkeypatch):
     # A write failure must not fail a review that actually ran.
-    import auditor.llm as llm
+    from auditor import llm
 
     monkeypatch.setattr(llm, "_liveness_path", lambda: (_ for _ in ()).throw(OSError("nope")))
     llm.record_judge_success()  # must not raise
@@ -134,7 +134,7 @@ def test_judge_liveness_incident_flows_through_sweep(tmp_path):
     out = sweep(
         jobs=[{"id": "ok1", "name": "healthy", "last_error": None,
                "last_delivery_error": None,
-               "last_run_at": datetime.now(timezone.utc).isoformat()}],
+               "last_run_at": datetime.now(UTC).isoformat()}],
         langfuse=[], checkout_drift=[], judge_liveness=jl,
         state_path=tmp_path / "s.json",
     )
@@ -159,7 +159,7 @@ def test_sweep_defaults_to_checking_liveness_for_real(tmp_path, monkeypatch):
     sw.sweep(
         jobs=[{"id": "ok1", "name": "healthy", "last_error": None,
                "last_delivery_error": None,
-               "last_run_at": datetime.now(timezone.utc).isoformat()}],
+               "last_run_at": datetime.now(UTC).isoformat()}],
         langfuse=[], checkout_drift=[], state_path=tmp_path / "s.json",
     )
     assert called["n"] == 1, "sweep() must consult the liveness check by default"

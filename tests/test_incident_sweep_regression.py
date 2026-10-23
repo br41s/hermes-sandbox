@@ -307,7 +307,7 @@ class TestProfileStores:
         empty = get_profile_dir("auditor")
         empty.mkdir(parents=True, exist_ok=True)
 
-        import hermes_cli.profiles as profiles
+        from hermes_cli import profiles
         monkeypatch.setattr(profiles, "profiles_to_serve", lambda multiplex: [
             ("default", cron_jobs.get_hermes_home()), ("grow-shop", shop), ("auditor", empty)])
 

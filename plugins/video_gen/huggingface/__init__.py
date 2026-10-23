@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Model catalog
 # ---------------------------------------------------------------------------
 
-_MODELS: Dict[str, Dict[str, Any]] = {
+_MODELS: dict[str, dict[str, Any]] = {
     "damo-vilab/text-to-video-ms-1.7b": {
         "display": "ModelScope Text-to-Video 1.7B",
         "speed": "~30-90s",
@@ -70,7 +70,7 @@ _HF_API_URL = "https://router.huggingface.co/hf-inference/models/{model}/v1"
 # ---------------------------------------------------------------------------
 
 
-def _load_hf_config() -> Dict[str, Any]:
+def _load_hf_config() -> dict[str, Any]:
     try:
         from hermes_cli.config import load_config
 
@@ -82,7 +82,7 @@ def _load_hf_config() -> Dict[str, Any]:
         return {}
 
 
-def _resolve_model() -> Tuple[str, Dict[str, Any]]:
+def _resolve_model() -> tuple[str, dict[str, Any]]:
     env_override = os.environ.get("HUGGINGFACE_VIDEO_MODEL", "").strip()
     if env_override and env_override in _MODELS:
         return env_override, _MODELS[env_override]
@@ -122,13 +122,13 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
             logger.debug("video_gen/huggingface: HUGGINGFACE_API_KEY not set — provider unavailable")
             return False
         try:
-            import requests  # noqa: F401
+            import requests
         except ImportError:
             logger.debug("video_gen/huggingface: requests package not installed")
             return False
         return True
 
-    def list_models(self) -> List[Dict[str, Any]]:
+    def list_models(self) -> list[dict[str, Any]]:
         return [
             {
                 "id": model_id,
@@ -144,7 +144,7 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
     def default_model(self) -> Optional[str]:
         return DEFAULT_MODEL
 
-    def capabilities(self) -> Dict[str, Any]:
+    def capabilities(self) -> dict[str, Any]:
         return {
             "modalities": ["text"],
             "aspect_ratios": ["16:9"],
@@ -156,7 +156,7 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
             "max_reference_images": 0,
         }
 
-    def get_setup_schema(self) -> Dict[str, Any]:
+    def get_setup_schema(self) -> dict[str, Any]:
         return {
             "name": "HuggingFace",
             "badge": "free",
@@ -176,7 +176,7 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
         *,
         model: Optional[str] = None,
         image_url: Optional[str] = None,
-        reference_image_urls: Optional[List[str]] = None,
+        reference_image_urls: Optional[list[str]] = None,
         duration: Optional[int] = None,
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         resolution: str = DEFAULT_RESOLUTION,
@@ -184,7 +184,7 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
         audio: Optional[bool] = None,
         seed=None,  # interface parity only: this backend has no seed control (supports_seed: False)
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         prompt = (prompt or "").strip()
 
         if not prompt:
@@ -228,7 +228,7 @@ class HuggingFaceVideoGenProvider(VideoGenProvider):
         active_model = model or _resolve_model()[0]
         url = _HF_API_URL.format(model=active_model)
         headers = {"Authorization": f"Bearer {api_key}"}
-        payload: Dict[str, Any] = {"inputs": prompt}
+        payload: dict[str, Any] = {"inputs": prompt}
 
         try:
             logger.debug("video_gen/huggingface: POST %s", url)

@@ -26,7 +26,7 @@ QUIET_MARGIN = 1.0       # the takes' own pauses around a quiet beat
 
 
 def _intervals(stderr: str, start_key: str, end_key: str,
-               until: float | None = None) -> List[Dict[str, float]]:
+               until: float | None = None) -> list[dict[str, float]]:
     """Pair start/end markers. A start with no end ran to the end of the file.
 
     The detectors only print an end marker when the condition stops, so a
@@ -55,9 +55,9 @@ def _analyse(path: Path) -> str:
     return out.stderr or ""
 
 
-def _loudness(stderr: str) -> Dict[str, float]:
+def _loudness(stderr: str) -> dict[str, float]:
     summary = stderr[stderr.rfind("Summary:"):] if "Summary:" in stderr else stderr
-    result: Dict[str, float] = {}
+    result: dict[str, float] = {}
     m = re.search(r"I:\s*(-?[\d.]+)\s*LUFS", summary)
     if m:
         result["integrated_lufs"] = float(m.group(1))
@@ -72,12 +72,12 @@ def _loudness(stderr: str) -> Dict[str, float]:
 
 def check_master(path: Path, *, expected_seconds: float | None = None,
                  target: tuple = (TARGET_MIN, TARGET_MAX),
-                 quiet: List[tuple] = ()) -> Dict[str, Any]:
+                 quiet: list[tuple] = ()) -> dict[str, Any]:
     """QA of the master. ``quiet`` lists (start, end) seconds meant to have no
     words (the tip format's nod); a silence inside one, give or take a breath
     on each side, is not an error."""
-    errors: List[str] = []
-    warnings: List[str] = []
+    errors: list[str] = []
+    warnings: list[str] = []
     info = media.probe(path)
     streams = info.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), {})
@@ -146,15 +146,15 @@ def check_master(path: Path, *, expected_seconds: float | None = None,
     }
 
 
-def check_story(path: Path) -> Dict[str, Any]:
+def check_story(path: Path) -> dict[str, Any]:
     seconds = media.duration(path)
     errors = [] if seconds <= STORY_MAX else [f"story is {seconds:.1f}s, max {STORY_MAX}s"]
     return {"passed": not errors, "errors": errors, "duration_s": round(seconds, 3)}
 
 
-def check_still(path: Path, *, max_bytes: int = 2 * 1024 * 1024) -> Dict[str, Any]:
+def check_still(path: Path, *, max_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
     """Covers must exist, be 1080x1920, and fit YouTube's 2 MB thumbnail cap."""
-    errors: List[str] = []
+    errors: list[str] = []
     if not path.exists() or path.stat().st_size == 0:
         return {"passed": False, "errors": [f"{path.name} missing"]}
     info = media.probe(path)

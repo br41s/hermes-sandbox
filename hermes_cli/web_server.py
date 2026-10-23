@@ -217,7 +217,7 @@ app.include_router(_memory_oauth_router)
 
 # fork: fork-owned routes (/health, cron job copy, /api/delegate, rental webhook) live in
 # hermes_cli/fork_ext/web.py so upstream merges of this file stay clean.
-from hermes_cli.fork_ext.web import router as _fork_router  # noqa: E402
+from hermes_cli.fork_ext.web import router as _fork_router
 
 app.include_router(_fork_router)
 

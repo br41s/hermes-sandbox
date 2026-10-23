@@ -123,7 +123,7 @@ class TestRunJobProfileContext:
         fake_mod.AIAgent = FakeAgent
         monkeypatch.setitem(sys.modules, "run_agent", fake_mod)
 
-        from hermes_cli import runtime_provider as runtime_provider
+        from hermes_cli import runtime_provider
 
         monkeypatch.setattr(
             runtime_provider,

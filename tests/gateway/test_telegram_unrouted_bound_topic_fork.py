@@ -25,8 +25,8 @@ from tests.gateway.conftest import _ensure_telegram_mock
 _ensure_telegram_mock()
 sys.modules.pop("plugins.platforms.telegram.adapter", None)
 
-from plugins.platforms.telegram.adapter import TOPIC_PROFILE_KEY, TelegramAdapter  # noqa: E402
-from telegram.constants import ChatType as _ChatType  # noqa: E402
+from plugins.platforms.telegram.adapter import TOPIC_PROFILE_KEY, TelegramAdapter
+from telegram.constants import ChatType as _ChatType
 
 CHAT = -1004224848555
 

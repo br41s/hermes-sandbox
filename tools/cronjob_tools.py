@@ -68,7 +68,7 @@ from tools.registry import registry, tool_error
 
 
 # ---- fork: kickoff ping / prompt_source (see cron/fork_ext/) ----
-def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
+def _format_job(job: dict[str, Any]) -> dict[str, Any]:
     """Upstream's ``_format_job`` plus the fork's job fields."""
     result = _upstream_format_job(job)
     if job.get("progress_ping") is not None:
@@ -78,7 +78,7 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _update_fork_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[str, Any]) -> Optional[str]:
+def _update_fork_fields(job: dict[str, Any], a: dict[str, Any], updates: dict[str, Any]) -> Optional[str]:
     """progress_ping / prompt_source (fork)."""
     if a["progress_ping"] is not None:
         # Per-job kickoff-ping override: False = silent on start (monitor crons), True = always
@@ -90,7 +90,7 @@ def _update_fork_fields(job: Dict[str, Any], a: Dict[str, Any], updates: Dict[st
     return None
 
 
-def _action_sync_prompt(job: Dict[str, Any], a: Dict[str, Any]) -> str:
+def _action_sync_prompt(job: dict[str, Any], a: dict[str, Any]) -> str:
     from cron.fork_ext.prompt_sync import sync_prompt  # body lives in the fork module
     return sync_prompt(job, a["prompt_source"], a["force"])
 # ---- end fork ----

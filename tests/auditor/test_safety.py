@@ -6,7 +6,7 @@ merge bypasses the pre-commit guard), a fetch failure fails SAFE (do not merge),
 and the threshold honours ``> limit`` (exactly at the limit is allowed), matching
 scripts/git-guard/check-mass-deletion.sh.
 """
-import auditor.safety as safety
+from auditor import safety
 
 
 def _patch_statuses(monkeypatch, statuses):

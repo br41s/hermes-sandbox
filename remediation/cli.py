@@ -24,7 +24,7 @@ from remediation import ledger, modes
 from remediation.registry import REGISTRY, RemediationClass, classify
 
 
-def _live_incidents(jobs: Optional[List[dict]] = None):
+def _live_incidents(jobs: Optional[list[dict]] = None):
     """Current cron-failure incidents — the same signal the watcher detects."""
     from incidents.sweep import cron_failure_incidents
     if jobs is None:
@@ -36,8 +36,8 @@ def _live_incidents(jobs: Optional[List[dict]] = None):
     return cron_failure_incidents(jobs)
 
 
-def _pending(jobs: Optional[List[dict]], *, ledger_path: Optional[Path],
-             now: Optional[datetime]) -> List[Tuple[object, RemediationClass]]:
+def _pending(jobs: Optional[list[dict]], *, ledger_path: Optional[Path],
+             now: Optional[datetime]) -> list[tuple[object, RemediationClass]]:
     """Live incidents that map to a remediation class and have NOT already been
     acted on for this occurrence (debounce)."""
     entries = ledger.read(path=ledger_path)
@@ -52,7 +52,7 @@ def _pending(jobs: Optional[List[dict]], *, ledger_path: Optional[Path],
     return out
 
 
-def cmd_list(*, jobs: Optional[List[dict]] = None, ledger_path: Optional[Path] = None,
+def cmd_list(*, jobs: Optional[list[dict]] = None, ledger_path: Optional[Path] = None,
              now: Optional[datetime] = None) -> str:
     pending = _pending(jobs, ledger_path=ledger_path, now=now)
     if not pending:
@@ -64,8 +64,8 @@ def cmd_list(*, jobs: Optional[List[dict]] = None, ledger_path: Optional[Path] =
     return "\n".join(lines)
 
 
-def cmd_apply(signature: str, *, jobs: Optional[List[dict]] = None,
-              ledger_path: Optional[Path] = None, now: Optional[datetime] = None) -> Tuple[int, str]:
+def cmd_apply(signature: str, *, jobs: Optional[list[dict]] = None,
+              ledger_path: Optional[Path] = None, now: Optional[datetime] = None) -> tuple[int, str]:
     """Approve + run the bounded fix for one signature. Returns (exit_code, message)."""
     inc = next((i for i in _live_incidents(jobs) if i.id == signature), None)
     if inc is None:
@@ -98,7 +98,7 @@ def _known_class(name: str) -> bool:
 
 
 def cmd_promote(name: str, *, modes_path: Optional[Path] = None,
-                ledger_path: Optional[Path] = None, now: Optional[datetime] = None) -> Tuple[int, str]:
+                ledger_path: Optional[Path] = None, now: Optional[datetime] = None) -> tuple[int, str]:
     """CEO-approved promotion: flip a gated class to auto. Records the promotion."""
     rc = next((c for c in REGISTRY if c.name == name), None)
     if rc is None:
@@ -116,7 +116,7 @@ def cmd_promote(name: str, *, modes_path: Optional[Path] = None,
     return 0, f"Promoted '{name}' to auto. It will now self-remediate under the guards."
 
 
-def cmd_demote(name: str, *, modes_path: Optional[Path] = None) -> Tuple[int, str]:
+def cmd_demote(name: str, *, modes_path: Optional[Path] = None) -> tuple[int, str]:
     """Instant brake: force a class back to gated (no ledger needed — it's a safety op)."""
     if not _known_class(name):
         return 1, f"Unknown remediation class '{name}'."
@@ -124,7 +124,7 @@ def cmd_demote(name: str, *, modes_path: Optional[Path] = None) -> Tuple[int, st
     return 0, f"Demoted '{name}' to gated. It will only act on explicit approval."
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m remediation.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="show pending remediation proposals")

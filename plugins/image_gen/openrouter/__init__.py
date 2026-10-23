@@ -732,7 +732,7 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         chain may continue with the fallback model."""
         fail = error_factory(self._name, aspect, model=model_id, prompt=prompt)
         for modalities in _modality_attempts(model_id):  # fork: modality negotiation
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "model": model_id,
                 "modalities": modalities,
                 "messages": [{"role": "user", "content": content}],

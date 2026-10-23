@@ -71,7 +71,7 @@ def _shim_env(tmp_path: Path, *, uid: str, real: bool = True, s6: bool = True):
 def test_shim_root_drops_to_hermes_and_execs_real_binary(tmp_path: Path) -> None:
     shim, env, real_bin = _shim_env(tmp_path, uid="0")
     r = subprocess.run([SH, str(shim), "lsd", "x:"], env=env,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == f"s6 user=hermes home=/opt/data cmd={real_bin} args=lsd x:"
 
@@ -80,7 +80,7 @@ def test_shim_root_drops_to_hermes_and_execs_real_binary(tmp_path: Path) -> None
 def test_shim_non_root_execs_real_binary_directly(tmp_path: Path) -> None:
     shim, env, _ = _shim_env(tmp_path, uid="10000")
     r = subprocess.run([SH, str(shim), "lsd", "x:"], env=env,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "real uid=10000 args=lsd x:"
 
@@ -90,7 +90,7 @@ def test_shim_non_root_execs_real_binary_directly(tmp_path: Path) -> None:
 def test_shim_missing_binary_exits_127(tmp_path: Path, uid: str) -> None:
     shim, env, _ = _shim_env(tmp_path, uid=uid, real=False)
     r = subprocess.run([SH, str(shim), "version"], env=env,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 127
     assert "no rclone binary found" in r.stderr
 
@@ -99,7 +99,7 @@ def test_shim_missing_binary_exits_127(tmp_path: Path, uid: str) -> None:
 def test_shim_root_without_s6_refuses_to_run_as_root(tmp_path: Path) -> None:
     shim, env, _ = _shim_env(tmp_path, uid="0", s6=False)
     r = subprocess.run([SH, str(shim), "version"], env=env,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 126
     assert "real uid" not in r.stdout
 
@@ -119,7 +119,7 @@ def test_dockerfile_installs_rclone_shim_on_path() -> None:
 def _rclone_boot_block() -> str:
     text = STAGE2_HOOK.read_text()
     m = re.search(
-        r'(if \[ -d "\$HERMES_HOME/\.config/rclone" \].*?\nfi)\n', text, re.S
+        r'(if \[ -d "\$HERMES_HOME/\.config/rclone" \].*?\nfi)\n', text, re.DOTALL
     )
     assert m, "stage2-hook.sh must re-chown $HERMES_HOME/.config/rclone at boot"
     return m.group(1)
@@ -144,7 +144,7 @@ def test_stage2_chowns_rclone_dir_only_when_present_and_mis_owned(
         'chown_hermes_tree() { echo "CHOWN $1"; }\n'
         f"{_rclone_boot_block()}\n"
     )
-    r = subprocess.run([BASH, "-c", harness], capture_output=True, text=True)
+    r = subprocess.run([BASH, "-c", harness], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     assert (f"CHOWN {home}/.config/rclone" in r.stdout) is expect_chown
 
@@ -156,7 +156,7 @@ def _bash_major() -> int:
     if BASH is None:
         return 0
     out = subprocess.run([BASH, "-c", 'echo "${BASH_VERSINFO[0]}"'],
-                         capture_output=True, text=True).stdout.strip()
+                         capture_output=True, text=True, check=False).stdout.strip()
     return int(out or 0)
 
 
@@ -177,7 +177,7 @@ def _run_backup(tmp_path: Path, conf_mode: int):
         "BACKUP_RCLONE_CONF": str(conf),
     }
     proc = subprocess.run([BASH, str(BACKUP_FULL)], env=env,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, check=False)
     return proc, marker, outdir, conf
 
 

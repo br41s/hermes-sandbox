@@ -49,9 +49,9 @@ OUTPUT_PATH = os.path.join(REPO_ROOT, "agent", "models_dev_snapshot.json")
 KEEP_KEYS = ("id", "name", "env", "api", "doc")
 
 
-def trim(raw: Dict[str, Any]) -> Dict[str, Any]:
+def trim(raw: dict[str, Any]) -> dict[str, Any]:
     """Reduce the full api.json to provider metadata only."""
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for provider_id, entry in raw.items():
         if not isinstance(entry, dict):
             continue

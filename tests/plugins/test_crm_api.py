@@ -12,8 +12,8 @@ import json
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi import FastAPI  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
@@ -23,7 +23,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
     # Reload modules so they pick up the patched env / fresh db path cache.
-    import plugins.crm.crm_db as crm_db
+    from plugins.crm import crm_db
     importlib.reload(crm_db)
     api = importlib.import_module("plugins.crm.dashboard.plugin_api")
     importlib.reload(api)

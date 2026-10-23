@@ -8,7 +8,7 @@ repo-qualified so the same PR number on two repos never collides.
 """
 import json
 
-import auditor.pending as pending
+from auditor import pending
 
 TEST_REPO = "br41s/hermes-sandbox"
 

@@ -20,7 +20,7 @@ TEXT = DEPLOY_SH.read_text(encoding="utf-8")
 
 
 def _probe() -> str:
-    return re.search(r"IN_FLIGHT_PY='\n(.*?)\n'\n", TEXT, re.S).group(1)
+    return re.search(r"IN_FLIGHT_PY='\n(.*?)\n'\n", TEXT, re.DOTALL).group(1)
 
 
 def _store(path: Path, rows) -> None:

@@ -162,7 +162,7 @@ def test_a_malformed_request_is_answered_once_and_never_uploaded(env, buzz, uplo
     buzz["events"] = [_event(f"{series.MARK}\n{{not json")]
     out = series.run()
     assert out["invalid"] and not uploads
-    (args, kw), = _sends(buzz)
+    (_args, kw), = _sends(buzz)
     assert "No puedo publicar" in kw["input"]
     series.run()
     assert len(_sends(buzz)) == 1
@@ -238,7 +238,7 @@ def test_an_update_for_a_video_outside_the_series_is_refused(env, buzz, uploads,
     buzz["events"] = [_event(_update(), pubkey=SEODESK)]
     out = series.run()
     assert out["invalid"] and "not a video of the series" in out["invalid"][0]["error"] and not updates
-    (args, kw), = _sends(buzz)
+    (_args, kw), = _sends(buzz)
     assert "No puedo actualizar" in kw["input"]
 
 
@@ -421,7 +421,7 @@ def test_a_png_cover_is_not_attached_to_the_hand_off(env, buzz, short_uploads, m
     monkeypatch.setattr(series, "_download", png)
     buzz["events"] = [_event(_short_request())]
     series.run()
-    (args, kw), = _handoffs(buzz)
+    (args, _kw), = _handoffs(buzz)
     assert [Path(args[i + 1]).name for i, a in enumerate(args) if a == "--file"] == ["master.mp4"]
     assert short_uploads[0]["thumb"].startswith(b"\x89PNG")
     assert "sólo acepta JPEG" in _replies(buzz)["e" * 64]
@@ -454,7 +454,7 @@ def test_a_malformed_short_request_is_answered_once_and_never_uploaded(env, buzz
     buzz["events"] = [_event(_short_request(articulo="https://evil.example/a", idioma="fr"))]
     out = series.run()
     assert out["invalid"] and not short_uploads
-    (args, kw), = _sends(buzz)
+    (_args, kw), = _sends(buzz)
     assert "No puedo publicar este short" in kw["input"] and "articulo" in kw["input"] and "idioma" in kw["input"]
     series.run()
     assert len(_sends(buzz)) == 1
@@ -496,7 +496,7 @@ def test_the_sender_is_told_once_after_three_failed_attempts(env, buzz, short_up
     buzz["events"] = [_event(_short_request())]
     assert [series.run()["failed"][0]["attempt"] for _ in range(3)] == [1, 2, 3]
     assert "failed" not in series.run()
-    (args, kw), = _sends(buzz)
+    (_args, kw), = _sends(buzz)
     assert "tras 3 intentos" in kw["input"] and "HTTP 503" in kw["input"]
 
 

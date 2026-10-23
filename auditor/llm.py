@@ -53,6 +53,7 @@ import sys
 import time
 import urllib.request
 from typing import List, Optional, Tuple
+from datetime import UTC
 
 # Known-present, cheap fallbacks (from docker/config.yaml). Override via env.
 # `deepseek/deepseek-v4.1-flash` has no dated snapshot on OpenRouter yet (as of
@@ -210,7 +211,7 @@ def judge_reasoning_effort() -> str:
     return JUDGE_REASONING_EFFORT_DEFAULT
 
 
-def _gh(args: List[str], *, timeout: int = 120) -> Optional[str]:
+def _gh(args: list[str], *, timeout: int = 120) -> Optional[str]:
     """Run a gh subcommand, returning stdout or None on any failure.
 
     argv list, never a shell string — so nothing here is a pipe the cron gate
@@ -226,7 +227,7 @@ def _gh(args: List[str], *, timeout: int = 120) -> Optional[str]:
         return None
 
 
-def fetch_pr_content(repo: str, number: int) -> Tuple[Optional[str], Optional[str]]:
+def fetch_pr_content(repo: str, number: int) -> tuple[Optional[str], Optional[str]]:
     """Return ``(review_text, error)`` — rubric + PR metadata + diff, ready to judge.
 
     Exactly one of the two is None. An unfetchable PR is an error, never an empty
@@ -288,11 +289,11 @@ def _env_value(name: str) -> str:
     """
     try:
         from hermes_cli.config import get_env_value as _get
-    except Exception:  # noqa: BLE001 — resolution must never be the thing that breaks
+    except Exception:
         return (os.environ.get(name) or "").strip()
     try:
         return (_get(name) or "").strip()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return (os.environ.get(name) or "").strip()
 
 
@@ -456,7 +457,7 @@ def resolve_model(tier: str) -> str:
 
 def _build_request(
     model: str,
-    messages: List[dict],
+    messages: list[dict],
     api_key: str,
     *,
     session_id: Optional[str] = None,
@@ -523,7 +524,7 @@ def _build_request(
     )
 
 
-def _read_stream(resp) -> Tuple[str, Optional[str], Optional[dict]]:
+def _read_stream(resp) -> tuple[str, Optional[str], Optional[dict]]:
     """Accumulate an OpenRouter SSE stream into ``(text, finish_reason, usage)``.
 
     Three line shapes arrive on the wire and only one carries content:
@@ -548,7 +549,7 @@ def _read_stream(resp) -> Tuple[str, Optional[str], Optional[dict]]:
     past every other check here and read as an approval. Either terminator is
     accepted (not both: a provider may omit one), neither is not.
     """
-    chunks: List[str] = []
+    chunks: list[str] = []
     finish_reason: Optional[str] = None
     usage: Optional[dict] = None
     saw_done = False
@@ -615,7 +616,7 @@ def report_judge_usage(model: str, usage: Optional[dict], verdict_chars: int) ->
     return line
 
 
-def _liveness_path() -> "Path":
+def _liveness_path() -> Path:
     from pathlib import Path  # local: keep module import cost down
     from hermes_constants import get_hermes_home
     return Path(get_hermes_home()) / "incidents" / "judge-liveness.json"
@@ -643,7 +644,7 @@ def record_judge_success(now: Optional[str] = None) -> None:
     try:
         path = _liveness_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        stamp = now or datetime.now(timezone.utc).isoformat()
+        stamp = now or datetime.now(UTC).isoformat()
         path.write_text(_json.dumps({"last_success_at": stamp}) + "\n", encoding="utf-8")
     except Exception:
         pass
@@ -681,7 +682,7 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
         # deadline at 100% of it). Propagate as-is — "it hung" and "it failed"
         # are different operational problems.
         raise
-    except Exception as e:  # noqa: BLE001 — surface any failure to the caller
+    except Exception as e:
         raise RuntimeError(f"auditor.llm review failed (model={model}): {e}") from e
 
     # Fail CLOSED on a verdict that is not whole. Both of these used to be
@@ -706,7 +707,7 @@ def review(tier: str, user_content: str, *, system_msg: Optional[str] = None,
     return text
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Auditor review model caller (LLM-as-judge).")
     ap.add_argument("--tier", choices=["system", "content"], required=True)
     ap.add_argument("--show-model", action="store_true",

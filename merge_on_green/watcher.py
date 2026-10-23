@@ -91,7 +91,7 @@ class GhError(RuntimeError):
 
 
 Runner = Callable[[Sequence[str]], str]
-SafetyCheck = Callable[[str, int], Tuple[bool, str]]
+SafetyCheck = Callable[[str, int], tuple[bool, str]]
 
 
 def _default_runner(args: Sequence[str]) -> str:
@@ -100,7 +100,7 @@ def _default_runner(args: Sequence[str]) -> str:
             ["gh", *args],
             capture_output=True,
             text=True,
-            timeout=_GH_TIMEOUT,
+            timeout=_GH_TIMEOUT, check=False
         )
     except FileNotFoundError as exc:  # pragma: no cover - environment specific
         raise GhError(
@@ -122,7 +122,7 @@ def gh_json(args: Sequence[str], *, runner: Optional[Runner] = None):
         raise GhError(f"gh returned non-JSON for {' '.join(args)}: {raw[:200]!r}") from exc
 
 
-def _default_safety(repo: str, number: int) -> Tuple[bool, str]:
+def _default_safety(repo: str, number: int) -> tuple[bool, str]:
     # Lazy: auditor.safety shells out to gh itself, and nothing else here needs it.
     from auditor.safety import check_mass_deletion
 
@@ -442,7 +442,7 @@ def process_repo(
 ) -> list[str]:
     """Evaluate one repo. Returns report lines; an empty list means silence."""
     safety_check = safety_check or _default_safety
-    entries: List[ledger.LedgerEntry] = ledger.read(path=ledger_path)
+    entries: list[ledger.LedgerEntry] = ledger.read(path=ledger_path)
     report: list[str] = []
 
     def say_once(signature: str, target: str, kind: str, message: str) -> None:

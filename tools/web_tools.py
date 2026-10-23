@@ -366,7 +366,7 @@ def _memoized_search(provider, query: str, limit: int, debug_call_data: Optional
         try:
             outcome = search_with_resilience(
                 provider, query, fetch_limit, fallbacks=resolve_search_fallbacks(provider.name))
-        except Exception as exc:  # noqa: BLE001 — candidate for rescue
+        except Exception as exc:
             served = _served_after_failure(str(exc), fetch_limit)
             if served is None:
                 raise

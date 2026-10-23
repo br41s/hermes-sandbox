@@ -41,7 +41,7 @@ class JudgeResult:
 
 def judge(
     output: str,
-    assertion: Dict[str, Any],
+    assertion: dict[str, Any],
     *,
     use_typesafe: bool = False,
     use_llm: bool = False,
@@ -73,7 +73,7 @@ def judge(
     return _deterministic(output, check)
 
 
-def _deterministic(output: str, check: Dict[str, Any]) -> JudgeResult:
+def _deterministic(output: str, check: dict[str, Any]) -> JudgeResult:
     if not check:
         return JudgeResult(
             False,
@@ -132,7 +132,7 @@ def _llm_judge(
         cmd += ["--provider", provider]
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
@@ -215,7 +215,7 @@ def _typesafe_judge(
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         noul = float(payload["answers"]["satisfied"]["noul"])
-    except Exception as exc:  # noqa: BLE001 — everything degrades, but with its cause
+    except Exception as exc:
         raise _TypeSafeUnavailable(f"{type(exc).__name__}: {exc}") from exc
 
     if noul >= NOUL_PASS_ABOVE:

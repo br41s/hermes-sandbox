@@ -114,7 +114,7 @@ def test_product_sheets_needs_no_old_site_url_and_no_extra_key():
 
 def test_product_sheets_is_staggered_off_peak_like_the_other_daily_agents():
     schedule = pick_stagger_schedule("bl-cliente-garcia", "product-sheets")
-    minute, hour, *rest = schedule.split()
+    _minute, hour, *rest = schedule.split()
     assert rest == ["*", "*", "*"]
     assert 2 <= int(hour) <= 5
     assert schedule != pick_stagger_schedule("bl-cliente-garcia", "gap-hunter")

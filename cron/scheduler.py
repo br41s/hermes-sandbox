@@ -1319,21 +1319,21 @@ def _get_lock_paths() -> tuple[Path, Path]:
 
 # Per-job run guard + webhook dispatch onto the job's own profile pool (fork): see
 # cron/fork_ext/run_guard.py and cron/fork_ext/dispatch.py.
-from cron.fork_ext.run_guard import _job_run_lock, guarded_run_job  # noqa: E402,F401
-from cron.fork_ext.dispatch import (  # noqa: E402
-    dispatch_job_async,  # noqa: F401 - re-exported; gateway/platforms/webhook.py calls it here
+from cron.fork_ext.run_guard import _job_run_lock, guarded_run_job
+from cron.fork_ext.dispatch import (
+    dispatch_job_async,
 )
 
 
 # Abandoned-thread counter + stuck-agent stack dump (fork): see
 # cron/fork_ext/diagnostics.py.
-from cron.fork_ext.diagnostics import (  # noqa: E402
+from cron.fork_ext.diagnostics import (
     _dump_stuck_agent_stack,
     _note_abandoned_agent_thread,
-    abandoned_agent_threads,  # noqa: F401 - re-exported; hermes_cli/cron.py reads it here
+    abandoned_agent_threads,
 )
 # Per-run wall-clock cap (fork): see cron/fork_ext/max_runtime.py.
-from cron.fork_ext.max_runtime import (  # noqa: E402
+from cron.fork_ext.max_runtime import (
     exceeded as _fork_max_runtime_exceeded,
     max_runtime_seconds as _fork_max_runtime_seconds,
     delivery_notice as _fork_max_runtime_notice,
@@ -1342,25 +1342,25 @@ from cron.fork_ext.max_runtime import (  # noqa: E402
 
 
 # Profile identity (fork): see cron/fork_ext/profile_scope.py.
-from cron.fork_ext.profile_scope import (  # noqa: E402
-    LegacyProfileJobError,  # noqa: F401 - re-exported for callers and tests
-    ProfileIdentityError,  # noqa: F401 - re-exported for callers and tests
+from cron.fork_ext.profile_scope import (
+    LegacyProfileJobError,
+    ProfileIdentityError,
 )
 
 
 # Kickoff ping (fork): see cron/fork_ext/kickoff.py.
-from cron.fork_ext.kickoff import (  # noqa: E402
+from cron.fork_ext.kickoff import (
     send_kickoff_ping as _send_kickoff_ping,
-    send_to_targets as _send_to_targets,  # noqa: F401 - kickoff reaches it here
+    send_to_targets as _send_to_targets,
 )
 
 
 # Per-run isolated checkouts (fork): see cron/fork_ext/isolated_checkout.py.
-from cron.fork_ext.isolated_checkout import (  # noqa: E402
+from cron.fork_ext.isolated_checkout import (
     IsolatedCheckoutError,
     _cleanup_isolated_checkout,
     _provision_isolated_checkout,
-    _sweep_stale_checkouts,  # noqa: F401 - scheduler_tick reaches it here
+    _sweep_stale_checkouts,
 )
 
 
@@ -4513,7 +4513,7 @@ from cron.scheduler_preflight import (
 )
 # Fork: cron/fork_ext/kickoff.py reaches _confirm_adapter_delivery here; fork tests call the
 # home-target lookups through this module.
-from cron.scheduler_delivery import (  # noqa: E402,F401
+from cron.scheduler_delivery import (
     _confirm_adapter_delivery, _get_home_target_chat_id, _get_home_target_thread_id,
 )
 

@@ -248,7 +248,7 @@ class TestCloneSafetyNet:
 
     def test_realign_clean_runs_reset_and_repins(self):
         git = FakeGit(_clean_clone_script())
-        ok, detail = realign_clone("/opt/data/p", git=git)
+        ok, _detail = realign_clone("/opt/data/p", git=git)
         assert ok is True
         assert git.ran("fetch origin main")
         assert git.ran("checkout main")
@@ -262,7 +262,7 @@ class TestCloneSafetyNet:
             ("diff --diff-filter=D", (0, "", "")),
         ]
         git = FakeGit(script)
-        ok, detail = realign_clone("/opt/data/p", git=git)
+        ok, _detail = realign_clone("/opt/data/p", git=git)
         assert ok is False
         assert not git.ran("reset --hard")   # the destructive step never ran
 

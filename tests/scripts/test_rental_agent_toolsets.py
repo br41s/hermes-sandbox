@@ -20,9 +20,9 @@ import pytest
 
 # Imported for their side effect: each registers its toolset, and
 # resolve_toolset() only sees a fork toolset once its module has been imported.
-import tools.bl_site_product_tool  # noqa: F401
-import tools.bl_site_publish_tool  # noqa: F401
-import tools.product_enrich_tool  # noqa: F401
+import tools.bl_site_product_tool
+import tools.bl_site_publish_tool
+import tools.product_enrich_tool
 from scripts.provision_bl_client import AGENT_SOURCES, REPO_ROOT
 from toolsets import resolve_toolset
 

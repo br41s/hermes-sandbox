@@ -82,7 +82,7 @@ def palettize(src, dst, colours, smooth=3):
 
 
 def hex_of(c):
-    return "#%02X%02X%02X" % c
+    return "#{:02X}{:02X}{:02X}".format(*c)
 
 
 def main():

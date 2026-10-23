@@ -48,7 +48,7 @@ def api_key() -> Optional[str]:
     return value or None
 
 
-def _pick_video_file(video: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _pick_video_file(video: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Choose the best portrait MP4 rendition of one Pexels video.
 
     Pexels returns several renditions per video at different resolutions.
@@ -82,7 +82,7 @@ def search_clips(
     *,
     per_page: int = 5,
     min_duration: int = 3,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Search Pexels for portrait video clips matching ``query``.
 
     Returns a list of ``{id, url, duration, width, height, preview_image}``
@@ -124,7 +124,7 @@ def search_clips(
     except Exception as exc:  # network, JSON, DNS
         raise StockError(f"Pexels search failed for {query!r}: {exc}") from exc
 
-    clips: List[Dict[str, Any]] = []
+    clips: list[dict[str, Any]] = []
     for video in payload.get("videos") or []:
         duration = video.get("duration") or 0
         if duration < min_duration:

@@ -47,7 +47,7 @@ def main() -> int:
             "final_response": result.get("final_response", ""),
             "error": result.get("error"),
         }
-    except Exception as exc:  # noqa: BLE001 - report any failure back to the parent
+    except Exception as exc:
         out = {"final_response": "", "error": str(exc)}
 
     sys.stdout.write(RESULT_PREFIX + json.dumps(out) + RESULT_SUFFIX + "\n")

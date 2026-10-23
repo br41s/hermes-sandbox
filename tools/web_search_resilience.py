@@ -117,9 +117,9 @@ _PERMANENT_STATUS = frozenset({400, 401, 402, 403, 404, 405, 409, 410, 413, 422,
 # turn a real 503 outage into a no-retry. Parenthesised codes are reached via
 # the phrase table instead ("server error", "bad gateway", ...).
 _STATUS_PATTERNS = (
-    re.compile(r"status[\s_]*code[\s:=]*\(?\s*(\d{3})\b", re.I),
-    re.compile(r"\bhttp\w*[\s:/-]{0,3}(\d{3})\b", re.I),
-    re.compile(r"\bstatus[\s:=]+\(?(\d{3})\b", re.I),
+    re.compile(r"status[\s_]*code[\s:=]*\(?\s*(\d{3})\b", re.IGNORECASE),
+    re.compile(r"\bhttp\w*[\s:/-]{0,3}(\d{3})\b", re.IGNORECASE),
+    re.compile(r"\bstatus[\s:=]+\(?(\d{3})\b", re.IGNORECASE),
 )
 
 _TRANSIENT_PHRASES = (
@@ -247,7 +247,7 @@ def _default_is_interrupted() -> bool:
         from tools.interrupt import is_interrupted
 
         return bool(is_interrupted())
-    except Exception:  # noqa: BLE001 — never let the interrupt probe break a retry
+    except Exception:
         return False
 
 
@@ -286,7 +286,7 @@ class ProviderAttempt:
     kind: Optional[str] = None
     detail: str = ""
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         # Deliberately no key literally named "error"/"failed": the guardrail's
         # fallback classifier (agent/tool_guardrails.classify_tool_failure)
         # flags any result containing '"error"' in its first 500 chars, which
@@ -301,11 +301,11 @@ class ProviderAttempt:
 
 @dataclass
 class SearchOutcome:
-    response: Dict[str, Any]
+    response: dict[str, Any]
     provider_used: Optional[str] = None
     fell_back: bool = False
     total_wait_s: float = 0.0
-    trail: List[ProviderAttempt] = field(default_factory=list)
+    trail: list[ProviderAttempt] = field(default_factory=list)
 
     @property
     def succeeded(self) -> bool:
@@ -321,7 +321,7 @@ def _failure_text(response: Any) -> str:
 def _provider_name(provider: Any) -> str:
     try:
         return str(provider.name)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return type(provider).__name__
 
 
@@ -385,7 +385,7 @@ def search_with_resilience(
 
         return jittered_backoff(attempt, base_delay=_BASE_DELAY_S, max_delay=_MAX_DELAY_S)
 
-    def _interrupted(trail: List[ProviderAttempt], waited: float) -> SearchOutcome:
+    def _interrupted(trail: list[ProviderAttempt], waited: float) -> SearchOutcome:
         return SearchOutcome(
             response={"success": False, "error": "Interrupted"},
             trail=trail,
@@ -393,13 +393,13 @@ def search_with_resilience(
         )
 
     chain = [p for p in [primary, *fallbacks] if p is not None]
-    trail: List[ProviderAttempt] = []
+    trail: list[ProviderAttempt] = []
     budget_left = max(0.0, float(total_wait_budget_s))
     total_waited = 0.0
     attempt_cap = max(1, int(max_attempts))
     saw_transient = False
     deadline_hit = False
-    last_response: Optional[Dict[str, Any]] = None
+    last_response: Optional[dict[str, Any]] = None
     # math.isfinite guards NaN: ``float("nan") > 0`` is False, which would
     # silently disable the deadline entirely with no log line.
     _dl = float(total_deadline_s or 0.0)
@@ -437,7 +437,7 @@ def search_with_resilience(
             raised: Optional[BaseException] = None
             try:
                 response = provider.search(query, limit)
-            except Exception as exc:  # noqa: BLE001 — classified below, re-raised if not transient
+            except Exception as exc:
                 raised = exc
                 response = {"success": False, "error": f"{name} search raised: {exc}"}
 
@@ -525,7 +525,7 @@ def search_with_resilience(
     )
 
 
-def build_unavailable_response(trail: Sequence[ProviderAttempt]) -> Dict[str, Any]:
+def build_unavailable_response(trail: Sequence[ProviderAttempt]) -> dict[str, Any]:
     """Build the typed "search is down" payload.
 
     The wording is aimed squarely at the model reading it. A run that cannot
@@ -585,7 +585,7 @@ def build_unavailable_response(trail: Sequence[ProviderAttempt]) -> Dict[str, An
 _KEYLESS_FALLBACKS = ("ddgs",)
 
 
-def resolve_search_fallbacks(primary_name: str) -> List[Any]:
+def resolve_search_fallbacks(primary_name: str) -> list[Any]:
     """Return the keyless provider(s) to try after *primary_name* fails.
 
     Never returns a provider that requires an API key — see the comment above;
@@ -600,12 +600,12 @@ def resolve_search_fallbacks(primary_name: str) -> List[Any]:
     """
     try:
         from agent.web_search_registry import get_provider
-    except Exception as exc:  # noqa: BLE001 — no registry, no fallback
+    except Exception as exc:
         logger.debug("fallback resolution unavailable: %s", exc)
         return []
 
     primary = (primary_name or "").strip()
-    chosen: List[Any] = []
+    chosen: list[Any] = []
     for name in _KEYLESS_FALLBACKS:
         if name == primary:
             continue
@@ -613,7 +613,7 @@ def resolve_search_fallbacks(primary_name: str) -> List[Any]:
             provider = get_provider(name)
             if provider is None or not provider.supports_search():
                 continue
-        except Exception as exc:  # noqa: BLE001 — a broken provider is skipped
+        except Exception as exc:
             logger.debug("provider %s probe raised: %s", name, exc)
             continue
         chosen.append(provider)

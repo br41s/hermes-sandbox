@@ -36,7 +36,7 @@ _IN_PROFILE_RUN: ContextVar[bool] = ContextVar("_fork_in_cron_profile_run", defa
 # raw key; the evicted client is only dropped from the cache — a request
 # handle still in flight keeps its own reference.
 _FAL_CLIENTS_MAX = 8
-_fal_clients: "OrderedDict[str, Any]" = OrderedDict()
+_fal_clients: OrderedDict[str, Any] = OrderedDict()
 _fal_clients_lock = threading.Lock()
 
 
@@ -50,7 +50,7 @@ def profile_run() -> Iterator[None]:
         _IN_PROFILE_RUN.reset(token)
 
 
-def child_env_overlay() -> Dict[str, str]:
+def child_env_overlay() -> dict[str, str]:
     if not _IN_PROFILE_RUN.get():
         return {}
     try:

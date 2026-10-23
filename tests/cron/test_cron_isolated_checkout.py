@@ -318,7 +318,7 @@ class TestCrossDeviceFallback:
 
         monkeypatch.setattr(sched, "_is_git_worktree", lambda p: True)
         monkeypatch.setattr(sched, "_git", fake_git)
-        eff, cleanup = sched._provision_isolated_checkout("job", "bl", "/fake/src")
+        _eff, cleanup = sched._provision_isolated_checkout("job", "bl", "/fake/src")
         clone_calls = [c for c in calls if c[0] == "clone"]
         assert len(clone_calls) == 2
         assert "--no-hardlinks" in clone_calls[1]

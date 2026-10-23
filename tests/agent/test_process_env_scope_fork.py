@@ -144,7 +144,7 @@ def test_the_image_turns_it_on():
 
 
 def test_probe_reports_ready_and_never_prints_a_value(homes, monkeypatch, capsys):
-    launch, _ = homes
+    _launch, _ = homes
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
     monkeypatch.setenv("TELEGRAM_GROUP_ALLOWED_CHATS", "-1004224848555")
     assert pes.check() == 0
@@ -243,7 +243,7 @@ def test_the_module_entry_point_suppresses_the_real_module(homes, monkeypatch):
 
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT), "PROBE_ONLY_KEY": "x"}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.fork_ext.process_env_scope", "--check"],
-                            env=env, cwd="/", capture_output=True, text=True, timeout=120)
+                            env=env, cwd="/", capture_output=True, text=True, timeout=120, check=False)
     assert "  PROBE_ONLY_KEY\n" in result.stdout, result.stdout + result.stderr
 
 
