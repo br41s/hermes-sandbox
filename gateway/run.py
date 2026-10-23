@@ -3747,7 +3747,8 @@ class GatewayRunner(
                 return
             text = resolve_display_setting(cfg, platform_key, "turn_start_ack_text", "")
             text = str(text).strip() if text else ""
-            adapter = self.adapters.get(source.platform)
+            # The adapter that answers this source: under multiplex a profile can own its own.
+            adapter = self._delivery_adapter_for(source)
             if not text or not adapter:
                 return
             reply_anchor = self._reply_anchor_for_event(event)
