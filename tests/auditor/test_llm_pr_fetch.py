@@ -36,8 +36,12 @@ META = json.dumps({"title": "Fix the thing", "body": "why", "additions": 3,
 
 
 def test_paso_2d_command_passes_the_cron_security_scanner():
-    """The bug in one assertion: the command in the prompt must be allowed."""
-    from tools.tirith_security import check_command_security
+    """The bug in one assertion: the command in the prompt must be allowed.
+
+    Cron in deny mode refuses what the hardline floor or the dangerous-command
+    detector flags (tools/approval.py ``_floor_block`` / ``_unattended_deny``);
+    upstream folded the old tirith scanner into that detector (68dd992769)."""
+    from tools.approval_detection import detect_dangerous_command, detect_hardline_command
     text = PROMPT.read_text(encoding="utf-8")
     # Match the WHOLE line any auditor.llm invocation sits on, so a reintroduced
     # `printf ... | python -m auditor.llm` is caught as a pipe rather than slipping
@@ -50,8 +54,10 @@ def test_paso_2d_command_passes_the_cron_security_scanner():
                        .replace("<number>", "247"))
         assert "|" not in concrete, (
             f"PASO 2d pipes into the interpreter again — cron blocks this: {concrete}")
-        verdict = check_command_security(concrete).get("action")
-        assert verdict == "allow", f"cron would refuse PASO 2d: {verdict} for {concrete}"
+        hardline, why = detect_hardline_command(concrete)
+        assert not hardline, f"cron would refuse PASO 2d: {why} for {concrete}"
+        dangerous, _key, why = detect_dangerous_command(concrete)
+        assert not dangerous, f"cron would refuse PASO 2d: {why} for {concrete}"
 
 
 def test_repo_path_never_reads_stdin(monkeypatch, capsys):
