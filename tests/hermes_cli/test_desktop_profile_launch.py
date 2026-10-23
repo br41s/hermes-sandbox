@@ -126,7 +126,8 @@ def test_dash_p_desktop_appends_profile_to_packaged_launch(tmp_path, monkeypatch
 
 
 def test_profile_equals_spelling_is_forwarded(tmp_path, monkeypatch):
-    launched = _launch_command(tmp_path, monkeypatch, ["hermes", "desktop", "--profile=work"])
+    # fork (#57): a global --profile goes before the subcommand; after it, it belongs to the subcommand.
+    launched = _launch_command(tmp_path, monkeypatch, ["hermes", "--profile=work", "desktop"])
 
     assert launched[-2:] == ["--profile", "work"]
 

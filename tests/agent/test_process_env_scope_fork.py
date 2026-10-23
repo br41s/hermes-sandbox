@@ -257,14 +257,14 @@ def _write_default_jobs(launch, jobs):
 
 def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes, capsys):
     launch, secondary = homes
-    (secondary / ".env").write_text("TELEGRAM_CRON_THREAD_ID=3\n", encoding="utf-8")
+    (secondary / ".env").write_text("TELEGRAM_CRON_THREAD_ID=3917\n", encoding="utf-8")
     rental = launch / "profiles" / "bl-acme"
     rental.mkdir()
     _write_default_jobs(launch, [
         {"id": "a1", "name": "own", "profile": "grow-shop", "deliver": "telegram"},
-        {"id": "a2", "name": "general", "profile": "grow-shop", "deliver": "telegram:-1001:"},
-        {"id": "a3", "name": "elsewhere", "profile": "grow-shop", "deliver": "telegram:-1001:61",
-         "failure_deliver": "telegram:-1001:3", "workdir": "/srv/x"},
+        {"id": "a2", "name": "general", "profile": "grow-shop", "deliver": "telegram:-1009876543210:"},
+        {"id": "a3", "name": "elsewhere", "profile": "grow-shop", "deliver": "telegram:-1009876543210:6143",
+         "failure_deliver": "telegram:-1009876543210:3917", "workdir": "/srv/x"},
         {"id": "a4", "name": "quiet", "profile": "grow-shop", "deliver": "local"},
         {"id": "a5", "name": "rental-bare", "profile": "bl-acme", "deliver": "telegram"},
         {"id": "a6", "name": "no-profile", "deliver": "telegram"},
@@ -280,7 +280,8 @@ def test_probe_lists_default_store_profile_jobs_with_their_delivery_class(homes,
     assert "bl-acme a5 enabled deliver=General (no routing thread)" in out
     assert "no-profile" not in out
     assert "explicit-default" not in out  # runs as a plain job; nothing to move
-    for value in ("-1001", ":61", ":3"):
+    # Distinctive ids: a bare "-1001" also matches the runner uid in pytest's tmp path.
+    for value in ("-1009876543210", ":6143", ":3917"):
         assert value not in out
 
 
