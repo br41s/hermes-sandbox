@@ -31,6 +31,8 @@ on:
         required: true
         type: string
   push:
+    # Every branch, never a tag (tests/ci/test_workflow_job_graph.py).
+    branches: ["**"]
     paths:
       - "plugins/shorts/studio/**"
       - "shorts/studio/**"
