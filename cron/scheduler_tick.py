@@ -181,11 +181,11 @@ def _tick_admitted(
         _all_futures: list = []
         pool = _sched._get_parallel_pool(_max_workers)
 
-        # fork: only the gateway's in-process ticker passes adapters; a standalone `hermes cron tick`
-        # is recorded as source="cli" so the execution ledger can attribute it.
+        # fork: a standalone `hermes cron tick` (headless, upstream v0.22) is recorded as
+        # source="cli" so the execution ledger can attribute it; every other tick is "builtin".
         def _submit(job: dict, job_pool):
             return _sched._submit_with_guard(
-                job, job_pool, _process_job, source="builtin" if adapters is not None else "cli")
+                job, job_pool, _process_job, source="cli" if headless else "builtin")
         for job in due_jobs:
             fut = _submit(job, pool)
             if fut is None:

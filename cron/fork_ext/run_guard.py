@@ -77,6 +77,17 @@ def _job_run_lock(job_id: str):
         fh.close()
 
 
+def _inside_owner_execution(job: dict, execution_id) -> bool:
+    """True inside the owner execution of this job's run: the same test upstream's
+    ``_run_job_impl`` uses to run the agent in place instead of submitting it again."""
+    try:
+        from gateway.session_cron import current_execution
+    except ImportError:
+        return False
+    owner = current_execution()
+    return owner is not None and tuple(owner[2:]) == (job["id"], execution_id)
+
+
 def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
     """Run ``impl(job, **kwargs)`` under the per-job lock and, for a job from a
     profile's own store, that profile's identity context.
@@ -95,9 +106,14 @@ def guarded_run_job(job: dict, impl: Callable, **kwargs) -> tuple:
     ``execution_id`` and ``cancel_event``, and a wrapper that named its
     keywords would reject every run with a TypeError.
     """
-    import cron.scheduler as sched
-
     job_id = job["id"]
+    if _inside_owner_execution(job, kwargs.get("execution_id")):
+        # The owner execution re-enters run_job for the run the outer call already holds the lock
+        # for (upstream v0.22: _run_job_impl -> run_canonical_job -> session_cron.execute). Taking
+        # the lock again would find it held and skip: every agent job would succeed silently.
+        _refuse_legacy_profile_record(job)
+        with _satellite_store_context(job_id):
+            return impl(job, **kwargs)
     with _job_run_lock(job_id) as acquired:
         if not acquired:
             logger.info(

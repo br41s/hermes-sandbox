@@ -70,6 +70,7 @@ class TestProfileFieldRetired:
         assert "profile" not in inspect.signature(cronjob).parameters
 
 
+@pytest.mark.usefixtures("cron_owner")  # upstream v0.22: agent runs go through the owner execution
 class TestRunJobProfileContext:
     @staticmethod
     def _install_agent_stubs(monkeypatch, observed: dict):
@@ -282,6 +283,7 @@ class TestRunJobProfileContext:
         assert observed["hermes_home_during_init"] == str(root)
         assert os.environ["HERMES_HOME"] == str(root)
 
+@pytest.mark.usefixtures("cron_owner")  # upstream v0.22: agent runs go through the owner execution
 class TestTickProfilePartition:
     def test_profile_store_and_workdir_combined(self, isolated_cron_profile_home, monkeypatch):
         """A profile-store job with a workdir — verify both are applied and restored."""

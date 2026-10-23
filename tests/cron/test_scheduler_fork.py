@@ -61,12 +61,15 @@ class TestRunJobSessionPersistenceFork:
             "next_run_at": "2020-01-01T00:00:00+00:00",
             "enabled": True,
         }
+        # Upstream v0.22's `hermes cron tick` passes headless=True, which also refuses agent jobs
+        # without a gateway; that gate is not what this test is about.
         with patch("cron.scheduler.get_due_jobs", return_value=[job]), \
              patch("cron.scheduler.advance_next_runs"), \
+             patch("cron.scheduler_gateway_gate.refuse_agent_jobs_without_gateway", side_effect=lambda jobs: jobs), \
              patch("cron.scheduler.claim_job_for_fire", side_effect=lambda jid, return_job=False, **_kw: dict(job)), \
              patch("cron.scheduler.run_one_job", return_value=True), \
              patch("cron.scheduler.create_execution", return_value={"id": "exec-1"}) as mock_create:
-            assert tick(verbose=False, sync=True, adapters=None) == 1
+            assert tick(verbose=False, sync=True, adapters=None, headless=True) == 1
 
         mock_create.assert_called_once()
         assert mock_create.call_args.args == ("cli-trigger-job",)
