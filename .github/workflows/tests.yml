@@ -156,7 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     # v2026.9.24's core e2e suites (tenancy, chaos, delivery, history, sqlite) take ~6 min
     # per-file in parallel; the old single-process run hit the 15-minute limit at 35%.
-    timeout-minutes: 40
+    # v0.22's provider catalog suites now run one file at a time (below): 60.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -192,20 +193,62 @@ jobs:
         run: |
           "$HERMES_PYTHON" -c "import sqlite3, hermes_state_wal as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
 
+      - name: Run messaging-gated gateway cases
+        # Same step as upstream (tests/ci/test_messaging_gated_selection.py). These gateway files
+        # drive the REAL Discord/Telegram SDKs and skip when the `messaging` extra is absent, which
+        # it is in the ordinary slices; this is the only job that installs it. A skip here is a
+        # coverage hole, not a pass: fail on any.
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/messaging-gateway.log"
+          scripts/run_tests.sh -rs \
+            tests/gateway/test_native_role_reauthorization.py \
+            tests/gateway/test_native_telegram_startup_recovery.py \
+            tests/gateway/test_native_pause_notice.py \
+            tests/gateway/test_native_reply_crash_recovery.py | tee "$log"
+          summary=$(grep '^=== Summary:' "$log")
+          case "$summary" in
+            *skipped*) echo "::error::messaging-gated gateway cases skipped: $summary"; exit 1 ;;
+          esac
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
       - name: Run e2e tests
         # One subprocess per file, in parallel, as upstream does: the core suites spawn real
         # processes (serve, gateway, tui_gateway, MCP servers, SQLite writers) and must not
         # share interpreter state. tests/e2e/core/upgrade is excluded: it exercises
         # `hermes update` from N-1 release tags, and the fork deploys by image tag instead
-        # (scripts/deploy.sh); upstream runs it in its own 32-core job.
+        # (scripts/deploy.sh); upstream runs it in its own 32-core job. The provider catalog
+        # suites run in the next step.
         run: |
-          mapfile -t files < <(find tests/e2e -name 'test_*.py' -not -path 'tests/e2e/core/upgrade/*' | sort)
+          mapfile -t files < <(find tests/e2e -name 'test_*.py' -not -path 'tests/e2e/core/upgrade/*' \
+            -not -path 'tests/e2e/core/providers/test_catalog_*' | sort)
           scripts/run_tests.sh --include-integration "${files[@]}"
         env:
+          # Upstream bounds these process trees at 3 workers on a 32-vCPU runner ("at 4 the PTY
+          # turn and serve-SIGTERM deadlines still starved intermittently"); this is a 4-vCPU one.
+          HERMES_TEST_WORKERS: "3"
           # Multi-process episodes legitimately run past the 300s default.
           HERMES_TEST_FILE_TIMEOUT: "900"
           # No automatic re-run: the torture chamber and exactly-once suites are race
           # detectors, and a corruption that passes on retry is still a corruption.
+          HERMES_TEST_FILE_RETRIES: "0"
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Run e2e provider catalog suites, one file at a time
+        # Each catalog file already drives 8 real CLI turns at once (_catalog_helpers.py), each
+        # with a 75s ceiling. Beside other e2e files on this 4-vCPU runner they starved into
+        # timeouts on rows that pass alone; upstream's v0.22.5 does the same under that load.
+        run: |
+          mapfile -t files < <(find tests/e2e/core/providers -name 'test_catalog_*.py' | sort)
+          scripts/run_tests.sh --include-integration "${files[@]}"
+        env:
+          HERMES_TEST_WORKERS: "1"
+          HERMES_TEST_FILE_TIMEOUT: "900"
           HERMES_TEST_FILE_RETRIES: "0"
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
