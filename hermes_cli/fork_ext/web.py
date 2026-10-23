@@ -22,7 +22,7 @@ import os
 import urllib.parse
 from typing import Any, Dict, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from hermes_cli.bl_rental_webhook import router as _bl_rental_router
@@ -229,7 +229,11 @@ _DELEGATE_SECRET_HEADER = "x-hermes-secret"
 
 
 def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
-    """Return ``(status_code, detail)`` when the request should be rejected, else ``None``."""
+    """Return ``(status_code, detail)`` when the request should be rejected, else ``None``.
+
+    A request with no secret header is a 401 before anything else, configured or not."""
+    if not request.headers.get(_DELEGATE_SECRET_HEADER, ""):
+        return 401, "Unauthorized"
     secret = os.environ.get(_DELEGATE_SECRET_ENV_VAR, "").strip()
     if not secret:
         _log.error(
@@ -273,7 +277,17 @@ def _validate_delegate_webhook_url(url: str) -> Optional[str]:
     return None
 
 
-@router.post("/api/delegate", status_code=202)
+def _require_delegate_secret(request: Request) -> None:
+    """Route dependency: FastAPI runs it before validating the body, so an anonymous caller
+    gets 401 and never the request schema in a 422."""
+    rejection = _verify_delegate_secret(request)
+    if rejection is not None:
+        status_code, detail = rejection
+        _log.warning("Rejected /api/delegate request: %s", detail)
+        raise HTTPException(status_code=status_code, detail=detail)
+
+
+@router.post("/api/delegate", status_code=202, dependencies=[Depends(_require_delegate_secret)])
 async def post_delegate(request: Request, body: _DelegateRequest):
     """Accept a task from an external orchestrator and execute it asynchronously.
 

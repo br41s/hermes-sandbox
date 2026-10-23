@@ -273,6 +273,11 @@ def _error(code: str, detail: str, order_id: str, **extra: Any) -> JSONResponse:
 
 @router.post("/api/bl/rental/provision")
 async def post_bl_rental_provision(request: Request):
+    # A request with no signature is refused before anything else, configured or not: the
+    # public route answers an anonymous caller 401, never what this engine has set up.
+    if not request.headers.get(SIGNATURE_HEADER) or not request.headers.get(TIMESTAMP_HEADER):
+        return JSONResponse(status_code=401, content={
+            "status": "failed", "code": "unauthorized", "detail": "missing signature or timestamp header"})
     secret = os.environ.get(SECRET_ENV_VAR, "").strip()
     if not secret:
         # Fail closed. An unauthenticated provisioning endpoint would let
