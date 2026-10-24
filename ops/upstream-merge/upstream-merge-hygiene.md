@@ -210,6 +210,10 @@ upstream and a watchdog that keeps saying "up to date". Check with
   `if: github.repository != 'br41s/hermes-sandbox'` (never `== 'NousResearch/...'`,
   which upstream's gate tests evaluate as false). Load-sensitive e2e suites starve on
   4 vCPU: the provider catalogs run serially in `tests.yml`.
+* **`js-autofix.yml` stays off here** (owner, 2026-10-24). On the fork it reformatted 282
+  files byte-identical to upstream (PR 490, closed), which would turn every later upstream
+  change to them into a conflict. Keep its upstream-only guard on both jobs when the merge
+  takes upstream's copy.
 * **The Langfuse catalog plugin is baked into the image** (owner, 2026-10-23). The
   Dockerfile's `catalog_plugins` stage fetches it at `plugin-catalog/langfuse.yaml`'s sha;
   `boot_reconcile.place_catalog_plugins` places it in every home that uses it. When upstream
