@@ -251,10 +251,10 @@ def satellite_delivery_adapters(own_adapters, primary_adapters):
     ``{local: ...}`` as "has its own bot": every satellite delivery then failed
     ``platform 'telegram' not configured/enabled`` (biglobster, auditor, 2026-10-23 on).
     """
-    from gateway.config import Platform
+    from gateway.profile_routing import holds_messaging_adapter
 
     own = own_adapters or {}
-    if not primary_adapters or any(platform is not Platform.LOCAL for platform in own):
+    if not primary_adapters or holds_messaging_adapter(own):
         return own
     return SharedRouteAdapters(
         primary_adapters, _primary_profile_routes_for_current_home(), own_adapters=own)

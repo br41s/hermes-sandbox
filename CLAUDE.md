@@ -216,16 +216,20 @@ topic 1904. Upstream's `cron_job` route (`run_event_job`) still runs without ada
 no live route uses it.
 
 **A satellite borrows the primary's bot only while it holds no messaging adapter of its own,
-and `local` does not count** (`cron/scheduler_preflight.py` `satellite_delivery_adapters`, used
-by the ticker, `live_adapters_for` and the restart-safe drain). Since upstream v0.22.5 a served
+and `local` does not count** (`gateway/profile_routing.py` `holds_messaging_adapter`, one
+definition for both sides: cron's `satellite_delivery_adapters` for the ticker,
+`live_adapters_for` and the restart-safe drain; the gateway's `_adapters_for_profile` for
+restored sources, restart notices, goal wakeups and completion notices, which merges the
+primary's bots with the satellite's own `local`). Since upstream v0.22.5 a served
 secondary keeps a credential-free `LocalSessionAdapter` for its local sessions in
 `runner._profile_adapters[<profile>]`; the old "is the map empty?" test read `{local: …}` as its
 own bot. From the 2026-10-23 deploy to the fix, every biglobster and auditor delivery and kickoff
 ping failed `platform 'telegram' not configured/enabled`, the GEO Scout on Buzz too, while every
 part tested alone still worked. The tell was the satellite's shutdown line
-`✓ local disconnected (profile: <name>)`. The same emptiness test survives in upstream's
-`_is_shared_bot_satellite` (`gateway/authz_mixin.py`), which decides where a satellite's
-heartbeats and goal notices go.
+`✓ local disconnected (profile: <name>)`. The gateway side failed silently (DEBUG-level skips)
+and only ever failed closed: live messages resolve through the receiving bot, and Telegram's
+inbound verdict comes from the env allowlists. The kanban notifier never had the bug (its rule
+is per platform, upstream #115460). Upstream `main` still has the emptiness test.
 
 ## Deployment — Zeabur, Frankfurt
 
