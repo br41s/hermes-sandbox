@@ -430,6 +430,23 @@ mkdir -p "$HERMES_HOME/auditor" 2>/dev/null || true
 chown -R hermes:hermes "$HERMES_HOME/auditor" 2>/dev/null || true
 echo "[03-biglobster] Auditor state dir ownership enforced (hermes:hermes)"
 
+# --- 4d: dependency install state must be hermes-owned (or `hermes` will not start) ---
+# Every `hermes` start takes $HERMES_HOME/installs/<key>/.install.lock
+# (hermes_cli/runtime_state.py, pm/install_states.py) and exits 1 when it cannot
+# write it: "install state is not writable by this user" (pm/environments.py).
+# A `hermes` command run as root (`zeabur service exec` is root) creates that lock
+# root:root 0600 when it is missing. One did on 2026-10-23; the running gateway
+# never noticed, and the next deploy (2026-10-25) crash-looped dashboard and
+# gateway-default: a 502 on the panel and a silent Telegram. Force hermes
+# ownership every boot, before the services start; non-fatal. A root run between
+# boots still breaks the next in-place service restart (no cont-init then) — run
+# `hermes` on the pod as hermes (s6-setuidgid), never as root.
+if [ -d "$HERMES_HOME/installs" ]; then
+    chown -R hermes:hermes "$HERMES_HOME/installs" 2>/dev/null || \
+        echo "[03-biglobster] could not chown $HERMES_HOME/installs"
+    echo "[03-biglobster] Install state ownership enforced (hermes:hermes)"
+fi
+
 # --- 5: seed per-profile bootstrap files from docker/profiles/<name>/ (once) ---
 # Files bundled in the image under docker/profiles/<name>/ are copied into the
 # corresponding volume profile directory on first use (i.e. only if the
