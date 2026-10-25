@@ -4,6 +4,10 @@ GEO Scout's STEP 0.5: SocialBot's exclusion list reaches the scout fail-closed.
 The script is run for real against a fake ``buzz`` on PATH: a dated canvas is copied into
 the scout's workdir silently; an undated canvas, a failing ``buzz`` or a missing channel
 deletes any old copy and exits 2, so the runner alerts and the brief says NO VERIFICADO.
+
+The environment mimics the cron runner, which scrubs ``BUZZ_*`` from a script's env: the
+fake ``buzz`` only answers when the script maps ``HERMES_GEO_BUZZ_*`` onto them, and a
+failing ``buzz`` must reach the alert with its own stderr (the original bug swallowed it).
 """
 
 import os
@@ -40,19 +44,31 @@ def _fake_buzz(tmp_path: Path, output: str, code: int = 0) -> Path:
     bindir.mkdir()
     (tmp_path / "canvas.md").write_text(output, encoding="utf-8")
     buzz = bindir / "buzz"
-    buzz.write_text(f"#!/bin/bash\ncat '{tmp_path / 'canvas.md'}'\nexit {code}\n", encoding="utf-8")
+    buzz.write_text(
+        "#!/bin/bash\n"
+        '[ "$BUZZ_PRIVATE_KEY" = key ] && [ "$BUZZ_RELAY_URL" = wss://relay ] && [ "$BUZZ_AUTH_TAG" = tag ] \\\n'
+        '    || { echo \'{"error":"auth","message":"no identity"}\' >&2; exit 3; }\n'
+        f"cat '{tmp_path / 'canvas.md'}'\n"
+        f"[ {code} -eq 0 ] || {{ echo '{{\"error\":\"relay\",\"message\":\"boom\"}}' >&2; }}\n"
+        f"exit {code}\n",
+        encoding="utf-8",
+    )
     buzz.chmod(buzz.stat().st_mode | stat.S_IEXEC)
     return bindir
 
 
-def _run(tmp_path: Path, output: str, code: int = 0, channel: str = "42d4e93e", stale: bool = True):
+def _run(tmp_path: Path, output: str, code: int = 0, channel: str = "42d4e93e", stale: bool = True, creds: bool = True):
     home = tmp_path / "home"
     dest = home / DEST
     if stale:
         dest.parent.mkdir(parents=True)
         dest.write_text("old list\n", encoding="utf-8")
     env = dict(os.environ, HERMES_HOME=str(home), PATH=f"{_fake_buzz(tmp_path, output, code)}:{os.environ['PATH']}")
+    for name in [n for n in env if n.startswith(("BUZZ_", "HERMES_GEO_BUZZ_"))]:
+        del env[name]                               # the cron runner's scrub: no BUZZ_* reaches a script
     env.pop("SHORTS_BUZZ_CHANNEL", None)
+    if creds:
+        env.update(HERMES_GEO_BUZZ_PRIVATE_KEY="key", HERMES_GEO_BUZZ_RELAY_URL="wss://relay", HERMES_GEO_BUZZ_AUTH_TAG="tag")
     if channel:
         env["SHORTS_BUZZ_CHANNEL"] = channel
     result = subprocess.run(["bash", str(_script(tmp_path))], capture_output=True, text=True, env=env, timeout=30, check=False)
@@ -78,6 +94,20 @@ def test_a_failing_buzz_deletes_the_old_copy_and_alerts(tmp_path):
     result, dest = _run(tmp_path, LIST, code=1)
     assert result.returncode == 2
     assert not dest.exists()
+
+
+def test_a_failing_buzz_puts_its_own_error_in_the_alert(tmp_path):
+    result, _ = _run(tmp_path, LIST, code=1)
+    assert "exited 1" in result.stderr and "boom" in result.stderr
+    assert "NO VERIFICADO" in result.stderr
+
+
+def test_without_the_geo_buzz_credentials_nothing_is_trusted_and_the_alert_names_them(tmp_path):
+    result, dest = _run(tmp_path, LIST, creds=False)
+    assert result.returncode == 2
+    assert not dest.exists()
+    assert "HERMES_GEO_BUZZ_PRIVATE_KEY is not set" in result.stderr
+    assert "NO VERIFICADO" in result.stderr
 
 
 def test_without_the_shorts_channel_nothing_is_trusted(tmp_path):

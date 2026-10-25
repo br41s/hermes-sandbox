@@ -543,10 +543,15 @@ echo "[03-biglobster] Seeded scripts/upstream_drift.sh"
 # communities as the canvas of #shorts. The Off-Site GEO Scout (biglobster
 # profile, 03:00) reads it in STEP 0.5 of offsite-geo/geo-scout.prompt, but its
 # profile carries no Buzz identity, so this no-agent job copies the canvas into
-# the scout's workdir from the default store, which does. Silent when it works.
+# the scout's workdir from the default store. Silent when it works.
 # When it cannot read a dated list it deletes the old copy (the brief then says
 # "exclusiones NO VERIFICADO" instead of trusting a stale list) and exits 2, so
-# the runner alerts.
+# the runner alerts, with buzz's own error in the alert.
+# A cron script never sees BUZZ_*: the runner scrubs them (tools/environments/
+# local_env_policy.py; the carve-out needs a Buzz session). So the job reads its
+# own HERMES_GEO_BUZZ_{PRIVATE_KEY,RELAY_URL,AUTH_TAG} (Zeabur env, same values
+# as BUZZ_*; HERMES_-prefixed names pass the scrub) and maps them for the one
+# buzz call.
 # Register the job ONCE (after deploy, in the container shell):
 #   hermes cron create "50 2 * * *" --no-agent --script geo_exclusiones.sh \
 #     --deliver telegram --name geo-exclusiones
@@ -556,17 +561,26 @@ cat > "$HERMES_HOME/scripts/geo_exclusiones.sh" <<'GEOEXCL'
 dest="${HERMES_HOME:-/opt/data}/profiles/biglobster/geo-scout/salida/socialbot/exclusiones.md"
 mkdir -p "$(dirname "$dest")" || exit 2
 tmp="$dest.tmp"
-if [ -z "${SHORTS_BUZZ_CHANNEL:-}" ]; then
-    rm -f "$dest"
-    echo "geo-exclusiones: SHORTS_BUZZ_CHANNEL is not set" >&2
+err="$dest.err"
+fail() {
+    rm -f "$tmp" "$err" "$dest"
+    echo "geo-exclusiones: $1; tonight's GEO Scout brief will say NO VERIFICADO" >&2
     exit 2
-fi
-if ! buzz canvas get --channel "$SHORTS_BUZZ_CHANNEL" > "$tmp" 2>/dev/null \
-    || ! grep -qE '^actualizado: [0-9]{4}-[0-9]{2}-[0-9]{2}' "$tmp"; then
-    rm -f "$tmp" "$dest"
-    echo "geo-exclusiones: no dated exclusion list in the #shorts canvas; tonight's GEO Scout brief will say NO VERIFICADO" >&2
-    exit 2
-fi
+}
+[ -n "${SHORTS_BUZZ_CHANNEL:-}" ] || fail "SHORTS_BUZZ_CHANNEL is not set"
+for name in PRIVATE_KEY RELAY_URL AUTH_TAG; do
+    var="HERMES_GEO_BUZZ_$name"
+    [ -n "${!var:-}" ] || fail "$var is not set (the cron runner strips BUZZ_*)"
+done
+BUZZ_PRIVATE_KEY="$HERMES_GEO_BUZZ_PRIVATE_KEY" \
+BUZZ_RELAY_URL="$HERMES_GEO_BUZZ_RELAY_URL" \
+BUZZ_AUTH_TAG="$HERMES_GEO_BUZZ_AUTH_TAG" \
+    buzz canvas get --channel "$SHORTS_BUZZ_CHANNEL" > "$tmp" 2> "$err"
+rc=$?
+[ "$rc" -eq 0 ] || fail "buzz canvas get exited $rc: $(head -c 300 "$err")"
+grep -qE '^actualizado: [0-9]{4}-[0-9]{2}-[0-9]{2}' "$tmp" \
+    || fail "no dated exclusion list in the #shorts canvas"
+rm -f "$err"
 mv -f "$tmp" "$dest"
 GEOEXCL
 chmod +x "$HERMES_HOME/scripts/geo_exclusiones.sh"
