@@ -43,6 +43,53 @@ Only for ids the shorts ledger recorded as uploaded by Hermes ("short" is the la
 used in the reply; the request_id is the natural one), and for the Flow shorts below
 (their "short" is the Flow folder name).
 
+Post-upload writes (SEODesk's routine; the bots have no YouTube write access). The same
+``#actualizar-video`` block takes five more optional keys, in a language entry or at the top of
+the request (a language's own key wins; ``respuestas`` of both levels are summed). A language entry
+that carries only these keys needs no ``titulo``/``descripcion``/``etiquetas``; one that carries any
+of the three still needs all three, as before, and only then may it carry a ``portada``::
+
+    {"episodio": "01", "agente": "content-gap-hunter",
+     "es": {"id": "<YouTube id>",
+            "localizaciones": {"id": {"titulo": "...", "descripcion": "..."}, "fil": {...}},
+            "subtitulos": {"id": "<relay /media/ URL of an .srt>"},
+            "lista": "Agentes BigLobster",
+            "comentario": "Text to pin. Hermes posts it; the sender pins it in Studio."},
+     "respuestas": [{"comentario_id": "<top-level comment id>", "texto": "..."}]}
+
+* ``localizaciones``: translated title (<= 100, no ``<``/``>``) and description per language code,
+  applied with ``videos.update`` (part snippet,localizations) next to the ones the video has. The
+  snippet is sent complete; a code equal to the video's own language is skipped with a warning.
+* ``subtitulos``: one ``captions.insert`` per language code (an ``.srt``, UTF-8, <= 1 MB, up to 6).
+  A language that already has a non-automatic track is skipped, never replaced.
+* ``lista``: a playlist title. Found among the channel's playlists (``playlists.list mine``), created
+  if missing, the video added (``playlistItems.insert``) unless it is already in it.
+* ``comentario``: a top-level comment as the channel (``commentThreads.insert``), once per video,
+  ever: ``series/posts.json`` and the channel's own comments on the video both count. The API
+  cannot pin it; the reply reminds the sender to.
+* ``respuestas``: replies (``comments.insert`` with ``parentId``) to top-level comments on a video
+  Hermes uploaded. Skipped, with the reason in the reply: an unknown or non-top-level comment, a
+  video that is not Hermes's, the channel's own comment, one the channel already answered. At most
+  ``SERIES_REPLIES_MAX_PER_RUN`` (default 10) per run and per request, logged; a request over what
+  the run has left waits for the next run.
+
+The text of a comment or reply is data from another bot: 1-1000 characters (replies 500), no
+control characters, no e-mail address, no link unless it is an https ``biglobster.top`` one. Each
+step is recorded as it succeeds, so a retry does only what is left, within ``MAX_ATTEMPTS`` and
+with the same one-line failure reply; a quota refusal ends the run's YouTube writes and the
+requests behind it wait. Nothing here runs outside ``SHORTS_PUBLISH_MODE=live``.
+
+Cost of a request, worst case, in YouTube units (a read is 1): ``titulo`` rewrite 50 (+50 with a
+``portada``, +1 with ``localizaciones``); ``localizaciones`` alone 51; ``subtitulos`` 50 + 400 per
+language; ``lista`` 102; ``comentario`` 52; each ``respuestas`` 52 (+1). The day (YouTube resets at
+midnight Pacific; the count uses UTC-8, so it errs high) is estimated as the uploads started today
+(2,050 per video) plus what this module spent (``series/quota.json``). A request that would leave
+less than 2,100 units, one more short upload, waits for another day, with one reply to the sender;
+one that could never fit is refused.
+
+Not possible through the API, so never attempted: pinning a comment, a Short's "related video"
+field, end screens.
+
 Flow shorts (from 2026-10-22 no agent renders videos: Brais shoots shorts in Google Flow
 and VideoDesk finishes them) are requested with ``#publicar-short`` and ONE flat block::
 
@@ -65,6 +112,7 @@ Config (service env of the profile that runs the shorts jobs):
     SERIES_YOUTUBE_PRIVACY  public | unlisted | private   (default public)
     SERIES_MAX_PER_DAY      episodes started per UTC day (default 1)
     SERIES_SHORTS_MAX_PER_DAY  Flow shorts started per UTC day, apart from the episodes (default 2)
+    SERIES_REPLIES_MAX_PER_RUN  comment replies posted per run (default 10)
     BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG   as for the shorts hand-off
 
 Quota: an episode is two uploads and two caption tracks, about 4,000 of the
@@ -310,7 +358,10 @@ def parse_update(content: str) -> dict[str, Any]:
     else:
         out = _episode(data, problems)
     out["langs"] = [lang for lang in LANGS if data.get(lang)]
-    if not out["langs"]:
+    from plugins.shorts import post_upload
+
+    extras, out["respuestas"] = post_upload.parse(data, out["langs"], problems)
+    if not out["langs"] and not out["respuestas"]:
         problems.append("at least one language (es, en)")
     for lang in out["langs"]:
         part = data[lang] if isinstance(data[lang], dict) else {}
@@ -323,7 +374,12 @@ def parse_update(content: str) -> dict[str, Any]:
                 portada = _media_url(part.get("portada"), f"{lang}.portada")
             except SeriesError as exc:
                 problems.append(str(exc))
-        out[lang] = {"id": video_id, "portada": portada, **_metadata(part, lang, problems)}
+        # Title, description and tags are required, unless the entry only carries post-upload keys.
+        rewrites = any(k in part for k in post_upload.META_KEYS) or not extras[lang]
+        if portada and not rewrites:
+            problems.append(f"{lang}.portada: the cover goes with titulo, descripcion and etiquetas")
+        out[lang] = {"id": video_id, "portada": portada, **(_metadata(part, lang, problems) if rewrites else {}),
+                     **extras[lang]}
     if problems:
         raise SeriesError("; ".join(problems))
     return out
@@ -455,14 +511,22 @@ def _summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
 
 
 def _update_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, Any]:
+    from plugins.shorts import post_upload
     from plugins.shorts.social import youtube
 
     part = item[lang]
+    translations = part.get("localizaciones")
+    if "titulo" not in part:            # only translations: the video's own title and description stay
+        result = youtube.localize(part["id"], lang, translations)
+        post_upload.spend(post_upload.READ + post_upload.WRITE)
+        return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
     thumb = _download(part["portada"], work / f"{lang}-portada") if part.get("portada") else None
     if thumb:
         _check_thumb(thumb)
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
-    result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")))
+    extra = {"localizations": translations} if translations else {}      # update() is called as before without them
+    result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")), **extra)
+    post_upload.spend(post_upload.WRITE + (post_upload.WRITE if thumb else 0) + (post_upload.READ if translations else 0))
     return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
@@ -584,12 +648,34 @@ def _what(item: dict[str, Any]) -> str:
     return f"el short {item['short']}" if item.get("short") else f"el episodio {item['episodio']}"
 
 
+def _applied(item: dict[str, Any], entry: dict[str, Any]) -> list[str]:
+    """The reply lines for what an optimisation request has applied so far, one per video, then the warnings."""
+    from plugins.shorts import post_upload
+
+    lines = []
+    for lang in item["langs"]:
+        done, part = entry.get(lang) or {}, item[lang]
+        bits = (["título, descripción y etiquetas"] + (["portada"] if done.get("thumbnail") else [])
+                if "titulo" in part and done.get("id") else []) + post_upload.summary(item, entry, lang)
+        if bits:
+            lines.append(f"{lang.upper()}: {done.get('url') or 'https://www.youtube.com/watch?v=' + part['id']} · "
+                         + " · ".join(bits))
+    lines += post_upload.replies_summary(item, entry)
+    warnings = [w for lang in item["langs"] for w in (entry.get(lang) or {}).get("warnings") or []]
+    if warnings:
+        lines.append("Avisos: " + " · ".join(warnings))
+    return lines
+
+
 def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
     """Apply the optimisation requests, each once; only to videos this module published."""
+    from plugins.shorts import post_upload
+
     ours = {(e.get(lang) or {}).get("id") for e in ledger.values() for lang in LANGS} - {None}
     shorts = set(_short_ids().values()) | {e["youtube"]["id"] for e in ledger.values()
                                            if e.get("kind") == "short" and (e.get("youtube") or {}).get("id")}
     updates = _load(_updates_path())
+    run = post_upload.Run(ledger, ours | shorts)
     for item in requests(mark=MARK_UPDATE):
         key = item["event"]
         entry = updates.get(key) or {}
@@ -609,20 +695,45 @@ def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             _save(updates, _updates_path())
             report["invalid"].append({"event": key, "error": problem})
             continue
+        held = post_upload.gate(item, entry, run)
+        if held and held[0] == "reject":
+            _reply(item, f"No aplico este cambio: {held[1]}. Divídelo en peticiones más pequeñas y vuelve a enviarlo.")
+            updates[key] = {"rejected": True, "replied": True, "error": held[1]}
+            _save(updates, _updates_path())
+            report["invalid"].append({"event": key, "error": held[1]})
+            continue
+        if held:                                    # it fits another day (or run): left pending, the sender told once
+            if not entry.get("deferred"):
+                _reply(item, f"Cambio aplazado: {held[1]}. Se aplicará solo en una ejecución posterior.")
+                entry["deferred"] = True
+                updates[key] = entry
+                _save(updates, _updates_path())
+            report["waiting"].append({"update": key[:16], "why": held[1]})
+            continue
         entry["attempts"] = int(entry.get("attempts") or 0) + 1
         updates[key] = entry
         _save(updates, _updates_path())
         work = _root() / f"u-{key[:16]}"
         try:
+            errors = []
             for lang in item["langs"]:
-                if not (entry.get(lang) or {}).get("id"):
+                part = item[lang]
+                if (entry.get(lang) or {}).get("id") or not ("titulo" in part or part.get("localizaciones")):
+                    continue
+                try:
                     entry[lang] = _update_language(item, lang, work)
                     _save(updates, _updates_path())
+                except Exception as exc:
+                    errors.append(f"{lang}: {exc}")
+                    post_upload.note_failure(run, exc)
+            errors += post_upload.apply(item, entry, run, work, lambda: _save(updates, _updates_path()))
+            if errors:
+                raise SeriesError("; ".join(errors))
         except Exception as exc:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
-                _reply(item, f"No he podido actualizar {_what(item)} tras {MAX_ATTEMPTS} intentos: "
-                             f"{entry['error']}. Necesita que alguien lo mire.")
+                _reply(item, "\n".join([f"No he podido actualizar {_what(item)} tras {MAX_ATTEMPTS} intentos: "
+                                        f"{entry['error']}. Necesita que alguien lo mire.", *_applied(item, entry)]))
                 entry["replied"] = True
             _save(updates, _updates_path())
             report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "short": item.get("short"),
@@ -633,19 +744,16 @@ def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             shutil.rmtree(work, ignore_errors=True)
         lines = [f"Short {item['short']} actualizado en YouTube por Hermes:" if item.get("short") else
                  f"Episodio {item['episodio']} ({item['agente']}) actualizado en YouTube por Hermes:"]
-        for lang in item["langs"]:
-            done = entry[lang]
-            lines.append(f"{lang.upper()}: {done['url']} · título, descripción y etiquetas"
-                         + (" · portada" if done.get("thumbnail") else ""))
-        warnings = [w for lang in item["langs"] for w in entry[lang].get("warnings") or []]
-        if warnings:
-            lines.append("Avisos: " + " · ".join(warnings))
-        _reply(item, "\n".join(lines))
+        _reply(item, "\n".join(lines + _applied(item, entry)))
         entry["replied"] = True
         entry.pop("error", None)
         _save(updates, _updates_path())
-        report["updated"].append({"short": item["short"], "langs": item["langs"]} if item.get("short") else
-                                 {"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
+        done = ({"short": item["short"], "langs": item["langs"]} if item.get("short") else
+                {"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
+        if post_upload.has_extras(item):
+            done["extras"] = entry.get("extras")
+        report["updated"].append(done)
+    run.finish(report)
 
 
 def run() -> dict[str, Any]:

@@ -340,6 +340,11 @@ Setup, once:
   - A custom thumbnail needs a phone-verified channel; if YouTube refuses it, the reply says so and the rest still applies.
   - **Blog Shorts too** (Brais, 18-10): the block carries `"short": "<request_id>"` instead of `episodio`/`agente`, plus the one language the Short is in. Applied only to ids the shorts ledger recorded as uploaded by Hermes; the title keeps `#Shorts`.
   - **Flow shorts too** (22-10): same block with `"short": "<Flow folder name>"`; they are in the series ledger, so they qualify, and the title keeps `#Shorts`.
+  - **Post-upload writes** (25-10; SEODesk's routine, because the bots have no YouTube write access): five more optional keys in the same block, per language entry or at the top of the request (`plugins/shorts/post_upload.py`; format, rules and costs in the `series.py` docstring). An entry that carries only these keys needs no `titulo`/`descripcion`/`etiquetas`.
+    - `localizaciones` (`{"id": {"titulo", "descripcion"}}`, in the `videos.update` call), `subtitulos` (`{"id": "<relay .srt URL>"}`, 400 units per language, a language with a track is skipped), `lista` (playlist title, created if missing, never a duplicate entry), `comentario` (one top-level comment per video; pinning is not in the API, Brais pins it) and `respuestas` (`[{"comentario_id", "texto"}]` on comments of Hermes's videos, at most `SERIES_REPLIES_MAX_PER_RUN` = 10 per run).
+    - Comment texts are data from another bot: length-checked, and no link unless it is an https `biglobster.top` one.
+    - Quota: each request is costed before it runs (`series/quota.json` plus the uploads started today). One that would leave less than 2,100 units for another short upload waits, with one reply to the sender. A quota refusal from YouTube ends that run's writes.
+    - Not possible by API, never tried: pinning a comment, a Short's related video, end screens.
 - **Flow shorts (`#publicar-short`, 2026-10-22):** from 22-10 no agent renders videos: Brais shoots shorts in Google Flow, VideoDesk finishes them (subtitles, logo, end card, cover) and asks Hermes to publish. They are vertical, so they have their own mark and a flat JSON block in the same series channel, from the same `SERIES_BUZZ_FROM` senders:
   - `short` (the Flow folder name, e.g. `2026-10-21_es-ia-empleados-junior`), `idioma` (`es` or `en`), `articulo` (an https URL on biglobster.top), `video` (relay `/media/` URL of the mp4), optional `srt` and `portada` (JPEG or PNG of 2 MB at most, relay URLs), `titulo`, `descripcion`, `etiquetas` and optional `redes` (`instagram`, `facebook`, `x`).
   - The same `series` run checks it is vertical, has audio and lasts 5–180 s, and uploads it with `youtube.upload(..., short=True, synthetic=True)` (`containsSyntheticMedia`: the scenes are AI-generated), `SERIES_YOUTUBE_PRIVACY`, the SRT as captions, the cover as thumbnail (if YouTube refuses it, the reply says so and the rest stands) and the article link tagged like the blog Shorts.
@@ -354,7 +359,7 @@ Setup, once:
 2. Zeabur service env:
    - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
    - `SERIES_BUZZ_FROM` (VideoDesk's and SEODesk's hex pubkeys, comma-separated);
-   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`), `SERIES_MAX_PER_DAY` (default 1) and `SERIES_SHORTS_MAX_PER_DAY` (default 2, Flow shorts).
+   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`), `SERIES_MAX_PER_DAY` (default 1), `SERIES_SHORTS_MAX_PER_DAY` (default 2, Flow shorts) and `SERIES_REPLIES_MAX_PER_RUN` (default 10, comment replies).
    - The Buzz credentials and `SHORTS_BUZZ_CHANNEL` are the shorts hand-off's (Flow shorts are handed to SocialBot there). Nothing goes in `INJECT`.
 3. Deploy and sync the Publisher prompt (`scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-publisher.prompt`).
 
