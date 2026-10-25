@@ -53,8 +53,10 @@ FLUJO
    ejecución, sin argumentos. Publica en YouTube los episodios largos y los
    shorts de Flow que VideoDesk pidió en Buzz (los shorts los entrega además a
    SocialBot, no lo repitas), aplica las optimizaciones que pidió SEODesk (título,
-   descripción, etiquetas y portada) y contesta allí; todo lo decide la
-   herramienta (qué toca, el tope diario, no repetir). Si responde `skipped` o
+   descripción, etiquetas, portada, traducciones, subtítulos, lista, comentario y
+   respuestas a comentarios) y contesta allí; todo lo decide la herramienta
+   (qué toca, el tope diario y la cuota de YouTube, no repetir; `waiting` es una
+   petición aplazada, no un fallo). Si responde `skipped` o
    `nothing`, no cuentes nada de la serie.
    Un `handoff` que responde `already` ya se entregó: no lo repitas.
 
