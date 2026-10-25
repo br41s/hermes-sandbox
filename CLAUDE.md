@@ -215,6 +215,18 @@ configured/enabled`: the auditor's scope holds no Telegram token. Only tick runs
 topic 1904. Upstream's `cron_job` route (`run_event_job`) still runs without adapters, and
 no live route uses it.
 
+**A satellite borrows the primary's bot only while it holds no messaging adapter of its own,
+and `local` does not count** (`cron/scheduler_preflight.py` `satellite_delivery_adapters`, used
+by the ticker, `live_adapters_for` and the restart-safe drain). Since upstream v0.22.5 a served
+secondary keeps a credential-free `LocalSessionAdapter` for its local sessions in
+`runner._profile_adapters[<profile>]`; the old "is the map empty?" test read `{local: …}` as its
+own bot. From the 2026-10-23 deploy to the fix, every biglobster and auditor delivery and kickoff
+ping failed `platform 'telegram' not configured/enabled`, the GEO Scout on Buzz too, while every
+part tested alone still worked. The tell was the satellite's shutdown line
+`✓ local disconnected (profile: <name>)`. The same emptiness test survives in upstream's
+`_is_shared_bot_satellite` (`gateway/authz_mixin.py`), which decides where a satellite's
+heartbeats and goal notices go.
+
 ## Deployment — Zeabur, Frankfurt
 
 One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk

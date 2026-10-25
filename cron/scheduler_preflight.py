@@ -201,14 +201,20 @@ class SharedRouteAdapters:
     See #101113.
     """
 
-    def __init__(self, primary_adapters, routes) -> None:
+    def __init__(self, primary_adapters, routes, own_adapters=None) -> None:
         self._primary = dict(primary_adapters or {})
         self._routes = list(routes or [])
+        # fork: the satellite's own credential-free adapters (its LOCAL session transport) stay
+        # its own; see ``satellite_delivery_adapters``.
+        self._own = dict(own_adapters or {})
 
     def __bool__(self) -> bool:
-        return bool(self._primary) and bool(self._routes)
+        return bool(self._own) or (bool(self._primary) and bool(self._routes))
 
     def get(self, platform, target=None, default=None):
+        own = self._own.get(platform)
+        if own is not None:
+            return own
         if not target:
             return default
         adapter = self._primary.get(platform)
@@ -231,6 +237,27 @@ class SharedRouteAdapters:
             ):
                 return adapter
         return default
+
+
+def satellite_delivery_adapters(own_adapters, primary_adapters):
+    """The adapters a non-launch profile's cron delivers through, inside that profile's scope.
+
+    Its own map when it holds a messaging adapter (its own bot is its credential boundary);
+    otherwise a ``SharedRouteAdapters`` over the primary's, for its routed targets only.
+
+    fork: LOCAL does not count as an adapter of its own. Since upstream v0.22.5 a served
+    secondary's local sessions (desktop, CLI, ``gateway/session_cron.py``) keep a credential-free
+    ``LocalSessionAdapter`` in its ``_profile_adapters`` entry, and the old emptiness test read
+    ``{local: ...}`` as "has its own bot": every satellite delivery then failed
+    ``platform 'telegram' not configured/enabled`` (biglobster, auditor, 2026-10-23 on).
+    """
+    from gateway.config import Platform
+
+    own = own_adapters or {}
+    if not primary_adapters or any(platform is not Platform.LOCAL for platform in own):
+        return own
+    return SharedRouteAdapters(
+        primary_adapters, _primary_profile_routes_for_current_home(), own_adapters=own)
 
 
 def _preflight_check_delivery(job: dict) -> Optional[str]:

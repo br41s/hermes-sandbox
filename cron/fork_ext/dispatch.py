@@ -63,13 +63,10 @@ def live_adapters_for(runner, profile=None):
     adapters = getattr(runner, "adapters", None)
     if not profile or profile == getattr(runner, "_primary_profile_name", None):
         return adapters
-    own = (getattr(runner, "_profile_adapters", None) or {}).get(profile) or {}
-    if not own and adapters:
-        from cron.scheduler_preflight import (
-            SharedRouteAdapters, _primary_profile_routes_for_current_home,
-        )
-        return SharedRouteAdapters(adapters, _primary_profile_routes_for_current_home())
-    return own
+    from cron.scheduler_preflight import satellite_delivery_adapters
+
+    return satellite_delivery_adapters(
+        (getattr(runner, "_profile_adapters", None) or {}).get(profile), adapters)
 
 
 def dispatch_job_async(job: dict, *, adapters=None, loop=None) -> dict:
