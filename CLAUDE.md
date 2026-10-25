@@ -393,6 +393,13 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 - **rclone: always via PATH (the shim), never as root by full path
   `/opt/data/scripts/bin/rclone`.** A root-run rclone rewrote `rclone.conf` as root:hermes
   0600 and cost four nightly Drive syncs (2026-10-08..11). Details in `ops/README.md`.
+- **Never run `hermes` on the pod as root.** `zeabur service exec` is root, and a root
+  `hermes` creates `/opt/data/installs/<key>/.install.lock` root:root 0600; every later
+  `hermes` start as hermes then exits 1 ("install state is not writable by this user").
+  On 2026-10-25 that crash-looped dashboard and gateway-default after a deploy (502, silent
+  Telegram). Boot §4d of `03-biglobster-config` chowns `installs/` back, but an in-place
+  service restart runs no cont-init. Wrap pod commands:
+  `/usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv s6-setuidgid hermes env HOME=/opt/data hermes …`.
 
 ## Diagnosing an agent run — Langfuse first, logs second
 
