@@ -114,6 +114,21 @@ def _bot_profile_key(name: Optional[str]) -> Optional[str]:
     return None if not name or name == "default" else name
 
 
+def holds_messaging_adapter(adapters) -> bool:
+    """Whether a served profile's adapter map holds a bot of its own (its credential boundary).
+
+    fork: LOCAL does not count. Since upstream v0.22.5 ``local_adapter_map`` keeps a served
+    secondary's credential-free ``LocalSessionAdapter`` in ``_profile_adapters[<profile>]``, so a
+    routed shared-bot satellite's map is ``{local: ...}``, not ``{}``. Read as "has its own bot",
+    that cut it off from the primary: cron delivery, restored sources and notices all found no
+    Telegram (2026-10-23 on). One definition for cron (``satellite_delivery_adapters``) and the
+    gateway (``_adapters_for_profile``) so the two rules cannot drift.
+    """
+    from gateway.config import Platform
+
+    return any(platform is not Platform.LOCAL for platform in (adapters or {}))
+
+
 def _coerce_route_id(value: Any) -> Optional[str]:
     """Normalize a route discriminator to str for strict equality matching.
 

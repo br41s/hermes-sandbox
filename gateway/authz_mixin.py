@@ -224,9 +224,14 @@ class GatewayAuthorizationMixin:
         profile_adapters = self._profile_adapters_map()
         if profile_name in profile_adapters:
             adapters = profile_adapters[profile_name]
-            if adapters or not self._is_shared_bot_satellite(profile_name):
+            from gateway.profile_routing import holds_messaging_adapter
+            if holds_messaging_adapter(adapters) or not self._is_shared_bot_satellite(profile_name):
                 return adapters
-            return self._primary_adapters()
+            if not adapters:
+                return self._primary_adapters()
+            # fork: a satellite's credential-free LOCAL session adapter stays its own (its local
+            # sessions resolve through this map); its bots are the primary's.
+            return {**self._primary_adapters(), **adapters}
         # Identity captured at construction, not the per-turn HERMES_HOME-derived name.
         primary_profile = getattr(self, "_primary_profile_name", None)
         if not primary_profile:
@@ -238,7 +243,8 @@ class GatewayAuthorizationMixin:
         """A served profile with NO adapter of its own that a ``profile_routes`` entry targets through the
         default profile's bot: it drains through the primary's adapters (gateway/AGENTS.md). Its
         ``_profile_adapters`` entry is the ``{}`` startup placeholder; a secondary connected on ANY
-        platform is its own credential boundary and never borrows the primary. Restored/cached sources
+        platform is its own credential boundary and never borrows the primary. fork: LOCAL is not a
+        platform connection (``holds_messaging_adapter``). Restored/cached sources
         carry no transport ref, so this is what keeps heartbeats, completions and goal notices for such a
         profile deliverable after a restart (the same rule ``kanban_watchers_notifier`` and cron apply)."""
         config = getattr(self, "config", None)
