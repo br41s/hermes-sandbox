@@ -13,7 +13,7 @@ a Telegram bot.
 from gateway.config import Platform
 from gateway.profile_routing import holds_messaging_adapter
 from gateway.session import SessionSource
-from tests.gateway.test_multiplex_routing_authz import _stub, mux  # noqa: F401  (fixture)
+from tests.gateway.test_multiplex_routing_authz import _stub, mux
 
 
 def _restored(profile="ops"):
