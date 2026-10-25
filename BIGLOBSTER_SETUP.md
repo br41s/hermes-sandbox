@@ -426,6 +426,22 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
     - The full blocks live in the workdir's `archive/` folder, and the ledger
       header tells the agent not to open it.
     - Never write multi-line entries back into the ledger.
+- **SocialBot's exclusions reach the Scout through the `geo-exclusiones` job**
+  (no-agent, `scripts/geo_exclusiones.sh`, daily 02:50 Bangkok, default store).
+  It copies the #shorts canvas into the Scout's workdir; STEP 0.5 reads it and
+  fails closed (`exclusiones NO VERIFICADO`) when the copy is missing or its
+  `actualizado:` date is over 7 days old.
+  - **A cron script never sees `BUZZ_*`.** The runner scrubs them and the
+    carve-out needs a Buzz session. From 2026-10-22 to 2026-10-25 every run
+    failed on that, and the old script hid `buzz`'s stderr. The job reads
+    `HERMES_GEO_BUZZ_PRIVATE_KEY`, `_RELAY_URL` and `_AUTH_TAG` instead, set on
+    the Zeabur `hermes` service to the same values as `BUZZ_*`, and maps them
+    for the one `buzz` call. A failure now prints `buzz`'s own error.
+  - Set the three vars before the deploy that ships the script (boot seeds
+    it), so the first run already has them. Never print the env table while
+    doing it (`zeabur variable create` echoes every secret).
+  - Test it as a cron run does, not from an exec shell, which still has
+    `BUZZ_*`: `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
 
 ---
 
