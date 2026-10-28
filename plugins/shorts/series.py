@@ -124,9 +124,11 @@ Shadow mode (``SHORTS_PUBLISH_MODE`` not ``live``) publishes nothing.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -134,6 +136,8 @@ from urllib.parse import urlparse
 
 from plugins.shorts import buzz_share
 from plugins.shorts._env import env
+
+logger = logging.getLogger(__name__)
 
 MARK = "#publicar-episodio"
 MARK_UPDATE = "#actualizar-video"
@@ -477,7 +481,7 @@ def _check_thumb(path: Path) -> None:
 
 def _reply(item: dict[str, Any], text: str) -> None:
     _buzz(["messages", "send", "--channel", channel(), "--reply-to", item["event"],
-           "--mention", item["from"], "--content", "-"], content=text)
+           *(["--mention", item["from"]] if item["from"] else []), "--content", "-"], content=text)
 
 
 # ---------------------------------------------------------------------------
@@ -600,10 +604,10 @@ def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             continue
         problem = item.get("error")
         if not problem and not entry.get("started"):
-            twin = next((e for k, e in shorts.items() if k != key and e.get("short") == item["short"]
+            twin = next((e for k, e in shorts.items() if k != key and _short_key(e) == _short_key(item)
                          and (e.get("youtube") or {}).get("id")), None)
             if twin:
-                problem = f"{item['short']} is already on YouTube: {twin['youtube']['url']}"
+                problem = f"{item['short']} ({item['idioma']}) is already on YouTube: {twin['youtube']['url']}"
         if problem:
             _reply(item, f"No puedo publicar este short: {problem}. Corrige el mensaje y vuelve a enviarlo.")
             _save_entry(ledger, key, {"kind": "short", "rejected": True, "replied": True, "error": problem})
@@ -642,6 +646,18 @@ def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
         _save_entry(ledger, key, entry)
         report["published"].append({"short": item["short"], "handoff": bool(entry.get("handoff_at")),
                                     **{k: entry["youtube"].get(k) for k in ("id", "url", "privacy")}})
+
+
+def _short_key(item: dict[str, Any]) -> tuple[str, str]:
+    """A Flow folder holds an ES and an EN master: the folder alone is not one video, folder + language is."""
+    return str(item.get("short") or ""), str(item.get("idioma") or "")
+
+
+def _episode_twin(ledger: dict[str, Any], key: str, item: dict[str, Any]) -> dict[str, Any]:
+    """The other ledger entries of the same episode (number + agent) with at least one video on YouTube."""
+    return {k: e for k, e in ledger.items()
+            if k != key and e.get("kind") != "short" and e.get("episodio") == item["episodio"]
+            and e.get("agente") == item["agente"] and any((e.get(lang) or {}).get("id") for lang in LANGS)}
 
 
 def _what(item: dict[str, Any]) -> str:
@@ -756,6 +772,58 @@ def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
     run.finish(report)
 
 
+LOOKALIKE = re.compile(r"(?m)^\s*(?:#publicar-episodio|#actualizar-video|#publicar-short)\b")
+LOOKALIKE_MAX_AGE = 2 * 3600   # seconds: only fresh messages are answered, never the channel's history
+
+
+def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
+    """Answer, once, every message that looks like a request but that ``requests()`` ignores.
+
+    Ignored for: the marker is not on the first line, the sender is not allowed, or it was posted in the
+    shorts channel instead of the series channel. Who may trigger an upload does not change: this only says why not.
+    """
+    senders, mine = set(allowed()), channel()
+    for chan in dict.fromkeys(c for c in (mine, buzz_share.channel()) if c):
+        try:
+            events = json.loads(_buzz(["messages", "get", "--channel", chan, "--limit", "200"]) or "[]")
+        except (SeriesError, json.JSONDecodeError) as exc:
+            logger.warning("lookalike scan of %s failed: %s", chan, exc)
+            continue
+        for ev in events if isinstance(events, list) else []:
+            content, sender = str(ev.get("content") or ""), str(ev.get("pubkey") or "").lower()
+            key = f"rejected-{ev.get('id')}"
+            if not LOOKALIKE.search(content) or "{" not in content or key in ledger or not ev.get("id"):
+                continue
+            try:
+                age = time.time() - float(ev.get("created_at") or 0)
+            except (TypeError, ValueError):
+                continue                                    # relay data: a bad timestamp must not stop the run
+            if age > LOOKALIKE_MAX_AGE:
+                continue                                    # old: the first deploy must not answer the backlog
+            first_line = content.strip().startswith(("#publicar-episodio", "#actualizar-video", "#publicar-short"))
+            if chan == mine and sender in senders and first_line:
+                continue                                    # a real request: requests() answers it
+            if chan != mine:
+                why = "las peticiones solo se leen en el canal de la serie, no en este"
+            elif sender not in senders:
+                why = "el remitente no está autorizado a pedir subidas o cambios en YouTube"
+            else:
+                why = "la marca (#publicar-episodio, #actualizar-video o #publicar-short) debe ir en la PRIMERA línea del mensaje, sin @menciones antes"
+            item = {"event": ev["id"], "from": sender}
+            try:
+                if chan == mine:
+                    _reply(item if sender in senders else {**item, "from": ""}, f"Petición ignorada: {why}.")
+                else:
+                    _buzz(["messages", "send", "--channel", chan, "--reply-to", ev["id"], "--content", "-"],
+                          content=f"Petición ignorada: {why}. Publícala en el canal de la serie.")
+            except SeriesError as exc:
+                logger.warning("could not answer ignored request %s: %s", ev["id"], exc)
+                continue
+            ledger[key] = {"kind": "ignored", "replied": True, "error": why}
+            _save(ledger)
+            report["invalid"].append({"event": ev["id"], "error": why})
+
+
 def run() -> dict[str, Any]:
     """Publish the pending episodes this run may take. Returns what happened, for the Publisher's report."""
     if not configured():
@@ -770,6 +838,7 @@ def run() -> dict[str, Any]:
     ledger = _load()
     started_today = sum(1 for e in ledger.values() if e.get("kind") != "short" and e.get("started") == _today())
     report: dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": []}
+    _reject_lookalikes(ledger, report)
     for item in requests():
         key = item["event"]
         entry = ledger.get(key) or {}
@@ -782,12 +851,26 @@ def run() -> dict[str, Any]:
                 _save(ledger)
             report["invalid"].append({"event": key, "error": item["error"]})
             continue
+        twins = {} if entry.get("started") else _episode_twin(ledger, key, item)
+        if twins and all(any((e.get(lang) or {}).get("id") for e in twins.values()) for lang in LANGS):
+            ids = ", ".join(f"{lang.upper()} {next(e[lang]['id'] for e in twins.values() if (e.get(lang) or {}).get('id'))}"
+                            for lang in LANGS)
+            problem = f"already published: episodio {item['episodio']} ({item['agente']}) is on YouTube ({ids})"
+            _reply(item, f"No lo subo otra vez, {problem}. Si de verdad hay que rehacerlo, bórralo antes en YouTube.")
+            ledger[key] = {"rejected": True, "replied": True, "error": problem}
+            _save(ledger)
+            report["invalid"].append({"event": key, "error": problem})
+            continue
         if not entry.get("started"):
             if started_today >= _max_per_day():
                 report["waiting"].append({"episodio": item["episodio"], "agente": item["agente"],
                                           "why": f"{_max_per_day()} episode(s) a day (YouTube quota)"})
                 continue
             entry = {"agente": item["agente"], "episodio": item["episodio"], "started": _today(), "attempts": 0}
+            for lang in LANGS:          # a language an earlier message already published is reused, never uploaded again
+                done = next((e[lang] for e in twins.values() if (e.get(lang) or {}).get("id")), None)
+                if done:
+                    entry[lang] = {**done, "reused": True}
             started_today += 1
         entry["attempts"] = int(entry.get("attempts") or 0) + 1
         ledger[key] = entry

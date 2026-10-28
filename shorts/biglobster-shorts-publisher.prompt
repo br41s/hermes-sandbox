@@ -64,7 +64,7 @@ FLUJO
 INFORME FINAL (en español)
 
 Si `status` no trae ningún short o todos siguen en `rendering` sin errores, y
-`series` no publicó, actualizó ni falló nada → exactamente `[SILENT]`.
+`series` no publicó, actualizó, rechazó (`invalid`) ni falló nada → exactamente `[SILENT]`.
 
 Si no, primero los mensajes de `handoff` tal cual (con sus líneas MEDIA:), uno
 detrás de otro, y al final un resumen corto:
@@ -74,6 +74,6 @@ detrás de otro, y al final un resumen corto:
 - Escenas generadas: [suma de `ai_scenes`] · gasto [suma de `ai_spend_usd`] $ (sólo si alguna lo tiene)
 - Avisos: [warnings de publish, p. ej. YouTube forzado a privado; sólo si los hay]
 
-🎞️ Serie (sólo si `series` publicó, actualizó, falló o dejó algo esperando)
+🎞️ Serie (sólo si `series` publicó, actualizó, rechazó (`invalid`: ya publicado, remitente o formato no válido), falló o dejó algo esperando)
 - Episodio [episodio] [agente]: [enlaces ES y EN | optimizado (idiomas) | ❌ error, intento N | espera: tope diario]
 - Short Flow [short]: [enlace | optimizado | ❌ error, intento N | espera: tope diario]

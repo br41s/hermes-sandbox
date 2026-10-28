@@ -5,6 +5,7 @@ Buzz (the ``buzz`` CLI) and YouTube are faked; nothing leaves the machine.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ RELAY = "https://relay.example"
 VIDEODESK = "d8" * 32
 SEODESK = "5e" * 32
 STRANGER = "ab" * 32
+SHORTS_CHANNEL = "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd"
 
 
 def _request(**over):
@@ -70,7 +72,8 @@ def buzz(monkeypatch):
     def fake_run(args, **kw):
         state["calls"].append((args, kw))
         if args[1:3] == ["messages", "get"]:
-            out = json.dumps(state["events"])
+            chan = args[args.index("--channel") + 1]
+            out = json.dumps(state["events"] if chan != SHORTS_CHANNEL else state.get("shorts_events", []))
         elif args[1:3] == ["media", "get"]:
             dest = Path(args[args.index("-o") + 1])
             dest.write_bytes(b"\xff\xd8\xff\xe0cover" if dest.name.startswith("cover") or "portada" in dest.name else b"video")
@@ -94,6 +97,9 @@ def uploads(monkeypatch):
 
     monkeypatch.setattr(youtube, "upload", fake_upload)
     return done
+
+
+NOW = int(time.time())   # lookalike requests are answered only while fresh
 
 
 def _event(content, pubkey=VIDEODESK, eid="e" * 64, at=100):
@@ -124,14 +130,15 @@ def test_parse_accepts_a_good_request_and_lists_every_problem(env):
 
 
 def test_an_episode_is_published_in_both_languages_once(env, buzz, uploads):
-    buzz["events"] = [_event(_request()), _event(_request(), pubkey=STRANGER, eid="f" * 64)]
+    buzz["events"] = [_event(_request()), _event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     out = json.loads(st.handle_shorts_studio({"action": "series"}))
     assert out["success"] and len(out["published"]) == 1
     assert [u["lang"] for u in uploads] == ["es", "en"]
     assert all(u["short"] is False and u["privacy"] == "public" for u in uploads)
     assert uploads[0]["srt"] is not None and uploads[1]["srt"] is None
     assert uploads[0]["social"]["youtube"]["title"].startswith("Content Gap Hunter")
-    (args, kw), = _sends(buzz)
+    (stranger, _), (args, kw) = _sends(buzz)      # the stranger is answered ("not authorised"), not obeyed
+    assert stranger[stranger.index("--reply-to") + 1] == "f" * 64 and "--mention" not in stranger
     assert args[args.index("--reply-to") + 1] == "e" * 64 and args[args.index("--mention") + 1] == VIDEODESK
     assert "watch?v=esVideoId0" in kw["input"] and "watch?v=enVideoId0" in kw["input"]
     assert "videosAgentes.json" in kw["input"]
@@ -141,7 +148,7 @@ def test_an_episode_is_published_in_both_languages_once(env, buzz, uploads):
     assert not any((env / "workspace" / "shorts" / "series").glob("*/*.mp4"))
 
     again = json.loads(st.handle_shorts_studio({"action": "series"}))
-    assert again["success"] and "published" not in again and len(uploads) == 2 and len(_sends(buzz)) == 1
+    assert again["success"] and "published" not in again and len(uploads) == 2 and len(_sends(buzz)) == 2
 
 
 def test_one_episode_a_day_by_default(env, buzz, uploads):
@@ -368,7 +375,7 @@ def test_parse_short_accepts_a_good_request_and_lists_every_problem(env):
 
 
 def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64)]
+    buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     out = json.loads(st.handle_shorts_studio({"action": "series"}))
     assert out["success"] and out["published"] == [{"short": FLOW, "handoff": True, "id": "flowVid0001",
                                                     "url": "https://youtube.com/shorts/flowVid0001", "privacy": "public"}]
@@ -378,8 +385,8 @@ def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz
     assert up["article"]["url"].startswith("https://biglobster.top/") and up["social"]["youtube"]["tags"] == ["ia", "pymes"]
 
     replies = _replies(buzz)
-    assert set(replies) == {"e" * 64}
-    reply_args = next(a for a, kw in _sends(buzz) if "--reply-to" in a)
+    assert set(replies) == {"e" * 64, "f" * 64} and "no está autorizado" in replies["f" * 64]
+    reply_args = next(a for a, kw in _sends(buzz) if "--reply-to" in a and a[a.index("--reply-to") + 1] == "e" * 64)
     assert reply_args[reply_args.index("--mention") + 1] == VIDEODESK
     assert "youtube.com/shorts/flowVid0001" in replies["e" * 64] and "SocialBot" in replies["e" * 64]
 
@@ -398,7 +405,7 @@ def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz
     assert ledger["e" * 64]["kind"] == "short" and ledger["e" * 64]["youtube"]["id"] == "flowVid0001"
 
     again = series.run()
-    assert "published" not in again and len(short_uploads) == 1 and len(_sends(buzz)) == 2
+    assert "published" not in again and len(short_uploads) == 1 and len(_sends(buzz)) == 3
 
 
 def test_the_hand_off_falls_back_to_the_description_without_redes(env, buzz, short_uploads):
@@ -548,3 +555,85 @@ def test_the_socialbot_message_is_unchanged_for_a_studio_short_with_its_story():
                                      {"instagram": "ig"}, "https://youtube.com/shorts/x",
                                      ["master.mp4", "story.mp4", "cover.jpg"])
     assert "(Reel; la Story es story.mp4, sin texto)" in text and "Instagram (Reel con cover.jpg como portada, y Story)" in text
+
+
+# ---- 2026-10-28 guards: duplicate episode, language in the short key, no silent drops ----
+
+def test_a_second_message_for_a_published_episode_is_refused_with_the_ids(env, buzz, uploads):
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    series.run()
+    assert len(uploads) == 2
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1), _event(_request(), eid="b" * 64, at=2)]
+    out = series.run()
+    assert len(uploads) == 2 and "already published" in out["invalid"][0]["error"]
+    reply = _replies(buzz)["b" * 64]
+    assert "esVideoId01" in reply and "enVideoId01" in reply
+    series.run()
+    assert len([1 for a, _ in _sends(buzz) if "b" * 64 in a]) == 1
+
+
+def test_a_half_published_episode_resent_uploads_only_the_missing_language(env, buzz, uploads, monkeypatch):
+    monkeypatch.setenv("SERIES_MAX_PER_DAY", "5")
+    real = youtube.upload
+
+    def flaky(video, thumb, srt, social, lang, **kw):
+        if lang == "en":
+            raise youtube.YouTubeError("boom")
+        return real(video, thumb, srt, social, lang, **kw)
+
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    monkeypatch.setattr(youtube, "upload", flaky)
+    series.run()
+    monkeypatch.setattr(youtube, "upload", real)
+    buzz["events"] = [_event(_request(), eid="b" * 64, at=2)]
+    series.run()
+    assert [u["lang"] for u in uploads] == ["es", "en"]
+
+
+def test_a_flow_folder_in_the_other_language_is_not_a_duplicate(env, buzz, short_uploads):
+    buzz["events"] = [_event(_short_request(idioma="en"), eid="a" * 64, at=1),
+                      _event(_short_request(idioma="es"), eid="b" * 64, at=2),
+                      _event(_short_request(idioma="es"), eid="c" * 64, at=3)]
+    out = series.run()
+    assert [u["lang"] for u in short_uploads] == ["en", "es"]
+    assert "(es) is already on YouTube" in out["invalid"][0]["error"]
+
+
+def test_the_short_key_has_the_language():
+    assert series._short_key({"short": "f", "idioma": "es"}) != series._short_key({"short": "f", "idioma": "en"})
+
+
+def test_a_request_with_the_marker_off_the_first_line_is_answered(env, buzz, uploads):
+    buzz["events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
+    out = series.run()
+    assert "PRIMERA línea" in _replies(buzz)["a" * 64] and out["invalid"] and not uploads
+    series.run()
+    assert len(_sends(buzz)) == 1
+
+
+def test_a_request_from_a_stranger_is_answered_but_never_acted_on(env, buzz, uploads):
+    buzz["events"] = [_event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
+    series.run()
+    assert not uploads and "no está autorizado" in _replies(buzz)["f" * 64]
+    (args, _), = _sends(buzz)
+    assert "--mention" not in args
+
+
+def test_a_request_in_the_shorts_channel_is_answered_there(env, buzz, uploads):
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
+    series.run()
+    chans = [a[a.index("--channel") + 1] for a, _ in _sends(buzz)]
+    assert chans == [SHORTS_CHANNEL] and not uploads
+
+
+def test_an_old_lookalike_is_not_answered_on_the_first_deploy(env, buzz, uploads):
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW - 3 * 3600)]
+    series.run()
+    assert _sends(buzz) == [] and not uploads
+
+
+def test_a_lookalike_with_a_bad_timestamp_is_skipped_and_the_run_goes_on(env, buzz, uploads):
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="b" * 64, at="ayer")]
+    series.run()
+    assert uploads and "b" * 64 not in _replies(buzz)
