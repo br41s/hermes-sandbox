@@ -794,7 +794,11 @@ def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             key = f"rejected-{ev.get('id')}"
             if not LOOKALIKE.search(content) or "{" not in content or key in ledger or not ev.get("id"):
                 continue
-            if time.time() - float(ev.get("created_at") or 0) > LOOKALIKE_MAX_AGE:
+            try:
+                age = time.time() - float(ev.get("created_at") or 0)
+            except (TypeError, ValueError):
+                continue                                    # relay data: a bad timestamp must not stop the run
+            if age > LOOKALIKE_MAX_AGE:
                 continue                                    # old: the first deploy must not answer the backlog
             first_line = content.strip().startswith(("#publicar-episodio", "#actualizar-video", "#publicar-short"))
             if chan == mine and sender in senders and first_line:

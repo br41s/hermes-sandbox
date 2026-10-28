@@ -630,3 +630,10 @@ def test_an_old_lookalike_is_not_answered_on_the_first_deploy(env, buzz, uploads
     buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW - 3 * 3600)]
     series.run()
     assert _sends(buzz) == [] and not uploads
+
+
+def test_a_lookalike_with_a_bad_timestamp_is_skipped_and_the_run_goes_on(env, buzz, uploads):
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="b" * 64, at="ayer")]
+    series.run()
+    assert uploads and "b" * 64 not in _replies(buzz)
