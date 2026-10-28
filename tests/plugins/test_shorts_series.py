@@ -5,6 +5,7 @@ Buzz (the ``buzz`` CLI) and YouTube are faked; nothing leaves the machine.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,9 @@ def uploads(monkeypatch):
     return done
 
 
+NOW = int(time.time())   # lookalike requests are answered only while fresh
+
+
 def _event(content, pubkey=VIDEODESK, eid="e" * 64, at=100):
     return {"id": eid, "pubkey": pubkey, "content": content, "created_at": at}
 
@@ -126,7 +130,7 @@ def test_parse_accepts_a_good_request_and_lists_every_problem(env):
 
 
 def test_an_episode_is_published_in_both_languages_once(env, buzz, uploads):
-    buzz["events"] = [_event(_request()), _event(_request(), pubkey=STRANGER, eid="f" * 64)]
+    buzz["events"] = [_event(_request()), _event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     out = json.loads(st.handle_shorts_studio({"action": "series"}))
     assert out["success"] and len(out["published"]) == 1
     assert [u["lang"] for u in uploads] == ["es", "en"]
@@ -371,7 +375,7 @@ def test_parse_short_accepts_a_good_request_and_lists_every_problem(env):
 
 
 def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64)]
+    buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     out = json.loads(st.handle_shorts_studio({"action": "series"}))
     assert out["success"] and out["published"] == [{"short": FLOW, "handoff": True, "id": "flowVid0001",
                                                     "url": "https://youtube.com/shorts/flowVid0001", "privacy": "public"}]
@@ -600,7 +604,7 @@ def test_the_short_key_has_the_language():
 
 
 def test_a_request_with_the_marker_off_the_first_line_is_answered(env, buzz, uploads):
-    buzz["events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64)]
+    buzz["events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
     out = series.run()
     assert "PRIMERA línea" in _replies(buzz)["a" * 64] and out["invalid"] and not uploads
     series.run()
@@ -608,7 +612,7 @@ def test_a_request_with_the_marker_off_the_first_line_is_answered(env, buzz, upl
 
 
 def test_a_request_from_a_stranger_is_answered_but_never_acted_on(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), pubkey=STRANGER, eid="f" * 64)]
+    buzz["events"] = [_event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     series.run()
     assert not uploads and "no está autorizado" in _replies(buzz)["f" * 64]
     (args, _), = _sends(buzz)
@@ -616,7 +620,13 @@ def test_a_request_from_a_stranger_is_answered_but_never_acted_on(env, buzz, upl
 
 
 def test_a_request_in_the_shorts_channel_is_answered_there(env, buzz, uploads):
-    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64)]
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
     series.run()
     chans = [a[a.index("--channel") + 1] for a, _ in _sends(buzz)]
     assert chans == [SHORTS_CHANNEL] and not uploads
+
+
+def test_an_old_lookalike_is_not_answered_on_the_first_deploy(env, buzz, uploads):
+    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW - 3 * 3600)]
+    series.run()
+    assert _sends(buzz) == [] and not uploads

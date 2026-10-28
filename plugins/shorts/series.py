@@ -128,6 +128,7 @@ import logging
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -772,6 +773,7 @@ def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
 
 
 LOOKALIKE = re.compile(r"(?m)^\s*(?:#publicar-episodio|#actualizar-video|#publicar-short)\b")
+LOOKALIKE_MAX_AGE = 2 * 3600   # seconds: only fresh messages are answered, never the channel's history
 
 
 def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
@@ -792,6 +794,8 @@ def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             key = f"rejected-{ev.get('id')}"
             if not LOOKALIKE.search(content) or "{" not in content or key in ledger or not ev.get("id"):
                 continue
+            if time.time() - float(ev.get("created_at") or 0) > LOOKALIKE_MAX_AGE:
+                continue                                    # old: the first deploy must not answer the backlog
             first_line = content.strip().startswith(("#publicar-episodio", "#actualizar-video", "#publicar-short"))
             if chan == mine and sender in senders and first_line:
                 continue                                    # a real request: requests() answers it
