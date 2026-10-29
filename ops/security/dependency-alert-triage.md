@@ -203,6 +203,45 @@ override change does not re-resolve a locked entry that still satisfies its rang
 `undici` entry moved. In the sidecar, add `--ignore-scripts`: its `postinstall` runs even
 under `--package-lock-only` and fails without `node_modules`.
 
+## 2026-10-30 — vendored toolchain `undici` (no lockfile, no bump possible yet)
+
+**osv-scanner cannot see the Node and npm toolchains the image vendors.** Their
+`undici` is bundled inside the npm tarball, so it sits in no lockfile and raises no
+alert. The 10-28 batch above patched every lockfile copy and still left two:
+
+| Copy | Pinned in | Bundled `undici` | Decision |
+|---|---|---|---|
+| `tools/node-26.12.1-linux-x64` (npm 11.20.0 inside Node) | `pm/lock.json` `node` | 6.28.0 | **Not patchable yet.** |
+| `tools/npm-12.0.2-linux-x64` | `pm/lock.json` `npm` | 6.27.0 | **Not patchable yet.** |
+
+Both are affected by CVE-2026-109383, CVE-2026-109869 and CVE-2026-87018 (fixed in
+6.29.1). **No release carries the fix.** Read from `node_modules/undici/package.json`
+inside each published tarball, not from changelogs:
+
+| npm | Published (UTC) | Bundled `undici` |
+|---|---|---|
+| 12.0.2 (pinned) | 2026-07-29 | 6.27.0 |
+| 12.1.0 | 2026-09-22 | 6.28.0 |
+| 12.2.0 | 2026-09-30 | 6.28.0 |
+| 12.2.1 (`latest`) | 2026-10-15 | 6.29.0 |
+| 11.21.1 (newest 11.x) | 2026-10-15 | 6.29.0 |
+
+Node 26.11.0 through 26.13.0 (2026-10-28) all ship npm 11.20.0 (6.28.0), and earlier
+26.x ship older npm, so no Node release helps either; 26.13.0 is also inside the 14-day gate.
+
+Risk is low: these copies run only when npm itself runs, which is mostly at build time,
+and npm talks only to `registry.npmjs.org`. Same rule as the lockfile copies: patch
+when a fixed release clears the gate; do not suppress and do not waive.
+
+**Watch for**, then bump `pm/lock.json` with `hermes pm lock --bump` once the release is
+14 days old:
+
+- an **npm ≥ 12.2.2 or 12.3.0** whose tarball bundles `undici` ≥ 6.29.1 (re-check with
+  `curl -s https://registry.npmjs.org/npm/-/npm-<v>.tgz | tar -xzOf - package/node_modules/undici/package.json`);
+- a **Node 26.x** whose bundled npm is that release (`https://nodejs.org/dist/index.json`,
+  `npm` field). The `node` and `npm` pins move independently, so the npm bump alone
+  closes the 6.27.0 copy.
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
