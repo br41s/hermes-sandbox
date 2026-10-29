@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -176,6 +177,32 @@ def _current(client, auth: dict[str, str], video_id: str, part: str) -> dict[str
     return items[0]
 
 
+_URL = re.compile(r"https?://[^\s<>()\"']+")
+_HASHTAG = re.compile(r"(?<![\w&])#\w+")
+MAX_HASHTAGS = 3            # Brais, 24-10: three hashtags in a description
+
+
+def _lost_links(sent: str, got: str) -> list[str]:
+    """Each URL of the description we sent that the published one does not carry whole."""
+    return [url for url in _URL.findall(sent) if url not in got]
+
+
+def _check_published(client, auth: dict[str, str], video_id: str, snippet: dict[str, Any], warnings: list[str]) -> None:
+    """Read the description back after a write (retro 29-10: OM1PVMnMGaA went out with both UTM
+    links cut). A lost link gets the snippet sent once more; still lost, it becomes a warning,
+    which the run reply shows in its "Avisos" line."""
+    for attempt in (1, 2):
+        got = (_current(client, auth, video_id, "snippet").get("snippet") or {}).get("description") or ""
+        lost = _lost_links(snippet["description"], got)
+        if not lost or attempt == 2:
+            break
+        _put_video(client, auth, "snippet", {"id": video_id, "snippet": snippet}, "fix description")
+    warnings.extend(f"description link lost on YouTube: {url}" for url in lost)
+    tags = len(_HASHTAG.findall(snippet["description"]))
+    if tags > MAX_HASHTAGS:
+        warnings.append(f"{tags} hashtags in the description (max {MAX_HASHTAGS})")
+
+
 def update(video_id: str, social: dict[str, Any], lang: str, thumb: Optional[Path] = None,
            short: bool = False, localizations: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """New title, description and tags for an uploaded video, and its thumbnail if given.
@@ -198,6 +225,7 @@ def update(video_id: str, social: dict[str, Any], lang: str, thumb: Optional[Pat
             body["localizations"] = {**(_current(client, auth, video_id, "localizations").get("localizations") or {}), **kept}
             part = "snippet,localizations"
         _put_video(client, auth, part, body, "update video")
+        _check_published(client, auth, video_id, snippet, warnings)
         _set_thumbnail(client, auth, video_id, thumb, warnings)
     result = {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
               "thumbnail": bool(thumb) and not any(w.startswith("thumbnail") for w in warnings), "warnings": warnings}
@@ -288,6 +316,7 @@ def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: dict
         video_id = body["id"]
         applied_privacy = body.get("status", {}).get("privacyStatus")
 
+        _check_published(client, auth, video_id, meta["snippet"], warnings)
         _set_thumbnail(client, auth, video_id, thumb, warnings)
         if srt and srt.exists():
             c = _insert_caption(client, auth, video_id, lang, srt.read_bytes())

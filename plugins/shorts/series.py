@@ -530,7 +530,8 @@ def _update_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, A
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
     extra = {"localizations": translations} if translations else {}      # update() is called as before without them
     result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")), **extra)
-    post_upload.spend(post_upload.WRITE + (post_upload.WRITE if thumb else 0) + (post_upload.READ if translations else 0))
+    post_upload.spend(post_upload.WRITE + post_upload.READ + (post_upload.WRITE if thumb else 0)   # READ: description read-back
+                      + (post_upload.READ if translations else 0))
     return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 

@@ -274,6 +274,11 @@ def test_youtube_update_rewrites_the_snippet_and_sets_the_cover(env, tmp_path, m
             calls.append(("put", url, kw))
             return Resp(200, {"id": "esVideoId0"})
 
+        def get(self, url, **kw):            # the description read-back: YouTube kept what was sent
+            calls.append(("get", url, kw))
+            sent = json.loads(next(c for c in reversed(calls) if c[0] == "put")[2]["content"])
+            return Resp(200, {"items": [{"snippet": sent["snippet"]}]})
+
     monkeypatch.setattr(youtube, "_client", lambda: Client())
     cover = tmp_path / "c.jpg"
     cover.write_bytes(b"\xff\xd8\xff")

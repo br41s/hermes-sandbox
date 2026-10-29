@@ -296,7 +296,8 @@ def test_translations_travel_with_the_rewrite_and_cost_one_update(env, buzz, edi
     assert out["updated"][0]["langs"] == ["es"] and "extras" in out["updated"][0]
     (reply,) = _sent_to(buzz, "b" * 64)
     assert "título, descripción y etiquetas · localizaciones (id)" in reply
-    assert post_upload.spent_today() == post_upload.WRITE + post_upload.READ
+    # one update, the localizations read and the description read-back
+    assert post_upload.spent_today() == post_upload.WRITE + 2 * post_upload.READ
 
 
 def test_translations_alone_leave_the_title_and_description(env, buzz, edits, yt):
@@ -510,6 +511,40 @@ def test_update_adds_localizations_to_the_ones_the_video_has(env, monkeypatch):
     assert body["localizations"] == {"de": VIDEO["localizations"]["de"], "id": {"title": "Artikel", "description": "Cara"}}
     assert body["snippet"]["title"] == "El artículo que te falta" and body["snippet"]["defaultLanguage"] == "es"
     assert out["localized"] == ["id"] and "own language (es)" in out["warnings"][0]
+
+
+RENT = "https://biglobster.top/es/agentes-en-alquiler.html?utm_source=youtube&utm_medium=short&utm_campaign=whatsapp"
+
+
+def _cut_once(http, published):
+    """YouTube returns ``published`` as the description on the first read, then what was sent."""
+    reads = iter([published])
+
+    def get(url, **kw):
+        http.calls.append(("get", url, kw))
+        sent = _puts(http)[-1][1]["snippet"]
+        return Resp(200, {"items": [{"snippet": {**sent, "description": next(reads, sent["description"])}}]})
+    http.get = get
+
+
+def test_update_resends_a_description_whose_link_youtube_cut(env, monkeypatch):
+    http = Http(VIDEO)
+    _cut_once(http, "Tu agente de WhatsApp: https://biglobster.top/")
+    monkeypatch.setattr(youtube, "_client", lambda: http)
+    social = {"youtube": {"title": "Agente de WhatsApp", "description": f"Tu agente de WhatsApp: {RENT}", "tags": []}}
+    out = youtube.update(ES, social, "es")
+    assert len(_puts(http)) == 2 and _puts(http)[1][1]["snippet"]["description"].endswith(RENT)
+    assert out["warnings"] == []
+
+
+def test_update_warns_when_the_link_stays_cut_and_counts_hashtags(env, monkeypatch):
+    http = Http(VIDEO)
+    monkeypatch.setattr(youtube, "_client", lambda: http)
+    http.get = lambda url, **kw: Resp(200, {"items": [{"snippet": {"description": "https://biglobster.top/"}}]})
+    social = {"youtube": {"title": "Agente", "description": f"{RENT} #IA #pymes #WhatsApp #ventas", "tags": []}}
+    out = youtube.update(ES, social, "es")
+    assert len(_puts(http)) == 2            # one retry, not a loop
+    assert out["warnings"] == [f"description link lost on YouTube: {RENT}", "4 hashtags in the description (max 3)"]
 
 
 def test_localize_sends_the_snippet_back_complete_and_writable_only(env, monkeypatch):
