@@ -203,6 +203,36 @@ override change does not re-resolve a locked entry that still satisfies its rang
 `undici` entry moved. In the sidecar, add `--ignore-scripts`: its `postinstall` runs even
 under `--package-lock-only` and fails without `node_modules`.
 
+## 2026-10-29 — stale `min-release-age-exclude` sweep
+
+The 10-28 triage found the root `.npmrc` still holding excludes whose "remove when X is
+> 2 wks old" conditions had passed, the same drift as 09-27 and 09-30. Each condition
+was checked against `npm view <pkg> time --json` on 2026-10-29, not against the date in
+the comment.
+
+Removed from the root `.npmrc` (14 lines): `react-router` 8.3.0 (07-22), `eslint` +
+`@eslint/*` 10.8.0 (07-24), `tar` 7.5.21 (07-21), `concurrently` 10.0.4 (07-24),
+`minimatch` 10.2.6 (07-27), `mermaid` 11.16.1 (08-04), `dompurify` 3.4.17 (10-12),
+`source-map-js` 1.2.2 (09-30), `http-cache-semantics` 4.3.0 (10-04), `ip-address` 10.7.4
+(10-11), `sanitize-html` 2.18.1 (10-14), `vitest` + `@vitest/*` 4.1.12 (10-15 14:51 UTC,
+cleared the gate two hours before the check).
+
+Removed from `website/.npmrc` (all of them, so it now holds only `engine-strict` and
+`min-release-age`): `mermaid`, `dompurify`, `minimatch`, `postcss` 8.5.23 (07-24),
+`brace-expansion` 5.0.8 (07-23), `undici` 6.28.0 (07-24), `@nous-research/image-size`
+2.0.3 (08-08), `http-cache-semantics`. The `brace-expansion` line was meant to go on
+09-30 (above) but only left the root file.
+
+Kept: `electron` 44.9.3 (rel 2026-10-21, gate clears 2026-11-04). Also kept, because
+they carry no dated condition: the `@assistant-ui/*` / `@radix-ui/*` group ("remove when
+we stabilize") and the `lightningcss` / `postcss` "ink needs" pair. Those are an owner
+decision, not a sweep.
+
+Checked with `npx -y npm@12 install --package-lock-only` in the root and in `website/`:
+neither lockfile changed, so no pin moved. Removing an exclude only changes what a
+*future* resolve may pick up. When the electron line goes, delete it in the same PR as
+whatever relock needs it, and re-run this check.
+
 ## 2026-10-30 — vendored toolchain `undici` (no lockfile, no bump possible yet)
 
 **osv-scanner cannot see the Node and npm toolchains the image vendors.** Their
