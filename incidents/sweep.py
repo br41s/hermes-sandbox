@@ -1443,10 +1443,74 @@ def unclean_exit_incidents(path: Optional[Path] = None, *,
 # the same volume as a core runtime CVE is how a queue gets muted, so the brief
 # says which tier an alert is in rather than pretending they are equivalent.
 DEP_LOCKFILE_TIERS = {
-    "uv.lock": "runtime (production image)",
+    # uv.lock is split per package by `_dep_uv_tier`; this is only the fallback
+    # when the lock cannot be read, and it must not claim image membership.
+    "uv.lock": "runtime (uv.lock; image membership not checked)",
     "package-lock.json": "runtime (web/ui-tui in image; apps/desktop is NOT)",
+    "plugins/platforms/photon/sidecar/package-lock.json": (
+        "runtime (photon sidecar, npm ci'd into the image; "
+        "open-graph-scraper fetches URLs chosen by message senders)"),
     "website/package-lock.json": "build-only (docs site, never in the image)",
 }
+DEP_UV_IN_IMAGE = "runtime (production image)"
+DEP_UV_ON_DEMAND = "runtime (on-demand install, not in image)"
+# The extras the Dockerfile bakes into /opt/hermes/.venv (`pm.build_env --extra
+# ...`). Everything else in uv.lock arrives through a lazy-installed extra,
+# into /opt/data/installs/<key>/environments/<id>/venv, on first use (fal-client
+# and its msgpack are the example). tests/test_dependency_alert_incident.py
+# fails if this drifts from the Dockerfile.
+DEP_IMAGE_EXTRAS = ("all", "messaging", "otlp", "anthropic", "bedrock",
+                    "azure-identity", "matrix", "google-chat", "observability")
+
+
+def _norm_pkg(name: str) -> str:
+    return name.lower().replace("_", "-").replace(".", "-")
+
+
+def _uv_image_packages(lock_path: Path) -> Optional[set]:
+    """Normalised names reachable from ``hermes-agent`` + the baked extras.
+
+    Walks uv.lock's own dependency graph, so it needs no pip and no network.
+    Markers are ignored, which over-approximates (a win32-only dependency
+    reads as in-image): the safe direction for a security brief. Returns None
+    when the lock is missing or unparsable, so the caller says "not checked"
+    rather than guessing a tier.
+    """
+    import tomllib
+    try:
+        with open(lock_path, "rb") as fh:
+            packages = {_norm_pkg(p["name"]): p for p in tomllib.load(fh)["package"]}
+    except Exception:
+        return None
+    root = packages.get("hermes-agent")
+    if root is None:
+        return None
+    seen: set = set()
+    stack = [("hermes-agent", None)] + [("hermes-agent", e) for e in DEP_IMAGE_EXTRAS]
+    visited: set = set()
+    while stack:
+        name, extra = stack.pop()
+        if (name, extra) in visited or name not in packages:
+            continue
+        visited.add((name, extra))
+        seen.add(name)
+        pkg = packages[name]
+        deps = (pkg.get("optional-dependencies", {}).get(extra, [])
+                if extra else pkg.get("dependencies", []))
+        for dep in deps:
+            dname = _norm_pkg(dep["name"])
+            stack.append((dname, None))
+            stack.extend((dname, _norm_pkg(e)) for e in dep.get("extra", []))
+    return seen
+
+
+_UV_LOCK_FILE = Path(__file__).resolve().parent.parent / "uv.lock"
+
+
+def _dep_uv_tier(pkg: str, image_packages: Optional[set]) -> str:
+    if image_packages is None:
+        return DEP_LOCKFILE_TIERS["uv.lock"]
+    return DEP_UV_IN_IMAGE if _norm_pkg(pkg) in image_packages else DEP_UV_ON_DEMAND
 DEP_SEVERITIES = ("critical", "high")
 DEP_ROLLUP_THRESHOLD = 6  # more new packages than this in one sweep -> one rollup
 
@@ -1883,11 +1947,14 @@ def dependency_alert_incidents(*, alerts: Optional[list[dict]] = None,
             for pkg, version in packages:
                 grouped.setdefault((lockfile, pkg, version), {})[advisory] = sev
 
+    image_packages = (_uv_image_packages(_UV_LOCK_FILE)
+                      if any(k[0] == "uv.lock" for k in grouped) else None)
     out: list[Incident] = []
     for (lockfile, pkg, version), advisories in sorted(grouped.items()):
         ids = sorted(advisories)
         worst = "critical" if "critical" in advisories.values() else "high"
-        tier = DEP_LOCKFILE_TIERS.get(lockfile, "unknown reachability")
+        tier = (_dep_uv_tier(pkg, image_packages) if lockfile == "uv.lock"
+                else DEP_LOCKFILE_TIERS.get(lockfile, "unknown reachability"))
         shown = ", ".join(ids[:6]) + (f" (+{len(ids) - 6} more)" if len(ids) > 6 else "")
         out.append(Incident(
             # The advisory set is part of the id on purpose: an unchanged

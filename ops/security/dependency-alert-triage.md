@@ -26,7 +26,9 @@ the Security tab at all:
 
 | Lockfile | Ships to production? | Evidence |
 |---|---|---|
-| `uv.lock` | **Yes** — the agent runtime | `Dockerfile`, uv sync of pyproject extras |
+| `uv.lock`, package reachable from the baked extras | **Yes** — `/opt/hermes/.venv` | `Dockerfile` `pm.build_env --extra …`; the watcher walks `uv.lock`'s graph from those extras (`DEP_IMAGE_EXTRAS`) |
+| `uv.lock`, package behind any other extra | **On demand, not in the image** — installed on first use into `/opt/data/installs/<key>/environments/<id>/venv` | e.g. `fal-client` → `msgpack` (the `fal` extra is not in `all`); the brief says "runtime (on-demand install, not in image)". Still reachable once the feature is used, so still patched |
+| `plugins/platforms/photon/sidecar/package-lock.json` | **Yes** — the photon Node sidecar | `Dockerfile` `npm ci`s it into the image. `open-graph-scraper` fetches URLs chosen by message senders, so it is the lockfile with a real attack path |
 | `package-lock.json` | **Partly** — root/web/ui-tui only | `Dockerfile` installs those three; `apps/*` (the Electron desktop app) is never `npm install`ed in the image |
 | `website/package-lock.json` | **No** | never copied into the image; Docusaurus builds a **static** site, so dev-server and build-time packages have no runtime at all |
 
@@ -190,7 +192,7 @@ until someone deleted the copy.
 | `msgpack` | **`uv.lock`, ships**, through `fal-client` only (`msgpack_decode_message`, fal's realtime/streaming replies) | 1.2.1 → 1.2.3 | **Patchable, patched.** CVE-2026-114613 / GHSA-j586-36cw-2gc2: the C extension leaks the decoded map value each time `strict_map_key` rejects a key, so repeated malformed input grows memory without bound. The peer is fal's own API, so this is a DoS only from a hostile or compromised upstream. The floor in `[tool.uv] constraint-dependencies` went to `>=1.2.3`. 1.2.4 (2026-10-26) sits inside the 3-day `exclude-newer` window, so uv picked 1.2.3 (2026-09-29). Relock with a current uv: 0.11.x writes `revision = 3` and adds a `python_full_version` marker to every dependency. |
 | `undici` | root lock: `ui-tui` (direct dependency, **ships**), and `node-gyp` (build-time only) | 6.29.0 → 6.29.1 | **Patched** on 2026-10-29, after the gate cleared. Fixed in 6.29.1 (2026-10-15 14:19 UTC), which cleared the release-age gate at **2026-10-29 14:19 UTC**. CVE-2026-109383 (an `Agent` drops a custom `checkServerIdentity`), CVE-2026-109869 (`fetch` crashes on more than five content codings) and CVE-2026-87018 (TLS 1.2 renegotiation crashes the process). The TUI only uses `WebSocket`, against our own gateway, and passes no TLS callback, so this is low risk. Same rule as `@grpc/grpc-js` on 09-30: patch when the gate clears; do not suppress and do not waive. |
 | `undici` | root lock: `jsdom`, `app-builder-lib`, `@electron/get` (dev; jsdom is present in the image but not executed) | 7.30.0 → 7.30.1 | **Patched**, same gate (7.30.1, 2026-10-15 14:18 UTC). Same three advisories, plus CVE-2026-109829 (redirect + cache interceptor key confusion; we compose neither). |
-| `undici` | **photon sidecar, baked into the image** | 7.30.0 → 7.30.1 | **Patched**, same gate. **The one with a real path, if photon runs.** `spectrum-ts` → `@spectrum-ts/core` → `open-graph-scraper` fetches link previews, so the URL is chosen by whoever sent the message. A hostile server there reaches CVE-2026-109869 and CVE-2026-87018 and crashes the sidecar. Whether photon is enabled on the pod was not checked. The watcher reports this lockfile as "unknown reachability" because its tier table has no entry for it. |
+| `undici` | **photon sidecar, baked into the image** | 7.30.0 → 7.30.1 | **Patched**, same gate. **The one with a real path, if photon runs.** `spectrum-ts` → `@spectrum-ts/core` → `open-graph-scraper` fetches link previews, so the URL is chosen by whoever sent the message. A hostile server there reaches CVE-2026-109869 and CVE-2026-87018 and crashes the sidecar. Whether photon is enabled on the pod was not checked. The watcher used to report this lockfile as "unknown reachability" because its tier table had no entry for it; it now labels it runtime. |
 
 The undici bump is three exact pins moving together: `overrides` `undici@^6`/`undici@^7`
 in the root `package.json`, `ui-tui`'s own pin, and both `undici` entries in the sidecar's
@@ -224,6 +226,12 @@ Four behaviours carry the design, each guarded by a test in
 
 Each brief carries the reachability tier from the table above, so a docs-site
 advisory does not read like a runtime one.
+For `uv.lock` the tier is per package: the watcher reads the `uv.lock` in the
+image and walks it from `hermes-agent` plus the extras in `DEP_IMAGE_EXTRAS`
+(`incidents/sweep.py`, kept equal to the Dockerfile by a test). If the lock
+cannot be read it says "image membership not checked" instead of guessing.
+Markers are ignored, so a platform-only dependency reads as in-image — the safe
+direction.
 
 Accepted alerts are suppressed at source in `osv-scanner.toml`, so they never
 become alerts at all. That file is the *decision log*; the open queue is the

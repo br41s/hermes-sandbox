@@ -178,6 +178,52 @@ def test_build_only_lockfile_is_labelled_as_such(tmp_path):
     assert "build-only" in inc[0].detail
 
 
+def test_photon_sidecar_lock_is_runtime_not_unknown():
+    """The sidecar is npm ci'd into the image and fetches sender-chosen URLs.
+
+    It was "unknown reachability" on 2026-10-28, the one lockfile with a real
+    attack path.
+    """
+    inc = dependency_alert_incidents(alerts=[
+        _alert(1, "CVE-1", "high", "undici", "7.30.0",
+               "plugins/platforms/photon/sidecar/package-lock.json")])
+    assert "unknown" not in inc[0].detail
+    assert "reachability: runtime (photon sidecar" in inc[0].detail
+
+
+def test_uv_lazy_extra_package_is_not_claimed_to_be_in_the_image():
+    """fal-client/msgpack sit behind the `fal` extra, which the image does not
+    bake: they install on first use. aiohttp is in the image."""
+    inc = dependency_alert_incidents(alerts=[
+        _alert(1, "CVE-1", "high", "msgpack", "1.2.1"),
+        _alert(2, "CVE-2", "high", "aiohttp", "3.14.1")])
+    detail = {i.title.split("—")[1].split()[0]: i.detail for i in inc}
+    assert "reachability: runtime (on-demand install, not in image)" in detail["msgpack"]
+    assert "reachability: runtime (production image)" in detail["aiohttp"]
+
+
+def test_unreadable_uv_lock_does_not_claim_image_membership(monkeypatch, tmp_path):
+    from incidents import sweep as sweep_mod
+
+    monkeypatch.setattr(sweep_mod, "_UV_LOCK_FILE", tmp_path / "missing.lock")
+    inc = dependency_alert_incidents(alerts=[_alert(1, "CVE-1", "high", "msgpack", "1.2.1")])
+    assert "production image" not in inc[0].detail
+    assert "not checked" in inc[0].detail
+
+
+def test_image_extras_match_the_dockerfile():
+    """DEP_IMAGE_EXTRAS is a copy of the Dockerfile's `pm.build_env --extra`
+    list; if they drift the tier labels silently go wrong."""
+    import re
+    from pathlib import Path
+
+    from incidents.sweep import DEP_IMAGE_EXTRAS
+
+    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    block = dockerfile.split("pm.build_env --source", 1)[1].split("\n\n", 1)[0]
+    assert set(re.findall(r"--extra (\S+)", block)) == set(DEP_IMAGE_EXTRAS)
+
+
 # --- fail-closed: a refused API must not look like an empty queue -------------
 # Production ran this signal blind: the fine-grained PAT had no
 # `Code scanning alerts: Read`, so every fetch 403'd, the detector swallowed it
