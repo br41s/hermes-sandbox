@@ -183,6 +183,19 @@ One thing to know before you rely on this lock in a container: `resolve_whatsapp
 then reuses that copy. A pod that had already set up WhatsApp would keep the old lock
 until someone deleted the copy.
 
+## 2026-10-28 — incident-watcher batch (`undici` ×4, `msgpack`)
+
+| Package | Tier | Was → now | Decision |
+|---|---|---|---|
+| `msgpack` | **`uv.lock`, ships**, through `fal-client` only (`msgpack_decode_message`, fal's realtime/streaming replies) | 1.2.1 → 1.2.3 | **Patchable, patched.** CVE-2026-114613 / GHSA-j586-36cw-2gc2: the C extension leaks the decoded map value each time `strict_map_key` rejects a key, so repeated malformed input grows memory without bound. The peer is fal's own API, so this is a DoS only from a hostile or compromised upstream. The floor in `[tool.uv] constraint-dependencies` went to `>=1.2.3`. 1.2.4 (2026-10-26) sits inside the 3-day `exclude-newer` window, so uv picked 1.2.3 (2026-09-29). Relock with a current uv: 0.11.x writes `revision = 3` and adds a `python_full_version` marker to every dependency. |
+| `undici` 6.29.0 | root lock: `ui-tui` (direct dependency, **ships**), and `node-gyp` (build-time only) | **left open** until 6.29.1 is 14 days old | Fixed in 6.29.1 (2026-10-15 14:19 UTC). It clears the release-age gate at **2026-10-29 14:19 UTC**. CVE-2026-109383 (an `Agent` drops a custom `checkServerIdentity`), CVE-2026-109869 (`fetch` crashes on more than five content codings) and CVE-2026-87018 (TLS 1.2 renegotiation crashes the process). The TUI only uses `WebSocket`, against our own gateway, and passes no TLS callback, so this is low risk. Same rule as `@grpc/grpc-js` on 09-30: patch when the gate clears; do not suppress and do not waive. |
+| `undici` 7.30.0 | root lock: `jsdom`, `app-builder-lib`, `@electron/get` (dev; jsdom is present in the image but not executed) | **left open**, same gate (7.30.1, 2026-10-15 14:18 UTC) | Same three advisories, plus CVE-2026-109829 (redirect + cache interceptor key confusion; we compose neither). |
+| `undici` 7.30.0 | **photon sidecar, baked into the image** | **left open**, same gate | **The one with a real path, if photon runs.** `spectrum-ts` → `@spectrum-ts/core` → `open-graph-scraper` fetches link previews, so the URL is chosen by whoever sent the message. A hostile server there reaches CVE-2026-109869 and CVE-2026-87018 and crashes the sidecar. Whether photon is enabled on the pod was not checked. The watcher reports this lockfile as "unknown reachability" because its tier table has no entry for it. |
+
+The undici bump is three exact pins moving together: `overrides` `undici@^6`/`undici@^7`
+in the root `package.json`, `ui-tui`'s own pin, and both `undici` entries in the sidecar's
+`package.json`. Relock both lockfiles with `npx -y npm@12`.
+
 ## Part 2 — the standing owner
 
 Nothing told anyone when a new alert appeared. That is why the queue reached
