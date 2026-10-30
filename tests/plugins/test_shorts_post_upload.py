@@ -541,10 +541,10 @@ def test_update_warns_when_the_link_stays_cut_and_counts_hashtags(env, monkeypat
     http = Http(VIDEO)
     monkeypatch.setattr(youtube, "_client", lambda: http)
     http.get = lambda url, **kw: Resp(200, {"items": [{"snippet": {"description": "https://biglobster.top/"}}]})
-    social = {"youtube": {"title": "Agente", "description": f"{RENT} #IA #pymes #WhatsApp #ventas", "tags": []}}
+    social = {"youtube": {"title": "Agente", "description": f"{RENT} #IA #pymes #WhatsApp #ventas #agentes #automatizacion #atencion #negocio #BigLobster", "tags": []}}
     out = youtube.update(ES, social, "es")
     assert len(_puts(http)) == 2            # one retry, not a loop
-    assert out["warnings"] == [f"description link lost on YouTube: {RENT}", "4 hashtags in the description (max 3)"]
+    assert out["warnings"] == [f"description link lost on YouTube: {RENT}", "9 hashtags in the description (max 8)"]
 
 
 def test_localize_sends_the_snippet_back_complete_and_writable_only(env, monkeypatch):
