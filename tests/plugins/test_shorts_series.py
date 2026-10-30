@@ -608,6 +608,21 @@ def test_the_short_key_has_the_language():
     assert series._short_key({"short": "f", "idioma": "es"}) != series._short_key({"short": "f", "idioma": "en"})
 
 
+def test_a_status_line_that_starts_with_the_marker_is_not_a_request(env, buzz, short_uploads):
+    # VideoDesk, 30-10: "#publicar-short EN LANZADO a @Hermes ..." was answered "the JSON block does not parse"
+    status = "#publicar-short EN LANZADO a @Hermes — evento vigente {a1948e46} en Media Forgery."
+    buzz["events"] = [_event(status, eid="a" * 64, at=NOW)]
+    out = series.run()
+    assert not out.get("invalid") and not short_uploads and _sends(buzz) == []
+
+
+def test_the_json_may_follow_the_marker_on_the_same_line(env, buzz, short_uploads):
+    same_line = _short_request().replace(f"{series.MARK_SHORT}\n", f"{series.MARK_SHORT} ", 1)
+    buzz["events"] = [_event(same_line, eid="a" * 64, at=1)]
+    series.run()
+    assert [u["lang"] for u in short_uploads] == ["es"]
+
+
 def test_a_request_with_the_marker_off_the_first_line_is_answered(env, buzz, uploads):
     buzz["events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
     out = series.run()
