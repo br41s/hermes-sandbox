@@ -142,6 +142,9 @@ logger = logging.getLogger(__name__)
 MARK = "#publicar-episodio"
 MARK_UPDATE = "#actualizar-video"
 MARK_SHORT = "#publicar-short"
+# A mark counts alone on its line or followed straight by the JSON: "#publicar-short EN LANZADO a
+# @Hermes" is a bot's status line, not a request (30-10: it was answered "the JSON block does not parse").
+MARK_END = r"[ \t]*(?:\r?\n|\{|`|$)"
 LANGS = ("es", "en")
 MAX_ATTEMPTS = 3            # per episode; after that the sender is told and it is left alone
 MIN_SECONDS, MAX_SECONDS = 30.0, 900.0
@@ -408,6 +411,10 @@ def _buzz(args: list[str], content: Optional[str] = None) -> str:
     return done.stdout or ""
 
 
+def _opens_with(content: str, mark: str) -> bool:
+    return re.match(re.escape(mark) + MARK_END, content.strip()) is not None
+
+
 def requests(limit: int = 200, mark: str = MARK) -> list[dict[str, Any]]:
     """Requests with ``mark`` in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
     parser = {MARK_UPDATE: parse_update, MARK_SHORT: parse_short}.get(mark, parse)
@@ -420,7 +427,7 @@ def requests(limit: int = 200, mark: str = MARK) -> list[dict[str, Any]]:
     senders = set(allowed())
     for ev in sorted(events if isinstance(events, list) else [], key=lambda e: e.get("created_at") or 0):
         content = str(ev.get("content") or "")
-        if str(ev.get("pubkey") or "").lower() not in senders or not content.strip().startswith(mark):
+        if str(ev.get("pubkey") or "").lower() not in senders or not _opens_with(content, mark):
             continue
         item = {"event": ev.get("id"), "from": str(ev.get("pubkey")).lower(), "created_at": ev.get("created_at")}
         try:
@@ -772,7 +779,7 @@ def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
     run.finish(report)
 
 
-LOOKALIKE = re.compile(r"(?m)^\s*(?:#publicar-episodio|#actualizar-video|#publicar-short)\b")
+LOOKALIKE = re.compile(r"(?m)^\s*(?:#publicar-episodio|#actualizar-video|#publicar-short)" + MARK_END)
 LOOKALIKE_MAX_AGE = 2 * 3600   # seconds: only fresh messages are answered, never the channel's history
 
 
@@ -800,7 +807,7 @@ def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
                 continue                                    # relay data: a bad timestamp must not stop the run
             if age > LOOKALIKE_MAX_AGE:
                 continue                                    # old: the first deploy must not answer the backlog
-            first_line = content.strip().startswith(("#publicar-episodio", "#actualizar-video", "#publicar-short"))
+            first_line = any(_opens_with(content, m) for m in (MARK, MARK_UPDATE, MARK_SHORT))
             if chan == mine and sender in senders and first_line:
                 continue                                    # a real request: requests() answers it
             if chan != mine:
