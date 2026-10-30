@@ -80,32 +80,16 @@ def _error(resp, what: str) -> YouTubeError:
     return YouTubeError(f"{what}: HTTP {resp.status_code} {reason} {resp.text[:300]}".strip())
 
 
-def article_link(article: Optional[dict[str, Any]]) -> str:
-    """The article URL tagged for Umami, so visits from YouTube stop counting as "direct".
-
-    Campaign ``short-<slug>`` tells which Short sent the visit (retro 2026-10-12 experiment).
-    """
-    url = str((article or {}).get("url") or "").strip()
-    slug = str((article or {}).get("slug") or "").strip()
-    if not url.startswith("https://"):
-        return ""
-    sep = "&" if "?" in url else "?"
-    campaign = f"short-{slug}" if slug else "short"
-    return f"{url}{sep}utm_source=youtube&utm_medium=short&utm_campaign={campaign}"
-
-
 def build_metadata(social: dict[str, Any], lang: str, *, synthetic: bool,
-                   article: Optional[dict[str, Any]] = None, short: bool = True,
                    privacy: Optional[str] = None) -> dict[str, Any]:
-    """``short=False``: a regular video (no #Shorts in the title). ``privacy`` overrides SHORTS_YOUTUBE_PRIVACY."""
+    """Title, description and tags as the writer sent them. ``privacy`` overrides SHORTS_YOUTUBE_PRIVACY.
+
+    Nothing is added (Brais, 30-10): YouTube tells a Short by its vertical format and length, so a
+    "#Shorts" tag in the title only took room, and links in a Short's description are not clickable.
+    """
     yt = social.get("youtube") or {}
     title = (yt.get("title") or "").strip()
-    if short and "#shorts" not in title.lower() and len(title) <= 92:
-        title = f"{title} #Shorts"
     description = (yt.get("description") or "").strip()
-    link = article_link(article)
-    if link and "utm_source=" not in description:
-        description = f"{description}\n\n{link}".strip()
     return {
         "snippet": {
             "title": title[:100],
@@ -179,7 +163,7 @@ def _current(client, auth: dict[str, str], video_id: str, part: str) -> dict[str
 
 _URL = re.compile(r"https?://[^\s<>()\"']+")
 _HASHTAG = re.compile(r"(?<![\w&])#\w+")
-MAX_HASHTAGS = 3            # Brais, 24-10: three hashtags in a description
+MAX_HASHTAGS = 8            # Brais, 30-10: 3 shown above the title + up to 5 more on the topic
 
 
 def _lost_links(sent: str, got: str) -> list[str]:
@@ -204,9 +188,8 @@ def _check_published(client, auth: dict[str, str], video_id: str, snippet: dict[
 
 
 def update(video_id: str, social: dict[str, Any], lang: str, thumb: Optional[Path] = None,
-           short: bool = False, localizations: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+           localizations: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """New title, description and tags for an uploaded video, and its thumbnail if given.
-    ``short=True`` keeps the #Shorts tag in the title, as ``upload`` puts it.
 
     ``videos.update`` replaces the whole snippet, so it is rebuilt complete (category, languages).
     ``localizations`` (``{"id": {"title", "description"}}``) go in the same call, added to the ones
@@ -214,7 +197,7 @@ def update(video_id: str, social: dict[str, Any], lang: str, thumb: Optional[Pat
     """
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
-    snippet = build_metadata(social, lang, synthetic=False, short=short)["snippet"]
+    snippet = build_metadata(social, lang, synthetic=False)["snippet"]
     warnings: list[str] = []
     body: dict[str, Any] = {"id": video_id, "snippet": snippet}
     part = "snippet"
@@ -289,12 +272,11 @@ def api() -> Iterator[Api]:
 
 
 def upload(video: Path, thumb: Optional[Path], srt: Optional[Path], social: dict[str, Any],
-           lang: str, *, synthetic: bool = False,
-           article: Optional[dict[str, Any]] = None, short: bool = True,
+           lang: str, *, synthetic: bool = False, short: bool = True,
            privacy: Optional[str] = None) -> dict[str, Any]:
     if not configured():
         raise YouTubeError("YouTube is not configured (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN)")
-    meta = build_metadata(social, lang, synthetic=synthetic, article=article, short=short, privacy=privacy)
+    meta = build_metadata(social, lang, synthetic=synthetic, privacy=privacy)
     size = video.stat().st_size
     warnings: list[str] = []
     with _client() as client:

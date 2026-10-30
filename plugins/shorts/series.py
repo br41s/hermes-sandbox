@@ -529,7 +529,7 @@ def _update_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, A
         _check_thumb(thumb)
     social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
     extra = {"localizations": translations} if translations else {}      # update() is called as before without them
-    result = youtube.update(part["id"], social, lang, thumb, short=bool(item.get("short")), **extra)
+    result = youtube.update(part["id"], social, lang, thumb, **extra)
     post_upload.spend(post_upload.WRITE + post_upload.READ + (post_upload.WRITE if thumb else 0)   # READ: description read-back
                       + (post_upload.READ if translations else 0))
     return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
@@ -566,8 +566,7 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
             _check_thumb(cover)
         srt = _download(item["srt"], work / "short.srt") if item.get("srt") else None
         social = {"youtube": {"title": item["titulo"], "description": item["descripcion"], "tags": item["etiquetas"]}}
-        article = {"url": item["articulo"], "slug": item["short"]}
-        result = youtube.upload(video, cover, srt, social, item["idioma"], synthetic=True, short=True, article=article,
+        result = youtube.upload(video, cover, srt, social, item["idioma"], synthetic=True, short=True,
                                 privacy=env("SERIES_YOUTUBE_PRIVACY", "public") or "public")
         entry["youtube"] = {**result, "seconds": round(seconds, 1),
                             "at": datetime.now(UTC).isoformat(timespec="seconds")}

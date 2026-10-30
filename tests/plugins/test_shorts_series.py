@@ -112,9 +112,8 @@ def _sends(buzz):
 
 def test_long_video_metadata_has_no_shorts_tag_and_own_privacy():
     social = {"youtube": {"title": "Content Gap Hunter: the article you're missing", "description": "d", "tags": ["a"]}}
-    meta = youtube.build_metadata(social, "en", synthetic=False, short=False, privacy="unlisted")
+    meta = youtube.build_metadata(social, "en", synthetic=False, privacy="unlisted")
     assert "#Shorts" not in meta["snippet"]["title"] and meta["status"]["privacyStatus"] == "unlisted"
-    assert "#Shorts" in youtube.build_metadata(social, "en", synthetic=False)["snippet"]["title"]
 
 
 def test_parse_accepts_a_good_request_and_lists_every_problem(env):
@@ -202,8 +201,8 @@ def test_not_configured_is_a_quiet_skip(tmp_path, monkeypatch):
 def updates(monkeypatch):
     done = []
 
-    def fake_update(video_id, social, lang, thumb=None, short=False):
-        done.append({"id": video_id, "lang": lang, "social": social, "short": short,
+    def fake_update(video_id, social, lang, thumb=None):
+        done.append({"id": video_id, "lang": lang, "social": social,
                      "thumb": thumb.read_bytes() if thumb else None})
         return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "thumbnail": bool(thumb),
                 "warnings": []}
@@ -304,15 +303,16 @@ def test_seodesk_optimises_a_blog_short_only_with_its_own_id(env, buzz, uploads,
                       _event(_short_update(vid="otherVid001"), pubkey=SEODESK, eid="b" * 64, at=2)]
     out = series.run()
     assert out["updated"] == [{"short": "es-limite-decision-ia-pymes-2026-20261017040713", "langs": ["es"]}]
-    assert [(u["id"], u["short"]) for u in updates] == [("shortVid001", True)]
+    assert [u["id"] for u in updates] == ["shortVid001"]
     assert "is not a Short uploaded by Hermes" in out["invalid"][0]["error"]
     replies = {a[a.index("--reply-to") + 1]: kw["input"] for a, kw in _sends(buzz)}
     assert replies["a" * 64].startswith("Short es-limite") and "No puedo actualizar" in replies["b" * 64]
 
 
-def test_youtube_update_keeps_the_shorts_tag_for_a_short(monkeypatch):
-    social = {"youtube": {"title": "¿Dónde pones el límite a la IA?", "description": "d", "tags": []}}
-    assert "#Shorts" in youtube.build_metadata(social, "es", synthetic=False, short=True)["snippet"]["title"]
+def test_a_short_title_and_description_go_out_as_written(monkeypatch):
+    social = {"youtube": {"title": "¿Dónde pones el límite a la IA?", "description": "d #IA", "tags": []}}
+    snippet = youtube.build_metadata(social, "es", synthetic=False)["snippet"]
+    assert snippet["title"] == "¿Dónde pones el límite a la IA?" and snippet["description"] == "d #IA"
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +387,7 @@ def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz
     (up,) = short_uploads
     assert up["short"] is True and up["synthetic"] is True and up["privacy"] == "public" and up["lang"] == "es"
     assert up["thumb"].startswith(b"\xff\xd8") and up["srt"] == b"video"
-    assert up["article"]["url"].startswith("https://biglobster.top/") and up["social"]["youtube"]["tags"] == ["ia", "pymes"]
+    assert "article" not in up and up["social"]["youtube"]["tags"] == ["ia", "pymes"]
 
     replies = _replies(buzz)
     assert set(replies) == {"e" * 64, "f" * 64} and "no está autorizado" in replies["f" * 64]
@@ -549,7 +549,7 @@ def test_seodesk_optimises_a_flow_short_with_its_folder_name(env, buzz, short_up
                       _event(f"{mark}\n```json\n{json.dumps(other)}\n```", pubkey=SEODESK, eid="c" * 64, at=3)]
     out = series.run()
     assert out["updated"] == [{"short": FLOW, "langs": ["es"]}]
-    assert [(u["id"], u["short"]) for u in updates] == [("flowVid0001", True)]
+    assert [u["id"] for u in updates] == ["flowVid0001"]
     assert "is not a Short uploaded by Hermes" in out["invalid"][0]["error"]
     replies = _replies(buzz)
     assert replies["b" * 64].startswith(f"Short {FLOW} actualizado") and "No puedo actualizar" in replies["c" * 64]
