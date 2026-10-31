@@ -139,6 +139,63 @@ def test_spanish_words_with_accents_and_apostrophes_count_once():
     assert mod._markdown_word_count("¿Qué está pasando? El año d’ahora, bien-hecho.") == 7
 
 
+def test_a_percentage_with_no_outside_link_is_refused_before_anything_is_sent(monkeypatch):
+    """The post is live on return and nobody reads it first, so a figure with
+    nothing to cite is caught here, not by a client who finds it later."""
+    sent = wire(monkeypatch)
+    body = LONG_BODY + " El 68% de las pymes lo hace y otro 3,5 % no."
+
+    result = mod.bl_site_publish(action="create_blog_post", title="Una entrada", content=body)
+
+    assert "68%" in result and "3,5 %" in result
+    assert "Nothing was published" in result
+    assert sent == {}, "a refused post must never reach the site"
+
+
+@pytest.mark.parametrize(
+    "citation",
+    [
+        "[Eurostat](https://ec.europa.eu/eurostat/news/x)",
+        '<a href="https://www.inc.es/informe">INE</a>',
+    ],
+)
+def test_a_percentage_linked_to_an_outside_source_is_published(monkeypatch, citation):
+    sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
+    body = LONG_BODY + f" Según {citation}, el 68% de las pymes lo hace."
+
+    mod.bl_site_publish(action="create_blog_post", title="Una entrada", content=body)
+
+    assert sent["body"]["content"] == body
+
+
+@pytest.mark.parametrize(
+    "own_link",
+    [
+        "[la tienda](https://cliente.example/productos/)",
+        "[la tienda](https://www.cliente.example/productos/)",
+    ],
+)
+def test_a_link_to_the_clients_own_site_is_not_a_source(monkeypatch, own_link):
+    """Internal links are required in every post; they cite nothing."""
+    sent = wire(monkeypatch)
+    body = LONG_BODY + f" El 68% de las pymes, como se ve en {own_link}."
+
+    assert "refused" in mod.bl_site_publish(
+        action="create_blog_post", title="Una entrada", content=body
+    )
+    assert sent == {}
+
+
+def test_prices_and_counts_need_no_outside_link(monkeypatch):
+    """A product guide quotes the client's own catalogue, which is the source."""
+    sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
+    body = LONG_BODY + " Hay 412 productos en Papelería y el cuaderno cuesta 4,50 €."
+
+    mod.bl_site_publish(action="create_blog_post", title="Una entrada", content=body)
+
+    assert sent["body"]["content"] == body
+
+
 def test_a_post_at_the_floor_is_published(monkeypatch):
     sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
 

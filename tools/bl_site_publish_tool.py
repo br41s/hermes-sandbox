@@ -22,6 +22,7 @@ from typing import Optional
 
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 from tools.bl_site_client import _jwt_cache, cached_token, request_json
 
@@ -40,11 +41,40 @@ MIN_BLOG_POST_WORDS = 1200
 _WORD_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*")
 
 
-def _markdown_word_count(md: str) -> int:
-    """Words a reader sees: link and image targets and HTML tags are not words."""
+def _visible_text(md: str) -> str:
+    """What a reader sees: link and image targets and HTML tags are not text."""
     text = re.sub(r"\]\([^)]*\)", "]", md)
-    text = re.sub(r"<[^>]+>", " ", text)
-    return len(_WORD_RE.findall(text))
+    return re.sub(r"<[^>]+>", " ", text)
+
+
+def _markdown_word_count(md: str) -> int:
+    return len(_WORD_RE.findall(_visible_text(md)))
+
+
+# A percentage is the figure a model most readily states from memory, and on a
+# live post nobody checks it afterwards. The prompts ask for a link to the
+# primary source beside every figure; this is the one part of that rule a tool
+# can check without judging the source: a post with percentages and no link
+# off the client's own site cannot be citing anything. It does not look at
+# prices or counts, which a product guide takes from the client's catalogue.
+_PERCENT_RE = re.compile(r"\d[\d.,]*\s?%")
+_LINK_TARGET_RE = re.compile(r"\]\((https?://[^)\s]+)|href=[\"'](https?://[^\"']+)", re.I)
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower().removeprefix("www.")
+
+
+def _unsourced_percentages(md: str, site_url: str) -> list[str]:
+    """Percentages in a post that links to nothing outside the client's site."""
+    figures = [m.strip() for m in _PERCENT_RE.findall(_visible_text(md))]
+    if not figures:
+        return []
+    own = _host(site_url)
+    for target in _LINK_TARGET_RE.findall(md):
+        if _host(target[0] or target[1]) != own:
+            return []
+    return figures
 
 
 def _download_bytes(url: str) -> bytes:
@@ -195,6 +225,15 @@ def bl_site_publish(
                     f"{MIN_BLOG_POST_WORDS}. Nothing was published. Deepen the weakest "
                     "section with real, sourced material (never filler), or do not "
                     "publish this run and report it as your prompt says."
+                )
+            unsourced = _unsourced_percentages(content, site_url)
+            if unsourced:
+                return tool_error(
+                    f"create_blog_post refused: the post states {', '.join(unsourced[:3])} "
+                    "but links to no source outside this site. Nothing was published. "
+                    "Link each percentage inline to the primary document it comes from "
+                    "(the report, the regulator, the manufacturer), or rewrite the "
+                    "sentence without the number. Never keep a figure you cannot link."
                 )
             payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "published"}
             if cta_url:
@@ -452,7 +491,7 @@ BL_SITE_PUBLISH_SCHEMA = {
                 ),
             },
             "title": {"type": "string", "description": "Blog post title. Required for create_blog_post."},
-            "content": {"type": "string", "description": "Blog post body text (Markdown). Required for create_blog_post, which refuses fewer than 1,200 words."},
+            "content": {"type": "string", "description": "Blog post body text (Markdown). Required for create_blog_post, which refuses fewer than 1,200 words, and a post with percentages but no link to a source outside the client's site."},
             "excerpt": {"type": "string", "description": "Optional short excerpt for create_blog_post."},
             "field": {
                 "type": "string",
