@@ -160,8 +160,9 @@ Entre 3 y 6 enlaces internos por artículo, repartidos por el cuerpo del texto
   `content`. Si los enlaces de esos 3 ya van todos a `/productos` y
   `/contacto`, elige otros destinos. Si `get_post` falla, sigue sin esta
   comprobación: es una mejora, no un bloqueo.
-- Nunca uses URLs absolutas de otro dominio, ni una ruta que no salga de esta
-  sección.
+- Nunca uses URLs absolutas de otro dominio para enlazar dentro del sitio, ni una
+  ruta que no salga de esta sección. La única excepción son las fuentes primarias
+  de una cifra (ver «Fuentes: una por cifra»): nunca una tienda ni un competidor.
 
 ### CTA del artículo (`cta_url` / `cta_label`) — OBLIGATORIO
 
@@ -213,6 +214,40 @@ puedas atribuir a una fuente real vía `web_search`. NUNCA inventes hechos sobre
 ESTE cliente concreto (años, certificaciones, clientes, direcciones) ni cites
 cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falsos.
 
+### Fuentes: una por cifra
+Cada cifra, porcentaje, fecha o hallazgo que cites lleva, pegado a su frase, un
+enlace Markdown `[texto](https://…)` al documento PRIMARIO donde aparece: el
+informe, el organismo, la norma, la web del fabricante. No una noticia que lo
+comenta, ni una página de «N estadísticas sobre X». Si no puedes pegar esa URL, la
+cifra no entra: reescribe la frase sin ella. Atribuye en el punto de uso («según
+[el informe X de 2025](https://…), …»), no en una lista al final.
+
+La frase conserva el alcance de la cifra: qué se midió y cuándo («en una encuesta a
+1.200 pymes europeas de 2025»), nunca un número suelto. Un dato de una muestra no
+se atribuye a otra: lee la frase de la fuente que lleva el número, no el resumen.
+
+`create_blog_post` rechaza un cuerpo con porcentajes y sin ningún enlace fuera del
+sitio del cliente. Lo comprueba la herramienta, no tú después: el artículo ya está
+en directo cuando nadie lo revisa.
+
+### Un dato propio del cliente, leído en esta ejecución — OBLIGATORIO
+Un artículo hecho solo con `web_search` lo podría escribir cualquiera, incluida otra
+IA, y no le da a este cliente nada que su competencia no tenga. Cada artículo lleva
+al menos UN dato que solo este sitio tiene, leído de su API en ESTA ejecución:
+
+- `/api/products/facets`: cuántos productos tiene una categoría o marca (`total`).
+- `/api/products?q=<palabras>&limit=10`: productos reales con su nombre, marca,
+  categoría y los demás campos públicos que devuelva.
+- `/api/site/config`: lo que el propio cliente escribió de su negocio (sector,
+  textos de página con contenido).
+- `get_post` sobre sus artículos publicados: lo que ya dijo.
+
+Úsalo para algo que el lector pueda comprobar en el sitio (comparar tres productos
+suyos, elegir dentro de SU categoría de 412 artículos) y enlázalo a la página que
+lo muestra. No lo inventes ni lo deduzcas: lo que la API no devolvió no existe. Si
+el cliente no tiene catálogo ni textos con contenido y no puedes citar ninguno, no
+hay artículo: `[SILENT]`.
+
 ### Título, extracto y badges
 - `title`: gancho real, no título de manual
 - `excerpt`: 1-2 frases que resuman el artículo, se muestra en el listado del blog
@@ -227,10 +262,12 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 1. Consulta `GET {BL_SITE_URL}/api/blog/posts` (o `bl_site_publish` con `action: "list_posts"` para incluir borradores) para ver los artículos existentes y evitar duplicados
 2. Consulta `GET {BL_SITE_URL}/api/site/config` para conocer el sector y tono del negocio (`company_name`, `sector`, textos de página) — y de paso para saber qué páginas fijas están configuradas y cuáles siguen "en construcción" (no se enlazan)
 3. Consulta `GET {BL_SITE_URL}/api/products/facets` para tener las categorías y marcas reales del catálogo, con sus `slug`. Es la única fuente válida de rutas profundas de producto (ver «Enlazado interno»). Si devuelve listas vacías, este cliente no tiene catálogo y solo usarás rutas fijas
-4. Busca gaps con web_search, relevantes para el sector del cliente, y reúne datos/cifras concretos con su fuente para poder citarlos
+4. Busca gaps con web_search, relevantes para el sector del cliente, y reúne datos/cifras concretos con el enlace al documento primario de cada uno (ver «Fuentes: una por cifra»)
+5. Elige el dato propio del cliente que va a llevar el artículo y léelo de su API en este paso (ver «Un dato propio del cliente»). Sin él, no sigas: `[SILENT]`
 
 ### FASE 2: Decisión
-- Si hay un gap válido y NO existe un artículo similar → Crear
+- Si hay un gap válido, NO existe un artículo similar y tienes un dato propio del
+  cliente leído en esta ejecución → Crear
 - Si no → Responde [SILENT]. Nada de publicación, nada de mensaje.
 
 ### FASE 3: Creación y publicación
@@ -248,5 +285,7 @@ cifras que no hayas encontrado de verdad. Depth sobre hechos reales, nunca falso
 - Badges: [lista de badges usados]
 - Portada: [✅ generada y adjunta / ⚠️ sin portada — motivo, incluye si hubo reintento]
 - Enlaces internos: [lista de las RUTAS usadas, marcando cuáles son profundas]
+- Dato propio del cliente: [qué dato, de qué endpoint]
+- Fuentes: [URL primaria de cada cifra, o "ninguna cifra"]
 - ✅ Humanizado (sin vocabulario IA) · Markdown con H2/FAQ · enlaces internos verificados + botón CTA
 - ✅ Publicado directamente — ya está en directo en el blog del cliente
