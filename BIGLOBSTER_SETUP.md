@@ -445,6 +445,33 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
 
 ---
 
+## Content Gap Hunter: feedback loop, weekly cap, first-party data
+
+Job `ce583d11dedd` (profile `biglobster`, `0 6 * * *`). Three behaviours live in
+`gap-hunter/biglobster-gap-hunter.prompt`, so they reach the job only through
+`sync-prompt` (see "Config-only changes" above):
+
+- **FASE 1B measures the blog.** One `gsc_search_analytics` call per run (page
+  dimension, 90 days, `sc-domain:biglobster.top`), crossed with the ledger's
+  `RESULTADO | escrito` lines, writes a `RENDIMIENTO` line to
+  `/opt/data/profiles/biglobster/gaphunter/research-ledger.md`. If the GSC tool is
+  not in the job's toolset the step logs `no-medido` and the run goes on: whether
+  `enabled_toolsets: None` exposes the profile's `gsc` MCP server to a cron run has
+  not been verified. Check the first `RENDIMIENTO` line after a sync.
+- **Weekly cap.** With ≥20 measured articles and under 10 % of them clicked, at most
+  3 articles per rolling 7 days; past that the run ends `[SILENT]` with
+  `sin-accion | tope-semanal`. On 2026-10-31 the numbers were 2 clicked of 104
+  articles older than 45 days, so the cap would bind. Change the thresholds in the
+  prompt, not in code.
+- **Class 5, `datos-propios`.** Reads owner-approved files from
+  `/opt/data/profiles/biglobster/gaphunter/first-party/` (format:
+  `gap-hunter/first-party-facts.template.md`, which ships `aprobado: no`). The
+  directory does not exist until the owner creates it; without an approved file the
+  class contributes nothing. The hunter never writes or approves these files.
+
+`tests/tools/test_biglobster_gap_hunter_contract.py` pins the ledger line shape the
+cap counts and the template's unapproved default.
+
 ## Available tools
 
 Hermes activates tools based on configured API keys. The `03-biglobster-config` boot hook forces provider settings into `config.yaml` on every boot.

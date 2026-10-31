@@ -50,10 +50,11 @@ UN FALLO NUNCA ES [SILENT]. Si cualquier paso de preparación o de herramientas 
 — git (fetch, pull, checkout, push), credenciales, `web_search`/`web_extract`
 inaccesibles, `npm run build`, `gh pr create`, `image_generate` — aborta y responde
 con el paso que falló y el error LITERAL de la herramienta, en 3-5 líneas. [SILENT]
-vale en DOS casos y en ninguno más: (a) investigaste las cuatro clases, nada pasó
+vale en TRES casos y en ninguno más: (a) investigaste las cuatro clases, nada pasó
 las puertas y añadiste al LIBRO DE REGISTRO las candidatas de hoy; (b) hoy ya se
 creó el artículo del día (tope de 1 al día) — anótalo en el libro como
-`sin-accion` y no barras. El 2026-10-06 una ejecución
+`sin-accion` y no barras; (c) el tope semanal de la FASE 1B está consumido — anótalo
+como `sin-accion` con la nota `tope-semanal` y no barras. El 2026-10-06 una ejecución
 falló en `git fetch` (`could not read Username for 'https://github.com'`) y respondió
 [SILENT]: en Telegram eso es idéntico a un día sin tema, así que la avería no se vio.
 
@@ -298,6 +299,8 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] El tema pasa la PUERTA 2 (duradera): no trata de precios, planes, licencias,
       versiones, betas ni incidentes, y el título no depende de una fecha, un precio
       ni un número de versión (salvo fecha de entrada en vigor de una norma)
+- [ ] Ninguna cifra que su fuente da como serie en movimiento aparece en `title`,
+      `description`, `ogTitle`, `ogDescription` ni H1; en el cuerpo lleva «a <mes año>»
 - [ ] La cover la generaste TÚ en esta ejecución con image_generate —
       no copiada, renombrada ni reutilizada de otro artículo
 - [ ] NO hay `<figure class="article-infographic">` ni ficheros en web/assets/blog/infographics/ en tu PR
@@ -316,6 +319,36 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
    cubiertos en español) para evitar duplicados
 2. Lee tu LIBRO DE REGISTRO (sección propia más abajo): no vuelvas a evaluar
    hoy lo que ya rechazaste otro día.
+
+### FASE 1B: Rendimiento propio y tope semanal (después de la FASE 1, antes de la 1A)
+El blog se mide por lo que gana, no por lo que publica. El 2026-10-31, de 104
+artículos en inglés con más de 45 días, 49 tenían alguna impresión en 90 días, 2
+algún clic y la mediana era 0 (Search Console, `sc-domain:biglobster.top`). Un
+artículo más no cambia eso; saber qué clases sí rinden, sí.
+
+1. UNA llamada, con las fechas calculadas con `date` y no de memoria:
+   `gsc_search_analytics(site_url="sc-domain:biglobster.top", dimensions=["page"],
+   start_date=<date -d '90 days ago' +%F>, end_date=<date -d '3 days ago' +%F>,
+   row_limit=400)`. Si la herramienta no existe o falla, NO abortes el ciclo: añade
+   al libro `YYYY-MM-DD | RENDIMIENTO | - | no-medido | <error literal>`, salta los
+   pasos 2-5 y sigue con el tope diario de siempre. No es una avería que merezca un
+   informe, pero tampoco una razón para publicar de más.
+2. Del libro, los artículos escritos hace 45 días o más: la línea
+   `YYYY-MM-DD | RESULTADO | - | escrito | articulo /blog/<slug>.html …` da la ruta, y
+   la línea `escrito` de esa misma fecha da su clase. Busca
+   `https://biglobster.top/blog/<slug>.html` en las filas de GSC; una página que no
+   aparece tiene 0 impresiones.
+3. Añade UNA línea al libro: `YYYY-MM-DD | RENDIMIENTO | - | medido | N artículos de
+   ≥45 días: C con ≥1 clic, I con ≥1 impresión, mediana de impresiones M; por clase
+   (solo con ≥5 medidos): <clase> I/N, …`.
+4. TOPE: con ≥20 artículos medidos y menos del 10 % con algún clic (C/N < 10 %), no
+   se publican más de 3 artículos en una ventana móvil de 7 días. Cuéntalos así:
+   `DESDE=$(date -d '6 days ago' +%F); awk -F ' [|] ' -v d="$DESDE" '$2=="RESULTADO" && $4=="escrito" && $1>=d' <libro> | wc -l`.
+   Si ya son 3, el cupo está consumido: [SILENT] (caso (c) de la FASE 0), sin barrido.
+   Con C/N ≥ 10 % o con menos de 20 medidos, el tope es el diario de siempre.
+5. DESEMPATE (PUERTA 5): entre las candidatas que pasaron 1-4, prefiere la clase con
+   mayor proporción de artículos con ≥1 impresión, solo si cada clase comparada tiene
+   ≥5 medidos. Nunca sirve para descartar una candidata que ya pasó las puertas.
 
 ### FASE 1A: Barrido de fuentes primarias (PRIMERO, antes de cualquier web_search genérico)
 EL BLOG ES EVERGREEN (decisión de la CEO, 2026-10-01). Buscamos cambios que DURAN:
@@ -351,6 +384,25 @@ que decidan las puertas de la FASE 2, no el orden de esta lista.
      estadísticos) cuyo hallazgo seguirá siendo cierto dentro de un año. Caídas
      puntuales y post-mortems de un servicio NO: son noticia de una semana.
 
+  5. DATOS PROPIOS (interna, solo si existe) — un fichero aprobado en
+     `/opt/data/profiles/biglobster/gaphunter/first-party/`. Cada fichero es una
+     medición de BigLobster (trazas, libro de registro, CI, validadores) que el DUEÑO
+     escribió o revisó y marcó `aprobado: si` en su cabecera; el formato está en
+     `gap-hunter/first-party-facts.template.md` del repo hermes-sandbox (es para el
+     dueño: tú solo lees ficheros ya aprobados). Lista el directorio con `ls`: sin
+     directorio o sin ficheros aprobados, esta clase no aporta candidatas y NO se
+     anota nada. Nunca escribas, edites ni apruebes tú estos ficheros, y nunca uses
+     uno con `aprobado: no`. Uno ya escrito consta en el libro con clase
+     `datos-propios` y url `first-party/<fichero>`: no lo repitas.
+     Puertas para esta clase: la 1 se cumple porque la medición es nuestra; la 3 se
+     cumple por definición, porque nadie más tiene el dato; la 2 y la 4 se aplican
+     igual (el post-mortem de una caída puntual no pasa; la lección que sigue
+     valiendo, sí). La FASE 2b NO se relaja: ≥12 hechos con URL y muestra, de ≥2
+     fuentes, y el fichero cuenta como UNA: el resto es contexto externo que enlazas
+     (regla 4b). Cada cifra propia dice cómo se midió, de dónde y en qué periodo («en
+     nuestras trazas de Langfuse, del 12 al 31 de octubre, n=…»). Sin nombres de
+     clientes ni de sus dominios, aunque el fichero los traiga: omítelos.
+
 REGLA DE HERRAMIENTAS: usa web_extract y web_search. NO uses execute_code ni
 python3 -c/-e (bloqueados en cron, igual que en el buzón). Nada de curl con tokens
 ni cabeceras — el guard de exfiltración lo bloquea y el job no corre. Todas estas
@@ -381,6 +433,13 @@ Aplica en orden y para en la primera que falle (la más barata primero):
     Prueba rápida: si el titular necesita una fecha, un precio o un número de
     versión para tener sentido, es noticia, no evergreen. La excepción es la
     regulación con fecha de entrada en vigor: la fecha caduca, la obligación no.
+    CIFRA QUE SE MUEVE: si la fuente da la cifra de cabecera como una serie que sube
+    o baja cada año («creció 8,1 puntos al año»), esa cifra caduca aunque el estudio
+    no. No va en el título, el `description` ni el H1; en el cuerpo lleva «a <mes
+    año>» y el artículo dice hacia dónde se mueve. El 2026-10-31 un post titulado
+    «One in Four Web Pages Is Now AI Text» se apoyaba en una cifra que su fuente da
+    subiendo 8,1 puntos al año: dentro de 18 meses el titular será falso. Esto no
+    descarta el tema, cambia cómo se titula.
     Por qué es dura: el 2026-10-01 salió un post sobre la subida de precios de
     Atlassian del 13 de octubre. Dos semanas después ya es historia, y en cuanto
     Atlassian vuelva a tocar precios dirá algo falso. Cada post así resta
@@ -534,6 +593,12 @@ y `git add -A` está prohibido, así que un fichero ahí nunca sobreviviría.
   vieja de cuatro puertas — no las reinterpretes, solo te sirven para no repetir url.)
   Ejemplo: 2026-10-02 | avance-ia | https://... | rechazado:duradera | subida de precio del plan Pro
 
+  Al cerrar un día, además de las líneas de candidatas, añade una de resultado:
+  `YYYY-MM-DD | RESULTADO | - | escrito | articulo /blog/<slug>.html …` (o `sin-accion`,
+  `silencio`, `fallo`). La FASE 1B lee la ruta de esas líneas para medir cada
+  artículo y cuenta las `escrito` para el tope. La FASE 1B añade además las suyas,
+  `YYYY-MM-DD | RENDIMIENTO | - | medido | …`.
+
 ### FASE 3: Creación
 1. Lee la plantilla site/en/blog/microsoft-365-copilot-for-smbs.html
 2. Crea site/en/blog/<slug>.html POR PARTES, nunca de una sola vez (ver
@@ -618,7 +683,7 @@ hazlo; no la sustituyas por prosa ni por un relato del `npm run build`.
 - PR: [link]
 - Gap: [descripción]
 - Fuente primaria: [URL con fecha]
-- Clase: [regulación | ciencia | avance-ia | estudio | reserva]
+- Clase: [regulación | ciencia | avance-ia | estudio | datos-propios | reserva]
 - Por qué dura: [una frase — por qué seguirá siendo cierto dentro de 18 meses]
 - Extensión: [N] palabras de cuerpo en [M] secciones · [K] hechos en la hoja
 - ✅ Humanizado (sin vocabulario IA)
