@@ -301,7 +301,8 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] La cover la generaste TÚ en esta ejecución con image_generate —
       no copiada, renombrada ni reutilizada de otro artículo
 - [ ] NO hay `<figure class="article-infographic">` ni ficheros en web/assets/blog/infographics/ en tu PR
-- [ ] La hoja de hechos de la FASE 2b existe, con ≥12 hechos enlazados de ≥2 fuentes, y el esquema de la 2c al final
+- [ ] La hoja de hechos de la FASE 2b existe, con ≥12 hechos enlazados de ≥2 fuentes, cada uno con su muestra y fecha de recogida, y el esquema de la 2c al final
+- [ ] Cada cifra del artículo conserva en su frase el alcance que la hoja anota (qué muestra, cuándo); ninguna cifra de un corpus se atribuye a una submuestra
 - [ ] Cuerpo de 2.000-4.500 palabras en 3-10 secciones de 200+ palabras, con la forma que pedía el tema (regla 5b)
 - [ ] Hay un ejemplo con cuentas, una tabla de decisión o lista de pasos, y un "cuándo NO" (regla 5c)
 - [ ] Ninguna anécdota inventada contada como real; los supuestos van como supuestos
@@ -472,11 +473,21 @@ abstract es un abstract estirado: la extensión tiene que salir de material real
    `/opt/data/profiles/biglobster/gaphunter/factsheets/<slug>.md` (fuera del
    checkout, por el mismo motivo que el libro de registro; si el directorio no
    existe, `mkdir -p` con tu usuario). Una línea por hecho:
-   `- <hecho, con la cifra exacta> | <URL primaria> | <dónde en el documento>`
+   `- <hecho, con la cifra exacta> | <URL primaria> | <dónde en el documento> | <muestra: qué se midió, cuántos, fecha de recogida>`
+   La cuarta columna es el DENOMINADOR de la cifra, y se copia de la FRASE de la
+   fuente que lleva el número, no de otra parte del documento. Un número del corpus
+   entero no se atribuye a una submuestra: el 2026-10-31 un post dio "490.000
+   páginas" a la muestra aleatoria de julio de Pew, cuando esas 490.000 son todo su
+   corpus 2021-26 y la muestra de julio es de 10.000. Cada cifra era correcta; el
+   error estaba en a qué se refería. La fecha de recogida (cuándo se midió) no es la
+   de publicación: anota la que la fuente dé y, si no da ninguna, escribe
+   `recogida: no indicada` y no la deduzcas. Si la fuente no dice qué se muestreó, la
+   cifra no entra. En el artículo, la frase que da la cifra conserva ese alcance
+   ("en una muestra aleatoria de 10.000 páginas de julio de 2026…").
    Más, debajo, los límites del estudio o de la norma (a quién NO aplica) y los
    ejemplos reales con nombre y enlace.
-4. PUERTA DE MATERIAL: hacen falta **al menos 12 hechos con su URL, de al menos 2
-   fuentes distintas**. Si no llegas, el tema no da para un artículo de este blog:
+4. PUERTA DE MATERIAL: hacen falta **al menos 12 hechos con su URL y su muestra, de al
+   menos 2 fuentes distintas**. Si no llegas, el tema no da para un artículo de este blog:
    anota `rechazado:material` en el libro de registro y vuelve a la FASE 2 con la
    siguiente candidata. Nunca rellenes la diferencia.
 Todo lo que el artículo afirme sale de esta hoja. Si al escribir necesitas un dato
