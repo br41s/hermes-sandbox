@@ -58,7 +58,7 @@ def _markdown_word_count(md: str) -> int:
 # off the client's own site cannot be citing anything. It does not look at
 # prices or counts, which a product guide takes from the client's catalogue.
 _PERCENT_RE = re.compile(r"\d[\d.,]*\s?%")
-_LINK_TARGET_RE = re.compile(r"\]\((https?://[^)\s]+)|href=[\"'](https?://[^\"']+)", re.I)
+_LINK_TARGET_RE = re.compile(r"\]\((https?://[^)\s]+)|href=[\"'](https?://[^\"']+)", re.IGNORECASE)
 
 
 def _host(url: str) -> str:
@@ -71,10 +71,36 @@ def _unsourced_percentages(md: str, site_url: str) -> list[str]:
     if not figures:
         return []
     own = _host(site_url)
-    for target in _LINK_TARGET_RE.findall(md):
-        if _host(target[0] or target[1]) != own:
+    # A link inside an HTML comment is not on the page, and a target with no
+    # host is not a source: both fail closed.
+    linked = re.sub(r"<!--.*?-->", "", md, flags=re.DOTALL)
+    for target in _LINK_TARGET_RE.findall(linked):
+        host = _host(target[0] or target[1])
+        if host and host != own:
             return []
     return figures
+
+
+def _new_post_refusal(content: str, site_url: str) -> Optional[str]:
+    """Why a new post may not go live, or None. Both checks run before the POST."""
+    words = _markdown_word_count(content)
+    if words < MIN_BLOG_POST_WORDS:
+        return (
+            f"create_blog_post refused: content is {words} words, minimum "
+            f"{MIN_BLOG_POST_WORDS}. Nothing was published. Deepen the weakest "
+            "section with real, sourced material (never filler), or do not "
+            "publish this run and report it as your prompt says."
+        )
+    unsourced = _unsourced_percentages(content, site_url)
+    if unsourced:
+        return (
+            f"create_blog_post refused: the post states {', '.join(unsourced[:3])} "
+            "but links to no source outside this site. Nothing was published. "
+            "Link each percentage inline to the primary document it comes from "
+            "(the report, the regulator, the manufacturer), or rewrite the "
+            "sentence without the number. Never keep a figure you cannot link."
+        )
+    return None
 
 
 def _download_bytes(url: str) -> bytes:
@@ -218,23 +244,9 @@ def bl_site_publish(
         if action == "create_blog_post":
             if not title or not content:
                 return tool_error("create_blog_post requires 'title' and 'content'.")
-            words = _markdown_word_count(content)
-            if words < MIN_BLOG_POST_WORDS:
-                return tool_error(
-                    f"create_blog_post refused: content is {words} words, minimum "
-                    f"{MIN_BLOG_POST_WORDS}. Nothing was published. Deepen the weakest "
-                    "section with real, sourced material (never filler), or do not "
-                    "publish this run and report it as your prompt says."
-                )
-            unsourced = _unsourced_percentages(content, site_url)
-            if unsourced:
-                return tool_error(
-                    f"create_blog_post refused: the post states {', '.join(unsourced[:3])} "
-                    "but links to no source outside this site. Nothing was published. "
-                    "Link each percentage inline to the primary document it comes from "
-                    "(the report, the regulator, the manufacturer), or rewrite the "
-                    "sentence without the number. Never keep a figure you cannot link."
-                )
+            refusal = _new_post_refusal(content, site_url)
+            if refusal:
+                return tool_error(refusal)
             payload = {"title": title, "content": content, "excerpt": excerpt or "", "status": "published"}
             if cta_url:
                 payload["cta_url"] = cta_url

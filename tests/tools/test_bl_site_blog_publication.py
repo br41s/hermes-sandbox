@@ -186,6 +186,23 @@ def test_a_link_to_the_clients_own_site_is_not_a_source(monkeypatch, own_link):
     assert sent == {}
 
 
+@pytest.mark.parametrize(
+    "not_a_source",
+    [
+        "<!-- [Eurostat](https://ec.europa.eu/eurostat/news/x) -->",
+        "[nada](https:///sin-host)",
+    ],
+)
+def test_a_hidden_or_hostless_link_is_not_a_source(monkeypatch, not_a_source):
+    sent = wire(monkeypatch)
+    body = LONG_BODY + f" El 68% de las pymes. {not_a_source}"
+
+    assert "refused" in mod.bl_site_publish(
+        action="create_blog_post", title="Una entrada", content=body
+    )
+    assert sent == {}
+
+
 def test_prices_and_counts_need_no_outside_link(monkeypatch):
     """A product guide quotes the client's own catalogue, which is the source."""
     sent = wire(monkeypatch, {"id": 7, "slug": "una-entrada"})
