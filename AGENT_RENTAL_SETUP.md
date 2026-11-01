@@ -42,15 +42,24 @@ redirect work its own prompt actually documents.
 
 | Agent | Prompt file | Publishes via | Schedule |
 |---|---|---|---|
-| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (goes live immediately) | daily |
-| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `update_blog_post` (link repairs only), `bl_site_redirect` (verified matches auto-publish) | daily |
+| Content Gap Hunter | `gap-hunter/bl-site-package-gap-hunter.prompt` | `create_blog_post` (goes live immediately) | `--runs-per-week` (default 2) |
+| SEO/GEO On-Site | `onsite-seo/bl-site-package-seo-agent.prompt` | `update_page_text` (direct), `update_blog_post` (link repairs only), `bl_site_redirect` (verified matches auto-publish) | `--runs-per-week` (default 2) |
 | Onboarding Content Agent | `onboarding-content/bl-site-package-onboarding-content.prompt` | both actions | once, 5m after provisioning |
-| Product Guide Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (one guide per run, goes live immediately, CTA to the featured product's own sheet) | daily |
-| Infographic Engineer | `infographic/infographic-engineer.prompt` (shared with biglobster) | `update_blog_post` (inserts one inline SVG, or one HTML table) | daily |
-| Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily |
+| Product Guide Agent | `product-articles/bl-site-package-product-articles.prompt` | `create_blog_post` (one guide per run, goes live immediately, CTA to the featured product's own sheet) | `--runs-per-week` (default 2) |
+| Infographic Engineer | `infographic/infographic-engineer.prompt` (shared with biglobster) | `update_blog_post` (inserts one inline SVG, or one HTML table) | `--runs-per-week` (default 2) |
+| Website Maintenance | `maintenance/bl-site-package-maintenance.prompt` | `update_page_text` / `update_blog_post` (repairs only) | daily, always |
 | Site Launch | `site-setup/bl-site-package-site-setup.prompt` | both actions | once, 5m after provisioning |
-| Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | daily |
-| Content Updater | `content-updater/bl-site-package-content-updater.prompt` | `update_blog_post` (corrects one existing article, goes live immediately) | daily |
+| Social Shorts | `shorts/bl-site-package-shorts.prompt` | `update_blog_post` (sentinel only) | `--runs-per-week` (default 2) |
+| Content Updater | `content-updater/bl-site-package-content-updater.prompt` | `update_blog_post` (corrects one existing article, goes live immediately) | `--runs-per-week` (default 2) |
+
+**How often recurring agents run is the client's choice.** Every agent can run
+daily, and that is what we sell, but most businesses do better with 1-2 runs a
+week, so `--runs-per-week` defaults to 2 (spread across the week, e.g. Mon and
+Thu; 7 = daily). Website Maintenance ignores it: its daily run is the
+availability check. Decided 2026-11-01, after biglobster.top was demoted
+site-wide for publishing daily on loosely related topics. To change a live
+client, edit the job's schedule (`hermes -p <slug> cron edit <job_id> --schedule
+"<cron>"`); `pick_stagger_schedule(slug, agent, n)` gives the expression.
 
 **Content Updater needs the client's site on bl-site-package >= 1.8.0.** It is
 the only agent here that rewrites prose that is already published, and what
@@ -620,7 +629,7 @@ default. What the script does, in order:
 5. Writes that profile's `config.yaml` with `model.default`/`model.provider: openrouter`, plus `image_gen.model` when a FAL image model was resolved and `web.search_backend: ddgs` (always — see "Web research is bundled, not BYOK" above; this is what stops the client's web_search calls landing on BigLobster's own Exa account) — **without the base model the profile has no model and every cron run 400s with `No models provided`** (the Shoroban bug). Only these blocks are written; all other config is deep-merged from defaults at runtime.
 6. Writes that profile's `.env` (mode `0600`): `BL_SITE_URL`, `BL_SITE_PANEL_PASSWORD`, `OPENROUTER_API_KEY` (BYOK — never BigLobster's own key), plus `FAL_KEY` if `--fal-key` was given and `OLD_SITE_URL` if `--old-site-url` was.
 6b. Applies the boot's per-rental `.env` sync to it straight away: the shared `INJECT` keys minus `TENANT_EXCLUDE` (so the client's own keys stay and BigLobster's research and Langfuse keys never arrive), the `HERMES_CRON_*` tuning, the rental Langfuse pin, and the pass-through keys BigLobster supplies to every rental (`RENTAL_PASSTHROUGH`: `BL_SITE_AUTOMATION_KEY` for the Turnstile bypass, `TYPESAFE_API_KEY` for the maintenance boilerplate check). The jobs below read that `.env` alone, and the first one fires in 5 minutes, long before the next boot would sync it.
-7. Creates one cron job per ordered agent **in the profile's own cron store** (`profiles/<slug>/cron/jobs.json`), with no `profile` field, and `prompt_source=<the shared prompt file above>`. `gap-hunter`/`seo` get a deterministic off-peak daily time staggered by client+agent; `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead. Every per-job command for them needs `hermes -p <slug> cron …`. `--deliver` must stay `local`: a rental has no Telegram route, so from its own store any other target would fail on every run, and the script refuses it. Rentals provisioned before 2026-10-01 were `profile=<slug>` jobs in BigLobster's store; stage 3 moved them all (`hermes cron move`, `ops/multiplex-stage3-plan.md`), and a default-store record still carrying `profile` is refused at run time. A rental's jobs run one at a time on its own pool, side by side with every other profile's.
+7. Creates one cron job per ordered agent **in the profile's own cron store** (`profiles/<slug>/cron/jobs.json`), with no `profile` field, and `prompt_source=<the shared prompt file above>`. recurring agents get a deterministic off-peak time staggered by client+agent, on `--runs-per-week` days (default 2; maintenance always daily); `onboarding-content` and `site-setup` get a one-shot run 5 minutes out instead. Every per-job command for them needs `hermes -p <slug> cron …`. `--deliver` must stay `local`: a rental has no Telegram route, so from its own store any other target would fail on every run, and the script refuses it. Rentals provisioned before 2026-10-01 were `profile=<slug>` jobs in BigLobster's store; stage 3 moved them all (`hermes cron move`, `ops/multiplex-stage3-plan.md`), and a default-store record still carrying `profile` is refused at run time. A rental's jobs run one at a time on its own pool, side by side with every other profile's.
 
 Confirm back to the CEO: profile slug, job IDs created (the script prints them as JSON), and which agents are now active for this client.
 

@@ -38,7 +38,8 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
         --openrouter-key sk-or-... \\
         --fal-key <key_id>:<key_secret> \\
         --agents gap-hunter,seo,onboarding-content,product-articles,infographic,maintenance \\
-        --old-site-url https://their-old-site.example.com
+        --old-site-url https://their-old-site.example.com \\
+        --runs-per-week 2   # optional; default 2, 7 = daily
 
 `--fal-key` is the client's own FAL key (BYOK) for image generation — blog
 covers and page images are billed to it, never BigLobster's. It's validated
@@ -569,8 +570,25 @@ def _sync_rental_env_now(env_path: Path, environ) -> None:
     br.pin_rental_passthrough(env_path, home, environ)
 
 
-def pick_stagger_schedule(slug: str, agent_key: str) -> str:
-    """Pick a daily off-peak cron expression for this client+agent's job.
+# How often a recurring agent runs, chosen per client. Every agent CAN run daily
+# (7), and that is what we sell; most businesses do better with 1-2 runs a week,
+# so a new client starts at 2 unless they ask for more (CEO, 2026-11-01). A blog
+# that publishes daily on loosely related topics is what got biglobster.top
+# demoted site-wide on 2026-10-18.
+DEFAULT_RUNS_PER_WEEK = 2
+
+# Agents whose daily run is the product itself, not a publishing cadence: the
+# maintenance availability/drift check would let a site sit broken for days at
+# 2 runs a week. These ignore --runs-per-week.
+DAILY_ONLY_AGENTS = {"maintenance"}
+
+
+def pick_stagger_schedule(slug: str, agent_key: str, runs_per_week: int = 7) -> str:
+    """Pick an off-peak cron expression for this client+agent's job.
+
+    ``runs_per_week`` 7 is every day; 1-6 spreads that many days evenly across
+    the week, starting on a day hashed from (slug, agent_key) so clients on the
+    same cadence don't all run on Monday.
 
     TODO(product decision): this just hashes (slug, agent_key) into a minute
     inside a 02:00-06:00 window so customers don't all fire at once — it's
@@ -587,7 +605,13 @@ def pick_stagger_schedule(slug: str, agent_key: str) -> str:
     minute_offset = int(digest[:8], 16) % (4 * 60)  # spread across 4h window
     hour = 2 + minute_offset // 60
     minute = minute_offset % 60
-    return f"{minute} {hour} * * *"
+    if not 1 <= runs_per_week <= 7:
+        raise ValueError(f"runs_per_week must be 1-7, got {runs_per_week}")
+    if runs_per_week == 7:
+        return f"{minute} {hour} * * *"
+    first_day = int(digest[8:16], 16) % 7
+    days = sorted({(first_day + i * 7 // runs_per_week) % 7 for i in range(runs_per_week)})
+    return f"{minute} {hour} * * {','.join(map(str, days))}"
 
 
 def provision(
@@ -605,6 +629,7 @@ def provision(
     image_model: str | None = None,
     questionnaire: dict | None = None,
     pexels_key: str | None = None,
+    runs_per_week: int = DEFAULT_RUNS_PER_WEEK,
 ) -> dict:
     if (deliver or "local").strip() != "local":
         # The jobs live in the rental's own store, where delivery goes through a
@@ -726,7 +751,9 @@ def provision(
             schedule = (
                 ONBOARDING_CONTENT_DELAY
                 if schedule_kind == "once"
-                else pick_stagger_schedule(canon, agent_key)
+                else pick_stagger_schedule(
+                    canon, agent_key, 7 if agent_key in DAILY_ONLY_AGENTS else runs_per_week
+                )
             )
             job = create_job(
                 prompt=Path(REPO_ROOT, source).read_text(encoding="utf-8-sig"),
@@ -796,6 +823,15 @@ def main() -> int:
         "--agents includes site-setup — it is what the fixed site template is "
         "applied from. Schema: scripts/bl_site_setup.py.",
     )
+    parser.add_argument(
+        "--runs-per-week",
+        type=int,
+        choices=range(1, 8),
+        default=DEFAULT_RUNS_PER_WEEK,
+        help=f"How often each recurring agent runs, 1-7 (7 = daily). Default "
+        f"{DEFAULT_RUNS_PER_WEEK}: every agent can run daily, but most businesses do "
+        "better with 1-2 runs a week. Maintenance always runs daily.",
+    )
     parser.add_argument("--skip-key-check", action="store_true", help="Skip the live OpenRouter/FAL key + model validation calls")
     parser.add_argument(
         "--old-site-url",
@@ -831,6 +867,7 @@ def main() -> int:
             image_model=args.image_model,
             questionnaire=questionnaire,
             pexels_key=args.pexels_key,
+            runs_per_week=args.runs_per_week,
         )
     except (ValueError, FileExistsError) as exc:
         print(f"Provisioning failed: {exc}", file=sys.stderr)
