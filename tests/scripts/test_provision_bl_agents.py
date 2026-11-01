@@ -15,6 +15,8 @@ from scripts.provision_bl_client import (
     AGENT_SOURCES,
     AGENTS_REQUIRING_OLD_SITE,
     AGENTS_REQUIRING_PEXELS,
+    DAILY_ONLY_AGENTS,
+    DEFAULT_RUNS_PER_WEEK,
     MUTUALLY_EXCLUSIVE_AGENTS,
     _write_config,
     pick_stagger_schedule,
@@ -58,6 +60,36 @@ def test_maintenance_is_staggered_off_peak_like_the_other_daily_agents():
     assert 0 <= int(minute) <= 59
     # Different agents for the same client must not all fire at once.
     assert schedule != pick_stagger_schedule("bl-cliente-garcia", "gap-hunter")
+
+
+def test_runs_per_week_spreads_distinct_days_and_seven_is_daily():
+    # Every agent can run daily (what we sell); a new client starts at 2 runs a
+    # week because most businesses do better that way (CEO, 2026-11-01).
+    assert DEFAULT_RUNS_PER_WEEK == 2
+    daily = pick_stagger_schedule("bl-cliente-garcia", "gap-hunter", 7)
+    assert daily == pick_stagger_schedule("bl-cliente-garcia", "gap-hunter")
+    assert daily.split()[2:] == ["*", "*", "*"]
+    for n in range(1, 7):
+        minute, hour, dom, month, dow = pick_stagger_schedule("bl-cliente-garcia", "gap-hunter", n).split()
+        days = [int(d) for d in dow.split(",")]
+        assert (dom, month) == ("*", "*")
+        assert len(set(days)) == n and all(0 <= d <= 6 for d in days)
+        # Same minute and hour as the daily slot: only the days change.
+        assert (minute, hour) == tuple(daily.split()[:2])
+    two = [int(d) for d in pick_stagger_schedule("bl-cliente-garcia", "gap-hunter", 2).split()[4].split(",")]
+    assert (two[1] - two[0]) % 7 in (3, 4)  # spread across the week, not back to back
+
+
+def test_runs_per_week_out_of_range_is_refused():
+    with pytest.raises(ValueError):
+        pick_stagger_schedule("bl-cliente-garcia", "gap-hunter", 0)
+    with pytest.raises(ValueError):
+        pick_stagger_schedule("bl-cliente-garcia", "gap-hunter", 8)
+
+
+def test_maintenance_ignores_runs_per_week():
+    # Its daily run is the availability check itself; see the test above.
+    assert DAILY_ONLY_AGENTS == {"maintenance"}
 
 
 def test_maintenance_prompt_states_its_boundaries():
