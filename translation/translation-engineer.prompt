@@ -32,7 +32,7 @@ CONFIG  (the only project-specific block — change these to retarget)
                    body. Front-matter fields to preserve/re-derive per post:
                    layout, title, description, ogTitle, ogDescription, ogType,
                    permalink, image, styles, date, dateModified, badges,
-                   excerpt, readingTime, lang. NOTE: this directory contains
+                   excerpt, readingTime, lang, pillar (when present). NOTE: this directory contains
                    both old ES→EN translations AND new worldwide-first
                    originals — STEP 1's langmap check is what filters to only
                    the ones that still need a Spanish version.
@@ -118,12 +118,37 @@ STEP 1 — Select target (idempotent, deterministic):
       'BRANCH_PREFIX*'` — anything with an open branch is in flight, skip it.
    c. Eligible = posts NOT present as a key in langmap.json's `enToEs` (i.e.
       no Spanish version yet) AND with no BRANCH_PREFIX<slug> branch on the
-      remote. This naturally excludes every old ES→EN translation (they're
-      already in `enToEs` from the original direction) and only surfaces new
+      remote AND with no `| <slug> | skipped:` line in LEDGER (a skip is
+      final; without this the same oldest post is picked and skipped every
+      run) AND without `"googleNoindex": true` in its frontmatter. This
+      naturally excludes every old ES→EN translation (they're already in
+      `enToEs` from the original direction) and only surfaces new
       worldwide-first English posts.
-   d. Pick the single OLDEST eligible post by its `date` field. If none are
-      eligible, append a line to LEDGER, output "Status: nothing to
-      translate", and finish the run cleanly. Do nothing else.
+   d. TRANSLATE ON EVIDENCE, NOT BY DEFAULT (CEO, 2026-11-01). Google demoted
+      the whole site on 2026-10-18; one reason was volume, and translating
+      every English post doubled it. A Spanish version is now earned:
+      1. ONE call: `gsc_search_analytics(site_url="sc-domain:biglobster.top",
+         dimensions=["page"], start_date=<date -d '90 days ago' +%F>,
+         end_date=<date -d '3 days ago' +%F>, row_limit=1000)`. If the tool is
+         missing or fails, translate NOTHING: append
+         `YYYY-MM-DD | - | no-medido: <literal error>` to LEDGER, output
+         "Status: no traffic data, nothing translated", and finish. Never
+         fall back to translating without evidence.
+      2. Keep the eligible posts dated 28+ days ago whose row
+         `https://biglobster.top/blog/<slug>.html` has 20 or more impressions.
+         A post under that bar is NOT skipped — it may earn it later — so it
+         gets no LEDGER line.
+      3. Pick the one with the most impressions. If none qualify, append
+         `YYYY-MM-DD | - | nothing earned a translation (N eligible)` to
+         LEDGER, output "Status: nothing to translate", and finish the run
+         cleanly. Do nothing else.
+   d2. Topic gate: read `site/_data/topics.json`. The post must belong to one
+      of its pillars: its `"pillar"` frontmatter field, or, for posts written
+      before that field existed (2026-11-01), a topic that plainly fits one
+      pillar's `inScope` and nothing in `outOfScope`. If not, append
+      `YYYY-MM-DD | <slug> | skipped: off-topic (no pillar)` to LEDGER, output
+      "Status: skipped <slug> (off-topic)", and finish the run cleanly. Copy
+      the `pillar` field to the Spanish post when the source has one.
    e. Relevance gate, BEFORE translating: if the post is about a product,
       plan, price list or regulation that only exists in the US (and the
       source itself names no EU availability), do NOT translate it. Append

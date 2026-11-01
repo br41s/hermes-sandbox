@@ -458,16 +458,40 @@ Job `ce583d11dedd` (profile `biglobster`, `0 6 * * *`). Three behaviours live in
   not in the job's toolset the step logs `no-medido` and the run goes on: whether
   `enabled_toolsets: None` exposes the profile's `gsc` MCP server to a cron run has
   not been verified. Check the first `RENDIMIENTO` line after a sync.
-- **Weekly cap.** With ≥20 measured articles and under 10 % of them clicked, at most
-  3 articles per rolling 7 days; past that the run ends `[SILENT]` with
-  `sin-accion | tope-semanal`. On 2026-10-31 the numbers were 2 clicked of 104
-  articles older than 45 days, so the cap would bind. Change the thresholds in the
-  prompt, not in code.
+- **Weekly cap, fixed (CEO, 2026-11-01).** At most 1 article per rolling 7 days,
+  whatever FASE 1B measures; past that the run ends `[SILENT]` with
+  `sin-accion | tope-semanal`. It replaced a 3-a-week cap that only bound while
+  clicks stayed under 10 %. Change it in the prompt, not in code.
+- **PUERTA 0, the topic map.** Before the sweep the hunter reads
+  `site/_data/topics.json` from its biglobster checkout: five pillars (get found,
+  content that sells, visitors to leads, a website that works, running AI agents),
+  each with `inScope`, its agents and hub pages, plus an `outOfScope` list. A
+  candidate that fits no pillar is logged `rechazado:tema`. The post carries
+  `"pillar": "P1"`…`"P5"`, links in context to a hub of its pillar, and its
+  `escrito` ledger note starts with the pillar. The pillars live in that biglobster
+  file, never in the prompt. Why: Google demoted biglobster.top site-wide on
+  2026-10-18 with no manual action, after ~45 posts a month on unrelated subjects.
 - **Class 5, `datos-propios`.** Reads owner-approved files from
   `/opt/data/profiles/biglobster/gaphunter/first-party/` (format:
   `gap-hunter/first-party-facts.template.md`, which ships `aprobado: no`). The
   directory does not exist until the owner creates it; without an approved file the
-  class contributes nothing. The hunter never writes or approves these files.
+  class contributes nothing. The hunter never writes or approves these files. Since
+  2026-11-01 a `datos-propios` candidate wins every tie (PUERTA 5).
+
+## Other content jobs after the 2026-11-01 demotion
+
+All prompt-only, so they reach the jobs only through `sync-prompt`:
+
+- **Translation Engineer** (job `e197e33b0f00`) translates on evidence. An English
+  post qualifies once it is 28+ days old with 20+ Google impressions in 90 days,
+  and it must belong to a pillar in `site/_data/topics.json`. Without GSC data it
+  translates nothing (`no-medido` in its ledger). A `skipped:` ledger line is now
+  final, which also stops a skipped post from being re-picked every run.
+- **Content Updater**: the biglobster scanner leaves out pairs that are all
+  `googleNoindex` (`excludedByGoogleNoindex`). Nothing to sync for that part. The
+  prompt line is just the reporting rule.
+- **SEO agent**: internal links go to the hubs of the post's pillar, and never to
+  a `googleNoindex` post.
 
 `tests/tools/test_biglobster_gap_hunter_contract.py` pins the ledger line shape the
 cap counts and the template's unapproved default.

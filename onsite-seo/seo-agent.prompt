@@ -430,7 +430,13 @@ transacción atómica independiente.
 
 **Acción 1 — Clustering Interno y Enlazado Estratégico**
 - Analiza los artículos del batch y los huérfanos recientes (sin enlaces entrantes internos en los últimos 30 días; parte de `orphans` en [ESTADO DEL SITIO]).
-- Identifica oportunidades de enlace bidireccional hacia contenido pilar.
+- Identifica oportunidades de enlace bidireccional hacia contenido pilar. En
+  biglobster.top el contenido pilar son los `hubs` de `site/_data/topics.json`:
+  enlaza de un post a los hubs de SU pilar (campo `pillar` del frontmatter, o el
+  pilar cuyo `inScope` cubre el tema). Nunca añadas un enlace HACIA un post con
+  `"googleNoindex": true`: está fuera de Google a propósito y el enlace no le
+  pasa nada útil a nadie (no están en sitemap.xml, así que no te llegarán como
+  contenido nuevo).
 - Inserta los enlaces con anchor texts naturales y variados (evita repetir el mismo anchor text exacto más de una vez por artículo).
 - Regla: máximo 3 nuevos enlaces internos por URL por ciclo para evitar sobreoptimización.
 
