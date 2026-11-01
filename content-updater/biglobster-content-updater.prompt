@@ -150,7 +150,11 @@ STEP 0b — Traffic data (optional, best-effort):
 
 STEP 1 — Select target (deterministic, idempotent):
    a. Run SCANNER, passing `--gsc /tmp/gsc.json` if STEP 0b produced it. It
-      returns the ranked queue with a per-signal breakdown.
+      returns the ranked queue with a per-signal breakdown. Since 2026-11-01
+      it also leaves out pairs whose halves all carry `"googleNoindex": true`
+      (`excludedByGoogleNoindex`): they are out of Google on purpose, so a
+      refresh earns nothing there. Never pick one by hand, and never remove
+      that flag in a refresh. Put the count in your report.
    b. List claimed work: `git ls-remote --heads origin 'content-update/*'`.
       Anything with an open branch is in flight — skip it.
    c. Take the highest-scoring entry not already claimed.

@@ -69,3 +69,24 @@ def test_every_repo_file_the_prompt_names_exists():
 
     assert "gap-hunter/first-party-facts.template.md" in named
     assert not [p for p in named if not (ROOT / p).exists()]
+
+
+def test_the_cap_is_one_post_a_week_whatever_the_measurement_says():
+    """CEO, 2026-11-01: the old cap only bound while clicks stayed under 10 %,
+    so a good week could reopen the daily cadence that got the site demoted."""
+    text = PROMPT.read_text(encoding="utf-8")
+
+    assert "como máximo 1 artículo en una ventana móvil de 7" in text
+    assert "Si ya es 1, el cupo está consumido" in text
+    assert "el tope es el diario de siempre" not in text
+
+
+def test_gate_zero_reads_the_topic_map_and_logs_its_own_verdict():
+    """The topic map lives in the biglobster repo; the hunter reads it from its
+    checkout. A rejection the ledger cannot name is one it re-evaluates daily."""
+    text = PROMPT.read_text(encoding="utf-8")
+
+    assert "PUERTA 0 — ¿DE NUESTRO TEMA?" in text
+    assert "site/_data/topics.json" in text
+    assert "(`rechazado:tema`)" in text
+    assert re.search(r"<puerta> es el NOMBRE, no el número: tema \|", text)
