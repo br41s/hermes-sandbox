@@ -19,7 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getRegistryEntry } from "./registry.js";
 import { fetchKnowledge, searchCatalogue } from "./knowledge.js";
 import { getAssistantReply } from "./assistant.js";
-import { decideHandoff, messageRequestsHuman, requestedHumanLanguage } from "./policy.js";
+import { decideHandoff, messageRequestsHuman, requestedHumanLanguage, smallTalkLanguage } from "./policy.js";
 import { notifyHandoff, conversationUrl } from "./notify.js";
 import { handoffExpired, handoffTtlMs } from "./handoff.js";
 import * as chatwoot from "./chatwoot.js";
@@ -53,6 +53,28 @@ const HUMAN_REQUEST_REPLY = {
   es: "Claro. Te paso con una persona del equipo para que siga contigo aquí.",
   en: "Of course. I'm passing you to a person on the team to continue with you here.",
 };
+
+// Worded to fit a "hola" and a "gracias" alike, and it still says it is an AI
+// in case this is the bot's first message in the conversation.
+const SMALL_TALK_REPLY = {
+  es: "Soy el asistente de inteligencia artificial de esta web. Cuando quieras, dime en qué puedo ayudarte.",
+  en: "I'm this website's AI assistant. Whenever you're ready, tell me how I can help.",
+};
+
+// Pure, exported for testing: what a small-talk turn sends. The model's reply
+// when it answered normally. If it gave up or failed, its text says it cannot
+// help, which is wrong for a greeting, so a fixed reply takes its place, in the
+// same shape as a model answer so the normal reply path needs no special case.
+export function smallTalkOutput(modelOutput, lang) {
+  if (modelOutput?.answer_status === "answered" && !modelOutput.handoff?.required) return modelOutput;
+  return {
+    reply: SMALL_TALK_REPLY[lang],
+    answer_status: "answered",
+    detected_language: lang,
+    lead: { name: null, email: null, need: null },
+    handoff: { required: false, reason: null },
+  };
+}
 
 // Pure, exported for testing: the single outbound message for an
 // escalation. A qualified lead with a valid model reply gets that reply
@@ -194,7 +216,7 @@ export function dedupeKey(payload) {
   return payload.id;
 }
 
-async function handleWebhookEvent(payload) {
+export async function handleWebhookEvent(payload) {
   const messageId = dedupeKey(payload);
   if (messageId != null && alreadyProcessed(messageId)) {
     console.log(`webhook ignored: duplicate delivery of message ${messageId}`);
@@ -316,14 +338,20 @@ async function processTurn(payload, { reclaimed = false } = {}) {
   // order in decideHandoff), so calling it would only add ~10 s and a paid
   // request whose answer is thrown away -- measured 13 s vs 2 s live.
   const visitorRequestedHuman = messageRequestsHuman(visitorMessage);
+  const smallTalkLang = smallTalkLanguage(visitorMessage);
+  // Small talk does not hand off at the turn cap, so the cap's other job moves
+  // here: past it, a visitor repeating "hola" costs no more model calls.
+  const skipModel = visitorRequestedHuman || (smallTalkLang && turnCount >= turnCap);
 
   let modelOutput = null;
   let modelError = null;
-  if (knowledge && !visitorRequestedHuman) {
+  if (knowledge && !skipModel) {
     try {
+      // No catalogue search on small talk: it would put "the search found no
+      // products for the visitor's query" in the prompt for a plain "hola".
       const [chatwootMessages, matches] = await Promise.all([
         chatwoot.getMessages(accountId, conversationId),
-        searchCatalogue(entry, knowledge, visitorMessage),
+        smallTalkLang ? null : searchCatalogue(entry, knowledge, visitorMessage),
       ]);
       modelOutput = await getAssistantReply({ knowledge, chatwootMessages, visitorMessage, siteUrl: entry.siteUrl, matches });
     } catch (err) {
@@ -332,6 +360,16 @@ async function processTurn(payload, { reclaimed = false } = {}) {
         `assistant call failed for conversation ${conversationId}: ${err.message}`,
       );
     }
+  }
+
+  if (smallTalkLang) {
+    const output = smallTalkOutput(modelOutput, smallTalkLang);
+    if (output !== modelOutput) {
+      // Logged so a model still giving up on greetings stays visible now that
+      // no escalation or alert will show it.
+      console.log(`small talk in conversation ${conversationId}: fixed reply sent (model: ${modelOutput?.answer_status ?? "no output"})`);
+    }
+    modelOutput = output;
   }
 
   const decision = decideHandoff({

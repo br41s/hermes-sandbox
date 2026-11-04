@@ -92,6 +92,31 @@ export function messageRequestsHuman(text) {
   return requestedHumanLanguage(text) !== null;
 }
 
+// A message that only greets, thanks or says goodbye asks nothing, so there is
+// nothing for a person to pick up. The whole message must match: "hola, ¿tenéis
+// plumas?" is a question and "hola, soy Marta" carries a lead. "Vale", "ok" and
+// "sí" are left out on purpose: they can be the answer to "¿te paso con el
+// equipo?". Same two languages as the backstops above.
+const SMALL_TALK_PATTERNS = {
+  es: /^(?:(?:hola+|holi|buenas(?: tardes| noches)?|buenos dias|buen dia|que tal(?: estas)?|como estas|(?:muchas )?gracias|adios|hasta luego|hasta pronto|un saludo|saludos|chao)(?: |$))+$/,
+  en: /^(?:(?:hi+(?: there)?|hey+|hello+|good (?:morning|afternoon|evening|night)|how are you|thanks(?: a lot)?|thank you(?: very much)?|bye|goodbye|see you|cheers)(?: |$))+$/,
+};
+
+// "es" | "en" | null: which language's small talk this message is.
+export function smallTalkLanguage(text) {
+  if (typeof text !== "string") return null;
+  const normalized = text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  for (const [lang, pattern] of Object.entries(SMALL_TALK_PATTERNS)) {
+    if (pattern.test(normalized)) return lang;
+  }
+  return null;
+}
+
 /**
  * @param {object} input
  * @param {string} input.visitorMessage - latest inbound text
@@ -134,6 +159,12 @@ export function decideHandoff({
   }
   if (visitorRequestedHuman) {
     return { required: true, reason: "visitor_requested_human" };
+  }
+  // Ahead of everything that follows, the model's signals included: on
+  // 2026-11-04 a model that gave up on "hola" sent a customer a Telegram alert.
+  // The webhook handler guarantees a reply exists on this path.
+  if (smallTalkLanguage(visitorMessage)) {
+    return { required: false, reason: null };
   }
   if (!knowledgeAvailable) {
     return { required: true, reason: "no_knowledge_available" };
