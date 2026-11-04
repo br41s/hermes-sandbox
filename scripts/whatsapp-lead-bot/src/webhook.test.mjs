@@ -7,7 +7,10 @@ import {
   escalationMessage,
   dedupeKey,
   expectedSecretFor,
+  handleWebhookEvent,
 } from "./webhook.js";
+import { loadRegistry } from "./registry.js";
+import { clearKnowledgeCache } from "./knowledge.js";
 
 const basePayload = {
   event: "message_created",
@@ -136,4 +139,146 @@ test("the webhook secret is bound to the account named in the payload", async ()
   delete process.env.REGISTRY_JSON_BASE64;
   delete process.env.WEBHOOK_SHARED_SECRET;
   assert.equal(expectedSecretFor(2), "", "unconfigured never matches");
+});
+
+// One whole turn with every outside service stubbed: Chatwoot, the site, the
+// model and Telegram. `modelOutput` null makes the model call fail.
+async function runTurn({ content, modelOutput, status = "pending", attributes = {}, knowledgeOk = true }) {
+  const calls = { models: [], sent: [], statuses: [], labels: 0, telegram: 0, search: 0 };
+  let liveStatus = status;
+  const realFetch = globalThis.fetch;
+  const saved = { ...process.env };
+  Object.assign(process.env, {
+    CHATWOOT_BASE_URL: "https://chat.example",
+    CHATWOOT_AGENT_BOT_TOKEN: "bot-token",
+    CHATWOOT_USER_API_TOKEN: "user-token",
+    OPENROUTER_API_KEY: "test-key",
+    VISITOR_AGENT_MODEL: "some/model",
+    TELEGRAM_BOT_TOKEN: "telegram-token",
+    REGISTRY_JSON_BASE64: Buffer.from(
+      JSON.stringify({ "3": { chatwootAccountId: 3, companyName: "Shop", siteUrl: "https://shop.example", knowledgeToken: "k", enabled: true, telegram: { chatId: "-100" } } }),
+    ).toString("base64"),
+  });
+  loadRegistry();
+  clearKnowledgeCache();
+
+  const json = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    const body = opts.body ? JSON.parse(opts.body) : null;
+    if (u.startsWith("https://api.telegram.org")) { calls.telegram += 1; return json({ ok: true }); }
+    if (u.startsWith("https://openrouter.ai")) {
+      calls.models.push(body);
+      if (!modelOutput) return { ok: false, status: 502, text: async () => "bad gateway" };
+      return json({ choices: [{ message: { content: JSON.stringify(modelOutput) } }] });
+    }
+    if (u.endsWith("/api/knowledge")) {
+      if (!knowledgeOk) return { ok: false, status: 500 };
+      return json({ business: { name: "Shop" }, catalogue: { search_path: "/api/knowledge/search" } });
+    }
+    if (u.includes("/api/knowledge/search")) { calls.search += 1; return json({ products: [], categories: [] }); }
+    if (u.endsWith("/toggle_status")) { liveStatus = body.status; calls.statuses.push(body.status); return json({}); }
+    if (u.endsWith("/labels")) { calls.labels += 1; return json({}); }
+    if (u.endsWith("/custom_attributes")) return json({});
+    if (u.endsWith("/messages") && opts.method === "POST") { calls.sent.push(body.content); return json({}); }
+    if (u.endsWith("/messages")) {
+      // What Chatwoot returns for a conversation handed off long ago and just
+      // reclaimed: the fixed handoff reply, its activity lines, the visitor's
+      // new message, then the bot's own "marked as pending" line after it.
+      const at = 1_800_000_000;
+      return json({ payload: [
+        { message_type: 0, content: "¿Hacéis envíos a Canarias?", created_at: at },
+        { message_type: 1, content: "No tengo información suficiente para responderte con seguridad. Se lo paso a una persona para que continúe contigo aquí.", created_at: at + 1 },
+        { message_type: 2, content: "Bot added needs-attention", created_at: at + 2 },
+        { message_type: 2, content: "Conversation was marked open by Bot", created_at: at + 3 },
+        { message_type: 0, content, created_at: at + 90_000 },
+        { message_type: 2, content: "Conversation was marked as pending by Bot", created_at: at + 90_001 },
+      ] });
+    }
+    return json({ id: 2, status: liveStatus, custom_attributes: attributes });
+  };
+
+  try {
+    await handleWebhookEvent({
+      event: "message_created",
+      id: `${Math.random()}`,
+      message_type: "incoming",
+      content_type: "text",
+      content,
+      account: { id: 3 },
+      inbox: { channel_type: "Channel::WebWidget" },
+      conversation: { id: 2, status },
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+  }
+  return calls;
+}
+
+const CANNOT_ANSWER = {
+  reply: "No lo sé.",
+  answer_status: "cannot_answer",
+  detected_language: "es",
+  lead: { name: null, email: null, need: null },
+  handoff: { required: true, reason: "no information" },
+};
+
+test("the 2026-11-04 incident: 'hola' in a reclaimed conversation, model gives up, nobody is alerted", async () => {
+  const calls = await runTurn({
+    content: "hola",
+    modelOutput: CANNOT_ANSWER,
+    status: "open",
+    attributes: { escalation_at: "2026-10-18T10:00:00Z" },
+  });
+  assert.deepEqual(calls.statuses, ["pending"], "taken back from the expired handoff and never handed over again");
+  assert.equal(calls.labels, 0);
+  assert.equal(calls.telegram, 0);
+  assert.equal(calls.sent.length, 1);
+  assert.ok(!calls.sent[0].includes("No tengo información"), calls.sent[0]);
+  assert.ok(!calls.sent[0].includes("No lo sé"), "the give-up text never reaches the visitor");
+  assert.match(calls.sent[0], /asistente de inteligencia artificial/);
+});
+
+test("a greeting skips the catalogue search: 'no products found for hola' is not a useful fact", async () => {
+  const calls = await runTurn({ content: "hola", modelOutput: CANNOT_ANSWER });
+  assert.equal(calls.search, 0);
+  assert.doesNotMatch(calls.models[0].messages[0].content, /no ha encontrado productos/);
+});
+
+test("a greeting the model answers normally goes out as the model wrote it", async () => {
+  const calls = await runTurn({
+    content: "Hola!",
+    modelOutput: { ...CANNOT_ANSWER, reply: "Hola, soy el asistente de IA de Shop.", answer_status: "answered", handoff: { required: false, reason: null } },
+  });
+  assert.deepEqual(calls.sent, ["Hola, soy el asistente de IA de Shop."]);
+  assert.equal(calls.telegram, 0);
+});
+
+test("a greeting is still answered when the model fails or the knowledge is down", async () => {
+  for (const input of [{ modelOutput: null }, { modelOutput: CANNOT_ANSWER, knowledgeOk: false }]) {
+    const calls = await runTurn({ content: "buenos días", ...input });
+    assert.equal(calls.telegram, 0);
+    assert.deepEqual(calls.statuses, []);
+    assert.match(calls.sent[0], /asistente de inteligencia artificial/);
+  }
+});
+
+test("a greeting at the turn cap gets the fixed reply without paying for a model call", async () => {
+  const calls = await runTurn({ content: "thanks!", modelOutput: CANNOT_ANSWER, attributes: { bot_turn_count: 6 } });
+  assert.equal(calls.models.length, 0);
+  assert.equal(calls.telegram, 0);
+  assert.match(calls.sent[0], /AI assistant/);
+});
+
+test("a real question the site cannot answer still hands off and alerts", async () => {
+  for (const content of ["¿Hacéis envíos a Canarias?", "Hola, ¿hacéis envíos a Canarias?"]) {
+    const calls = await runTurn({ content, modelOutput: CANNOT_ANSWER });
+    assert.deepEqual(calls.statuses, ["open"], content);
+    assert.equal(calls.labels, 1, content);
+    assert.equal(calls.telegram, 1, content);
+    assert.ok(calls.sent[0].startsWith("No tengo información suficiente"), content);
+    assert.equal(calls.search, 1, content);
+  }
 });

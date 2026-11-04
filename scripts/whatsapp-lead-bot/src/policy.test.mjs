@@ -6,6 +6,7 @@ import {
   messageTouchesSensitiveTopic,
   messageRequestsHuman,
   requestedHumanLanguage,
+  smallTalkLanguage,
 } from "./policy.js";
 
 const baseInput = {
@@ -196,4 +197,58 @@ test("answersPricing never relaxes complaints or legal matters", () => {
   }
   assert.equal(messageTouchesSensitiveTopic("how much does it cost?", { pricingIsPublic: true }), false);
   assert.equal(messageTouchesSensitiveTopic("how much does it cost?"), true);
+});
+
+test("smallTalkLanguage recognises a message that only greets, thanks or says goodbye", () => {
+  for (const msg of ["hola", "Hola!", " ¡HOLA! ", "holaaa", "buenas", "Buenos días", "buenas tardes", "hola, buenas tardes", "¿Qué tal?", "hola qué tal", "gracias", "Muchas gracias!", "adiós", "hola 👋"]) {
+    assert.equal(smallTalkLanguage(msg), "es", msg);
+  }
+  for (const msg of ["hi", "Hi there!", "hello", "Hey", "good morning", "how are you?", "hi, how are you?", "thanks!", "thank you very much", "bye"]) {
+    assert.equal(smallTalkLanguage(msg), "en", msg);
+  }
+});
+
+test("smallTalkLanguage rejects anything that says more than hello", () => {
+  for (const msg of [
+    "Hola, ¿tenéis plumas?",
+    "hola soy Marta",
+    "gracias, pero quiero poner una queja",
+    "hi, what do you sell?",
+    "hello I need a website",
+    "¿cuánto cuesta?",
+    // These can accept an offer to hand over: they stay with the model and policy.
+    "vale",
+    "ok",
+    "sí",
+    "yes please",
+    "",
+    "👋",
+    null,
+    undefined,
+  ]) {
+    assert.equal(smallTalkLanguage(msg), null, String(msg));
+  }
+});
+
+test("small talk never hands off, whatever else this turn looks like", () => {
+  const giveUp = { ...baseInput.modelOutput, answer_status: "cannot_answer", handoff: { required: true, reason: "no info" } };
+  for (const input of [
+    { modelOutput: giveUp },
+    { modelOutput: { ...baseInput.modelOutput, answer_status: "unsupported", handoff: { required: true, reason: null } } },
+    { modelOutput: null },
+    { knowledgeAvailable: false },
+    { turnCount: 6, turnCap: 6 },
+    { modelOutput: { ...baseInput.modelOutput, lead: { name: null, email: null, need: "Reformar un baño de 4m2" } } },
+  ]) {
+    assert.deepEqual(decideHandoff({ ...baseInput, visitorMessage: "hola", ...input }), { required: false, reason: null });
+  }
+});
+
+test("the same signals still hand off when the greeting comes with a real question", () => {
+  const visitorMessage = "Hola, ¿hacéis envíos a Canarias?";
+  const giveUp = { ...baseInput.modelOutput, answer_status: "cannot_answer", handoff: { required: true, reason: "no info" } };
+  assert.equal(decideHandoff({ ...baseInput, visitorMessage, modelOutput: giveUp }).reason, "model_cannot_answer");
+  assert.equal(decideHandoff({ ...baseInput, visitorMessage, modelOutput: null }).reason, "invalid_model_output");
+  assert.equal(decideHandoff({ ...baseInput, visitorMessage, knowledgeAvailable: false }).reason, "no_knowledge_available");
+  assert.equal(decideHandoff({ ...baseInput, visitorMessage, turnCount: 6 }).reason, "turn_cap_reached");
 });

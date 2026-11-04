@@ -40,7 +40,8 @@ const SYSTEM_PROMPT_HEADER = `Reglas. Mensajes cortos (esto es un chat, no un em
   "lead": { "name": string|null, "email": string|null, "need": string|null },
   "handoff": { "required": boolean, "reason": string|null }
 }
-- "answer_status" debe ser "unsupported" si la pregunta no está cubierta por la información de referencia, o "cannot_answer" si no puedes responder con seguridad. En esos casos, "handoff.required" debe ser true.`;
+- "answer_status" debe ser "unsupported" si la pregunta no está cubierta por la información de referencia, o "cannot_answer" si no puedes responder con seguridad. En esos casos, "handoff.required" debe ser true.
+- Un mensaje que solo saluda, agradece, se despide o da conversación ("hola", "gracias", "¿qué tal?") no es una pregunta sobre la empresa y no necesita la referencia: contesta con normalidad, con "answer_status": "answered" y "handoff.required": false, aunque el historial tenga un traspaso anterior a una persona o una pregunta antigua sin resolver. "unsupported" y "cannot_answer" son solo para preguntas reales.`;
 
 // Exported for tests. Everything the model may answer from, as one text
 // block. Pages and FAQ travel whole (they are short and they *are* the
@@ -200,7 +201,15 @@ function buildHistoryMessages(chatwootMessages) {
   // Chatwoot message_type: 0/incoming, 1/outgoing (or string equivalents
   // depending on version) -- normalise defensively rather than assuming
   // one shape, and keep only the last MAX_HISTORY_MESSAGES by created_at.
-  const sorted = [...(chatwootMessages || [])].sort(
+  // The endpoint also returns what the visitor never saw: agents' private
+  // notes and activity lines (message_type 2). Neither is a bot turn. Our own
+  // status change on a reclaim queues "Conversation was marked as pending by
+  // ..." right after the visitor's message, so it could reach the model as the
+  // assistant's last word (the "hola" that escalated, 2026-11-04).
+  const visible = (chatwootMessages || []).filter(
+    (m) => !m.private && m.message_type !== 2 && m.message_type !== "activity",
+  );
+  const sorted = visible.sort(
     (a, b) => (a.created_at || 0) - (b.created_at || 0),
   );
   const trimmed = sorted.slice(-MAX_HISTORY_MESSAGES);

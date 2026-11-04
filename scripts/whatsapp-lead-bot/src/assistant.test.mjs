@@ -289,3 +289,40 @@ test("the reference block before the per-turn marker is identical for different 
   assert.match(a, /Categorías relacionadas con la consulta:\n- Plumas \(3\)/);
   assert.match(a.slice(a.indexOf("=== REFERENCIA PARA ESTA CONSULTA")), /Artículos del blog relacionados:\n- Plumas/);
 });
+
+test("the model only sees what the visitor saw, and the visitor's message is its last turn", async () => {
+  const realFetch = globalThis.fetch;
+  const env = { key: process.env.OPENROUTER_API_KEY, model: process.env.VISITOR_AGENT_MODEL };
+  process.env.OPENROUTER_API_KEY = "test-key";
+  process.env.VISITOR_AGENT_MODEL = "some/model";
+  let sent;
+  globalThis.fetch = async (url, opts) => {
+    sent = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: validRaw() } }] }) };
+  };
+  try {
+    await getAssistantReply({
+      knowledge: {},
+      visitorMessage: "hola",
+      // Out of order on purpose: Chatwoot's order depends on its version.
+      chatwootMessages: [
+        { message_type: 0, content: "hola", created_at: 50 },
+        { message_type: 2, content: "Conversation was marked as pending by Bot", created_at: 51 },
+        { message_type: 1, content: "un agente responde", created_at: 40 },
+        { message_type: 1, private: true, content: "nota interna: mal pagador", created_at: 41 },
+        { message_type: "activity", content: "Bot added needs-attention", created_at: 42 },
+        { message_type: 3, content: "plantilla visible del widget", created_at: 30 },
+      ],
+    });
+  } finally {
+    globalThis.fetch = realFetch;
+    if (env.key === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = env.key;
+    if (env.model === undefined) delete process.env.VISITOR_AGENT_MODEL; else process.env.VISITOR_AGENT_MODEL = env.model;
+  }
+  assert.deepEqual(sent.messages.slice(1), [
+    { role: "assistant", content: "plantilla visible del widget" },
+    { role: "assistant", content: "un agente responde" },
+    { role: "user", content: "hola" },
+  ]);
+  assert.match(sent.messages[0].content, /solo saluda, agradece, se despide/, "the small-talk rule must reach the model");
+});
