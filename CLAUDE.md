@@ -60,7 +60,7 @@ per bound topic. Multiplex shipped once before, on 2026-09-28, and silenced Tele
 read from the profile's secret scope only (`gateway/platforms/_shared.py`
 `platform_gate_env`), never `os.environ`. Upstream builds the launch profile's scope from
 `/opt/data/.env`, but `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_GROUP_ALLOWED_CHATS` and
-`TELEGRAM_BOT_TOKEN` live only in the Zeabur service env. So the adapter logged `Blocked
+`TELEGRAM_BOT_TOKEN` live only in the Coolify app's env. So the adapter logged `Blocked
 unauthorized user` for every sender, and default-profile cron failed `platform 'telegram'
 not configured/enabled`.
 
@@ -76,7 +76,7 @@ step 4. A topic bound to a profile in `group_topics` that no `gateway.profile_ro
 routes is dropped with a warning (`TelegramAdapter._drop_unrouted_bound_topic`), never
 answered by the default profile; a topic bound since the last boot stays quiet until the
 next one generates its route. The read-only probe stays the health check for the launch
-scope, after any change to the service env or a revert. `zeabur service exec` lacks `/command` on its PATH,
+scope, after any change to the service env or a revert. `docker exec` lacks `/command` on its PATH,
 and `with-contenv` needs it:
 `/usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv s6-setuidgid hermes env PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python -m hermes_cli.fork_ext.process_env_scope --check`.
 It must say `VERDICT: OK`. It also lists jobs in `profiles/*/cron/jobs.json`, which the gateway
@@ -231,11 +231,15 @@ and only ever failed closed: live messages resolve through the receiving bot, an
 inbound verdict comes from the env allowlists. The kanban notifier never had the bug (its rule
 is per platform, upstream #115460). Upstream `main` still has the emptiness test.
 
-## Deployment — Zeabur, Frankfurt
+## Deployment — Coolify on Netcup, Nuremberg
 
-One engine, project `hermes-eu`, EU region for GDPR residency and to clear a Spanish Plesk
-geo-block. Static egress IP `43.157.39.241`. Panel at
-[blhermes.zeabur.app](https://blhermes.zeabur.app), GitHub-OAuth only.
+One server, `ssh netcup-nue` (`62.83.91.62`, Netcup VPS Lite 2, 4 vCore/8 GB/160 GB), running
+Coolify. Hermes is app `nqonduf6dnveg889xjvoubbw` in project `hermes-eu`, with `/opt/data` on
+the named volume `nqonduf6dnveg889xjvoubbw-hermes-data`, bound to `/data/hermes/opt-data`. EU
+region for GDPR residency and to clear a Spanish Plesk geo-block. Panel at
+[hermes.biglobster.top](https://hermes.biglobster.top), Nous OAuth; webhooks at
+`hook.biglobster.top` (port 8644, a Traefik file, `ops/README.md`). Moved off Zeabur on
+2026-11-05: the Zeabur rules in older decisions and incident write-ups no longer apply.
 
 **Deploy as rarely as the work allows (owner's rule, 2026-10-01).** Every deploy
 restarts the gateway: Telegram drops what arrives during the cold boot, an in-flight
@@ -250,14 +254,15 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
 - **GitHub Actions builds; `scripts/deploy.sh` deploys.** `.github/workflows/
   ghcr-publish.yml` builds every push to main and publishes the same image as
   both `:latest` and `:sha-<commit>`. By the time you deploy the image already
-  exists, so the script only moves the service tag and verifies — seconds, not
-  the 8-20 minutes a build takes. Pull main, then run it: it derives the SHA
-  itself, refuses a non-main branch, refuses to move the tag to an image that
-  was never published, moves it, polls the pod until it reports that commit,
-  and prints how to verify. `--dry-run` prints every command without running
+  exists, so the script only stops Hermes, moves the tag, starts it and verifies
+  (about 2 minutes down, the image pulled first). Pull main, then run it: it derives
+  the SHA itself, refuses a non-main branch, refuses to move the tag to an image
+  that was never published, polls the container until it reports that commit, and
+  prints how to verify. It reaches Coolify's API over SSH (it listens only on the
+  server's localhost) with the token in `~/.config/coolify-token`. `--dry-run` prints every command without running
   one.
 
-  **"Pod is serving" does not mean Telegram is listening.** The script reports
+  **"Container is serving" does not mean Telegram is listening.** The script reports
   when the container runs the new commit; the gateway connects Telegram later,
   and `drop_pending_on_cold_boot` discards every message sent in between. Test
   only after `agent.log` shows `Cold boot: dropping Telegram updates` followed
@@ -278,7 +283,7 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   (`agent.restart_drain_timeout` / `agent.cron_drain_timeout`, both pinned to 10s in
   `boot_reconcile.py` `OVERRIDES`), the 1s post-interrupt grace, then adapter and
   SessionDB teardown (≤3.5s seen). `tests/hermes_cli/test_s6_shutdown_grace_fork.py`
-  holds the sum under it, and it under Kubernetes' 30s.
+  holds the sum under it, and it under a 30s stop (Coolify's default, `docker stop -t 30`).
   **What decides clean vs unclean is in-flight work, not how you stop it.** A
   shutdown with nothing running logs `drain took 0.00s` and finishes in <4s either
   way. Until the grace was raised from 5s, every rollout or `service restart` made
@@ -315,46 +320,14 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   The rest of this section is what the script automates — read it before
   overriding anything.
 
-- **Deploy by moving the image tag. Everything else is a no-op.** Zeabur only reconciles a
-  prebuilt service when its *spec* changes, and `latest` never looks changed — so every
-  in-place operation is entitled to answer "nothing to do" and leave old code running under
-  a healthy-looking container. All three of the obvious paths fail:
-  `hermes gateway restart` (not supported on this platform, see below), `service restart`
-  (re-runs the image already on the node, no pull), and `service redeploy`
-  (`CANNOT_REDEPLOY_INPLACE` — it wants a bound GitHub repo, which a prebuilt service has
-  no). Changing an env var to force a rollout does not reliably work either; it was tried
-  and the pod never cycled.
-
-  Cloud Build tags every build `sha-<commit>` as well as `latest`. Point the service at the
-  sha — the spec changes, so a rollout should happen (but see below), and afterwards you
-  can name exactly which build is running:
-
-  ```bash
-  # 1. wait for the build to finish and publish, then:
-  gcloud builds list --limit=3 --format="value(id,status,createTime)"
-  # 2. point the service at that build (never omit -i=false; the CLI prompts otherwise)
-  zeabur service update tag --id 6a5ea5074d439e41ee4cd38c -t sha-<commit> -y -i=false
-  # 3. verify by a file that only exists in the new image
-  zeabur service exec --id 6a5ea5074d439e41ee4cd38c -i=false -- ls -l /opt/hermes/<new file>
-  ```
-
-  **Order matters**: bumping anything before the image is published just cycles onto the
-  stale one. Verify by mtime or by a file that did not exist before — never by grepping for
-  a string, which an older image can also contain.
-
-  `-t latest` puts it back on the floating tag when you want that.
-
-  **A moved tag is not always rolled out (2026-10-06).** Zeabur saved `sha-a0b79d9d0` on
-  the service and never created a pod for it: the pod that predated the move kept serving
-  the old commit, with no failed rollout anywhere, until a manual **Restart** on the
-  service page (dash.zeabur.com → `hermes-eu` → `hermes`) rolled it out. That page keeps no
-  deployment history for this service. The signature is the new tag under *Source*, a single
-  pod in the *Running 1/1* dropdown, and `deploy.sh --status` still reporting the old commit.
-  `deploy.sh` now reads the serving pod's name and commit before the move and again at its
-  5-minute deadline, and says "never rolled it out" instead of "may still be in progress".
-  Before clicking Restart, check no cron run is in flight; if the new pod does not come up,
-  move the tag back to the old sha and Restart again. Do not leave it: the next routine pod
-  restart deploys the saved tag unattended.
+- **Deploy by moving the image tag: stop, move the tag, start. Never Coolify's Redeploy.**
+  Redeploy can start the new container before stopping the old one, and two containers would
+  poll Telegram with one bot token (a duplicate is fatal) and write the same volume and
+  `state.db`. `scripts/deploy.sh` does the three steps and refuses to move the tag if the old
+  container has not gone. `:latest` is never used, so the image running is always one you
+  can name. To roll back, do the same by hand in Coolify with the previous `sha-<commit>`.
+  Verify by a file only the new image has, or by `/opt/hermes/.hermes_build_sha`, never by
+  grepping for a string an older image can also contain.
 
   **Never read Cloud Build substitutions into a terminal.** `gcloud builds describe ...
   --format="value(substitutions)"` prints `_GITHUB_TOKEN` in clear. The token is stored in
@@ -365,19 +338,16 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   holds: `is_container()` detects Kubernetes too (`KUBERNETES_SERVICE_HOST`, the
   serviceaccount path, `kubepods`/`containerd`/`crio` cgroup markers), and
   `detect_service_manager()` no longer gates s6 on it at all — `_s6_running()` stands alone
-  on `/proc/1/comm` + `/run/s6/basedir`, so the s6 dispatch path is live in a Zeabur pod.
+  on `/proc/1/comm` + `/run/s6/basedir`, so the s6 dispatch path is live in the container.
   Nobody has re-verified the full lifecycle there since, so reach for
   `/command/s6-svc -u /run/service/gateway-default` first and treat a working
   `hermes gateway restart` as a pleasant surprise worth recording here. Multiplex is
   on by upstream's default (see "Multiplex is on" above).
   **Whenever it is on, the default gateway serves every profile: never bring up a
   `gateway-<profile>` slot for a secondary**, which would double-serve it.
-- **Container restarts every 1–2h are benign** — Zeabur deployment rollouts re-serialise the
-  env array, producing a new pod-template-hash and a k8s rolling restart. Not a crash, not
-  OOM; there are no liveness probes. Self-heals in ~3 min. Do not chase it.
-- **Rotating the OpenRouter key = Zeabur env + a full container restart.** Set
+- **Rotating the OpenRouter key = Coolify env + a full container restart.** Set
   `OPENROUTER_API_KEY` (and `HERMES_AUDITOR_OPENROUTER_API_KEY` for the auditor) on the
-  `hermes` service, then `zeabur service restart --id <id>`. `zeabur variable update` alone
+  Hermes app in Coolify, then stop and start it. Changing the variable alone
   changes nothing at runtime, and the panel's "Restart Gateway" does not re-run cont-init.
   On every boot `boot_reconcile.py` writes the env value into the main `.env` and every
   non-tenant profile `.env` (`INJECT`) and pins the auditor profile to its dedicated key.
@@ -401,15 +371,10 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   before pointing a profile at it.
 - **`group_topics` belongs at top-level `telegram.extra`**, not `display.telegram.extra`,
   which is dead config the adapter never loads.
-- **Zeabur `service delete` half-completes** — UI hides it, backend record and PVC linger,
-  retry returns `ALREADY_EXISTS`. `project export` shows what a clone would include.
-- **Bulk data cannot move via `service exec`** (fails past ~5MB). Host-to-host root SSH
-  rsync of `/opt/data` works. `project clone --region` carries services and volumes, but
-  not volumes large enough to exceed the S3 backup limit.
 - **rclone: always via PATH (the shim), never as root by full path
   `/opt/data/scripts/bin/rclone`.** A root-run rclone rewrote `rclone.conf` as root:hermes
   0600 and cost four nightly Drive syncs (2026-10-08..11). Details in `ops/README.md`.
-- **Never run `hermes` on the pod as root.** `zeabur service exec` is root, and a root
+- **Never run `hermes` in the container as root.** `docker exec` is root, and a root
   `hermes` creates `/opt/data/installs/<key>/.install.lock` root:root 0600; every later
   `hermes` start as hermes then exits 1 ("install state is not writable by this user").
   On 2026-10-25 that crash-looped dashboard and gateway-default after a deploy (502, silent
@@ -520,7 +485,7 @@ read a `HERMES_`-prefixed variable of its own, or go unauthenticated against a p
 repo. Falling back to `GITHUB_TOKEN` looks right in tests and is dead in production:
 it left the deploy-drift and dependency-alert signals blind until 2026-09-26.
 
-Keys live in Zeabur env vars and propagate to profile `.env` files at boot (see "Rotating the OpenRouter key"). **Never print a variable
+Keys live in the Coolify app's env vars and propagate to profile `.env` files at boot (see "Rotating the OpenRouter key"). **Never print a variable
 table or `env[N].value` into a session transcript** — path-based redaction does not catch
 those, and keys have leaked here that way before.
 
@@ -716,7 +681,7 @@ it writes from. Sold to a client without one it goes quiet on every run.
 
 - `ops/` — deploy runbooks, incident write-ups, security procedures. Never put fork-only
   docs in `docs/`: upstream folded it into the public `website/` (see `ops/README.md`)
-- `AGENT_RENTAL_SETUP.md` — rental provisioning, incl. whitelisting `43.157.39.241` on 443
+- `AGENT_RENTAL_SETUP.md` — rental provisioning, incl. whitelisting `62.83.91.62` on 443
 - `BIGLOBSTER_SETUP.md` — BigLobster profile wiring
 - `hermes-already-has-routines.md` — what upstream provides before you build scheduling
 - `shorts/STUDIO.md` — BigLobster shorts pipeline; `shorts/CHECKLIST.md` — the manual checklist, revised

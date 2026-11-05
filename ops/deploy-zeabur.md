@@ -1,3 +1,5 @@
+> **Historical.** Hermes left Zeabur on 2026-11-05. Current deployment: `CLAUDE.md`, `ops/README.md`.
+
 # Deploying the Hermes dashboard to Zeabur
 
 The live panel at **https://blhermes.zeabur.app** does **not** build from GitHub
