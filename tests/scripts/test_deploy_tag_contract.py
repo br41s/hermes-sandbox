@@ -1,7 +1,7 @@
 """The image-tag contract between the builder, the deployer and the image.
 
 Deploying is *moving a tag*. ``scripts/deploy.sh`` derives
-``sha-$(git rev-parse --short=9 HEAD)`` and points the Zeabur service at it;
+``sha-$(git rev-parse --short=9 HEAD)`` and points the Coolify app at it;
 whatever built the image had to publish that exact string. Nothing at runtime
 reconciles the two — if they disagree the service is pointed at a tag nobody
 pushed and the rollout dies as "Service Image Pull Failed" (PR #197/#198),

@@ -1,63 +1,59 @@
-"""deploy.sh tells a rollout Zeabur never started from one that is merely slow (2026-10-06).
+"""deploy.sh stops Hermes before it moves the tag, and says how to go back (2026-11-05).
 
-The deploy of sha-a0b79d9d0 moved the service tag, and Zeabur saved it, but no new
-pod was ever created: the pod that predated the move kept serving the old commit
-until a manual Restart. deploy.sh timed out with "the rollout may still be in
-progress", which sent the owner to wait for something that was never coming. It
-now reads the serving pod's name and build SHA before moving the tag, and again at
-the deadline; the same pod on the same commit means "never started".
+Two containers must never run at once: they would poll Telegram with one bot token (a
+duplicate is fatal) and write the same volume and state.db. Coolify's redeploy can start
+the new container before stopping the old one, so the script stops first, confirms the
+container is gone, then moves the tag and starts. A new container that never reports the
+commit gets the rollback steps, because a stopped app is not going to fix itself.
 """
 from __future__ import annotations
 
-import re
-import subprocess
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
 TEXT = DEPLOY_SH.read_text(encoding="utf-8")
 
-POD = "service-6a5ea5074d439e41ee4cd38c-7d9dc45d7b-qjhrs"
+
+def test_stop_then_gone_then_tag_then_start() -> None:
+    pull = TEXT.index('run ssh -n "$SSH_HOST" docker pull')
+    stop = TEXT.index("run coolify POST /stop")
+    gone = TEXT.index('while [ -n "$(hermes_container)" ]')
+    move = TEXT.index("run coolify PATCH")
+    start = TEXT.index("run coolify POST /start")
+    assert pull < stop < gone < move < start
 
 
-def _diagnose(*args: str) -> str:
-    func = re.search(r"^rollout_diagnosis\(\) \{\n.*?^\}\n", TEXT, re.DOTALL | re.MULTILINE).group(0)
-    script = func + 'rollout_diagnosis "$@"\n'
-    out = subprocess.run(["bash", "-c", script, "deploy.sh", *args],
-                         capture_output=True, text=True, timeout=10, check=True)
-    return out.stdout.strip()
+def test_a_container_that_will_not_stop_never_moves_the_tag() -> None:
+    block = TEXT[TEXT.index('while [ -n "$(hermes_container)" ]'):TEXT.index("run coolify PATCH")]
+    assert "exit 1" in block
+    assert "The tag was not moved" in block
 
 
-def test_the_same_pod_on_the_same_commit_is_a_rollout_that_never_started() -> None:
-    # The 2026-10-06 case, values as production reported them.
-    assert _diagnose(POD, "ae7173854", POD, "ae7173854") == "not_started"
+def test_the_script_never_uses_coolifys_redeploy() -> None:
+    for line in TEXT.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        assert "/deploy" not in line.replace("scripts/deploy.sh", "")
+        assert "/restart" not in line
 
 
-@pytest.mark.parametrize("pod_before, sha_before, pod_after, sha_after", [
-    (POD, "ae7173854", "service-6a5ea5074d439e41ee4cd38c-5f6b8c9d4-x2k7p", "ae7173854"),  # replaced
-    (POD, "ae7173854", "", ""),            # pod unreachable at the deadline (mid-swap)
-    ("", "", POD, "ae7173854"),            # could not read it before the move
-    (POD, "", POD, ""),                    # image without .hermes_build_sha
-])
-def test_anything_else_stays_in_progress(pod_before, sha_before, pod_after, sha_after) -> None:
-    # "Unknown" must never become a Restart instruction.
-    assert _diagnose(pod_before, sha_before, pod_after, sha_after) == "in_progress"
+def test_the_token_never_reaches_an_argv() -> None:
+    func = TEXT[TEXT.index("coolify() {"):TEXT.index("hermes_container() {")]
+    assert "-H @-" in func
+    assert 'printf \'Authorization: Bearer %s\\n\'' in func
+    assert 'ssh "$SSH_HOST"' in func
 
 
-def test_the_pod_is_read_before_the_tag_moves_and_again_at_the_deadline() -> None:
-    before = TEXT.index("read -r POD_BEFORE SHA_BEFORE")
-    move = TEXT.index("run zeabur service update tag")
-    deadline = TEXT.index("read -r POD_AFTER SHA_AFTER")
-    assert before < move < deadline
-    # A dry run moves nothing, so it must not exec into the pod either.
-    assert 'if [ "$DRY_RUN" -eq 0 ]; then\n  read -r POD_BEFORE' in TEXT
+def test_a_dry_run_touches_nothing() -> None:
+    # A dry run reads no commit from the container and never waits on it.
+    assert 'if [ "$DRY_RUN" -eq 0 ]; then\n  SHA_BEFORE=' in TEXT
+    assert 'if [ "$DRY_RUN" -eq 0 ]; then\n  DEADLINE=' in TEXT
 
 
-def test_never_started_says_restart_and_how_to_roll_back() -> None:
-    block = TEXT[TEXT.index('= not_started ]; then'):TEXT.index("may still be in progress")]
-    assert "never rolled it out" in block
-    assert "Click Restart" in block
-    assert "re-run scripts/deploy.sh and answer N" in block  # the in-flight check, before the restart
-    assert '-t sha-$SHA_BEFORE -y -i=false' in block          # rollback to what was serving
+def test_a_container_that_never_reports_says_how_to_roll_back() -> None:
+    block = TEXT[TEXT.index("Hermes did not report"):TEXT.index("# ── Verification")]
+    assert "sha-${SHA_BEFORE:-" in block
+    assert "stop the app" in block and "start it" in block
+    assert "Never Redeploy" in block
+    assert "exit 1" in block

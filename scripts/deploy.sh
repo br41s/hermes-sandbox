@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — point the Hermes service at the current commit's image.
+# deploy.sh — point the Hermes app on Coolify at the current commit's image.
 #
 # WHY THIS EXISTS
-# Deploying here means moving the service's image tag to `sha-<commit>`. Zeabur
-# only reconciles a prebuilt service when its *spec* changes, so `:latest` never
-# looks changed and restart/redeploy/env-var churn are all entitled to answer
-# "nothing to do" while old code keeps running under a healthy-looking
-# container. See CLAUDE.md, "Deploy by moving the image tag".
+# Deploying here means moving the app's image tag to `sha-<commit>`, so the image
+# running is always one you can name, then restarting onto it. The order is stop,
+# move the tag, start. Never Coolify's redeploy: it can start the new container
+# before stopping the old one, and two containers would poll Telegram with one bot
+# token (a duplicate is fatal) and write the same volume and state.db. See CLAUDE.md,
+# "Deploy by moving the image tag".
 #
 # That leaves a hand-run sequence whose one input is a short SHA typed twice —
 # once into the build, once into the tag move. Getting it wrong has already put
@@ -24,7 +25,7 @@
 # THE BUILD NORMALLY IS NOT THIS SCRIPT'S JOB. `.github/workflows/
 # ghcr-publish.yml` builds every push to main and publishes BOTH `:latest` and
 # `:sha-<commit>`, so by the time you deploy the image already exists and this
-# script only has to move the service tag and verify — seconds, not 7-20 min.
+# script only has to stop, move the tag, start and verify — minutes, not 7-20 more.
 # It refuses to move the tag to an image that was never published, so a failed
 # or still-running Actions build cannot become a broken rollout.
 #
@@ -58,7 +59,9 @@
 #
 set -euo pipefail
 
-SERVICE_ID="6a5ea5074d439e41ee4cd38c"
+APP_UUID="nqonduf6dnveg889xjvoubbw"
+SSH_HOST="netcup-nue"
+COOLIFY_TOKEN_FILE="${COOLIFY_TOKEN_FILE:-$HOME/.config/coolify-token}"
 IMAGE="ghcr.io/br41s/hermes-sandbox"
 
 DRY_RUN=0
@@ -106,22 +109,28 @@ confirm() {
   [ "$reply" = "y" ] || [ "$reply" = "Y" ] || { echo "aborted"; exit 1; }
 }
 
-# Classify a rollout that timed out. Args: the pod name and build SHA read just
-# BEFORE the tag moved, then the pod name and build SHA read at the deadline.
-# Prints `not_started` when the very same pod is still serving the very same
-# commit, i.e. Zeabur saved the new tag but never created a pod for it
-# (2026-10-06: the spec said sha-a0b79d9d0 while the pod that predated the move
-# kept serving, and only a manual Restart rolled it out). Prints `in_progress`
-# otherwise, including whenever a value could not be read: "unknown" must never
-# turn into a Restart instruction.
-rollout_diagnosis() {
-  local pod_before="$1" sha_before="$2" pod_after="$3" sha_after="$4"
-  if [ -n "$pod_before" ] && [ -n "$sha_before" ] \
-      && [ "$pod_before" = "$pod_after" ] && [ "$sha_before" = "$sha_after" ]; then
-    echo not_started
-  else
-    echo in_progress
-  fi
+# Call Coolify's API for this app. It listens only on the server's localhost, so curl
+# runs there, over SSH. The token travels on stdin, so it is never in an argv on
+# either machine.
+coolify() {  # METHOD PATH [JSON]
+  local args=(curl -fsS --max-time 30 -o /dev/null -H @- -X "$1"
+    "http://localhost:8000/api/v1/applications/$APP_UUID$2")
+  [ $# -lt 3 ] || args+=(-H "Content-Type: application/json" -d "$3")
+  printf 'Authorization: Bearer %s\n' "$(cat "$COOLIFY_TOKEN_FILE")" \
+    | ssh "$SSH_HOST" "$(printf '%q ' "${args[@]}")"
+}
+
+# The running Hermes container, or nothing. Coolify puts a timestamp in the name.
+hermes_container() {
+  ssh -n "$SSH_HOST" "docker ps --filter name=$APP_UUID --format '{{.Names}}'" | head -1
+}
+
+# Run a command in that container. Fails when there is none.
+pod_exec() {
+  local c
+  c="$(hermes_container)"
+  [ -n "$c" ] || return 1
+  ssh -n "$SSH_HOST" "docker exec $c $(printf '%q ' "$@")"
 }
 
 cd "$(dirname "$0")/.."
@@ -142,8 +151,7 @@ if [ "$STATUS_ONLY" -eq 1 ]; then
   git fetch origin main --quiet
   LOCAL_MAIN="$(git rev-parse --short origin/main)"
 
-  RUNNING="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
-    sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
+  RUNNING="$(pod_exec sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
     | tr -d "[:space:]")" || true
 
   echo
@@ -154,7 +162,7 @@ if [ "$STATUS_ONLY" -eq 1 ]; then
     echo "  That image predates the HERMES_GIT_SHA build-arg, so it cannot say"
     echo "  which commit it is. Date it by hashing a file recent commits touched:"
     echo "      git show <commit>:<path> | shasum -a256"
-    echo "      zeabur service exec --id $SERVICE_ID -i=false -- sha256sum /opt/hermes/<path>"
+    echo "      ssh $SSH_HOST docker exec <hermes container> sha256sum /opt/hermes/<path>"
     echo "  The next deploy from this script bakes the SHA in and ends the guessing."
     exit 2
   fi
@@ -203,7 +211,7 @@ if [ -n "$(git status --porcelain)" ]; then
   fi
   echo "⚠ Working tree is not clean — these changes are NOT part of this deploy."
   echo "  Actions built $(git rev-parse --short=9 HEAD) from the committed ref;"
-  echo "  this script only moves the service tag to it."
+  echo "  this script only moves the app's tag to it."
   git status --short | sed "s/^/      /"
   echo
 fi
@@ -300,7 +308,7 @@ echo
 echo "  commit : $(git log -1 --oneline)"
 echo "  tag    : $TAG"
 echo "  image  : $IMAGE:$TAG"
-echo "  service: $SERVICE_ID"
+echo "  app    : $APP_UUID on $SSH_HOST"
 echo
 
 # ── Guard 2: the same-commit no-op ───────────────────────────────────────────
@@ -329,8 +337,8 @@ if [ "$DO_BUILD" -eq 1 ] && command -v gcloud >/dev/null 2>&1; then
         --filter="substitutions._COMMIT_SHA=$SHA AND status=SUCCESS" \
         --format="value(id)" 2>/dev/null)" ]; then
     echo "⚠ $TAG has been built before — this commit is already published." >&2
-    echo "  Re-pointing the service at the same tag changes no spec, so Zeabur" >&2
-    echo "  will NOT roll out. If you need new code live, make a commit." >&2
+    echo "  Deploying it again restarts the same image. If you need new code live," >&2
+    echo "  make a commit." >&2
     if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
       confirm "  Continue anyway? [y/N] "
     fi
@@ -397,9 +405,8 @@ print("__in_flight_check_ok__")
 '
 echo "→ Checking for cron runs in flight"
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "  [dry-run] zeabur service exec --id $SERVICE_ID -i=false -- ... with-contenv s6-setuidgid hermes python -c \"\$IN_FLIGHT_PY\""
-elif IN_FLIGHT="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
-    /usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv \
+  echo "  [dry-run] docker exec <hermes container> ... with-contenv s6-setuidgid hermes python -c \"\$IN_FLIGHT_PY\""
+elif IN_FLIGHT="$(pod_exec /usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv \
     s6-setuidgid hermes /opt/hermes/.venv/bin/python -c "$IN_FLIGHT_PY" 2>/dev/null | tr -d '\r')" \
     && printf '%s\n' "$IN_FLIGHT" | grep -q '^__in_flight_check_ok__$'; then
   # The marker is the proof the probe ran to the end: an exec that swallowed a
@@ -442,36 +449,43 @@ if [ "$DO_BUILD" -eq 1 ]; then
   fi
 fi
 
-# Which pod, on which commit, is serving right now. Read again at the deadline,
-# this is what tells "Zeabur never rolled the new tag out" (same pod, same
-# commit) apart from a rollout that is merely slow. A pod's hostname is its
-# Kubernetes pod name, so a replaced pod always answers with a new one.
-read_pod() {
-  zeabur service exec --id "$SERVICE_ID" -i=false -- \
-    sh -c 'echo "$(cat /etc/hostname 2>/dev/null) $(cat /opt/hermes/.hermes_build_sha 2>/dev/null)"' \
-    2>/dev/null | tr -d '\r' | tail -1
-}
-POD_BEFORE=""
+# The commit serving now: the tag to go back to if the new one never comes up.
 SHA_BEFORE=""
 if [ "$DRY_RUN" -eq 0 ]; then
-  read -r POD_BEFORE SHA_BEFORE <<< "$(read_pod || true)" || true
+  SHA_BEFORE="$(pod_exec sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
+    | tr -d '[:space:]')" || true
 fi
 
-echo "→ Pointing service at $TAG"
-run zeabur service update tag --id "$SERVICE_ID" -t "$TAG" -y -i=false
+# Pulled first, so the gateway is down for the boot and not for the download too.
+echo "→ Pulling $TAG on $SSH_HOST"
+run ssh -n "$SSH_HOST" docker pull -q "$IMAGE:$TAG"
 
-# ── Wait for the NEW pod, not for 60 seconds ─────────────────────────────────
+# ── Stop, move the tag, start ────────────────────────────────────────────────
+# In this order, and the old container has to be gone before anything else moves:
+# see WHY THIS EXISTS at the top.
+echo "→ Stopping Hermes"
+run coolify POST /stop
+if [ "$DRY_RUN" -eq 0 ]; then
+  DEADLINE=$(( $(date +%s) + 120 ))
+  while [ -n "$(hermes_container)" ]; do
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+      echo "✗ Hermes is still running 2 min after the stop. The tag was not moved." >&2
+      exit 1
+    fi
+    sleep 5
+  done
+fi
+
+echo "→ Pointing the app at $TAG and starting it"
+run coolify PATCH "" "{\"docker_registry_image_tag\":\"$TAG\"}"
+run coolify POST /start
+
+# ── Wait for the NEW container, not for 60 seconds ───────────────────────────
 # A flat sleep is a guess, and it guessed wrong on 2026-09-15: the rollout
-# finished at 08:32:59 and the verify exec had already fired, dying with
-# CONTAINER_NOT_FOUND on a deploy that had in fact succeeded. Under `set -e`
-# that failed command substitution aborts the script, so a healthy deploy
-# reports as a failure.
-#
-# "exec works" is NOT readiness either — during a rolling update the OLD pod
-# answers perfectly well, and hashing a file against it would confirm the
-# previous image. The baked-in build SHA is what distinguishes them, so poll
-# until the container reports the commit THIS run deployed.
-echo "→ Waiting for the pod to report $SHA (up to 5 min)"
+# finished at 08:32:59 and the verify exec had already fired against nothing, so a
+# healthy deploy reported as a failure. Poll until the container reports the
+# commit THIS run deployed.
+echo "→ Waiting for the container to report $SHA (up to 5 min)"
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '  [dry-run] poll .hermes_build_sha until it reports %s\n' "$SHA"
 else
@@ -479,36 +493,19 @@ else
   POD_READY=0
   while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     sleep 10
-    RUNNING_SHA="$(zeabur service exec --id "$SERVICE_ID" -i=false -- \
-      sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
+    RUNNING_SHA="$(pod_exec sh -c 'cat /opt/hermes/.hermes_build_sha 2>/dev/null' 2>/dev/null \
       | tr -d '[:space:]')" || true
     if [ "$RUNNING_SHA" = "$SHA" ]; then
       POD_READY=1
-      echo "  pod is serving $SHA"
+      echo "  container is serving $SHA"
       break
     fi
   done
   if [ "$POD_READY" -eq 0 ]; then
-    POD_AFTER=""
-    SHA_AFTER=""
-    read -r POD_AFTER SHA_AFTER <<< "$(read_pod || true)" || true
-    if [ "$(rollout_diagnosis "$POD_BEFORE" "$SHA_BEFORE" "$POD_AFTER" "$SHA_AFTER")" = not_started ]; then
-      echo "✗ Zeabur saved $TAG but never rolled it out." >&2
-      echo "  The pod that was serving before the move ($POD_BEFORE) is still serving" >&2
-      echo "  $SHA_BEFORE, and no new pod was created (on 2026-10-06 waiting never fixed it)." >&2
-      echo "  To finish the deploy:" >&2
-      echo "    1. Check no cron run is in flight: re-run scripts/deploy.sh and answer N." >&2
-      echo "    2. Click Restart on the hermes service (dash.zeabur.com, project hermes-eu)." >&2
-      echo "    3. scripts/deploy.sh --status   until production reports $SHA." >&2
-      echo "  If the new pod is not up within ~5 min, roll back and Restart again:" >&2
-      echo "      zeabur service update tag --id $SERVICE_ID -t sha-$SHA_BEFORE -y -i=false" >&2
-      echo "  Do not leave it: the spec now names $TAG, so the next routine pod restart" >&2
-      echo "  deploys it unattended." >&2
-    else
-      echo "⚠ Pod did not report $SHA within 5 min (last seen: ${RUNNING_SHA:-none})." >&2
-      echo "  The tag was moved, so the rollout may still be in progress. Check with:" >&2
-      echo "      scripts/deploy.sh --status" >&2
-    fi
+    echo "✗ Hermes did not report $SHA within 5 min (last seen: ${RUNNING_SHA:-none})." >&2
+    echo "  Read the deploy log in Coolify, and: ssh $SSH_HOST docker ps -a --filter name=$APP_UUID" >&2
+    echo "  To roll back, in this order: stop the app in Coolify, set its image tag to" >&2
+    echo "  sha-${SHA_BEFORE:-<previous commit>}, start it. Never Redeploy: see the top of this script." >&2
     exit 1
   fi
 fi
@@ -527,10 +524,10 @@ if [ -n "$VERIFY_FILE" ]; then
   LOCAL_HASH="$(sha256sum "$VERIFY_FILE" | cut -d' ' -f1)"
   echo "→ Verifying /opt/hermes/$VERIFY_FILE"
   if [ "$DRY_RUN" -eq 1 ]; then
-    printf '  [dry-run] zeabur service exec --id %s -i=false -- sha256sum /opt/hermes/%s\n' "$SERVICE_ID" "$VERIFY_FILE"
+    printf '  [dry-run] docker exec <hermes container> sha256sum /opt/hermes/%s\n' "$VERIFY_FILE"
     printf '  [dry-run] expecting %s\n' "${LOCAL_HASH:0:12}"
   else
-    REMOTE_HASH="$(zeabur service exec --id "$SERVICE_ID" -i=false -- sha256sum "/opt/hermes/$VERIFY_FILE" | awk '{print $1}' | head -1)"
+    REMOTE_HASH="$(pod_exec sha256sum "/opt/hermes/$VERIFY_FILE" | awk '{print $1}' | head -1)"
     if [ "$REMOTE_HASH" = "$LOCAL_HASH" ]; then
       echo "✓ Deployed. $VERIFY_FILE matches (${LOCAL_HASH:0:12})"
     else
@@ -544,12 +541,13 @@ if [ -n "$VERIFY_FILE" ]; then
 else
   echo "→ Verify manually against a file this deploy changed, e.g.:"
   echo "    sha256sum <path>"
-  echo "    zeabur service exec --id $SERVICE_ID -i=false -- sha256sum /opt/hermes/<path>"
+  echo "    ssh $SSH_HOST docker exec <hermes container> sha256sum /opt/hermes/<path>"
   echo "  Same hash = the new image is live."
 fi
 
 echo
 echo "Deployed $TAG"
+echo "Telegram connects later than this: test only after agent.log shows 'Gateway running'."
 echo "If any cron job's .prompt file changed, sync it into the live job:"
 echo "  cronjob(action=\"sync_prompt\", job_id=\"<id>\")"
 echo "The sync refuses if the live prompt was edited since its last sync — that"
