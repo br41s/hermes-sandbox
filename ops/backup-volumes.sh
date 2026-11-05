@@ -21,8 +21,8 @@
 # remote was offered and declined to keep restores key-free.
 #
 # Why dumps and not a tar of a running database: a file copy of a live Postgres
-# data directory is not guaranteed restorable. pg_dumpall and SQLite's online backup
-# API are. Chatwoot's Redis holds only sessions and empty queues, so it is not copied.
+# data directory is not guaranteed restorable. pg_dumpall, a forced Redis SAVE and
+# SQLite's online backup API are.
 set -euo pipefail
 set -o noclobber
 
@@ -42,6 +42,13 @@ dump_pg() {  # container label
 dump_pg dvohhynzxxgjzqzcprsqe88h biglobster-eu-chatwoot-pgvector
 dump_pg h37zud6pi0ener9906gooucz social-agenda-postgres
 dump_pg pcffmkflmojnujjjcgtvw20e flywell-postgres
+
+# Redis (chatwoot sessions/cache): force a snapshot and insist on Redis saying OK
+# (redis-cli exits 0 on an auth error), then copy the RDB file.
+reply=$(docker exec 5iuojkalzft8ocrli3l7lcns \
+  sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning save' 2>&1 | tr -d '\r')
+[ "$reply" = "OK" ] || { echo "redis SAVE did not return OK: $reply" >&2; exit 1; }
+cp "$VOLUMES/redis-data-5iuojkalzft8ocrli3l7lcns/_data/dump.rdb" "$OUT/biglobster-eu-redis-dump.rdb"
 
 # Chatwoot's uploaded files.
 tar -C "$VOLUMES/zizhirxoo2p6azitnkr7rf4w_chatwoot-storage/_data" -czf "$OUT/chatwoot-storage.tar.gz" .

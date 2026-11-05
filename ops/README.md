@@ -55,9 +55,9 @@ Two scripts, two homes:
   root bypasses the shim; the nightly pre-check catches that. The volume copy of
   `backup-full.sh` must be updated by hand (see above) for the pre-check to take effect.
 - **`backup-volumes.sh` (this directory) runs as root on the host.** It dumps the
-  other services' data (three Postgres via `pg_dumpall`, the bl-site-package reference
-  site's SQLite via the online backup API, tars of Chatwoot's storage and the site's
-  uploads; every dump is size- and `gzip -t`-checked) into a root-only staging dir
+  other services' data (three Postgres via `pg_dumpall`, the Chatwoot Redis RDB, the
+  bl-site-package reference site's SQLite via the online backup API, tars of Chatwoot's
+  storage and the site's uploads; the Redis `SAVE` reply must be `OK`; every dump is size- and `gzip -t`-checked) into a root-only staging dir
   `/var/backups/volumes/<stamp>/` on the host, uploads it with the host's own `rclone`
   (Debian package), and fails unless `rclone check` confirms every file in Drive by size
   and hash. It uses a root-only config `/root/.config/rclone/backup.conf` (the
