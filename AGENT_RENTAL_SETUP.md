@@ -482,7 +482,7 @@ A paid checkout cannot wait for someone to deploy an instance by hand, so blank
 bl-site-package instances are deployed **ahead of demand** and claimed per
 order.
 
-> **Needs a decision:** where new client instances are hosted after Zeabur (2026-11-05).
+> **Hosting is decided per customer** (Brais, 2026-11-05): there is no default host.
 
 The inventory lives in `~/.hermes/bl_site_instances.json`:
 
