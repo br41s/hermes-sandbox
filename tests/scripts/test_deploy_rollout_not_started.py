@@ -37,7 +37,7 @@ def _loop_with(container_body: str) -> subprocess.CompletedProcess:
     block = block[:block.rindex("fi")]  # drop the closing fi of the DRY_RUN branch
     script = (f"set -euo pipefail\nSSH_HOST=host\nsleep() {{ :; }}\nhermes_container() {{ {container_body}; }}\n"
               f"{block}\necho TAG_MOVED\n")
-    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=20)
+    return subprocess.run(["bash", "-c", script], check=False, capture_output=True, text=True, timeout=20)
 
 
 def test_a_failed_ssh_is_not_read_as_a_stopped_container() -> None:
