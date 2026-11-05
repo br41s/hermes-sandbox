@@ -30,8 +30,8 @@ identity from the human account, so this path does not re-create the ban risk.
 2. **Search Console:** add the service account's `client_email` as a
    **Restricted** (read) user on the `biglobster.top` property
    (Settings → Users and permissions).
-3. **Credential delivery:** base64-encode the key (unwrapped) and set it as an
-   env var on the Hermes Coolify app. In the container shell:
+3. **Credential delivery:** base64-encode the key (unwrapped) and set it as a
+   Zeabur env var. In the container shell:
    ```sh
    base64 -w0 /path/to/key.json
    ```
