@@ -181,12 +181,12 @@ class HuggingFaceImageGenProvider(ImageGenProvider):
         if not api_key:
             logger.warning(
                 "image_gen/huggingface: HUGGINGFACE_API_KEY not set — "
-                "cannot generate image. Add the key to Zeabur Variables."
+                "cannot generate image. Add the key to the Coolify app's env."
             )
             return error_response(
                 error=(
                     "HUGGINGFACE_API_KEY not set. Add it to your environment "
-                    "or Zeabur Variables (https://huggingface.co/settings/tokens)."
+                    "or the Coolify app's env (https://huggingface.co/settings/tokens)."
                 ),
                 error_type="auth_required",
                 provider="huggingface",

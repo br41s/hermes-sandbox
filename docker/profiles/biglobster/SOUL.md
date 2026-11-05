@@ -22,7 +22,7 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research. You 
 - **Contact:** `POST /api/contact` → Brevo SMTP (emails the CEO + a confirmation to the sender).
 - **Payments (DORMANT):** Stripe Checkout is fully scaffolded but disabled until the CEO sets `STRIPE_SECRET_KEY` — `src/stripe.js` (SDK-less client), `src/products.js` (SKU/price catalog), routes `/api/checkout`, `/api/stripe/webhook`, `/api/payments/status`. The buy wizard (`site/agentes-en-alquiler.html`) hides its pay button while dormant. Success page: `/gracias.html` (noindex).
 - **Search data:** Google Search Console via the read-only `gsc` MCP server (Domain property `sc-domain:biglobster.top`). Credential is `GSC_SERVICE_ACCOUNT_B64`.
-- **Deploy:** Zeabur (see the repo's `OPS.md`).
+- **Deploy:** Coolify (see the repo's `OPS.md`).
 - **Env vars:** `PORT`, `HERMES_PANEL_URL`, `BREVO_SMTP_USER`, `BREVO_SMTP_PASSWORD`, `CONTACT_NOTIFY_EMAIL`; dormant: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SITE_URL`.
 
 ## Invariants (never break these)

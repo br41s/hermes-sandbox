@@ -78,11 +78,11 @@ Open a PR titled `Upstream merge: <tag>` against `main`. The body covers:
 - gate results, naming any new failing test files;
 - whether the `Dockerfile`, `.dockerignore`, `docker/` or
   `hermes_cli/fork_ext/boot_reconcile.py` changed, since those change how the
-  production pod boots;
+  production container boots;
 - post-deploy checks from `CLAUDE.md`: wait for `Gateway running` in `agent.log`,
   send a plain message in General, and confirm
   `grep -c "exited UNCLEANLY" /opt/data/logs/gateway.log` did not grow;
-- rollback: `zeabur service update tag --id 6a5ea5074d439e41ee4cd38c -t sha-<previous main, short 9> -y -i=false`.
+- rollback: in Coolify, stop the Hermes app, set its image tag to `sha-<previous main, short 9>`, start it (what `scripts/deploy.sh` does).
 
 Subscribe to the PR's activity and drive CI to green. Fix real failures and answer
 auditor findings; never skip or disable a test. If something can't be resolved

@@ -859,19 +859,19 @@ def laptop_backup_incidents(*, heartbeat: Optional[dict] = None,
 # Public addresses of the products Hermes does not run itself: (name, url, where to look).
 # Nothing else watches them — Ops Sentinel is retired — and FinView's 2026-09-29 outage
 # (a billing budget disabled the GCP project) was found by opening the app. One GET each per
-# sweep, from the Frankfurt egress IP; redirects are followed, so a root that sends you to
+# sweep, from the Netcup server's IP; redirects are followed, so a root that sends you to
 # /login counts as up when /login does. The bl-site-package fleet is left out: the Website
 # Maintenance agent already checks every deployment.
 SITE_PROBES = (
     ("FinView API", "https://finview-api-cqxkgvzgrq-ew.a.run.app/api/health",
      "Cloud Run finview-api (europe-west1); FinView docs/deployment.md"),
     ("FinView", "https://fin-view-topaz.vercel.app/", "Vercel project fin-view"),
-    ("SocialAgenda", "https://socialagenda.biglobster.top/health", "Zeabur social-agenda"),
-    ("FlyWell", "https://flywell.biglobster.top/", "Zeabur flywell"),
+    ("SocialAgenda", "https://socialagenda.biglobster.top/health", "Coolify social-agenda"),
+    ("FlyWell", "https://flywell.biglobster.top/", "Coolify flywell"),
     ("ChatMemo", "https://chatmemo-one.vercel.app/", "Vercel project chatmemo"),
-    ("BigLobster", "https://biglobster.top/health", "Zeabur biglobster"),
-    ("grow-shop", "https://grow-shop.com/", "Zeabur grow-shop"),
-    ("experiencianatural", "https://experiencianatural.com/", "Zeabur experiencianatural"),
+    ("BigLobster", "https://biglobster.top/health", "Coolify biglobster"),
+    ("grow-shop", "https://grow-shop.com/", "Coolify grow-shop"),
+    ("experiencianatural", "https://experiencianatural.com/", "Coolify experiencianatural"),
     ("Shambhala Bangkok", "https://shambhalabangkok.vercel.app/", "Vercel project shambhalabangkok"),
 )
 # Probed only in UTC hours divisible by this; everything else every sweep. FinView's API
@@ -908,7 +908,7 @@ def probe_verdict(status: Optional[int], seconds: float, error: str) -> Optional
     The reason string goes straight into the brief, so say what was seen.
 
     Down is no answer within ``SITE_TIMEOUT_SECONDS`` or any 4xx/5xx. Every address in
-    ``SITE_PROBES`` answered 200 from the Frankfurt IP when it was added, so a 4xx means
+    ``SITE_PROBES`` answered 200 from the server's IP when it was added, so a 4xx means
     something changed there (a broken route, a new auth wall) and is worth a look.
     Slowness alone is not down: one threshold cannot fit both a static page and a
     15-second Cloud Run cold start, and the timeout already bounds the wait.
@@ -974,8 +974,8 @@ def site_down_incidents(*, probes=SITE_PROBES, probe=None,
         return [i for i in pool.map(_check, due) if i is not None]
 
 
-# The host's nightly volume dump (ops/backup-volumes.sh via /etc/cron.d, 02:00 host time =
-# 18:00 UTC) runs outside the container, so no cron store records it. What the container
+# The Netcup host's nightly dump (ops/backup-volumes.sh via /etc/cron.d, 19:00 Europe/Berlin)
+# runs outside the container, so no cron store records it. What the container
 # can see is the result: a dated folder in Drive, through the same rclone and remote the
 # Hermes nightly backup uses.
 VOLUME_BACKUP_REMOTE = "hermesdrive:/VolumeBackups"
@@ -1066,7 +1066,7 @@ def volume_backup_incidents(*, folders: Optional[list] = None,
             detail=(f"{blind.detail}\nUntil this clears, 'no backup alert' means "
                     "'cannot tell', not 'the host backed up'."),
             handoff=("check the rclone remote with ops/backup-full.sh's binary and config; "
-                     "on the host: `sudo tail -n 20 /var/log/backup-volumes.log`"),
+                     "on the host (ssh netcup-nue): `tail -n 20 /var/log/backup-volumes.log`"),
         )]
 
     stamps = []
@@ -1078,8 +1078,8 @@ def volume_backup_incidents(*, folders: Optional[list] = None,
         except ValueError:
             continue
         stamps.append((when.replace(tzinfo=UTC), entry["Name"]))
-    handoff = ("on the host: `sudo tail -n 20 /var/log/backup-volumes.log` and "
-               "`sudo cat /etc/cron.d/backup-volumes`; ops/README.md, backup-volumes.sh")
+    handoff = ("on the host (ssh netcup-nue): `tail -n 20 /var/log/backup-volumes.log` and "
+               "`cat /etc/cron.d/backup-volumes`; ops/README.md, backup-volumes.sh")
     if not stamps:
         return [Incident(
             id="volume-backup-stale:none", kind="volume_backup",
@@ -1367,8 +1367,8 @@ def unclean_exit_incidents(path: Optional[Path] = None, *,
     and ``drop_pending_on_cold_boot`` then discards everything sent meanwhile —
     up to four minutes of silence after a deploy. s6-overlay's 3s default stop
     grace caused 5 of 13 restarts between 27 and 29 Sep 2026; PR #360 raised it,
-    but if Zeabur's pod termination grace is shorter than that, the kubelet's
-    SIGKILL still wins. This signal is how we find out.
+    but if the container's stop timeout is shorter than that, Docker's SIGKILL
+    still wins. This signal is how we find out.
 
     The log is shared with the CLI's ``_exit_diag`` (other tags) and is never
     pruned, so records are filtered by tag and bounded by ``window_hours`` —
@@ -1413,8 +1413,8 @@ def unclean_exit_incidents(path: Optional[Path] = None, *,
                        "killer is the likelier cause than a shutdown race.")
         else:
             detail += ("\nLikely cause: a shutdown that outran the stop grace (s6's "
-                       "S6_KILL_GRACETIME in the Dockerfile, or Zeabur's pod termination "
-                       "grace), so the gateway was SIGKILLed mid-shutdown. If this lines up "
+                       "S6_KILL_GRACETIME in the Dockerfile, or the container's stop "
+                       "timeout), so the gateway was SIGKILLed mid-shutdown. If this lines up "
                        "with a deploy, the grace is too short.")
         detail += ("\nTelegram was not listening until the integrity check finished; "
                    "messages sent in that gap were dropped (CLAUDE.md → Deployment).")
@@ -1516,7 +1516,7 @@ DEP_ROLLUP_THRESHOLD = 6  # more new packages than this in one sweep -> one roll
 
 
 # ── deploy drift ─────────────────────────────────────────────────────────────
-# Production runs whatever image the Zeabur service tag points at; `main` moves
+# Production runs whatever image the Coolify app's tag points at; `main` moves
 # on every merge. Nothing reconciles the two — `scripts/deploy.sh` is run by
 # hand — so the gap is invisible until someone thinks to look. On 2026-09-22 it
 # had reached 11 commits, one of which was a real fix that had been sitting
@@ -1601,8 +1601,8 @@ def _fetch_deploy_compare(repo: str, base: str, token: str) -> Optional[dict]:
 def _read_build_sha(path: Optional[Path] = None) -> str:
     """The commit the running image was built from, stamped by the Dockerfile.
 
-    The watcher runs INSIDE the pod, so this is a local file read — no
-    `zeabur service exec`, and no Zeabur credential anywhere in this signal.
+    The watcher runs INSIDE the container, so this is a local file read, with no
+    server or Coolify credential anywhere in this signal.
     Absent on images built before HERMES_GIT_SHA was wired; report that rather
     than guessing "up to date", which is the failure this whole check exists
     to prevent.
@@ -1923,7 +1923,7 @@ def dependency_alert_incidents(*, alerts: Optional[list[dict]] = None,
                         "`Code scanning alerts: Read` on this repo.\n"
                         "Until then the dependency signal reports nothing new "
                         "every hour regardless of what is actually in the queue."),
-                handoff=("set HERMES_DEP_ALERT_GITHUB_TOKEN in the Zeabur env, "
+                handoff=("set HERMES_DEP_ALERT_GITHUB_TOKEN in the Coolify env, "
                          "redeploy, and confirm the next sweep drops this alert"),
             )]
         try:

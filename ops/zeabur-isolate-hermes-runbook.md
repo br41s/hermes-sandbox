@@ -1,3 +1,5 @@
+> **Historical.** Hermes left Zeabur on 2026-11-05. Current deployment: `CLAUDE.md`, `ops/README.md`.
+
 # Runbook — Isolate Hermes into its own Zeabur project
 
 Goal: move the Hermes service out of the shared BigLobster Zeabur project into a

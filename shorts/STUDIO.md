@@ -46,7 +46,7 @@ unchanged and keeps rendering in-container; see §9 for how it moves onto the st
 ```
 
 Why the render is not in Hermes: a Remotion render is ~1,800 browser frames a
-minute of video. The Zeabur pod is CPU-only and runs every profile's agents at
+minute of video. The Hermes server is a 4 vCore, 8 GB VPS that runs every profile's agents at
 once, so a 4-minute render there would stall the fleet. Actions
 minutes are free, isolated and come with Chromium. Neither agent waits on a
 render: the producer submits and exits, the publisher collects what finished.
@@ -105,7 +105,7 @@ render: the producer submits and exits, the publisher collects what finished.
   `question` and nothing else, and `number-payoff` needs a figure in digits in
   that sentence. The field is optional in `validate_package` on purpose: the
   renderer validates packages from whichever Hermes is deployed, and Actions
-  picks up a merge before the pod does.
+  picks up a merge before the container does.
 - **Performance is read back, never guessed (2026-10-18).** The `performance`
   action (`plugins/shorts/social/youtube_analytics.py`, read-only) takes the
   shorts in the ledger with a `published.youtube.id`. It keeps the public ones
@@ -147,7 +147,7 @@ render: the producer submits and exits, the publisher collects what finished.
 
 ## 3. One-time setup
 
-Everything below is free. Keys go into **Zeabur service env vars** — never
+Everything below is free. Keys go into the **Hermes Coolify app's env vars** — never
 into chat, a commit, or a printed env table (CLAUDE.md, *Secrets*).
 
 ### 3.1 GitHub (render farm)
@@ -155,7 +155,7 @@ into chat, a commit, or a printed env table (CLAUDE.md, *Secrets*).
 1. Merge to `main`: `workflow_dispatch` only works for a workflow on the default branch.
 2. Fine-grained PAT, repository `br41s/hermes-sandbox` only, permissions
    **Actions: read & write**, **Contents: read & write** (the latter only for
-   avatar clip uploads) → Zeabur `SHORTS_STUDIO_GITHUB_TOKEN`.
+   avatar clip uploads) → Coolify env `SHORTS_STUDIO_GITHUB_TOKEN`.
 3. Repo secret **`PEXELS_API_KEY`** (Settings → Secrets → Actions): BigLobster's
    own free key. Without it footage falls back to Mixkit, which is mostly
    landscape and matched only 2 of 6 queries in the first smoke run.
@@ -177,7 +177,7 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
 3. Credentials → OAuth client ID → **Desktop app**.
 4. On your own machine: `python3 scripts/youtube_oauth.py --client-id … --client-secret …`,
    and sign in as the channel owner.
-5. Zeabur: `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`.
+5. Coolify env: `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`.
    Optional: `SHORTS_YOUTUBE_PRIVACY` (default `public`) and
    `SHORTS_YOUTUBE_CATEGORY` (default `27`, Education).
 6. **Audit.** Until the project passes Google's free *YouTube API Services*
@@ -193,7 +193,7 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
    Cloud project, separately from the Data API: without it `performance` fails
    `HTTP 403 accessNotConfigured`. A token minted before 2026-10-18 fails
    `HTTP 403 insufficientPermissions`. Re-run the script, replace
-   `YOUTUBE_REFRESH_TOKEN` in Zeabur and restart the service.
+   `YOUTUBE_REFRESH_TOKEN` in the Coolify app's env and restart the app.
 
 ### 3.3 Facebook + Instagram
 
@@ -210,7 +210,7 @@ two systems can never post the same short twice.
 4. Exchange it for a long-lived user token, then `GET /me/accounts`. The Page's
    `access_token` from a long-lived user token does not expire.
 5. `GET /<page-id>?fields=instagram_business_account` gives the IG user id.
-6. Zeabur: `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`, `META_IG_USER_ID`.
+6. Coolify env: `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`, `META_IG_USER_ID`.
    Optional: `META_GRAPH_VERSION` (default `v23.0`).
 
 ### 3.4 Turn it on
@@ -304,7 +304,7 @@ Setup, once:
    `~/fizz/identidad-hermes.sh` (its own key, Brais's attestation, profile
    "Hermes"). Never reuse a Fizz bot's key.
 2. In Buzz, create the channel `#shorts` and add Hermes and SocialBot.
-3. Zeabur service env: `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`
+3. Coolify app env: `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`
    (from step 1) and `SHORTS_BUZZ_CHANNEL` (the channel's UUID). Optional:
    `SHORTS_BUZZ_MENTION` (default `SocialBot`). Not in `INJECT`: they are
    BigLobster's identity, never a profile's.
@@ -356,7 +356,7 @@ Setup, once:
 Setup, once:
 
 1. Add Hermes and SEODesk to the series channel (Media Forgery, the video team's channel), so Hermes can read it and SEODesk can post there.
-2. Zeabur service env:
+2. Coolify app env:
    - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
    - `SERIES_BUZZ_FROM` (VideoDesk's and SEODesk's hex pubkeys, comma-separated);
    - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`), `SERIES_MAX_PER_DAY` (default 1), `SERIES_SHORTS_MAX_PER_DAY` (default 2, Flow shorts) and `SERIES_REPLIES_MAX_PER_RUN` (default 10, comment replies).

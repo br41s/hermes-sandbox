@@ -49,7 +49,7 @@ Depth + gate by tier:
 - **system** — deep review with the strong model. **Hard gate**: nothing auto-merges; you approve and the CEO merges.
 - **content** — light review with the cheap model, then auto-merge if clean (see Decision policy). The mass-deletion guard, per-repo asset hooks, AND the merge-time `auditor.safety` check cover the catastrophic case; do not re-litigate prose.
 
-The two review models are env-var knobs (swap them in Zeabur, no redeploy):
+The two review models are env-var knobs (swap them in the Coolify app's env and restart the app, no redeploy):
 `HERMES_AUDITOR_SYSTEM_MODEL` (system tier) and `HERMES_AUDITOR_CONTENT_MODEL`
 (content tier). `auditor/llm.py` resolves them per tier; defaults are cheap, so
 set the system one to a strong reviewer.

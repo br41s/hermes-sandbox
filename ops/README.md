@@ -1,6 +1,6 @@
 # ops/ — the fork's own runbooks and security records
 
-Deployment runbooks (Zeabur), incident write-ups and security procedures for
+Deployment runbooks, incident write-ups and security procedures for
 this fork. They live here, not in `docs/`, on purpose:
 
 - **Upstream folded `docs/` into the public Docusaurus site** (`website/docs/`)
@@ -55,54 +55,46 @@ Two scripts, two homes:
   root bypasses the shim; the nightly pre-check catches that. The volume copy of
   `backup-full.sh` must be updated by hand (see above) for the pre-check to take effect.
 - **`backup-volumes.sh` (this directory) runs as root on the host.** It dumps the
-  other services' volumes (three Postgres via `pg_dumpall`, the chatwoot Redis RDB, the
-  BigLobster sentinel SQLite via the online backup API, the idle Chrome/CDP volumes as
-  tars; each PVC prefix must match exactly one directory, a missing one is a skip; the
-  Redis `SAVE` reply must be `OK`; every dump is size- and `gzip -t`-checked) into a
-  root-only staging dir `/var/backups/volumes/<stamp>/` on the host, uploads it with
-  the host's own `rclone` (Ubuntu package), and fails unless `rclone check` confirms
-  every file in Drive by size and hash. It uses a root-only config
-  `/root/.config/rclone/backup.conf` (the container's Drive OAuth stanza, copied
-  2026-10-06), to `hermesdrive:/VolumeBackups/<stamp>`. Other projects' data never
-  touches the Hermes container or its volume, where every agent has file tools and the
-  rclone binary itself is writable. **Accepted trade-off:** the Drive folder is still
-  readable with the token the container holds, which already reads the nightly Hermes
-  zip; encrypting the dumps (rclone `crypt`) was declined on 2026-10-06 so a restore
+  other services' data (three Postgres via `pg_dumpall`, the Chatwoot Redis RDB, the
+  bl-site-package reference site's SQLite via the online backup API, tars of Chatwoot's
+  storage and the site's uploads; the Redis `SAVE` reply must be `OK`; every dump is size- and `gzip -t`-checked) into a root-only staging dir
+  `/var/backups/volumes/<stamp>/` on the host, uploads it with the host's own `rclone`
+  (Debian package), and fails unless `rclone check` confirms every file in Drive by size
+  and hash. It uses a root-only config `/root/.config/rclone/backup.conf` (the
+  container's Drive OAuth stanza) to `hermesdrive:/VolumeBackups/<stamp>`. Other projects'
+  data never touches the Hermes container or its volume, where every agent has file tools
+  and the rclone binary itself is writable. **Accepted trade-off:** the Drive folder is
+  still readable with the token the container holds, which already reads the nightly
+  Hermes zip; encrypting the dumps (rclone `crypt`) was declined on 2026-10-06 so a restore
   never depends on a key. Installed as `/root/backup-volumes.sh` on the host.
-  **Scheduled nightly at 02:00 host time** (the host clock is UTC+8, so 18:00 UTC, which is
-  what the log's start stamps show) since 2026-10-06 by `/etc/cron.d/backup-volumes`
+  **Scheduled nightly at 19:00 host time (Europe/Berlin)** by `/etc/cron.d/backup-volumes`
   through `backup-volumes-cron.sh` (this directory, installed as
   `/root/backup-volumes-cron.sh`), which appends one `OK` / `FAILED exit=N` line per run
   to `/var/log/backup-volumes.log` (logrotate weekly, 8 kept). Check it with
-  `ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'`. **The incident
+  `ssh netcup-nue 'tail -n 20 /var/log/backup-volumes.log'`. **The incident
   watcher checks the outcome** (`volume_backup_incidents` in `incidents/sweep.py`): the
   newest dated folder in Drive must be under 50h old and hold the three Postgres dumps,
   or the Incidents topic gets a brief. A night whose final `rclone check` failed after
   the dumps had landed still shows only in this log. **Retention** (Brais,
   2026-10-06): 14 days of stamps on the host, 30 in Drive, pruned by the script itself
-  only after that night's upload verified, matching stamp-named directories by their
-  UTC date. About 0.7 GB on the host and 1.5 GB in Drive at steady state.
+  only after that night's upload verified. All three dumps were restored from Drive into
+  throwaway containers on 2026-11-05, row counts equal to live.
+- **Coolify also uploads the three Postgres databases to R2** (`vps-db-backups`, 03:00 server
+  time, 30 days). It does not cover the volumes above, and the watcher does not read it.
 
-## Server access (key-only since 2026-10-06)
+## Server access
 
-The Tencent Frankfurt host (`43.157.39.241`) accepts SSH **only** with the key
-`~/.ssh/zeabur_frankfurt` on Brais's Mac, as `ubuntu` (passwordless sudo). The Mac's
-`~/.ssh/config` has the alias, so:
+`ssh netcup-nue` (`62.83.91.62`, Debian 13) logs in as root with the key `~/.ssh/netcup-nue`
+on Brais's Mac: Coolify needs root SSH, so `/etc/ssh/sshd_config.d/00-hardening.conf` sets
+`PasswordAuthentication no` and `PermitRootLogin prohibit-password`.
 
-```bash
-ssh zeabur-frankfurt 'sudo kubectl get pods -A'
-```
-
-`/etc/ssh/sshd_config.d/00-hardening.conf` sets `PasswordAuthentication no`,
-`KbdInteractiveAuthentication no`, `PermitRootLogin no`. It sorts before Tencent's
-`50-cloud-init.conf` (`PasswordAuthentication yes`) and sshd keeps the first value, so
-leave the `00-` prefix alone. Consequences:
-
-- `npx zeabur@latest server ssh` / `ssh-info` and Zeabur's dashboard "Open Terminal" no
-  longer log in: they use the stored password. Zeabur's deployments and restarts do not
-  use SSH (k3s talks outbound), verified before and after.
-- The `zeabur-server-ssh` plugin skill's password recipe is dead here; use the alias.
-- **Lockout escape is OS reinstall from the Zeabur server page, not "Reset SSH
-  password"**, which resets a password sshd will not accept. Keep the key backed up.
-- `authorized_keys.bak-20261006` holds the two `hermes-migration-ephemeral` keys that
-  were removed (private halves unknown).
+- **Docker bypasses ufw.** `docker-user-firewall.service` runs
+  `/usr/local/sbin/docker-user-firewall.sh`, which drops 8000/6001/6002 in the DOCKER-USER
+  chain. Coolify's panel and API are therefore reached only through SSH:
+  `ssh -N -L 8000:localhost:8000 netcup-nue`, then http://localhost:8000.
+- **Traefik files Coolify does not manage**, in `/data/coolify/proxy/dynamic/`:
+  `hermes-webhooks.yaml` (`hook.biglobster.top` to `hermes:8644`), `coolify-webhooks.yaml`
+  (`deploy.biglobster.top`, only `/webhooks/`, to Coolify for GitHub pushes) and
+  `www-redirects.yaml` (301s for `www.`, since Coolify's own redirect is a 302).
+- **Env values:** Coolify app env, never in a transcript. Secrets are runtime-only where
+  possible, because build-time env becomes a Docker ARG.

@@ -33,7 +33,7 @@ won't have PyYAML and other deps this imports, e.g. via cron/jobs.py):
     .venv/bin/python3 scripts/provision_bl_client.py \\
         --slug bl-cliente-nieto \\
         --client-name "Francisco Nieto" \\
-        --site-url https://blcliente.zeabur.app \\
+        --site-url https://cliente.biglobster.top \\
         --panel-password '...' \\
         --openrouter-key sk-or-... \\
         --fal-key <key_id>:<key_secret> \\

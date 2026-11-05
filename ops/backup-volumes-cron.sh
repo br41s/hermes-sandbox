@@ -1,10 +1,10 @@
 #!/bin/bash
-# Cron wrapper for backup-volumes.sh on the Zeabur host: one line per run in the log,
+# Cron wrapper for backup-volumes.sh on the Netcup host: one line per run in the log,
 # with the exit status, so a failed night is at least findable. Installed as
-# /root/backup-volumes-cron.sh and called from /etc/cron.d/backup-volumes (02:00 host time,
-# UTC+8, so 18:00 UTC).
+# /root/backup-volumes-cron.sh and called from /etc/cron.d/backup-volumes (19:00 host
+# time, Europe/Berlin).
 #
-# Check it with:  ssh zeabur-frankfurt 'sudo tail -n 20 /var/log/backup-volumes.log'
+# Check it with:  ssh netcup-nue 'tail -n 20 /var/log/backup-volumes.log'
 # The Hermes incident watcher checks the result in Drive (volume_backup_incidents), not
 # this log: a failed rclone check after the dumps had landed shows only here.
 LOG=/var/log/backup-volumes.log

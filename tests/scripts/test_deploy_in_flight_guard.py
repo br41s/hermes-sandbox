@@ -57,7 +57,7 @@ def test_an_idle_fleet_prints_only_the_marker(tmp_path) -> None:
 def test_the_check_runs_before_the_tag_moves_and_the_prompt() -> None:
     check = TEXT.index("→ Checking for cron runs in flight")
     assert check < TEXT.index('confirm "Deploy $TAG? [y/N] "')
-    assert check < TEXT.index("run zeabur service update tag")
+    assert check < TEXT.index("run coolify PATCH")
 
 
 def test_yes_refuses_unless_forced_and_a_missing_marker_is_not_idle() -> None:

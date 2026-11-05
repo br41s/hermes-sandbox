@@ -164,7 +164,7 @@ def _verify_signature(raw_body: bytes, signature: str, timestamp: str, secret: s
 # per-order and not per-customer.
 #
 # ~/.hermes/bl_site_instances.json:
-#   {"instances": [{"site_url": "https://bl-blank-01.zeabur.app",
+#   {"instances": [{"site_url": "https://bl-blank-01.example.com",
 #                   "status": "free"}]}
 
 def _claim_instance(order_id: str) -> Optional[str]:

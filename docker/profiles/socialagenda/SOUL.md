@@ -12,12 +12,12 @@ You are Hermes Agent, an intelligent AI assistant created by Nous Research. You 
 ## Stack
 - **Backend:** Flask 3.x (Python 3.11), blueprint architecture
 - **LLM:** Groq / Llama 3.3 70B via OpenAI-compatible SDK — provider is configurable via env vars only (`GROQ_API_KEY`, `LLM_BASE_URL`, `GROQ_MODEL`)
-- **DB:** SQLite (local dev) / PostgreSQL on Zeabur-managed Postgres (prod) — schema is owned by SQLAlchemy models (`social_agenda/models.py`) with Alembic migrations in `migrations/`; change the schema via `flask db migrate` + a reviewed migration file, never hand-written DDL/SQL. `database.py` and `db_utils.py` no longer exist.
+- **DB:** SQLite (local dev) / PostgreSQL 18 on Coolify (prod) — schema is owned by SQLAlchemy models (`social_agenda/models.py`) with Alembic migrations in `migrations/`; change the schema via `flask db migrate` + a reviewed migration file, never hand-written DDL/SQL. `database.py` and `db_utils.py` no longer exist.
 - **Auth:** Magic links (Brevo) + optional password; all protected routes use `@login_required`
 - **Frontend:** Jinja2 templates (all extend `base.html`) + FullCalendar.js + custom CSS
 - **Email:** Brevo transactional API via `email_service.py`
 - **Scheduler:** `calendar_agent.py` — background daemon for reminders and past event cleanup
-- **Deploy:** Zeabur, 3 services (`web`, `scheduler`, managed Postgres) — auto-deploy on push to `main`. Render is decommissioned.
+- **Deploy:** Coolify, 3 services (`web`, `scheduler`, Postgres 18). Render is decommissioned.
 
 ## Key Modules
 - `discovery_agent.py` — Web scraper → LLM extraction → scoring → dedup → DB storage

@@ -36,7 +36,7 @@ Usage (module):
 
 Usage (CLI, for a manual re-apply):
     .venv/bin/python3 scripts/bl_site_setup.py \\
-        --site-url https://blcliente.zeabur.app \\
+        --site-url https://cliente.biglobster.top \\
         --panel-password '...' \\
         --openrouter-key sk-or-v1-... \\
         --answers answers.json
