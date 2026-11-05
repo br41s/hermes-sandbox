@@ -3,7 +3,7 @@
 This is reference material for Hermes' own agent to follow when the CEO asks
 (via Telegram) to set up agent rental for a bl-site-package client — e.g.
 "set up agent rental for Francisco Nieto, gap-hunter + seo, site
-https://blcliente.zeabur.app, panel password X, their OpenRouter key Y".
+https://cliente.biglobster.top, panel password X, their OpenRouter key Y".
 
 There are now **two triggers**, both landing on the same
 `scripts/provision_bl_client.py` code path:
@@ -405,10 +405,10 @@ agent can use them.
    `GET /api/site/backup`, and nothing in the schema records a backup ever
    having run. The only backup that exists anywhere in the product is a manual
    human step in `RELEASE.md` §2 — *"copy `data/` outside the document root
-   before pulling"* — performed once, by hand, during a Plesk deploy. On Zeabur
-   the DB is a volume whose snapshots (if any) live in Zeabur's control plane,
-   which a client instance cannot query and the maintenance profile has no
-   credentials for.
+   before pulling"* — performed once, by hand, during a Plesk deploy. On the
+   server the DB is a SQLite file on a volume at `/app/data`; the nightly copy
+   to Drive made by `ops/backup-volumes.sh` covers only the reference site's
+   data, and a client instance cannot query it.
 
    So there is nothing to verify and nothing to restore-test, and an agent
    "confirming backups" today would be reporting on a mechanism that does not
@@ -478,14 +478,18 @@ buyer's real data plus sector context, never invented facts.
 
 ### The blank-instance pool
 
-A paid checkout cannot wait for someone to click through Zeabur, so blank
+A paid checkout cannot wait for someone to deploy an instance by hand, so blank
 bl-site-package instances are deployed **ahead of demand** and claimed per
-order. The inventory lives in `~/.hermes/bl_site_instances.json`:
+order.
+
+> **Needs a decision:** where new client instances are hosted after Zeabur (2026-11-05).
+
+The inventory lives in `~/.hermes/bl_site_instances.json`:
 
 ```json
 {"instances": [
-  {"site_url": "https://bl-blank-01.zeabur.app", "status": "free"},
-  {"site_url": "https://bl-blank-02.zeabur.app", "status": "free"}
+  {"site_url": "https://bl-blank-01.example.com", "status": "free"},
+  {"site_url": "https://bl-blank-02.example.com", "status": "free"}
 ]}
 ```
 
@@ -578,7 +582,7 @@ this pulls in via `cron/jobs.py`):
 .venv/bin/python3 scripts/provision_bl_client.py \
   --slug bl-cliente-nieto \
   --client-name "Francisco Nieto" \
-  --site-url https://blcliente.zeabur.app \
+  --site-url https://cliente.biglobster.top \
   --panel-password '<their panel password>' \
   --openrouter-key sk-or-v1-... \
   --fal-key <key_id>:<key_secret> \
@@ -640,8 +644,8 @@ If the script isn't available and a step needs doing by hand, the underlying pri
 Only for clients whose catalogue comes from a distributor feed, and it is **not** an agent:
 no model, no tokens, one authenticated POST.
 
-bl-site-package schedules its own sync in-process with `node-cron` at 06:00. That holds on
-Zeabur, where the Node process is long-lived. It does **not** hold on Passenger, which shuts
+bl-site-package schedules its own sync in-process with `node-cron` at 06:00. That holds in a
+container, where the Node process is long-lived. It does **not** hold on Passenger, which shuts
 application processes down when no request has arrived for a few minutes — so on a
 low-traffic client site the timer is never alive when its window comes round. Shoroban ran
 that way from go-live: catalogue seeded once, never refreshed, while upstream published
@@ -707,7 +711,7 @@ hermes profile delete <slug>
 ## Payment-confirmed provisioning webhook
 
 `hermes_cli/bl_rental_webhook.py`, mounted on the Hermes dashboard server
-(`blhermes.zeabur.app`). This is the trigger this document used to defer until
+(`hermes.biglobster.top`). This is the trigger this document used to defer until
 a payment gate existed.
 
 **BigLobster owns the Stripe integration.** Stripe never calls this endpoint;
@@ -717,7 +721,7 @@ here is a shared secret, not a Stripe signature.
 ### Endpoint
 
 ```
-POST https://blhermes.zeabur.app/api/bl/rental/provision
+POST https://hermes.biglobster.top/api/bl/rental/provision
 Content-Type: application/json
 X-BL-Timestamp: <unix seconds>
 X-BL-Signature: sha256=<hex>
@@ -797,8 +801,8 @@ await fetch(url, { method: "POST", body: raw, headers: {
   "status": "provisioned",
   "order_id": "cs_live_a1b2c3",
   "profile": "bl-cliente-garcia",
-  "site_url": "https://bl-blank-01.zeabur.app",
-  "panel_url": "https://bl-blank-01.zeabur.app/panel",
+  "site_url": "https://bl-blank-01.example.com",
+  "panel_url": "https://bl-blank-01.example.com/panel",
   "panel_password": "generated-or-echoed",
   "jobs": [{"job_id": "...", "name": "...", "schedule": "...", "source": "..."}],
   "site_setup": {"setup_completed": true, "fields_written": ["..."], "logo": "/uploads/logo.png"}
@@ -838,7 +842,7 @@ scratch; a *provisioned* one never re-runs.
 ### Wiring checklist for the BigLobster side
 
 1. Generate a secret, set `BL_RENTAL_WEBHOOK_SECRET` in **both** the Hermes
-   Zeabur env and BigLobster's.
+   Coolify app's env and BigLobster's.
 2. Deploy blank bl-site-package instances and register them in
    `~/.hermes/bl_site_instances.json`.
 3. On `checkout.session.completed` for the Site Launch SKU, POST the body

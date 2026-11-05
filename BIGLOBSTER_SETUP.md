@@ -1,12 +1,12 @@
 # Hermes Architect Agent — BigLobster Integration
 
-Hermes runs as a service on Zeabur (same project as BigLobster) and communicates over the internal network. The COO delegates long-running tasks to it asynchronously.
+Hermes runs as a Coolify app on the same server as BigLobster and communicates over the internal Docker network (`coolify`). The COO delegates long-running tasks to it asynchronously.
 
 ## How it works
 
 ```
-BigLobster COO (Zeabur)
-  → POST http://hermes-sandbox.zeabur.internal:9119/api/delegate
+BigLobster COO
+  → POST http://hermes:9119/api/delegate
                                └─ runs agent in background thread
   ← POST https://biglobster.top/api/hermes-callback  (async, when done)
 BigLobster sentinel.js
@@ -19,9 +19,9 @@ BigLobster sentinel.js
 
 | Component | Value |
 |-----------|-------|
-| Service name | `hermes` (Zeabur, same project as BigLobster) |
-| Internal URL | `http://hermes-sandbox.zeabur.internal:9119` |
-| Public URL | `https://blhermes.zeabur.app` |
+| Service name | `hermes` (Coolify app `nqonduf6dnveg889xjvoubbw`, same server as BigLobster) |
+| Internal URL | `http://hermes:9119` |
+| Public URL | `https://hermes.biglobster.top` (panel, Nous OAuth) |
 | Repo | `github.com/br41s/hermes-sandbox` |
 | Docker image | `ghcr.io/br41s/hermes-sandbox:latest` |
 | Deploy method | **Docker image from GHCR** (not git autodeploy — see Deploy section) |
@@ -30,41 +30,27 @@ BigLobster sentinel.js
 
 ## Deploy Process
 
-⚠️ Hermes does NOT autodeploy from git push. Cloud Build builds the image and pushes to GHCR; Zeabur then requires a manual restart to pull it.
+⚠️ Hermes does NOT autodeploy from git push. It is a prebuilt image: GitHub Actions (`.github/workflows/ghcr-publish.yml`) publishes it to GHCR on every push to `main`, and `scripts/deploy.sh` is the only way it reaches the server.
 
 ### Why
-Zeabur's build timeout is too short for the 2.7GB image (Playwright + Chromium + Python + Node). GitHub Actions is not enabled on this repo. Cloud Build runs on GCP with no timeout issues.
+The image is 2.7GB (Playwright + Chromium + Python + Node), so it is built once and published rather than built by the host.
 
 ### Current flow
 
 1. Merge changes to `main`
-2. Trigger Cloud Build from the repo root:
-   ```bash
-   cd /Users/brais/VSCODE/hermes-sandbox
-   gcloud builds submit --config=cloudbuild.yaml --substitutions=_GITHUB_TOKEN="<ghcr_pat>"
-   ```
-   Cloud Build builds the image and pushes it to `ghcr.io/br41s/hermes-sandbox:latest`.
-   - **First pull `main` in this checkout** (`git checkout main && git pull`) — `gcloud builds submit` packages the *working tree*, not GitHub. If you merge a PR on GitHub but don't pull, the build ships stale code. Verify with `grep ENTRYPOINT Dockerfile` → it should show `/init`.
-3. Restart Hermes service in Zeabur dashboard
-
-> ⚠️ **s6 cold-boot health check.** Since the s6 upgrade the dashboard starts *after* all
-> cont-init hooks (skills sync, etc.), so port 9119 binds ~20–40s into boot — later than the
-> old image. Zeabur's startup/readiness probe on `9119` must tolerate this or it kills the pod
-> mid-boot in a restart loop. Use a lenient probe: **TCP 9119, initial delay 60s, period 10s,
-> failure threshold 12** (≈2 min grace). Also requires `HERMES_DASHBOARD_INSECURE=1` (see env
-> table) or the dashboard refuses to bind at all.
+2. `git checkout main && git pull`, then `scripts/deploy.sh`. Actions has already published the image, so the script stops the app, moves the image tag to `sha-<commit>`, starts it and verifies. `--dry-run` prints every command without running one. `--build` builds via Cloud Build first (needs `$GHCR_TOKEN`), only for when Actions is unavailable; that path packages the *working tree*, so verify with `grep ENTRYPOINT Dockerfile` → `/init`. Details: "Deployment" in `CLAUDE.md`.
 
 ### Config-only changes (no rebuild needed)
 
-For model changes or env var updates, use Zeabur Variables instead:
+For model changes or env var updates, use the Coolify app's Environment Variables instead:
 - `HERMES_DEFAULT_MODEL` — overrides model in config.yaml on every boot
-- Takes effect on next Zeabur restart (no image rebuild needed)
+- Takes effect on the next restart of the app (no image rebuild needed)
 
 ### Three different "restarts" — don't confuse them
 
 (Cost a long debugging session on 2026-06-09.)
 
-- **Zeabur "Restart"** recreates the container but re-pulls the **same `:latest`** image. It brings **no new code** unless you ran a Cloud Build first. Restarting after a code change without building = nothing changes.
+- **Restarting the app in Coolify** recreates the container on the image tag it already has. It brings **no new code**: that takes `scripts/deploy.sh`. Restarting after a code change without deploying = nothing changes.
 - **A full container restart re-runs the cont-init hooks** (`01-hermes-setup`, `03-biglobster-config`, …) before the dashboard/gateway start.
 - **"Restart Gateway" in the web panel** only restarts the `main-hermes` s6 service — it does **not** re-run cont-init. So **`config.yaml` edits + a panel gateway-restart are safe and fast**; use that for model/config changes, not a container restart.
 
@@ -78,9 +64,9 @@ For model changes or env var updates, use Zeabur Variables instead:
 
 Observed 2026-06-09 and root-caused to **model latency, not infrastructure**. Triage in order:
 
-1. **Edge health (no auth):** `curl -sS -o /dev/null -w "%{http_code} %{time_total}s\n" https://blhermes.zeabur.app/api/dashboard/plugins`. Fast 200 ⇒ backend is alive; the problem is downstream (authenticated endpoints or the browser).
+1. **Edge health (no auth):** `curl -sS -o /dev/null -w "%{http_code} %{time_total}s\n" https://hermes.biglobster.top/api/dashboard/plugins`. Fast 200 ⇒ backend is alive; the problem is downstream (authenticated endpoints or the browser).
 2. **Browser cache:** a stale cached app bundle shows old nav while plugins still appear (plugins load at runtime, so they're not a reliable tell). Hard-refresh / incognito. Confirm the loaded bundle in DevTools console: `[...document.scripts].map(s=>s.src).filter(s=>s.includes('/assets/index-'))`.
-3. **Metrics (Zeabur → Metrics):** **CPU ~0% + RAM not maxed** while data pages hang ⇒ the backend is *waiting*, not working — it is **not** resource pressure.
+3. **Metrics (Coolify panel, or `docker stats` on the server):** **CPU ~0% + RAM not maxed** while data pages hang ⇒ the backend is *waiting*, not working — it is **not** resource pressure.
 4. **Volume:** in the container, `time dd if=/opt/data/state.db of=/dev/null bs=4M` and `cat /proc/loadavg`. Fast read + low load ⇒ the volume is fine (don't blame infra).
 5. **The real cause (this incident):** a slow model. `owl-alpha` ran **7–25 s per call**; after a gateway restart the gateway drains a cron/telegram backlog, each turn blocking on slow LLM calls (network wait → 0% CPU), and `/api/status` (a synchronous DB query on the async event loop) queues behind it → panel hangs ~20 min then self-recovers. **Fix: switch to a fast model** (e.g. `deepseek/deepseek-v4-flash-0731`). Always name the **dated** OpenRouter slug: the undated `deepseek/deepseek-v4-flash` alias resolves to the *oldest* snapshot (0423, $0.087/M input) — `-0731` is $0.065/M for the same speed. "No version" means "most expensive version". Note the `auxiliary.*` models (`title_generation`, `compression`, `skills_hub`, `session_search`, `curator`, …) are configured **separately** and must be switched too.
 6. **Catch it live:** `pip install py-spy && py-spy dump --pid <dashboard_pid>` during a hang shows the exact stuck line.
@@ -97,7 +83,7 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 ---
 
-## Zeabur environment variables (Hermes service)
+## Coolify environment variables (Hermes app)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -107,19 +93,19 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 | `HERMES_DEFAULT_MODEL` | Yes | Active model. Target: `deepseek/deepseek-v4.1-flash` (see *Model* below) |
 | `HERMES_MAX_ITERATIONS` | No | Max agent turns per task (default: 60) |
 | `HERMES_DASHBOARD` | Yes | Set to `1` to start the web dashboard on port 9119 |
-| `HERMES_DASHBOARD_INSECURE` | Yes | Set to `1`. Since the s6 upgrade, the dashboard **refuses to bind to `0.0.0.0`** without this (the OAuth gate engages on non-loopback binds and no auth provider is configured). Without it the dashboard never comes up → Zeabur health probe fails → restart loop. See the deploy note below. |
+| `HERMES_DASHBOARD_INSECURE` | Yes | Set to `1`. Since the s6 upgrade, the dashboard **refuses to bind to `0.0.0.0`** without this (the OAuth gate engages on non-loopback binds and no auth provider is configured). Without it the dashboard never comes up. |
 | `TELEGRAM_BOT_TOKEN` | No | Token for direct CEO ↔ Hermes Telegram chat (@b_l_hermes_bot) |
 | `TELEGRAM_ALLOWED_USERS` | No | CEO's Telegram user ID for direct access |
 | `EXA_API_KEY` | No | Exa web search API key — activates the `web` toolset |
 | `HUGGINGFACE_API_KEY` | No | HuggingFace token — activates `video_gen` (text-to-video) |
 | `PEXELS_API_KEY` | No | **BigLobster's own** Pexels key — stock B-roll when the `shorts` agent runs against biglobster.top's blog. Rented clients are BYOK and bring their own (`--pexels-key`), so `03-biglobster-config` holds this back from rented tenant `.env` files exactly like `OPENROUTER_API_KEY`. Only needed if BigLobster itself runs `shorts`. |
-| `GITHUB_TOKEN` | No | GitHub PAT (fine-grained, `contents:write` + `pull_requests:write`). At boot, `03-biglobster-config` writes it into `~/.git-credentials` so `git push/clone` over HTTPS works without prompts. Refresh = rotate token in Zeabur + restart. |
+| `GITHUB_TOKEN` | No | GitHub PAT (fine-grained, `contents:write` + `pull_requests:write`). At boot, `03-biglobster-config` writes it into `~/.git-credentials` so `git push/clone` over HTTPS works without prompts. Refresh = rotate the token in the Coolify app's env + restart. |
 
-## Zeabur environment variables (BigLobster service)
+## Coolify environment variables (BigLobster app)
 
 | Variable | Value |
 |----------|-------|
-| `HERMES_URL` | `http://hermes-sandbox.zeabur.internal:9119` |
+| `HERMES_URL` | `http://hermes:9119` |
 | `HERMES_CALLBACK_SECRET` | Same value as above |
 
 ---
@@ -128,20 +114,20 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 
 `deepseek/deepseek-v4.1-flash` via OpenRouter — the standing default (CEO, 2026-09-20), superseding `openai/gpt-5.6-luna`.
 
-> **The table below is the TARGET, not a verified reading.** The last verification against the live Zeabur service was 2026-10-09 (model roles above). Zeabur is the source of truth, so these values are only true once the vars are set there — confirm with `hermes doctor` after a full container restart.
+> **The table below is the TARGET, not a verified reading.** The last verification against the live service was 2026-10-09 (model roles above). The Coolify app's env is the source of truth, so these values are only true once the vars are set there — confirm with `hermes doctor` after a full container restart.
 
-Set via env vars in Zeabur — the `03-biglobster-config` boot hook reconciles `config.yaml` on the persistent volume at **every boot**. `docker/config.yaml` in the repo is only the *first-boot seed*: an existing volume keeps its own file, so the env var is the source of truth, not the repo.
+Set via env vars in the Coolify app — the `03-biglobster-config` boot hook reconciles `config.yaml` on the persistent volume at **every boot**. `docker/config.yaml` in the repo is only the *first-boot seed*: an existing volume keeps its own file, so the env var is the source of truth, not the repo.
 
 | Role | Env var | Value |
 |---|---|---|
 | Main | `HERMES_DEFAULT_MODEL` | `deepseek/deepseek-v4.1-flash` |
 | Fallback | `HERMES_FALLBACK_MODEL` | `z-ai/glm-5.3-flash` |
-| Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4.1-flash` (live value; the older `-0731` slug in this table was never what Zeabur held) |
+| Auditor orchestrator | `HERMES_AUDITOR_ORCHESTRATOR_MODEL` | `deepseek/deepseek-v4.1-flash` (live value; the older `-0731` slug in this table was never what the live service held) |
 | Auditor system reviewer | `HERMES_AUDITOR_SYSTEM_MODEL` | `moonshotai/kimi-k2.6` |
 | Auditor content reviewer | `HERMES_AUDITOR_CONTENT_MODEL` | `moonshotai/kimi-k2.6` |
 | Vision (auxiliary) | `AUXILIARY_VISION_MODEL` | `deepseek/deepseek-v4.1-flash` |
 
-**Role changes of 2026-10-09/10 (set in the live Zeabur service; the model env vars act at the next full container restart):** the reviewers use a different model family than the main model on purpose, so the judge does not share the author's blind spots. `xiaomi/mimo-v2.6-flash` was tried first and **failed as a judge** on the judge's real request (3 useful answers in 9: tool-call stubs from Novita, 51-character preambles from DeepInfra, with and without `data_collection: deny`), so both tiers moved to `moonshotai/kimi-k2.6` (4 of 4 verdicts on the same request). Fallbacks that passed: `deepseek/deepseek-v4.1-flash` (10 of 10, the main family) and `minimax/minimax-m3` (4 of 4). **Check a candidate before pointing a tier at it:** replay the judge's request with `tasks/judge_provider_probe.py` from the workspace, which flags stubs, preamble-only answers and a missing `APPROVE`/`BLOCK`. A reviewer model must also allow `reasoning: {enabled: false}` (`HERMES_AUDITOR_JUDGE_REASONING_EFFORT=off`): `z-ai/glm-5.3-flash` has mandatory reasoning, so it is a valid **fallback** and an invalid judge. The orchestrator stays on the deepseek default (its job pin in `jobs.json` also names it). `OPENROUTER_IMAGE_MODEL` is `bytedance-seed/seedream-4.5` since 2026-10-12: it was `meta/muse-image`, which has no zero-retention provider, so once the account kept ZDR on (2026-10-10) every cover generation answered 404 `ZDR violation (guardrail)` and the Gap Hunter shipped no article for two nights. Any image model set here (or as `CURATED_OPENROUTER_IMAGE_MODEL` in `boot_reconcile.py`) must appear in `GET https://openrouter.ai/api/v1/endpoints/zdr`; the OpenAI, FLUX, Grok and Meta image models do not.
+**Role changes of 2026-10-09/10 (set in the live service; the model env vars act at the next full container restart):** the reviewers use a different model family than the main model on purpose, so the judge does not share the author's blind spots. `xiaomi/mimo-v2.6-flash` was tried first and **failed as a judge** on the judge's real request (3 useful answers in 9: tool-call stubs from Novita, 51-character preambles from DeepInfra, with and without `data_collection: deny`), so both tiers moved to `moonshotai/kimi-k2.6` (4 of 4 verdicts on the same request). Fallbacks that passed: `deepseek/deepseek-v4.1-flash` (10 of 10, the main family) and `minimax/minimax-m3` (4 of 4). **Check a candidate before pointing a tier at it:** replay the judge's request with `tasks/judge_provider_probe.py` from the workspace, which flags stubs, preamble-only answers and a missing `APPROVE`/`BLOCK`. A reviewer model must also allow `reasoning: {enabled: false}` (`HERMES_AUDITOR_JUDGE_REASONING_EFFORT=off`): `z-ai/glm-5.3-flash` has mandatory reasoning, so it is a valid **fallback** and an invalid judge. The orchestrator stays on the deepseek default (its job pin in `jobs.json` also names it). `OPENROUTER_IMAGE_MODEL` is `bytedance-seed/seedream-4.5` since 2026-10-12: it was `meta/muse-image`, which has no zero-retention provider, so once the account kept ZDR on (2026-10-10) every cover generation answered 404 `ZDR violation (guardrail)` and the Gap Hunter shipped no article for two nights. Any image model set here (or as `CURATED_OPENROUTER_IMAGE_MODEL` in `boot_reconcile.py`) must appear in `GET https://openrouter.ai/api/v1/endpoints/zdr`; the OpenAI, FLUX, Grok and Meta image models do not.
 
 Code defaults, used only when a var above is unset, are `deepseek/deepseek-v4.1-flash` for **both** tiers — the standing Hermes default. The content default was `openrouter/owl-alpha` until 2026-09-20; that model no longer exists on OpenRouter, so the default was a guaranteed 404 — harmless only because the env var is set. Keep both defaults **live**: a dead default turns a missing env var into a broken gate instead of a degraded one.
 
@@ -150,7 +136,7 @@ Two rules the reconciler enforces, both from incidents:
 - **The auditor profile is exempt** from `HERMES_DEFAULT_MODEL` *and* `HERMES_FALLBACK_MODEL`. It drives a tool-calling orchestrator loop, not prose, and has the three separate knobs above. Changing the main model does **not** move the auditor.
 - **`fallback_model` must never equal `model.default`** — a fallback pointing at the same upstream is a no-op retry against the same dead/rate-limited provider. Swapping the main model once clobbered both keys on five profiles, silently disabling fallback account-wide (2026-07-02).
 
-Model env vars are read by a **cont-init hook**, so they take effect on a full Zeabur container restart only — the panel's "Restart Gateway" does not re-run cont-init. See *Three different "restarts"* above.
+Model env vars are read by a **cont-init hook**, so they take effect on a full restart of the app in Coolify only — the panel's "Restart Gateway" does not re-run cont-init. See *Three different "restarts"* above.
 
 ### Judge generation bounds (read before touching the deadline)
 Both candidate system-reviewer models (`deepseek-v4.1-flash`, `deepseek-v4-flash-0731`) are **reasoning** models with completion budgets of 384k and 943k tokens. The judge call originally sent no cap and did not stream, so its latency had no ceiling and the gate timed out on whatever PR happened to draw a long thinking run — including `biglobster#550`, a 3-file prose diff (2026-09-20). Raising `HERMES_AUDITOR_JUDGE_DEADLINE_SECONDS` from 300 to 420 did not help and could not: the tail was unbounded.
@@ -181,8 +167,8 @@ It's safe for the env-var-driven defaults because they flow through `03-biglobst
 
 The CEO can talk directly to Hermes without going through BigLobster/COO:
 - Bot: `@b_l_hermes_bot`
-- Configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USERS` in Zeabur
-- After adding/changing these vars, click **Restart Gateway** in the Hermes web panel (not just Zeabur restart)
+- Configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USERS` in the Coolify app's env
+- After adding/changing these vars, click **Restart Gateway** in the Hermes web panel (not just an app restart)
 
 ---
 
@@ -206,7 +192,7 @@ gateway is now restored natively by `container_boot.py` (cont-init `02`) from th
 `gateway_state.json` on the volume.
 
 **To manually restart the gateway** (e.g. after changing Telegram env vars):
-1. Go to `https://blhermes.zeabur.app`
+1. Go to `https://hermes.biglobster.top`
 2. Click **Restart Gateway** in the System section (bottom left)
 
 Check status: Gateway Status should show **RUNNING** in the bottom-left of the panel.
@@ -215,7 +201,7 @@ Check status: Gateway Status should show **RUNNING** in the bottom-left of the p
 
 ## Mounted workspaces
 
-The Hermes container's only writable volume is `/opt/data/` (Zeabur persistent volume, `HERMES_HOME=/opt/data`). The `stage2-hook.sh` cont-init step pre-creates `/opt/data/workspace/` on boot.
+The Hermes container's only writable volume is `/opt/data/` (persistent volume, `HERMES_HOME=/opt/data`). The `stage2-hook.sh` cont-init step pre-creates `/opt/data/workspace/` on boot.
 
 > ⚠️ `/workspace/` does **not** exist at the container root. All paths must be under `/opt/data/`.
 
@@ -283,13 +269,13 @@ on branch + git identity between the two jobs.
 > will report `"already matches"` — a false positive — against the `/opt/hermes/`
 > copy from whichever image is running.
 >
-> **Refreshing `/opt/hermes` therefore means deploying.** A `service restart` does
-> not do it either: it re-runs the image already on the node. The sequence to push
+> **Refreshing `/opt/hermes` therefore means deploying.** A restart of the app does
+> not do it either: it re-runs the image already tagged. The sequence to push
 > a prompt fix to a live job is:
 >
 > 1. merge to `main`;
-> 2. `scripts/deploy.sh --verify-file <repo/path.prompt>` — builds the commit and
->    moves the image tag, which is the only operation that makes Zeabur roll out;
+> 2. `scripts/deploy.sh --verify-file <repo/path.prompt>` — moves the image tag to
+>    the commit's image, which is the only operation that makes the server run it;
 > 3. `hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>`;
 > 4. confirm it reports `"changed": true`. `"already matches"` here means step 2
 >    did not land, and you compared the new file against itself in the old image.
@@ -309,11 +295,11 @@ on branch + git identity between the two jobs.
 >
 > ```sh
 > B64=$(git show origin/main:<repo/path.prompt> | base64 | tr -d '\n') && \
->   zeabur service exec --id <svc> -i=false -- \
+>   ssh netcup-nue docker exec <container> \
 >   sh -c "echo $B64 | base64 -d > /opt/hermes/<repo/path.prompt>"
 > # verify, then sync (note: write as root, sync as hermes)
-> zeabur service exec --id <svc> -i=false -- sha256sum /opt/hermes/<repo/path.prompt>
-> zeabur service exec --id <svc> -i=false -- su hermes -c \
+> ssh netcup-nue docker exec <container> sha256sum /opt/hermes/<repo/path.prompt>
+> ssh netcup-nue docker exec <container> su hermes -c \
 >   'hermes cron sync-prompt <job_id> --prompt-source <repo/path.prompt>'
 > ```
 >
@@ -365,7 +351,7 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
     preflight (`cron/scheduler_preflight.py`, `_preflight_check_delivery`)
     reads Buzz as unconnected and blocks the **whole job**, Telegram included.
     That is what happened on 2026-10-17 at 03:00: no brief that day. Testing
-    from a `zeabur service exec` shell hides this, because that shell has the
+    from a `docker exec` shell hides this, because that shell has the
     container's global `BUZZ_*`. Reproduce with
     `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
   - **Membership.** Hermes must stay a member of #geo, or the send fails while
@@ -407,7 +393,7 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
   - Every Monday, or on the next run if a Monday was missed, adds a "Community
     to join this week" section. It lands even on a "Nothing worth pitching
     today" run. SocialBot turns it into a "crear cuenta" item for Brais.
-  - Can pick Reddit threads even though reddit.com blocks Zeabur's IPs, so
+  - Can pick Reddit threads even though reddit.com blocks the server's IP (403 from Netcup, 2026-11-05), so
     the Scout cannot open them (since 2026-10-18). The thread must show in
     search results with a post date in the last 30 days. It goes out marked
     `Status: UNVERIFIED`, and SocialBot, which has the brand's Reddit session,
@@ -435,11 +421,11 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
     carve-out needs a Buzz session. From 2026-10-22 to 2026-10-25 every run
     failed on that, and the old script hid `buzz`'s stderr. The job reads
     `HERMES_GEO_BUZZ_PRIVATE_KEY`, `_RELAY_URL` and `_AUTH_TAG` instead, set on
-    the Zeabur `hermes` service to the same values as `BUZZ_*`, and maps them
+    the Hermes Coolify app to the same values as `BUZZ_*`, and maps them
     for the one `buzz` call. A failure now prints `buzz`'s own error.
   - Set the three vars before the deploy that ships the script (boot seeds
     it), so the first run already has them. Never print the env table while
-    doing it (`zeabur variable create` echoes every secret).
+    doing it.
   - Test it as a cron run does, not from an exec shell, which still has
     `BUZZ_*`: `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
 
@@ -510,12 +496,12 @@ Plugins live in `plugins/image_gen/` and `plugins/video_gen/` — **baked into t
 
 ### HuggingFace egress
 
-Egress to `router.huggingface.co` is reachable from Zeabur (confirmed 2026-06-05). The
-earlier "blocked" diagnosis was a false negative — the boot check was hitting the bare root
+The boot check logs `Egress router.huggingface.co` on every boot. The
+earlier "blocked" diagnosis (2026-06-05, old host) was a false negative — the boot check was hitting the bare root
 `/` which HF returns a 404 on by design. Fixed in PR #10: probe now targets
 `/v1/models` (returns 200 without auth).
 
-`video_gen` (HuggingFace) requires `HUGGINGFACE_API_KEY` to be set in Zeabur. If it fails
+`video_gen` (HuggingFace) requires `HUGGINGFACE_API_KEY` to be set in the Coolify app's env. If it fails
 in prod, suspect a missing/invalid key or model availability — not network egress.
 
 ---
@@ -553,17 +539,17 @@ SELECT * FROM agent_tasks WHERE request_id = 'hermes-1779505977261';
 
 ```bash
 # Container health probe (always returns 200 if process is alive)
-curl https://blhermes.zeabur.app/health
+curl https://hermes.biglobster.top/health
 
 # Richer status (gateway state, active sessions, model)
-curl https://blhermes.zeabur.app/api/status
+curl https://hermes.biglobster.top/api/status
 
-# Manual delegate (from BigLobster or any service in same Zeabur project)
-# Requires x-hermes-secret to match the HERMES_CALLBACK_SECRET Zeabur env var —
+# Manual delegate (from BigLobster or any app on the coolify network)
+# Requires x-hermes-secret to match the HERMES_CALLBACK_SECRET Coolify env var —
 # /api/delegate is on the public dashboard-auth allowlist (reachable from
-# blhermes.zeabur.app, not just the internal network), so this header is the
+# hermes.biglobster.top, not just the internal network), so this header is the
 # ONLY thing gating it. Missing/wrong header -> 401; secret unset -> 503.
-curl -X POST http://hermes-sandbox.zeabur.internal:9119/api/delegate \
+curl -X POST http://hermes:9119/api/delegate \
   -H "Content-Type: application/json" \
   -H "x-hermes-secret: $HERMES_CALLBACK_SECRET" \
   -d '{
@@ -578,7 +564,7 @@ curl -X POST http://hermes-sandbox.zeabur.internal:9119/api/delegate \
 
 ## Startup log verification
 
-After every Zeabur restart, confirm these lines appear in the logs (s6-overlay format
+After every restart, confirm these lines appear in the logs (s6-overlay format
 since the 2026-06 upgrade — the old `[entrypoint] …` lines are gone):
 
 ```
@@ -589,7 +575,7 @@ since the 2026-06 upgrade — the old `[entrypoint] …` lines are gone):
 [03-biglobster] Pulling br41s/grow-shop-api      (or "Cloning …" on first boot)
 [03-biglobster] Pulling br41s/grow-shop-landing
 [03-biglobster] Egress openrouter.ai: 200
-[03-biglobster] Egress router.huggingface.co: 200   (or FAIL if Zeabur blocks it)
+[03-biglobster] Egress router.huggingface.co: 200   (or FAIL if blocked)
 [startup] Model: openrouter/owl-alpha | Provider: openrouter | API key present: True
 ```
 
@@ -600,15 +586,15 @@ already records `running`. If — only on the very first upgrade boot — it com
 `registered`/down instead, click **Restart Gateway** once in the web panel; it self-heals
 on every subsequent restart.
 
-If `API key present: False` or `Provider resolution FAILED` → check `OPENROUTER_API_KEY` in Zeabur Variables.
+If `API key present: False` or `Provider resolution FAILED` → check `OPENROUTER_API_KEY` in the Coolify app's env.
 
 ---
 
 ## Logs
 
-Zeabur → hermes service → **Logs** tab.
+Coolify panel → Hermes app → **Logs**, or `ssh netcup-nue docker logs <container>` (the container name starts with the app uuid).
 
-For agent execution detail: `https://blhermes.zeabur.app/logs`
+For agent execution detail: `https://hermes.biglobster.top/logs`
 
 ---
 

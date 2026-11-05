@@ -256,7 +256,7 @@ the established `PORTADA` pattern in `gap-hunter/bl-site-package-gap-hunter.prom
 
 | Rejected | Why |
 |---|---|
-| **Wan2GP self-hosted** | Needs an NVIDIA GPU with ≥6 GB VRAM. Zeabur Frankfurt is CPU-only (`nvidia-smi` absent). Would mean renting a second GPU host and building an API in front of it |
+| **Wan2GP self-hosted** | Needs an NVIDIA GPU with ≥6 GB VRAM. The Netcup VPS (4 vCore, 8 GB) is a CPU server. Would mean renting a second GPU host and building an API in front of it |
 | **HuggingFace `video_gen` provider** | Its free-tier model is `damo-vilab/text-to-video-ms-1.7b` — a 2023 model at 576×320. Unusable for content meant to perform |
 | **`optional-skills/creative/hyperframes`** | Renders by capturing a Chromium page frame-by-frame: ~900 frames for a 30s/30fps clip, minutes of CPU each, ×5 videos ×N clients daily, plus a runtime `npx` install. Direct ffmpeg filtergraphs are an order of magnitude cheaper |
 | **XTTS-v2 / F5-TTS** | Non-commercial licences (§6) |
@@ -319,8 +319,8 @@ ffprobe -v error -show_entries stream=width,height,r_frame_rate \
 
 Plugins are baked into the image, so this is not a config-only change:
 
-1. `gcloud builds submit --config=cloudbuild.yaml` → GHCR
-2. Restart the **container** in Zeabur — not "Restart Gateway" in the panel, which does not
+1. Merge to `main`: Actions publishes the image to GHCR
+2. Deploy with `scripts/deploy.sh` — not "Restart Gateway" in the panel, which does not
    re-run `cont-init` and so never applies the boot-hook change
 3. `PEXELS_API_KEY` on the Hermes service is only needed if **BigLobster itself** runs
    `shorts`; rented clients bring their own via `--pexels-key`
