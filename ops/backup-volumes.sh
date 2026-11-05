@@ -1,15 +1,18 @@
 #!/bin/bash
-# Back up the non-Hermes service volumes on the Zeabur server (Tencent Frankfurt)
-# and mirror them to Google Drive next to the nightly Hermes zip.
+# Back up the non-Hermes service data on the Netcup server (Coolify, Nuremberg) and
+# mirror it to Google Drive next to the nightly Hermes zip.
 #
-# Runs as root ON THE HOST (not in a container): it reads the k3s local-path
-# volumes directly and uses kubectl only for the logical dumps. Dumps are staged
-# in a root-only directory and uploaded by the host's own rclone (Ubuntu package,
-# root-owned binary) with a root-only config, so other projects' data never
-# passes through the Hermes container, whose volume every agent can read and
-# whose rclone binary and config live on that writable volume.
-# /root/.config/rclone/backup.conf holds the same Drive OAuth stanza as the
-# container's rclone.conf (copied 2026-10-06); revoking that OAuth client stops both.
+# Runs as root ON THE HOST (not in a container): it reads the Docker volumes directly
+# and uses `docker exec` only for the logical dumps. Dumps are staged in a root-only
+# directory and uploaded by the host's own rclone (Debian package, root-owned binary)
+# with a root-only config, so other projects' data never passes through the Hermes
+# container, whose volume every agent can read and whose rclone binary and config live
+# on that writable volume.
+# /root/.config/rclone/backup.conf holds the same Drive OAuth stanza as the container's
+# rclone.conf; revoking that OAuth client stops both.
+#
+# Coolify also uploads the three Postgres databases to R2 every night. It does not see
+# the volumes below, and the incident watcher reads this Drive folder, so both stay.
 #
 # Accepted trade-off (Brais, 2026-10-06): the Drive folder is reachable with the
 # token the container also holds, so a compromised container could download these
@@ -18,54 +21,35 @@
 # remote was offered and declined to keep restores key-free.
 #
 # Why dumps and not a tar of a running database: a file copy of a live Postgres
-# data directory is not guaranteed restorable. pg_dumpall / a forced Redis SAVE /
-# SQLite's online backup API are.
-#
-# First run 2026-10-06 (one-off, see ops/README.md). Not scheduled yet.
+# data directory is not guaranteed restorable. pg_dumpall and SQLite's online backup
+# API are. Chatwoot's Redis holds only sessions and empty queues, so it is not copied.
 set -euo pipefail
 set -o noclobber
 
-ST=/var/lib/rancher/k3s/storage
-HNS=environment-6a5ea4ecb0b7a4abeb4e61fd
-HDEP=deploy/service-6a5ea5074d439e41ee4cd38c
+VOLUMES=/var/lib/docker/volumes
 RCLONE="/usr/bin/rclone --config /root/.config/rclone/backup.conf"
 STAMP=$(date -u +%Y%m%d-%H%M%S)
 STAGE=/var/backups/volumes
 OUT=$STAGE/$STAMP
 mkdir -p "$OUT" && chmod 700 "$STAGE" "$OUT"
 
-# Resolve a PVC prefix to exactly one directory. Zero matches is a clean skip (prints
-# nothing, returns 1); more than one is a hard failure, never a guess.
-one_dir() {  # prefix
-  local matches=()
-  for d in "$ST"/"$1"*; do [ -d "$d" ] && matches+=("$d"); done
-  case ${#matches[@]} in
-    0) echo "skip $1: volume no longer exists" >&2; return 1 ;;
-    1) printf '%s\n' "${matches[0]}" ;;
-    *) echo "refusing: $1 matches ${#matches[@]} volumes: ${matches[*]}" >&2; exit 1 ;;
-  esac
+# Coolify names a database's container after its uuid. The file names are the ones
+# VOLUME_BACKUP_DUMPS in incidents/sweep.py requires: change them together.
+dump_pg() {  # container label
+  docker exec "$1" sh -c 'pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists' \
+    | gzip > "$OUT/$2-pg_dumpall.sql.gz"
 }
+dump_pg dvohhynzxxgjzqzcprsqe88h biglobster-eu-chatwoot-pgvector
+dump_pg h37zud6pi0ener9906gooucz social-agenda-postgres
+dump_pg pcffmkflmojnujjjcgtvw20e flywell-postgres
 
-dump_pg() {  # ns deploy label
-  kubectl exec -n "$1" "$2" -- sh -c 'pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists' \
-    | gzip > "$OUT/$3-pg_dumpall.sql.gz"
-}
-dump_pg "$HNS" deploy/service-6a7dac382b4272705cd16068 biglobster-eu-chatwoot-pgvector
-dump_pg environment-6a5f3b21b0b7a4abeb4e65ea deploy/service-6a5f3b214d439e41ee4d120e social-agenda-postgres
-dump_pg environment-6a77a9a65f062718bc7b8222 deploy/service-6a77aa1bb3e95d61b0de29d4 flywell-postgres
+# Chatwoot's uploaded files.
+tar -C "$VOLUMES/zizhirxoo2p6azitnkr7rf4w_chatwoot-storage/_data" -czf "$OUT/chatwoot-storage.tar.gz" .
 
-# Redis (chatwoot sessions/cache): force a snapshot and insist on Redis saying OK
-# (redis-cli exits 0 on an auth error), then copy the RDB file.
-if REDIS=$(one_dir pvc-9f0ca35c); then
-  reply=$(kubectl exec -n "$HNS" deploy/service-6a7dac382b4272705cd16077 -- \
-    sh -c 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning save' 2>&1 | tr -d '\r')
-  [ "$reply" = "OK" ] || { echo "redis SAVE did not return OK: $reply" >&2; exit 1; }
-  cp "$REDIS/dump.rdb" "$OUT/biglobster-eu-redis-dump.rdb"
-fi
-
-# BigLobster sentinel (SQLite in WAL mode): online backup API, then the rest of the volume.
-if SENT=$(one_dir pvc-2b694de2); then
-  python3 - "$SENT/sentinel.db" "$OUT/biglobster-cursin-sentinel.db" <<'PY'
+# The bl-site-package reference site (SQLite in WAL mode): online backup API, then the
+# rest of the volume.
+SITE=$VOLUMES/7upzm0o1hdox8bivde1nwg6g-bl-site-data/_data
+python3 - "$SITE/app.db" "$OUT/bl-site-app.db" <<'PY'
 import sqlite3, sys
 src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 dst = sqlite3.connect(sys.argv[2])
@@ -74,15 +58,7 @@ ok = dst.execute("pragma integrity_check").fetchone()[0]
 dst.close(); src.close()
 sys.exit(0 if ok == "ok" else 1)
 PY
-  tar -C "$SENT" --exclude='sentinel.db*' -czf "$OUT/biglobster-cursin-data.tar.gz" .
-fi
-
-# "untitled" project (Chrome/CDP proxy, no running workload): plain tars. Its volumes
-# were deleted on 2026-10-06; a missing volume is skipped, not an error.
-for v in pvc-0b325c83 pvc-43eae7d9 pvc-11946d91; do
-  d=$(one_dir "$v") || continue
-  tar -C "$d" -czf "$OUT/untitled-$(basename "$d" | sed 's/.*_//').tar.gz" .
-done
+tar -C "$SITE" --exclude='app.db*' -czf "$OUT/bl-site-data.tar.gz" .
 
 # Every staged file must be non-empty and every gzip must decompress.
 for f in "$OUT"/*; do
