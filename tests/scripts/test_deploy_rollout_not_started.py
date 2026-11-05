@@ -8,6 +8,7 @@ commit gets the rollback steps, because a stopped app is not going to fix itself
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -18,16 +19,45 @@ TEXT = DEPLOY_SH.read_text(encoding="utf-8")
 def test_stop_then_gone_then_tag_then_start() -> None:
     pull = TEXT.index('run ssh -n "$SSH_HOST" docker pull')
     stop = TEXT.index("run coolify POST /stop")
-    gone = TEXT.index('while [ -n "$(hermes_container)" ]')
+    gone = TEXT.index('[ -n "$RUNNING_NOW" ] || break')
     move = TEXT.index("run coolify PATCH")
     start = TEXT.index("run coolify POST /start")
     assert pull < stop < gone < move < start
 
 
 def test_a_container_that_will_not_stop_never_moves_the_tag() -> None:
-    block = TEXT[TEXT.index('while [ -n "$(hermes_container)" ]'):TEXT.index("run coolify PATCH")]
+    block = TEXT[TEXT.index("run coolify POST /stop"):TEXT.index("run coolify PATCH")]
     assert "exit 1" in block
-    assert "The tag was not moved" in block
+    assert "still running" in block and "The tag was not moved" in block
+
+
+def _loop_with(container_body: str) -> subprocess.CompletedProcess:
+    """The real wait loop, with ``hermes_container`` replaced, then a line standing in for the tag move."""
+    block = TEXT[TEXT.index("  DEADLINE=$(( $(date +%s) + 120 ))"):TEXT.index('echo "→ Pointing the app at')]
+    block = block[:block.rindex("fi")]  # drop the closing fi of the DRY_RUN branch
+    script = (f"set -euo pipefail\nSSH_HOST=host\nsleep() {{ :; }}\nhermes_container() {{ {container_body}; }}\n"
+              f"{block}\necho TAG_MOVED\n")
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=20)
+
+
+def test_a_failed_ssh_is_not_read_as_a_stopped_container() -> None:
+    # The hazard: empty output from a failed ssh looking like "gone", then the tag moves
+    # while the old container is still terminating.
+    out = _loop_with("return 255")
+    assert out.returncode == 1
+    assert "TAG_MOVED" not in out.stdout
+    assert "Cannot reach" in out.stderr
+
+
+def test_the_tag_moves_only_once_the_container_is_really_gone() -> None:
+    assert "TAG_MOVED" in _loop_with("return 0").stdout
+
+
+def test_the_container_lookup_is_anchored_and_exec_wants_exactly_one() -> None:
+    assert "--filter name=^/?$APP_UUID-" in TEXT
+    func = TEXT[TEXT.index("pod_exec() {"):]
+    assert 'c="$(hermes_container)" || return 1' in func
+    assert "\"\"|*$'\\n'*) return 1" in func
 
 
 def test_the_script_never_uses_coolifys_redeploy() -> None:

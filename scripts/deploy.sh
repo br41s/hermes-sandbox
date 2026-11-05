@@ -120,16 +120,17 @@ coolify() {  # METHOD PATH [JSON]
     | ssh "$SSH_HOST" "$(printf '%q ' "${args[@]}")"
 }
 
-# The running Hermes container, or nothing. Coolify puts a timestamp in the name.
+# The running Hermes containers, one name per line; nothing when there are none. Coolify
+# appends a timestamp to the uuid. Fails when SSH does: empty must only ever mean "none".
 hermes_container() {
-  ssh -n "$SSH_HOST" "docker ps --filter name=$APP_UUID --format '{{.Names}}'" | head -1
+  ssh -n "$SSH_HOST" "docker ps --filter name=^/?$APP_UUID- --format '{{.Names}}'"
 }
 
-# Run a command in that container. Fails when there is none.
+# Run a command in that container. Fails unless there is exactly one.
 pod_exec() {
   local c
-  c="$(hermes_container)"
-  [ -n "$c" ] || return 1
+  c="$(hermes_container)" || return 1
+  case "$c" in ""|*$'\n'*) return 1 ;; esac
   ssh -n "$SSH_HOST" "docker exec $c $(printf '%q ' "$@")"
 }
 
@@ -467,7 +468,12 @@ echo "→ Stopping Hermes"
 run coolify POST /stop
 if [ "$DRY_RUN" -eq 0 ]; then
   DEADLINE=$(( $(date +%s) + 120 ))
-  while [ -n "$(hermes_container)" ]; do
+  while :; do
+    if ! RUNNING_NOW="$(hermes_container)"; then
+      echo "✗ Cannot reach $SSH_HOST to confirm Hermes stopped. The tag was not moved." >&2
+      exit 1
+    fi
+    [ -n "$RUNNING_NOW" ] || break
     if [ "$(date +%s)" -ge "$DEADLINE" ]; then
       echo "✗ Hermes is still running 2 min after the stop. The tag was not moved." >&2
       exit 1
