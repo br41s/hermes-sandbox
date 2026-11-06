@@ -79,8 +79,8 @@ Two scripts, two homes:
   2026-10-06): 14 days of stamps on the host, 30 in Drive, pruned by the script itself
   only after that night's upload verified. All three dumps were restored from Drive into
   throwaway containers on 2026-11-05, row counts equal to live.
-- **Coolify also uploads the three Postgres databases to R2** (`vps-db-backups`, 03:00 server
-  time, 30 days). It does not cover the volumes above, and the watcher does not read it.
+- **Coolify also uploads the three Postgres databases to R2** (`vps-db-backups`, 03:00 UTC,
+  30 days). It does not cover the volumes above, and the watcher does not read it.
 
 ## Server access
 
@@ -91,7 +91,9 @@ on Brais's Mac: Coolify needs root SSH, so `/etc/ssh/sshd_config.d/00-hardening.
 - **Docker bypasses ufw.** `docker-user-firewall.service` runs
   `/usr/local/sbin/docker-user-firewall.sh`, which drops 8000/6001/6002 in the DOCKER-USER
   chain. Coolify's panel and API are therefore reached only through SSH:
-  `ssh -N -L 8000:localhost:8000 netcup-nue`, then http://localhost:8000.
+  `ssh -N -L 8000:127.0.0.1:8000 -L 6001:127.0.0.1:6001 -L 6002:127.0.0.1:6002 netcup-nue`, then
+  http://localhost:8000. All three ports are needed, or the panel says "Cannot connect to
+  real-time service". Use `127.0.0.1`: port 6001 resets over IPv6 on the server.
 - **Traefik files Coolify does not manage**, in `/data/coolify/proxy/dynamic/`:
   `hermes-webhooks.yaml` (`hook.biglobster.top` to `hermes:8644`), `coolify-webhooks.yaml`
   (`deploy.biglobster.top`, only `/webhooks/`, to Coolify for GitHub pushes) and
