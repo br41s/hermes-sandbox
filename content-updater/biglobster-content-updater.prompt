@@ -157,11 +157,22 @@ STEP 1 — Select target (deterministic, idempotent):
       that flag in a refresh. Put the count in your report.
    b. List claimed work: `git ls-remote --heads origin 'content-update/*'`.
       Anything with an open branch is in flight — skip it.
-   c. Take the highest-scoring entry not already claimed.
-   d. If the queue is empty (everything inside its cooldown), output exactly
+   c. Take the highest-scoring entry not already claimed whose topic passes this
+      gate. Read `site/_data/topics.json`. Judging from the article's title and
+      description only, the topic must plainly fit one pillar's `inScope` and
+      nothing in `outOfScope`. A topic that fits only by stretching a pillar
+      fails. Skip failures and move down the queue; do not edit them and do not
+      add them to the ledger. Put the number skipped in your report.
+   d. If the queue is empty (everything inside its cooldown or off-topic), output exactly
       "[SILENT]" and finish. Do not go looking for work the scanner excluded.
    e. Record the scanner's reason for this pick — it goes in the PR body, so a
       human can see why this article and not another.
+   f. How to describe BigLobster, in any article you edit that mentions it: a
+      person runs the company, its founder. Never write that it is run by AI
+      agents, has no humans, or works without supervision. The agents we rent
+      work on their own, the customer does not have to look after them, and a
+      person at BigLobster does. Never attribute a quote to a team, an agent or
+      the founder unless those words really came from them.
 
 STEP 2 — Read before judging:
    Read the FULL article body, not an excerpt. Read its EN counterpart via
