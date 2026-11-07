@@ -175,6 +175,8 @@ Apply these humanizer rules. The article MUST read like a real person wrote it, 
    - Tables with more than 4 columns
    - Text that starts each H2 by repeating the title
 
+**How to describe BigLobster.** A person runs the company: its founder, named in the byline. Never write that BigLobster is run by AI agents, has no humans, or works without supervision. About the agents we rent, the accurate line is: they work on their own, the customer does not have to look after them, and a person at BigLobster does. Never attribute a quote to a team, an agent or the founder unless those words really came from them. Never claim a person reviewed an article before it was published.
+
 6b. **Repeated tics** (the corpus audit of 2026-10-14 found each of these in a quarter to a third of all posts):
    - Banned outright: "Here's the thing", "I won't sugarcoat it", "Read that again", "the part nobody tells you", "the uncomfortable part", "no fluff", "no hype", "Let me be precise", "Let me be honest", "the honest answer".
    - At most once per article: the "It's not X, it's Y" construction; "really", "actually" or "genuinely" as emphasis; "Picture this" / "Imagine".
@@ -474,6 +476,13 @@ Aplica en orden y para en la primera que falle (la más barata primero):
     que NO pasan, aunque pasarían las demás: un estudio de la Fed sobre si las
     pymes contratan más, la Ley de IA aplicada a selección de personal, ayudas
     públicas a la industria, criptografía post-cuántica.
+    Además, nombra el agente o servicio concreto de BigLobster (uno de los `agents`
+    del pilar) cuyo problema resuelve el artículo, en una frase: "quien lee esto
+    necesita <agente> porque <motivo>". Si no puedes, descarta (`rechazado:tema`).
+    Temas delicados: la ley, los impuestos, la salud o el dinero del lector nunca son
+    el tema central. Una norma solo entra si el `inScope` del pilar ya la nombra, y el
+    artículo la trata desde lo que hay que cambiar en la web o en el chat, no como
+    asesoría.
 
   PUERTA 1 — ¿PRIMARIA? De primera mano, con fecha, de una de las cuatro clases.
     Si es un artículo SOBRE la noticia en vez de la noticia → descarta.

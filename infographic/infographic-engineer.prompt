@@ -151,6 +151,10 @@ alone. Your taste is not a reason to spend a run and burn a client's goodwill.
     Eligible = an article under CONTENT_GLOB containing CONTENT_CONTAINER, NOT
     containing `article-infographic`, and with no `BRANCH_PREFIX<slug>` branch in
     `git ls-remote --heads origin 'infographic/*'`.
+    Also NOT eligible: a post whose frontmatter has `"googleNoindex": true`, or whose
+    topic, judged from its title and description against `site/_data/topics.json`,
+    falls in `outOfScope` or fits no pillar's `inScope` without stretching. Repairs of
+    BROKEN and DEFECTIVE figures are not affected by this gate.
     Pick the OLDEST eligible by DATE_SOURCE.
 
     Git auth is already configured; a PAT is written into a credential store

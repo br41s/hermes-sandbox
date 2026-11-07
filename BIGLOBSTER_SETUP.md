@@ -457,6 +457,10 @@ Job `ce583d11dedd` (profile `biglobster`, `0 6 * * *`). Three behaviours live in
   `escrito` ledger note starts with the pillar. The pillars live in that biglobster
   file, never in the prompt. Why: Google demoted biglobster.top site-wide on
   2026-10-18 with no manual action, after ~45 posts a month on unrelated subjects.
+  Since 2026-11-07 the hunter must also name the BigLobster agent the article serves,
+  and the Content Updater and Infographic Engineer (repo lane) skip off-topic posts;
+  the Infographic Engineer also skips `googleNoindex` posts. These prompts also say
+  how to describe BigLobster: a person runs it, and rented agents work on their own.
 - **Class 5, `datos-propios`.** Reads owner-approved files from
   `/opt/data/profiles/biglobster/gaphunter/first-party/` (format:
   `gap-hunter/first-party-facts.template.md`, which ships `aprobado: no`). The
