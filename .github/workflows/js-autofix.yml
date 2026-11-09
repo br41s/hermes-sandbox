@@ -66,7 +66,7 @@ jobs:
       has-fixes: ${{ steps.produce-patch.outputs.has-fixes }}
     # No permissions override → inherits workflow-level contents: read.
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a  # v1
+      - uses: useblacksmith/checkout@2b9fe87d796feea153b455ec2f3125b471a7b0e7  # v1
 
       - name: Set up locked Node and npm
         id: node
@@ -144,7 +144,7 @@ jobs:
       contents: write # needed to push to bot/js-autofix
       pull-requests: write # needed for PR creation + auto-merge
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a  # v1
+      - uses: useblacksmith/checkout@2b9fe87d796feea153b455ec2f3125b471a7b0e7  # v1
 
       - name: Get GitHub App token
         id: app-token
