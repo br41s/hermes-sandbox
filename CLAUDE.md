@@ -340,7 +340,7 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   `detect_service_manager()` no longer gates s6 on it at all — `_s6_running()` stands alone
   on `/proc/1/comm` + `/run/s6/basedir`, so the s6 dispatch path is live in the container.
   Nobody has re-verified the full lifecycle there since, so reach for
-  `/command/s6-svc -u /run/service/gateway-default` first and treat a working
+  `/command/s6-svc -u /run/hermes-service/gateway-default` first and treat a working
   `hermes gateway restart` as a pleasant surprise worth recording here. Multiplex is
   on by upstream's default (see "Multiplex is on" above).
   **Whenever it is on, the default gateway serves every profile: never bring up a

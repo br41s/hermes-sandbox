@@ -638,7 +638,7 @@ model is **one bot, one poller**:
   shared token just crash-loops on the lock.
 
 **Recovery (Zeabur panel terminal, root):** `export PATH=/command:$PATH;
-s6-svc -u /run/service/gateway-default`. The healthy gateway writes `gateway_state=running`
+s6-svc -u /run/hermes-service/gateway-default`. The healthy gateway writes `gateway_state=running`
 itself, so it auto-starts on the next container restart. (s6 tools live in `/command/`, not on
 PATH.) Footgun still open: clicking dashboard "Start Gateway" for grow-shop/finview starts a
 poller that fails the shared-token lock and s6 restart-loops it ~every 3 s — harmless to
