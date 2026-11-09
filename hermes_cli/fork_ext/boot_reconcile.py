@@ -904,11 +904,11 @@ def reconcile_config(
 
     from hermes_cli.config import atomic_config_replace
 
-    if not config_path.exists():
+    if not config_path.exists():  # config-reader: ok — boot-time reconciler of the on-disk file it rewrites, before any backend runs
         print(f"[03-biglobster] {label}: config.yaml not present yet — skipping")
         return
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8-sig")) or {}  # config-reader: ok — boot-time reconciler of the on-disk file it rewrites, before any backend runs
         if reconcile_cfg(cfg, label, environ, is_rented=is_rented,
                          byok_images=byok_images, profiles_src=profiles_src, served=served):
             atomic_config_replace(config_path, cfg)

@@ -109,3 +109,26 @@ jobs:
         with:
           command: npm ci --prefix scripts/whatsapp-lead-bot
       - run: npm test --prefix scripts/whatsapp-lead-bot
+
+  whatsapp-bridge:
+    name: WhatsApp bridge node tests
+    # scripts/whatsapp-bridge is a standalone npm package outside the root workspaces, so the
+    # matrix above never sees it. Upstream v0.23.0 runs its node:test suites in its single JS
+    # job; the fork keeps its matrix layout, so they get a job of their own here. Two suites
+    # import @whiskeysockets/baileys, so install its own lockfile first; --ignore-scripts
+    # because the tests need no native build.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: scripts/whatsapp-bridge/package-lock.json
+      - name: Use npm 12
+        run: npm --version | grep -q '^12\.' || npm i -g npm@12
+      - uses: ./.github/actions/retry
+        with:
+          command: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/whatsapp-bridge
+      - run: node --test scripts/whatsapp-bridge/*.test.mjs

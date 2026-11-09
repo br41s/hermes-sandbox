@@ -123,10 +123,13 @@ def holds_messaging_adapter(adapters) -> bool:
     that cut it off from the primary: cron delivery, restored sources and notices all found no
     Telegram (2026-10-23 on). One definition for cron (``satellite_delivery_adapters``) and the
     gateway (``_adapters_for_profile``) so the two rules cannot drift.
-    """
-    from gateway.config import Platform
 
-    return any(platform is not Platform.LOCAL for platform in (adapters or {}))
+    Upstream v0.23.0 fixed the same bug as ``cron.scheduler_preflight.has_credential_platform``;
+    this delegates to it so the fork's callers and upstream's cannot drift apart.
+    """
+    from cron.scheduler_preflight import has_credential_platform
+
+    return has_credential_platform(adapters)
 
 
 def _coerce_route_id(value: Any) -> Optional[str]:

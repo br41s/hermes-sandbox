@@ -84,12 +84,12 @@ def _timezone_cache_identity() -> tuple[str, str]:
     # at the next restart. Without it, the multiplexed gateway kept a profile on the zone it
     # first resolved — UTC for an unset one — and re-anchored that profile's cron runs to it
     # (2026-10-04: a rental's 12:45 Bangkok run became 13:45 after its timezone was set).
+    # Through the config backend (upstream v0.23.0 routes every config.yaml read through it).
+    from hermes_cli.config_backend import config_version_or_none
+
     path = get_config_path()
-    try:
-        st = os.stat(path)
-        stamp = f"{st.st_mtime_ns}:{st.st_size}"
-    except OSError:
-        stamp = "absent"
+    version = config_version_or_none(path)
+    stamp = "absent" if version is None else ":".join(map(str, version))
     return ("config", f"{path}\0{stamp}")
 
 
@@ -102,14 +102,15 @@ def _resolve_timezone_name() -> str:
         # Prefer the shared cached effective-config loader (mtime-keyed + libyaml, managed overlay
         # included so an administrator can pin ``timezone``): a direct safe_load of a large
         # config.yaml costs ~100 ms and this ran inside the FIRST system prompt build. The bare
-        # parse is the stdlib-safe fallback for bootstrap consumers without hermes_cli importable.
+        # parse through the config backend is the fallback when the effective loader cannot be
+        # imported (any failure there lands in the outer except: no configured timezone).
         try:
             from hermes_cli.config_effective import load_user_config_effective
             cfg = load_user_config_effective(get_config_path())
         except Exception:
-            import hermes_yaml as yaml
+            from hermes_cli.config_backend import config_exists, read_config_doc
             config_path = get_config_path()
-            cfg = (yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}) if config_path.exists() else {}
+            cfg = (read_config_doc(config_path) or {}) if config_exists(config_path) else {}
         if cfg:
             tz_cfg = cfg.get("timezone", "")
             if isinstance(tz_cfg, str) and tz_cfg.strip():
