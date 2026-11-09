@@ -1460,7 +1460,8 @@ DEP_UV_ON_DEMAND = "runtime (on-demand install, not in image)"
 # and its msgpack are the example). tests/test_dependency_alert_incident.py
 # fails if this drifts from the Dockerfile.
 DEP_IMAGE_EXTRAS = ("all", "messaging", "otlp", "anthropic", "bedrock",
-                    "azure-identity", "matrix", "google-chat", "observability")
+                    "azure-identity", "matrix", "google-chat", "fal", "documents",
+                    "observability")
 
 
 def _norm_pkg(name: str) -> str:

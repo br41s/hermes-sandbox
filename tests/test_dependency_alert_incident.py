@@ -192,13 +192,14 @@ def test_photon_sidecar_lock_is_runtime_not_unknown():
 
 
 def test_uv_lazy_extra_package_is_not_claimed_to_be_in_the_image():
-    """fal-client/msgpack sit behind the `fal` extra, which the image does not
-    bake: they install on first use. aiohttp is in the image."""
+    """grpclib sits behind the `modal` extra, which the image does not bake: it
+    installs on first use. aiohttp is in the image. (msgpack was the example until
+    upstream v0.23.0 baked the `fal` extra into the image.)"""
     inc = dependency_alert_incidents(alerts=[
-        _alert(1, "CVE-1", "high", "msgpack", "1.2.1"),
+        _alert(1, "CVE-1", "high", "grpclib", "0.4.8"),
         _alert(2, "CVE-2", "high", "aiohttp", "3.14.1")])
     detail = {i.title.split("—")[1].split()[0]: i.detail for i in inc}
-    assert "reachability: runtime (on-demand install, not in image)" in detail["msgpack"]
+    assert "reachability: runtime (on-demand install, not in image)" in detail["grpclib"]
     assert "reachability: runtime (production image)" in detail["aiohttp"]
 
 

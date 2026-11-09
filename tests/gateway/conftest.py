@@ -111,6 +111,8 @@ _TURN_START_ACK_OFF = frozenset({
     # upstream v0.22
     "test_busy_followup_marker_handoff", "test_mattermost_native_admission",
     "test_native_admission_metadata", "test_native_execution_secret_scope_off_loop",
+    # upstream v0.23
+    "test_authority_lane_moves_on",
 })
 
 
