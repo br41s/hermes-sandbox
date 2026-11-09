@@ -541,8 +541,7 @@ def bl_site_redirect(
 BL_SITE_REDIRECT_SCHEMA = {
     "name": "bl_site_redirect",
     "description": (
-        "Find and manage same-site 301 redirects for the bl-site-package client site this "
-        "profile is dedicated to. "
+        "Find and manage same-site 301 redirects on this profile's bl-site-package site. "
         "Use action='scan' (no other arguments) once per run to find URLs that were in this "
         "site's own sitemap on a prior run and are gone now. Returns 'confirmed_dead' (dead on "
         "this run AND the run that first noticed it missing — eligible to act on), "

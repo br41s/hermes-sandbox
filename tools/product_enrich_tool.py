@@ -588,8 +588,8 @@ def product_enrich(action: str, sku: Optional[str] = None, url: Optional[str] = 
 PRODUCT_ENRICH_SCHEMA = {
     "name": "product_enrich",
     "description": (
-        "Check whether a web page describes the SAME product the client sells, and if it "
-        "does, hand back the facts that page publishes. "
+        "Check whether a web page describes the SAME product the client sells. "
+        "If it does, hand back the facts that page publishes. "
         "Use action='verify' with the product's 'sku' and the 'url' of a candidate page "
         "found by searching. "
         "Use action='verify_dead_url' with 'sku' and 'url' set to a URL that now 404s on our "
