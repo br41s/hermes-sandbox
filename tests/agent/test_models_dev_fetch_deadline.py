@@ -41,6 +41,8 @@ def trickling_registry(monkeypatch):
     monkeypatch.setattr(md, "_MODELS_DEV_FETCH_DEADLINE", 0.5, raising=False)
     for name, value in (("_models_dev_cache", {}), ("_models_dev_cache_time", 0), ("_models_dev_retry_after", 0)):
         monkeypatch.setattr(md, name, value)
+    # fork: no bundled snapshot floor, so a failed cold fetch returns {} as upstream expects.
+    monkeypatch.setattr(md, "_bundled_snapshot", {})
     yield server
     server.stop.set()
     # The abandoned download ends once the body stops; it must hand its slot back.

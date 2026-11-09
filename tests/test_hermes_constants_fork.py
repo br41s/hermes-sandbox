@@ -5,12 +5,12 @@ import time
 
 import pytest
 
-from hermes_constants import agent_browser_runnable
+from hermes_constants import node_tool_runnable
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell stubs; Windows uses .cmd shims")
 class TestAgentBrowserRunnableProbeTimeout:
-    """agent_browser_runnable()'s version probe must honour its timeout."""
+    """node_tool_runnable()'s version probe (agent_browser_runnable before upstream v0.23.0) must honour its timeout."""
 
     def _stub(self, tmp_path, name, body, mode=0o755):
         p = tmp_path / name
@@ -41,7 +41,7 @@ class TestAgentBrowserRunnableProbeTimeout:
         )
 
         start = time.monotonic()
-        result = agent_browser_runnable(str(forking))
+        result = node_tool_runnable(str(forking))
         elapsed = time.monotonic() - start
 
         assert result is True
