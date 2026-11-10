@@ -83,6 +83,12 @@ def _cron_preflight_enabled(cfg: dict) -> bool:
     return not isinstance(cron_cfg, dict) or cron_cfg.get("preflight", True) is not False
 
 
+def cron_default_provider(cfg: dict) -> str:
+    """``cron.model_provider``: the provider every cron job without its own pin resolves through."""
+    cron = cfg.get("cron") if isinstance(cfg, dict) else None
+    return str(cron.get("model_provider") or "").strip() if isinstance(cron, dict) else ""
+
+
 def _preflight_check_provider_key(job: dict, cfg: dict) -> Optional[str]:
     """READ-ONLY probe: would provider resolution fail for lack of a key? Mirrors run_job's
     requested-provider computation. Skipped when the job has a fallback chain — auth-fallback may
@@ -94,9 +100,7 @@ def _preflight_check_provider_key(job: dict, cfg: dict) -> Optional[str]:
     except Exception:
         return None  # fail-open: never block on a preflight-internal error
 
-    _cron_cfg = cfg.get("cron") if isinstance(cfg.get("cron"), dict) else {}
-    requested = (
-        job.get("provider") or str((_cron_cfg or {}).get("model_provider") or "").strip() or None)
+    requested = job.get("provider") or cron_default_provider(cfg) or None
     model = job.get("model") or cron_env_setting("HERMES_MODEL") or ""
 
     from hermes_cli.auth import AuthError, is_rate_limited_auth_error
@@ -239,7 +243,7 @@ class SharedRouteAdapters:
         return default
 
 
-def satellite_delivery_adapters(own_adapters, primary_adapters):
+def satellite_delivery_adapters(own_adapters, primary_adapters, owned=None):
     """The adapters a non-launch profile's cron delivers through, inside that profile's scope.
 
     Its own map when it holds a messaging adapter (its own bot is its credential boundary);
@@ -250,14 +254,26 @@ def satellite_delivery_adapters(own_adapters, primary_adapters):
     ``LocalSessionAdapter`` in its ``_profile_adapters`` entry, and the old emptiness test read
     ``{local: ...}`` as "has its own bot": every satellite delivery then failed
     ``platform 'telegram' not configured/enabled`` (biglobster, auditor, 2026-10-23 on).
+    Upstream v0.23.0 fixed the same bug in ``has_credential_platform``, which this now uses, and
+    added ``owned`` (the profile's ``_profile_bot_platforms`` entry): a bot of its own that is
+    reconnecting still makes it a credential boundary. The fork keeps ``own_adapters`` layered
+    over the borrowed routes, so the satellite's LOCAL transport stays its own.
     """
-    from gateway.profile_routing import holds_messaging_adapter
-
     own = own_adapters or {}
-    if not primary_adapters or holds_messaging_adapter(own):
+    if not primary_adapters or has_credential_platform(own, owned):
         return own
     return SharedRouteAdapters(
         primary_adapters, _primary_profile_routes_for_current_home(), own_adapters=own)
+
+
+def has_credential_platform(adapters, owned=None) -> bool:
+    """True when the profile has a bot of its own. Any local session (Desktop chat, CLI run, Kanban
+    worker) adds a ``LOCAL`` adapter, which holds no platform credential: a profile with only that is
+    still a credentialless satellite that may ride routed primary adapters. ``owned`` is the
+    profile's ``_profile_bot_platforms`` entry: a bot that dropped leaves the live map while it
+    disconnects and reconnects, and borrowing the primary meanwhile would send through the wrong bot."""
+    return bool(owned) or any(
+        getattr(platform, "value", platform) != "local" for platform in adapters or ())
 
 
 def _preflight_check_delivery(job: dict) -> Optional[str]:
@@ -281,6 +297,8 @@ def _preflight_check_delivery(job: dict) -> Optional[str]:
             # bot-chat targets deliver via a local subprocess; failures land in last_delivery_error.
             if _delivery.parse_bot_chat_deliver_token(part) is not None:
                 continue
+            if _delivery.parse_room_deliver_token(part) is not None:
+                continue  # Group Chat posts write the room store directly; no adapter needed.
             platform_parts.append(part.split(":", 1)[0].strip())
     if not platform_parts:
         return None

@@ -317,6 +317,10 @@ _UPSTREAM_CI_LAYOUT_TESTS = frozenset({
     "tests/ci/test_classify_changes.py::test_real_update_suites_gate_the_merge_when_their_lane_fires",
     "tests/ci/test_clean_worktree_check.py::test_every_checkout_job_ends_with_the_clean_worktree_step",
     "tests/ci/test_e2e_tmux_required.py::test_the_e2e_job_requires_tmux",
+    # upstream v0.23.0: asserts the node_modules-cache + vitest-history steps of upstream's
+    # single JS job; the fork's js-tests.yml keeps its per-package matrix (no restored tree).
+    "tests/ci/test_js_tests_vitest_history.py"
+    "::test_restored_trees_lose_their_vitest_history_before_any_check",
     "tests/ci/test_live_comment.py::test_the_merge_gate_never_shows_as_a_job_in_the_comment",
     "tests/ci/test_stable_release_commit_threading.py::test_every_call_forwards_the_commit",
     "tests/ci/test_stable_release_commit_threading.py::test_every_checkout_follows_the_commit_input",

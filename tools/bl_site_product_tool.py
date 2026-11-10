@@ -224,8 +224,7 @@ def bl_site_product(
 BL_SITE_PRODUCT_SCHEMA = {
     "name": "bl_site_product",
     "description": (
-        "Write and publish product sheets on the bl-site-package client site this profile is "
-        "dedicated to. "
+        "Write and publish product sheets on this profile's bl-site-package client site. "
         "Use action='next_product' to be handed the single product to work on now, with "
         "everything known about it already attached: the distributor's specifications, barcode, "
         "manufacturer reference, documents and images. That is the material the sheet is written "

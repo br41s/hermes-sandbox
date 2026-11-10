@@ -1258,8 +1258,8 @@ def bl_site_health(action: str = "check", period: Optional[str] = None, summary:
 BL_SITE_HEALTH_SCHEMA = {
     "name": "bl_site_health",
     "description": (
-        "Run the deterministic maintenance health check on the bl-site-package client site this "
-        "profile is dedicated to, and read/stamp its run history. "
+        "Run the maintenance health check on this profile's bl-site-package client site. "
+        "It is deterministic, and also reads/stamps the check's run history. "
         "action='check' fetches every fixed route, the legal pages, robots.txt/sitemap.xml and "
         "every published blog post, then returns availability, response times, page weight, broken "
         "links (internal and outbound), publish drift (posts the API calls published but that 404 "
