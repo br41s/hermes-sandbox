@@ -731,6 +731,37 @@ class _MetaClient:
         return _MetaResp(self.script.pop(0))
 
 
+class _MetaErrorResp:
+    """An HTTP error from the Graph API, with the body Meta really sends."""
+
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    @property
+    def text(self):
+        return json.dumps(self._body)
+
+    def json(self):
+        return self._body
+
+
+class _MetaFlakyClient(_MetaClient):
+    """``_MetaClient`` whose script may also hold ``(status, body)``: an HTTP error."""
+
+    def post(self, url, **kw):
+        self.calls.append((url, kw))
+        item = self.script.pop(0)
+        return _MetaErrorResp(*item) if isinstance(item, tuple) else _MetaResp(item)
+
+    def get(self, url, **kw):
+        return self.post(url, **kw)
+
+
+# What rupload.facebook.com answered to about half of the identical uploads (2026-11-13).
+PROCESSING_FAILED = (400, {"debug_info": {"retriable": False, "type": "ProcessingFailedError",
+                                          "message": "Request processing failed"}})
+
+
 def test_meta_shadow_by_default_publishes_nothing_to_meta_and_hands_off_as_before(env, buzz, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     monkeypatch.delenv("META_PUBLISH_MODE")
@@ -775,7 +806,7 @@ def test_meta_live_posts_fb_and_ig_reels_after_youtube_and_hands_off_only_x(env,
     assert "solo para X." in reply
 
 
-def test_meta_live_ig_failure_is_retried_alone(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_ig_failure_falls_back_to_socialbot(env, buzz, short_uploads, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _meta_env(monkeypatch)
@@ -786,20 +817,65 @@ def test_meta_live_ig_failure_is_retried_alone(env, buzz, short_uploads, monkeyp
 
     monkeypatch.setattr(meta_mod, "instagram", broken)
     buzz["events"] = [_event(_short_request())]
-    first = series.run()
-    assert first["failed"][0]["attempt"] == 1 and "HTTP 500" in first["failed"][0]["error"]
-    assert [c[0] for c in calls] == ["facebook"] and len(short_uploads) == 1
-
-    def retry_ig(video, **kw):
-        calls.append(("instagram", kw))
-        return {"id": "ig1", "url": "https://instagram.com/reel/ig1"}
-
-    monkeypatch.setattr(meta_mod, "instagram", retry_ig)
     out = series.run()
     assert out["published"] and len(short_uploads) == 1
-    assert [c[0] for c in calls] == ["facebook", "instagram"]
-    assert calls[1][1]["pending_container"] is None
-    assert "https://instagram.com/reel/ig1" in _replies(buzz)["e" * 64]
+    assert [c[0] for c in calls] == ["facebook"]
+
+    (_args, kw), = _handoffs(buzz)
+    text = kw["input"]
+    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
+    assert "Ya publicado por Hermes: https://www.instagram.com" not in text
+    assert "@SocialBot: Facebook ya lo ha publicado Hermes (enlace arriba): no lo publiques." in text
+    assert "Tú solo: Instagram y X con este texto" in text
+
+    reply = _replies(buzz)["e" * 64]
+    assert "Instagram: Meta rechazó la subida del vídeo; se lo pide a SocialBot" in reply
+    assert "para Instagram y X." in reply and "solo para X." not in reply
+    entry = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())["e" * 64]
+    assert "HTTP 500" in entry["instagram"]["failed"] and entry["replied"]
+
+    # A later run does not send it to Instagram again: SocialBot has it.
+    def boom(*a, **kw):
+        raise AssertionError("Instagram is not retried once the fallback is recorded")
+
+    monkeypatch.setattr(meta_mod, "instagram", boom)
+    again = series.run()
+    assert "published" not in again
+    assert [c[0] for c in calls] == ["facebook"] and len(short_uploads) == 1
+
+
+def test_meta_live_ig_failure_is_not_retried_after_a_failed_hand_off(env, buzz, short_uploads, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+
+    def broken(*a, **kw):
+        raise meta_mod.MetaError("publish to Instagram: HTTP 500")
+
+    monkeypatch.setattr(meta_mod, "instagram", broken)
+    real = series.subprocess.run
+
+    def refuse_files(args, **kw):
+        if "--file" in args:
+            return type("Done", (), {"returncode": 1, "stdout": "", "stderr": "relay said no"})()
+        return real(args, **kw)
+
+    buzz["events"] = [_event(_short_request())]
+    monkeypatch.setattr(series.subprocess, "run", lambda args, **kw: refuse_files(args, **kw))
+    first = series.run()
+    assert first["failed"][0]["attempt"] == 1 and [c[0] for c in calls] == ["facebook"]
+
+    monkeypatch.setattr(series.subprocess, "run", real)
+
+    def boom(*a, **kw):
+        raise AssertionError("Instagram is not retried once the fallback is recorded")
+
+    monkeypatch.setattr(meta_mod, "instagram", boom)
+    out = series.run()
+    assert out["published"] and len(short_uploads) == 1
+    assert [c[0] for c in calls] == ["facebook"]
+    assert "Tú solo: Instagram y X con este texto" in _handoffs(buzz)[0][1]["input"]
 
 
 def test_meta_live_ig_pending_does_not_count_an_attempt(env, buzz, short_uploads, monkeypatch):
@@ -944,6 +1020,101 @@ def test_meta_instagram_sends_is_ai_generated_only_when_asked(tmp_path, monkeypa
 
     assert container_data(True)["is_ai_generated"] == "true"
     assert "is_ai_generated" not in container_data(False)
+
+
+def _ig_env(monkeypatch):
+    for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "tok", "META_IG_USER_ID": "2"}.items():
+        monkeypatch.setenv(k, v)
+
+
+def _no_sleep(monkeypatch):
+    """The waits are recorded, never slept: a retry is not worth 40 s of the suite."""
+    from plugins.shorts.social import meta as meta_mod
+
+    slept = []
+    monkeypatch.setattr(meta_mod.time, "sleep", slept.append)
+    return slept
+
+
+def test_meta_instagram_retries_a_processing_failure_with_a_fresh_container(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    slept = _no_sleep(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, PROCESSING_FAILED,
+                               {"id": "c3"}, {"success": True}, {"status_code": "FINISHED"},
+                               {"id": "media1"}, {"permalink": "https://www.instagram.com/reel/m1/"}])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert result["id"] == "media1" and result["url"] == "https://www.instagram.com/reel/m1/"
+    uploads = [url for url, _kw in client.calls if "/ig-api-upload/" in url]
+    assert len([url for url, _kw in client.calls if url.endswith("/media")]) == 3
+    assert [url.rsplit("/", 1)[-1] for url in uploads] == ["c1", "c2", "c3"]
+    assert slept == [meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT]
+
+
+def test_meta_instagram_gives_up_after_three_processing_failures(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    slept = _no_sleep(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, PROCESSING_FAILED,
+                               {"id": "c3"}, PROCESSING_FAILED])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    with pytest.raises(meta_mod.MetaError) as exc:
+        meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert str(exc.value).startswith("Instagram upload failed after 3 attempts")
+    assert "ProcessingFailedError" in str(exc.value)
+    assert len([url for url, _kw in client.calls if "/ig-api-upload/" in url]) == 3
+    assert slept == [meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT]
+
+
+def test_meta_instagram_does_not_retry_other_errors(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    slept = _no_sleep(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, (400, {"error": {"message": "Invalid OAuth access token."}})])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    with pytest.raises(meta_mod.MetaError, match="HTTP 400 Invalid OAuth"):
+        meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert len([url for url, _kw in client.calls if "/ig-api-upload/" in url]) == 1
+    assert slept == []
+
+
+def test_meta_instagram_stages_the_cover_once_across_retries(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    _no_sleep(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    cover = tmp_path / "cover.jpg"
+    cover.write_bytes(b"\xff\xd8\xff\xe0cover")
+    client = _MetaFlakyClient([{"id": "photo1"},
+                               {"images": [{"width": 1080, "source": "https://cdn.example/cover.jpg"}]},
+                               {"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, {"success": True},
+                               {"status_code": "FINISHED"}, {"id": "media1"},
+                               {"permalink": "https://www.instagram.com/reel/m1/"}])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    meta_mod.instagram(video, kind="reel", caption="Texto IG", cover=cover)
+
+    assert len([url for url, _kw in client.calls if url.endswith("/photos")]) == 1
+    containers = [kw["data"] for url, kw in client.calls if url.endswith("/media")]
+    assert [data.get("cover_url") for data in containers] == ["https://cdn.example/cover.jpg"] * 2
 
 
 def test_a_flow_short_marks_its_meta_posts_as_ai_generated(env, buzz, short_uploads, monkeypatch):

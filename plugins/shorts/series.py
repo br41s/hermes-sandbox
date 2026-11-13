@@ -600,16 +600,26 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
             if warning not in warnings:
                 warnings.append(warning)
                 _save_entry(ledger, key, entry)
-    if meta_live and meta.configured(instagram=True) and not (entry.get("instagram") or {}).get("id"):
-        result = meta.instagram(video, kind="reel", caption=text_ig, cover=cover,
-                                pending_container=(entry.get("instagram") or {}).get("pending"),
-                                ai_generated=True)
-        if result.get("pending"):
-            entry["instagram"] = {"pending": result["pending"]}
+    if meta_live and meta.configured(instagram=True) and not (
+            (entry.get("instagram") or {}).get("id") or (entry.get("instagram") or {}).get("failed")):
+        try:
+            result = meta.instagram(video, kind="reel", caption=text_ig, cover=cover,
+                                    pending_container=(entry.get("instagram") or {}).get("pending"),
+                                    ai_generated=True)
+        except meta.MetaError as exc:
+            entry["instagram"] = {"failed": str(exc)[:300], "at": datetime.now(UTC).isoformat(timespec="seconds")}
+            warnings = entry["youtube"].setdefault("warnings", [])
+            warning = "Instagram: Meta rechazó la subida del vídeo; se lo pide a SocialBot"
+            if warning not in warnings:
+                warnings.append(warning)
             _save_entry(ledger, key, entry)
-            raise SeriesPending("Instagram is still processing the reel")
-        entry["instagram"] = {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
-        _save_entry(ledger, key, entry)
+        else:
+            if result.get("pending"):
+                entry["instagram"] = {"pending": result["pending"]}
+                _save_entry(ledger, key, entry)
+                raise SeriesPending("Instagram is still processing the reel")
+            entry["instagram"] = {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
+            _save_entry(ledger, key, entry)
     if meta.configured() and not meta_live:
         report["meta_shadow"].append({"short": item["short"], "facebook": text_fb[:120],
                                       "instagram": text_ig[:120]})
@@ -631,9 +641,10 @@ def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     if done.get("warnings"):
         lines.append("Avisos: " + " · ".join(done["warnings"]))
     if entry.get("handoff_at"):
-        meta_published = (entry.get("facebook") or {}).get("url") or (entry.get("instagram") or {}).get("url")
+        left = [label for net, label in (("facebook", "Facebook"), ("instagram", "Instagram"))
+                if not (entry.get(net) or {}).get("url")]
         lines.append(f"Entregado a SocialBot en el canal de shorts ({', '.join(entry['handoff'])}) "
-                     + ("solo para X." if meta_published else "para Facebook, Instagram y X."))
+                     + (f"para {buzz_share._named(left + ['X'])}." if left else "solo para X."))
         if item.get("portada") and "cover.jpg" not in entry["handoff"]:
             lines.append("La portada no va adjunta: el relé de Buzz sólo acepta JPEG.")
     else:

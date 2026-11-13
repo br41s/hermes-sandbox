@@ -207,7 +207,13 @@ SocialBot's rules skip it, so one switch moves the network with no double post.
 Flow shorts go out as a Facebook Reel and an Instagram Reel marked
 `is_ai_generated` (their scenes are generated). Facebook Reels take 3–90 s
 through the API, so a longer short is left to SocialBot for Facebook, with a
-warning in the reply; Instagram takes up to 15 min. Series episodes go out as a
+warning in the reply; Instagram takes up to 15 min.
+
+Meta answers `ProcessingFailedError` to about half of identical Instagram uploads
+(2026-11-13, same file, minutes apart), so `meta.instagram` tries 3 fresh containers
+20 s apart. If all three fail, the short does not block: Hermes records
+`instagram.failed`, warns in the reply and hands Instagram and X to SocialBot, and it
+never tries Instagram again for that short. Series episodes go out as a
 regular Facebook Page video per language (`meta.facebook_video`).
 
 Token: a system user in Meta Business (Business settings → Users → System

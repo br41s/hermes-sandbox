@@ -40,6 +40,8 @@ from plugins.shorts._env import env
 TIMEOUT = 300.0
 PROCESS_BUDGET = 240.0
 POLL_EVERY = 10.0
+IG_UPLOAD_ATTEMPTS = 3    # Meta answers ProcessingFailedError to ~half of identical uploads (2026-11-13)
+IG_RETRY_WAIT = 20.0
 
 REQUIRED_ENV = ("META_PAGE_ID", "META_PAGE_ACCESS_TOKEN")
 
@@ -215,9 +217,22 @@ def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path
                 raise MetaError(f"unknown Instagram kind {kind!r}")
             if ai_generated:
                 data["is_ai_generated"] = "true"
-            container = _json(client.post(f"{graph()}/{ig}/media", data=data), f"create {kind} container")
-            container_id = container["id"]
-            _rupload(client, f"https://rupload.facebook.com/ig-api-upload/{_v()}/{container_id}", video)
+            last: Optional[MetaError] = None
+            for attempt in range(1, IG_UPLOAD_ATTEMPTS + 1):
+                container = _json(client.post(f"{graph()}/{ig}/media", data=data), f"create {kind} container")
+                container_id = container["id"]
+                try:
+                    _rupload(client, f"https://rupload.facebook.com/ig-api-upload/{_v()}/{container_id}", video)
+                    last = None
+                    break
+                except MetaError as exc:
+                    if not ("ProcessingFailedError" in str(exc) or "HTTP 5" in str(exc)):
+                        raise
+                    last = exc
+                    if attempt < IG_UPLOAD_ATTEMPTS:
+                        time.sleep(IG_RETRY_WAIT)
+            if last is not None:
+                raise MetaError(f"Instagram upload failed after {IG_UPLOAD_ATTEMPTS} attempts: {last}")
 
         status = _wait_container(client, container_id, PROCESS_BUDGET)
         if status != "FINISHED":
