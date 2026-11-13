@@ -157,6 +157,10 @@ class SeriesError(RuntimeError):
     pass
 
 
+class SeriesPending(SeriesError):
+    """Instagram is still processing the reel: the next run resumes it, no attempt used."""
+
+
 def channel() -> str:
     return env("SERIES_BUZZ_CHANNEL")
 
@@ -513,6 +517,8 @@ def _summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     for lang in LANGS:
         done = entry.get(lang) or {}
         lines.append(f"{lang.upper()}: {done.get('url')} (id {done.get('id')}, {done.get('privacy') or '?'})")
+        if (done.get("facebook") or {}).get("url"):
+            lines.append(f"   Facebook: {done['facebook']['url']}")
     warnings = [w for lang in LANGS for w in (entry.get(lang) or {}).get("warnings") or []]
     if warnings:
         lines.append("Avisos: " + " · ".join(warnings))
@@ -547,7 +553,8 @@ def _save_entry(ledger: dict[str, Any], key: str, entry: dict[str, Any]) -> None
     _save(ledger)
 
 
-def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_url: str) -> list[str]:
+def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_url: str,
+              published: Optional[dict[str, str]] = None) -> list[str]:
     """Post the Short to SocialBot in the shorts channel, as the blog Shorts are. Returns the attachments."""
     files = {"master": str(video)}
     if cover and cover.read_bytes()[:2] == b"\xff\xd8":      # the relay refuses a PNG
@@ -556,14 +563,15 @@ def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_
              "article_url": item["articulo"], "synthetic": True}
     social = {net: text or item["descripcion"] for net, text in item["redes"].items()}
     try:
-        return buzz_share.post(entry, files, social, youtube_url)["attached"]
+        return buzz_share.post(entry, files, social, youtube_url, published=published)["attached"]
     except buzz_share.BuzzError as exc:
         raise SeriesError(f"could not hand the short to SocialBot: {exc}") from exc
 
 
-def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any], key: str) -> None:
+def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any],
+                   key: str, report: dict[str, Any]) -> None:
     """Upload the Short and hand it to SocialBot; each step is recorded, so a retry does only what is left."""
-    from plugins.shorts.social import youtube
+    from plugins.shorts.social import meta, youtube
 
     video = _download(item["video"], work / "master.mp4")
     cover = _download(item["portada"], work / "cover.jpg") if item.get("portada") else None
@@ -578,8 +586,37 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
         entry["youtube"] = {**result, "seconds": round(seconds, 1),
                             "at": datetime.now(UTC).isoformat(timespec="seconds")}
         _save_entry(ledger, key, entry)
+    meta_live = meta.publish_mode() == "live"
+    text_fb = item["redes"].get("facebook") or item["redes"].get("instagram") or item["descripcion"]
+    text_ig = item["redes"].get("instagram") or item["descripcion"]
+    if meta_live and meta.configured() and not (entry.get("facebook") or {}).get("id"):
+        if entry["youtube"]["seconds"] <= 90:
+            entry["facebook"] = {**meta.facebook_reel(video, text_fb, ai_generated=True),
+                                 "at": datetime.now(UTC).isoformat(timespec="seconds")}
+            _save_entry(ledger, key, entry)
+        else:
+            warnings = entry["youtube"].setdefault("warnings", [])
+            warning = "Facebook: dura más de 90 s, Reels no lo admite; se lo pide a SocialBot"
+            if warning not in warnings:
+                warnings.append(warning)
+                _save_entry(ledger, key, entry)
+    if meta_live and meta.configured(instagram=True) and not (entry.get("instagram") or {}).get("id"):
+        result = meta.instagram(video, kind="reel", caption=text_ig, cover=cover,
+                                pending_container=(entry.get("instagram") or {}).get("pending"),
+                                ai_generated=True)
+        if result.get("pending"):
+            entry["instagram"] = {"pending": result["pending"]}
+            _save_entry(ledger, key, entry)
+            raise SeriesPending("Instagram is still processing the reel")
+        entry["instagram"] = {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
+        _save_entry(ledger, key, entry)
+    if meta.configured() and not meta_live:
+        report["meta_shadow"].append({"short": item["short"], "facebook": text_fb[:120],
+                                      "instagram": text_ig[:120]})
     if not entry.get("handoff_at") and buzz_share.configured():
-        entry["handoff"] = _hand_off(item, video, cover, entry["youtube"]["url"])
+        published = {net: entry[net]["url"] for net in ("facebook", "instagram")
+                     if (entry.get(net) or {}).get("url")} or None
+        entry["handoff"] = _hand_off(item, video, cover, entry["youtube"]["url"], published=published)
         entry["handoff_at"] = datetime.now(UTC).isoformat(timespec="seconds")
         _save_entry(ledger, key, entry)
 
@@ -588,11 +625,15 @@ def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     done = entry["youtube"]
     lines = [f"Short {item['short']} publicado en YouTube por Hermes:",
              f"{done.get('url')} (id {done.get('id')}, {done.get('privacy') or '?'})"]
+    for net, label in (("facebook", "Facebook"), ("instagram", "Instagram")):
+        if (entry.get(net) or {}).get("url"):
+            lines.append(f"{label}: {entry[net]['url']}")
     if done.get("warnings"):
         lines.append("Avisos: " + " · ".join(done["warnings"]))
     if entry.get("handoff_at"):
+        meta_published = (entry.get("facebook") or {}).get("url") or (entry.get("instagram") or {}).get("url")
         lines.append(f"Entregado a SocialBot en el canal de shorts ({', '.join(entry['handoff'])}) "
-                     "para Facebook, Instagram y X.")
+                     + ("solo para X." if meta_published else "para Facebook, Instagram y X."))
         if item.get("portada") and "cover.jpg" not in entry["handoff"]:
             lines.append("La portada no va adjunta: el relé de Buzz sólo acepta JPEG.")
     else:
@@ -633,12 +674,17 @@ def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
         shorts[key] = entry
         work = _root() / key[:16]
         try:
-            _publish_short(item, entry, work, ledger, key)
+            _publish_short(item, entry, work, ledger, key, report)
+        except SeriesPending:
+            entry["attempts"] -= 1
+            report["waiting"].append({"short": item["short"], "why": "Instagram still processing"})
+            _save_entry(ledger, key, entry)
+            continue
         except Exception as exc:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
                 where = (f"El short {item['short']} está en YouTube ({entry['youtube']['url']}) pero no he podido "
-                         "entregarlo a SocialBot" if entry.get("youtube") else
+                         "terminar Facebook/Instagram o la entrega a SocialBot" if entry.get("youtube") else
                          f"No he podido publicar el short {item['short']}")
                 _reply(item, f"{where} tras {MAX_ATTEMPTS} intentos: {entry['error']}. Necesita que alguien lo mire.")
                 entry["replied"] = True
@@ -835,16 +881,18 @@ def run() -> dict[str, Any]:
     """Publish the pending episodes this run may take. Returns what happened, for the Publisher's report."""
     if not configured():
         return {"skipped": "series not configured (SERIES_BUZZ_CHANNEL, SERIES_BUZZ_FROM, Buzz credentials)"}
-    from plugins.shorts.social import youtube
+    from plugins.shorts.social import meta, youtube
     from plugins.shorts.studio_tool import publish_mode
 
     if publish_mode() != "live":
         return {"skipped": "shadow mode: nothing is published"}
     if not youtube.configured():
         return {"skipped": "YouTube is not configured"}
+    meta_live = meta.publish_mode() == "live"
     ledger = _load()
     started_today = sum(1 for e in ledger.values() if e.get("kind") != "short" and e.get("started") == _today())
-    report: dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": []}
+    report: dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": [],
+                              "meta_shadow": []}
     _reject_lookalikes(ledger, report)
     for item in requests():
         key = item["event"]
@@ -885,8 +933,21 @@ def run() -> dict[str, Any]:
         work = _root() / key[:16]
         try:
             for lang in LANGS:
+                if meta.configured() and not meta_live and not (entry.get(lang) or {}).get("facebook"):
+                    report["meta_shadow"].append({"episodio": item["episodio"], "agente": item["agente"],
+                                                  "lang": lang, "facebook": item[lang]["titulo"][:120]})
                 if not (entry.get(lang) or {}).get("id"):
                     entry[lang] = _publish_language(item, lang, work)
+                    ledger[key] = entry
+                    _save(ledger)
+                if (meta_live and meta.configured() and not entry[lang].get("reused")
+                        and not (entry[lang].get("facebook") or {}).get("id")):
+                    video = work / f"{lang}.mp4"
+                    if not video.exists():
+                        video = _download(item[lang]["video"], video)
+                    entry[lang] = {**entry[lang], "facebook": {
+                        **meta.facebook_video(video, item[lang]["titulo"], item[lang]["descripcion"]),
+                        "at": datetime.now(UTC).isoformat(timespec="seconds")}}
                     ledger[key] = entry
                     _save(ledger)
         except Exception as exc:

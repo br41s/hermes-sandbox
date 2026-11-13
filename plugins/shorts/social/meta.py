@@ -11,9 +11,18 @@ the Instagram professional account is linked to the Facebook Page:
     META_PAGE_ACCESS_TOKEN  long-lived Page token (never expires when minted
                             from a long-lived user token); needs
                             pages_manage_posts, pages_read_engagement,
-                            instagram_basic, instagram_content_publish
+                            instagram_basic, instagram_content_publish, and
+                            pages_manage_engagement, pages_read_user_content,
+                            instagram_manage_comments,
+                            instagram_manage_insights, read_insights for the
+                            comments and metrics jobs that follow
     META_IG_USER_ID         the Instagram professional account id
     META_GRAPH_VERSION      default v23.0
+    META_PUBLISH_MODE       ``live`` posts to Meta; anything else is shadow
+                            mode (decide and report, post nothing)
+
+A regular Page video (the series episodes, not a Reel) goes through
+``facebook_video``: one multipart POST to ``graph-video.facebook.com``.
 
 Instagram processes a video asynchronously. Publishing waits for it, bounded:
 if processing outlasts the budget, the container id is returned as
@@ -52,6 +61,11 @@ def configured(instagram: bool = False) -> bool:
     return all(env(k) for k in keys)
 
 
+def publish_mode() -> str:
+    """``live`` posts to Meta; anything else is shadow mode (post nothing)."""
+    return "live" if env("META_PUBLISH_MODE").strip().lower() == "live" else "shadow"
+
+
 def _token() -> str:
     return env("META_PAGE_ACCESS_TOKEN")
 
@@ -88,7 +102,7 @@ def _rupload(client, url: str, video: Path) -> dict[str, Any]:
 # Facebook Page Reel
 # ---------------------------------------------------------------------------
 
-def facebook_reel(video: Path, description: str) -> dict[str, Any]:
+def facebook_reel(video: Path, description: str, ai_generated: bool = False) -> dict[str, Any]:
     if not configured():
         raise MetaError("Meta is not configured (META_PAGE_ID / META_PAGE_ACCESS_TOKEN)")
     page = env("META_PAGE_ID")
@@ -99,11 +113,26 @@ def facebook_reel(video: Path, description: str) -> dict[str, Any]:
         video_id = start["video_id"]
         upload_url = start.get("upload_url") or f"https://rupload.facebook.com/video-upload/{_v()}/{video_id}"
         _rupload(client, upload_url, video)
-        _json(client.post(f"{graph()}/{page}/video_reels", data={
-            "upload_phase": "finish", "video_id": video_id, "video_state": "PUBLISHED",
-            "description": description[:2200], "access_token": _token(),
-        }), "publish Facebook reel")
+        finish = {"upload_phase": "finish", "video_id": video_id, "video_state": "PUBLISHED",
+                  "description": description[:2200], "access_token": _token()}
+        if ai_generated:
+            finish["is_ai_generated"] = "true"
+        _json(client.post(f"{graph()}/{page}/video_reels", data=finish), "publish Facebook reel")
     return {"id": video_id, "url": f"https://www.facebook.com/reel/{video_id}"}
+
+
+def facebook_video(video: Path, title: str, description: str) -> dict[str, Any]:
+    """A regular (non-Reel) Page video, one multipart upload from the local file."""
+    if not configured():
+        raise MetaError("Meta is not configured (META_PAGE_ID / META_PAGE_ACCESS_TOKEN)")
+    page = env("META_PAGE_ID")
+    with _client() as client, open(video, "rb") as handle:
+        resp = client.post(f"https://graph-video.facebook.com/{_v()}/{page}/videos",
+                           data={"title": title[:255], "description": description[:5000],
+                                 "access_token": _token()},
+                           files={"source": (video.name, handle, "video/mp4")})
+        body = _json(resp, "upload Facebook video")
+    return {"id": body["id"], "url": f"https://www.facebook.com/{page}/videos/{body['id']}"}
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +184,7 @@ def _publish_container(client, container_id: str) -> dict[str, Any]:
 
 
 def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path] = None,
-              pending_container: Optional[str] = None) -> dict[str, Any]:
+              pending_container: Optional[str] = None, ai_generated: bool = False) -> dict[str, Any]:
     """Publish a Reel (``kind='reel'``) or Story (``kind='story'``).
 
     Returns ``{"id", "url"}`` when live, or ``{"pending": container_id}`` when
@@ -184,6 +213,8 @@ def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path
                 data["media_type"] = "STORIES"
             else:
                 raise MetaError(f"unknown Instagram kind {kind!r}")
+            if ai_generated:
+                data["is_ai_generated"] = "true"
             container = _json(client.post(f"{graph()}/{ig}/media", data=data), f"create {kind} container")
             container_id = container["id"]
             _rupload(client, f"https://rupload.facebook.com/ig-api-upload/{_v()}/{container_id}", video)

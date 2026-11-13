@@ -158,10 +158,23 @@ def canonical(path) -> Path:
     return dst
 
 
+NETWORKS = {"facebook": "Facebook", "instagram": "Instagram"}
+
+
+def _named(names: list[str]) -> str:
+    """A Spanish enumeration: "Facebook e Instagram", "Instagram y X"."""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} e {names[1]}" if names[1].startswith("I") else f"{names[0]} y {names[1]}"
+    return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
 def message(entry: dict[str, Any], social: dict[str, Any], youtube_url: Optional[str],
-            attached: list[str]) -> str:
+            attached: list[str], published: Optional[dict[str, str]] = None) -> str:
     mention = env("SHORTS_BUZZ_MENTION", "SocialBot").lstrip("@")
     lang = (entry.get("lang") or "").upper()
+    done = {net: url for net, url in (published or {}).items() if net in NETWORKS and url}
     lines = [
         f"🎬 Short {lang} listo para redes — {entry.get('title') or ''}",
         f"id: {entry.get('request_id')}",
@@ -173,20 +186,33 @@ def message(entry: dict[str, Any], social: dict[str, Any], youtube_url: Optional
         lines.append("⚠️ Lleva escenas o avatar generados con IA: márcalo como contenido IA donde la red lo pida.")
     story = "story.mp4" in attached       # series.py hands over Flow shorts too, which have no Story cut
     reel = "Reel con cover.jpg como portada" if "cover.jpg" in attached else "Reel"
+    instagram = done.get("instagram") or social.get("instagram") or ""
+    facebook = done.get("facebook") or social.get("facebook") or social.get("instagram") or ""
     lines += [
         "", "— Instagram (Reel; la Story es story.mp4, sin texto) —" if story else "— Instagram (Reel) —",
-        social.get("instagram") or "",
-        "", "— Facebook —", social.get("facebook") or social.get("instagram") or "",
+        f"Ya publicado por Hermes: {instagram}" if done.get("instagram") else instagram,
+        "", "— Facebook —",
+        f"Ya publicado por Hermes: {facebook}" if done.get("facebook") else facebook,
         "", "— X —", social.get("x") or "",
         "",
-        f"@{mention}: publícalo en Facebook, Instagram ({reel}{', y Story' if story else ''}) "
-        "y X con estos textos y tus UTM. Responde a este mensaje con los enlaces.",
     ]
+    if done:
+        pending = [NETWORKS[net] for net in NETWORKS if net not in done]
+        names = _named([NETWORKS[net] for net in done])
+        todo = _named(pending + ["X"])
+        lines.append(f"@{mention}: {names} ya lo{'s' if len(done) > 1 else ''} ha publicado Hermes "
+                     f"(enlace{'s' if len(done) > 1 else ''} arriba): no lo{'s' if len(done) > 1 else ''} "
+                     f"publiques. Tú solo: {todo} con este texto (a la lista de Brais si no hay sesión) y la "
+                     "línea «short Hermes» en ENGAGEMENT.md con todos los enlaces.")
+    else:
+        lines.append(
+            f"@{mention}: publícalo en Facebook, Instagram ({reel}{', y Story' if story else ''}) "
+            "y X con estos textos y tus UTM. Responde a este mensaje con los enlaces.")
     return "\n".join(lines)
 
 
 def post(entry: dict[str, Any], files: dict[str, str], social: dict[str, Any],
-         youtube_url: Optional[str]) -> dict[str, Any]:
+         youtube_url: Optional[str], published: Optional[dict[str, str]] = None) -> dict[str, Any]:
     """Post the short to the shorts channel. Raises BuzzError with the CLI's reason."""
     binary = cli()
     if not binary:
@@ -202,7 +228,7 @@ def post(entry: dict[str, Any], files: dict[str, str], social: dict[str, Any],
     for _name, path in paths:
         args += ["--file", path]
     args += ["--content", "-"]
-    content = message(entry, social, youtube_url, [name for name, _ in paths])
+    content = message(entry, social, youtube_url, [name for name, _ in paths], published)
     try:
         done = subprocess.run(args, input=content, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=TIMEOUT, env=_child_env(), check=False)

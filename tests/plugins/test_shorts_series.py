@@ -657,3 +657,342 @@ def test_a_lookalike_with_a_bad_timestamp_is_skipped_and_the_run_goes_on(env, bu
     buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="b" * 64, at="ayer")]
     series.run()
     assert uploads and "b" * 64 not in _replies(buzz)
+
+
+# ---------------------------------------------------------------------------
+# Meta (Facebook + Instagram): META_PUBLISH_MODE=live, and shadow by default
+
+
+def _meta_env(monkeypatch, instagram=True):
+    for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "tok", "META_PUBLISH_MODE": "live"}.items():
+        monkeypatch.setenv(k, v)
+    if instagram:
+        monkeypatch.setenv("META_IG_USER_ID", "2")
+    else:
+        monkeypatch.delenv("META_IG_USER_ID", raising=False)
+
+
+def _meta_calls(monkeypatch):
+    """Fake Meta poster: records ("facebook"|"instagram", kwargs) in order and returns a link."""
+    from plugins.shorts.social import meta as meta_mod
+
+    calls = []
+
+    def seq(kind):
+        return 1 + sum(1 for c in calls if c[0] == kind)
+
+    def fake_reel(video, description, ai_generated=False):
+        n = seq("facebook")
+        calls.append(("facebook", {"description": description, "ai_generated": ai_generated}))
+        return {"id": f"fb{n}", "url": f"https://www.facebook.com/reel/fb{n}"}
+
+    def fake_instagram(video, **kw):
+        n = seq("instagram")
+        calls.append(("instagram", kw))
+        return {"id": f"ig{n}", "url": f"https://www.instagram.com/reel/ig{n}/"}
+
+    def fake_video(video, title, description):
+        n = seq("facebook_video")
+        calls.append(("facebook_video", {"title": title, "description": description}))
+        return {"id": f"fbv{n}", "url": f"https://www.facebook.com/1/videos/fbv{n}"}
+
+    monkeypatch.setattr(meta_mod, "facebook_reel", fake_reel)
+    monkeypatch.setattr(meta_mod, "instagram", fake_instagram)
+    monkeypatch.setattr(meta_mod, "facebook_video", fake_video)
+    return calls
+
+
+class _MetaResp:
+    def __init__(self, body):
+        self.status_code, self._body = 200, body
+
+    def json(self):
+        return self._body
+
+
+class _MetaClient:
+    """The Graph calls ``facebook_reel`` and ``instagram`` make, answered from a script."""
+
+    def __init__(self, script):
+        self.script, self.calls = list(script), []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, **kw):
+        self.calls.append((url, kw))
+        return _MetaResp(self.script.pop(0))
+
+    def get(self, url, **kw):
+        self.calls.append((url, kw))
+        return _MetaResp(self.script.pop(0))
+
+
+def test_meta_shadow_by_default_publishes_nothing_to_meta_and_hands_off_as_before(env, buzz, short_uploads, monkeypatch):
+    _meta_env(monkeypatch)
+    monkeypatch.delenv("META_PUBLISH_MODE")
+    calls = _meta_calls(monkeypatch)
+    buzz["events"] = [_event(_short_request())]
+    out = series.run()
+    assert calls == []
+    assert out["meta_shadow"] == [{"short": FLOW, "facebook": "Texto FB", "instagram": "Texto IG #IA"}]
+    (_args, kw), = _handoffs(buzz)
+    assert "@SocialBot: publícalo en Facebook, Instagram (Reel con cover.jpg como portada) y X" in kw["input"]
+    assert "Ya publicado por Hermes" not in kw["input"] and "Texto IG #IA" in kw["input"]
+
+
+def test_meta_live_posts_fb_and_ig_reels_after_youtube_and_hands_off_only_x(env, buzz, short_uploads, monkeypatch):
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+    upload = youtube.upload
+
+    def ordered_upload(*a, **kw):
+        calls.append(("youtube", {}))
+        return upload(*a, **kw)
+
+    monkeypatch.setattr(youtube, "upload", ordered_upload)
+    buzz["events"] = [_event(_short_request())]
+    out = series.run()
+    assert [c[0] for c in calls] == ["youtube", "facebook", "instagram"]
+    assert calls[1][1]["description"] == "Texto FB" and calls[2][1]["caption"] == "Texto IG #IA"
+    assert calls[2][1]["kind"] == "reel"
+    assert "meta_shadow" not in out
+
+    (_args, kw), = _handoffs(buzz)
+    text = kw["input"]
+    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
+    assert "Ya publicado por Hermes: https://www.instagram.com/reel/ig1/" in text
+    assert "@SocialBot: Facebook e Instagram ya los ha publicado Hermes (enlaces arriba): no los publiques." in text
+    assert "Tú solo: X con este texto" in text and "ENGAGEMENT.md" in text
+    assert "y X con estos textos y tus UTM" not in text and "Texto X" in text
+
+    reply = _replies(buzz)["e" * 64]
+    assert "Facebook: https://www.facebook.com/reel/fb1" in reply
+    assert "Instagram: https://www.instagram.com/reel/ig1/" in reply
+    assert "solo para X." in reply
+
+
+def test_meta_live_ig_failure_is_retried_alone(env, buzz, short_uploads, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+
+    def broken(*a, **kw):
+        raise meta_mod.MetaError("publish to Instagram: HTTP 500")
+
+    monkeypatch.setattr(meta_mod, "instagram", broken)
+    buzz["events"] = [_event(_short_request())]
+    first = series.run()
+    assert first["failed"][0]["attempt"] == 1 and "HTTP 500" in first["failed"][0]["error"]
+    assert [c[0] for c in calls] == ["facebook"] and len(short_uploads) == 1
+
+    def retry_ig(video, **kw):
+        calls.append(("instagram", kw))
+        return {"id": "ig1", "url": "https://instagram.com/reel/ig1"}
+
+    monkeypatch.setattr(meta_mod, "instagram", retry_ig)
+    out = series.run()
+    assert out["published"] and len(short_uploads) == 1
+    assert [c[0] for c in calls] == ["facebook", "instagram"]
+    assert calls[1][1]["pending_container"] is None
+    assert "https://instagram.com/reel/ig1" in _replies(buzz)["e" * 64]
+
+
+def test_meta_live_ig_pending_does_not_count_an_attempt(env, buzz, short_uploads, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _meta_env(monkeypatch)
+    pending = []
+
+    def pending_ig(video, **kw):
+        pending.append(kw.get("pending_container"))
+        return {"pending": "container-1", "status": "IN_PROGRESS"}
+
+    monkeypatch.setattr(meta_mod, "facebook_reel", lambda video, text, **kw: {"id": "fb1", "url": "https://facebook.com/reel/fb1"})
+    monkeypatch.setattr(meta_mod, "instagram", pending_ig)
+    buzz["events"] = [_event(_short_request())]
+    out = series.run()
+    assert out["waiting"] == [{"short": FLOW, "why": "Instagram still processing"}]
+    assert "failed" not in out and not _replies(buzz)
+    entry = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())["e" * 64]
+    assert entry["attempts"] == 0 and entry["instagram"] == {"pending": "container-1"}
+
+    def resume_ig(video, **kw):
+        pending.append(kw.get("pending_container"))
+        return {"id": "ig1", "url": "https://instagram.com/reel/ig1"}
+
+    monkeypatch.setattr(meta_mod, "instagram", resume_ig)
+    out = series.run()
+    assert pending == [None, "container-1"]
+    assert out["published"] and len(short_uploads) == 1
+
+
+def test_meta_live_without_instagram_id_posts_only_facebook(env, buzz, short_uploads, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _meta_env(monkeypatch, instagram=False)
+    calls = _meta_calls(monkeypatch)
+
+    def boom(*a, **kw):
+        raise AssertionError("Instagram is not configured: it must not be called")
+
+    monkeypatch.setattr(meta_mod, "instagram", boom)
+    buzz["events"] = [_event(_short_request())]
+    out = series.run()
+    assert [c[0] for c in calls] == ["facebook"] and out["published"]
+    text = _handoffs(buzz)[0][1]["input"]
+    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
+    assert "— Instagram (Reel) —\nTexto IG #IA" in text
+    assert "@SocialBot: Facebook ya lo ha publicado Hermes (enlace arriba): no lo publiques." in text
+    assert "Tú solo: Instagram y X con este texto" in text
+
+
+def test_meta_live_episode_posts_one_facebook_video_per_language_once(env, buzz, uploads, monkeypatch):
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+    fail = {"en": True}
+    upload = youtube.upload
+
+    def flaky_upload(video, thumb, srt, social, lang, **kw):
+        if lang == "en" and fail["en"]:
+            raise youtube.YouTubeError("boom")
+        return upload(video, thumb, srt, social, lang, **kw)
+
+    monkeypatch.setattr(youtube, "upload", flaky_upload)
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    series.run()
+    assert [c[1]["title"] for c in calls] == ["Content Gap Hunter: el artículo que te falta"]
+    assert calls[0][1]["description"] == "Cómo trabaja el agente que encuentra los huecos de tu blog."
+
+    fail["en"] = False
+    out = series.run()
+    assert out["published"]
+    assert [c[1]["title"] for c in calls] == ["Content Gap Hunter: el artículo que te falta",
+                                             "Content Gap Hunter: the article you're missing"]
+    reply = _replies(buzz)["a" * 64]
+    assert "   Facebook: https://www.facebook.com/1/videos/fbv1" in reply
+    assert "   Facebook: https://www.facebook.com/1/videos/fbv2" in reply
+    # Replied: a third run does nothing and posts nothing again.
+    series.run()
+    assert len(calls) == 2
+
+
+def test_meta_live_episode_facebook_failure_keeps_the_youtube_upload(env, buzz, uploads, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+    post = meta_mod.facebook_video
+    es_title = "Content Gap Hunter: el artículo que te falta"
+    fail = {"es": True}
+
+    def flaky(video, title, description):
+        if fail["es"] and title == es_title:
+            raise meta_mod.MetaError("publish Facebook video: HTTP 500")
+        return post(video, title, description)
+
+    monkeypatch.setattr(meta_mod, "facebook_video", flaky)
+    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
+    first = series.run()
+    assert first["failed"][0]["attempt"] == 1 and calls == []
+    assert [u["lang"] for u in uploads] == ["es"]      # the YouTube upload was kept
+
+    fail["es"] = False
+    out = series.run()
+    assert out["published"]
+    assert [u["lang"] for u in uploads].count("es") == 1 and [u["lang"] for u in uploads].count("en") == 1
+    assert [c[1]["title"] for c in calls] == [es_title, "Content Gap Hunter: the article you're missing"]
+
+
+def test_meta_facebook_reel_sends_is_ai_generated_only_when_asked(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    for k, v in {"META_PAGE_ID": "123", "META_PAGE_ACCESS_TOKEN": "tok"}.items():
+        monkeypatch.setenv(k, v)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+
+    def finish_data(ai_generated):
+        client = _MetaClient([{"video_id": "99", "upload_url": "https://rupload.facebook.com/x/99"},
+                              {"success": True}, {"success": True}])
+        monkeypatch.setattr(meta_mod, "_client", lambda: client)
+        meta_mod.facebook_reel(video, "desc", ai_generated=ai_generated)
+        return client.calls[2][1]["data"]
+
+    assert finish_data(True)["is_ai_generated"] == "true"
+    assert "is_ai_generated" not in finish_data(False)
+
+
+def test_meta_instagram_sends_is_ai_generated_only_when_asked(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t", "META_IG_USER_ID": "2"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(meta_mod, "PROCESS_BUDGET", 0.0)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+
+    def container_data(ai_generated):
+        client = _MetaClient([{"id": "c1"}, {"success": True}])
+        monkeypatch.setattr(meta_mod, "_client", lambda: client)
+        assert meta_mod.instagram(video, kind="story", ai_generated=ai_generated)["pending"] == "c1"
+        return client.calls[0][1]["data"]
+
+    assert container_data(True)["is_ai_generated"] == "true"
+    assert "is_ai_generated" not in container_data(False)
+
+
+def test_a_flow_short_marks_its_meta_posts_as_ai_generated(env, buzz, short_uploads, monkeypatch):
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+    buzz["events"] = [_event(_short_request())]
+    series.run()
+    fb = next(c for c in calls if c[0] == "facebook")
+    ig = next(c for c in calls if c[0] == "instagram")
+    assert fb[1]["ai_generated"] is True and ig[1]["ai_generated"] is True
+
+
+def test_meta_live_short_over_90s_skips_facebook(env, buzz, short_uploads, monkeypatch):
+    monkeypatch.setattr(series, "_check_short", lambda path: 120.0)
+    _meta_env(monkeypatch)
+    calls = _meta_calls(monkeypatch)
+    buzz["events"] = [_event(_short_request())]
+    out = series.run()
+    assert out["published"] and [c[0] for c in calls] == ["instagram"]
+
+    (_args, kw), = _handoffs(buzz)
+    text = kw["input"]
+    assert "no lo publiques" in text and "Tú solo: Facebook y X con este texto" in text
+    reply = _replies(buzz)["e" * 64]
+    assert "Facebook: dura más de 90 s, Reels no lo admite; se lo pide a SocialBot" in reply
+
+
+@pytest.mark.parametrize("value,expected", [(None, "shadow"), ("live", "live"), (" LIVE ", "live"),
+                                           ("shadow", "shadow"), ("yes", "shadow")])
+def test_meta_publish_mode_is_live_only_for_live(monkeypatch, value, expected):
+    from plugins.shorts.social import meta as meta_mod
+
+    if value is None:
+        monkeypatch.delenv("META_PUBLISH_MODE", raising=False)
+    else:
+        monkeypatch.setenv("META_PUBLISH_MODE", value)
+    assert meta_mod.publish_mode() == expected
+
+
+def test_buzz_message_with_published_links_asks_only_for_x():
+    text = series.buzz_share.message({"lang": "es", "title": "T", "request_id": "r", "article_url": "u"},
+                                     {"instagram": "ig", "facebook": "fb", "x": "x-texto"},
+                                     "https://youtube.com/shorts/x", ["master.mp4", "cover.jpg"],
+                                     published={"facebook": "https://facebook.com/reel/f",
+                                                "instagram": "https://instagram.com/reel/i"})
+    assert "Ya publicado por Hermes: https://facebook.com/reel/f" in text
+    assert "Ya publicado por Hermes: https://instagram.com/reel/i" in text
+    assert "— Instagram (Reel) —\nYa publicado por Hermes: https://instagram.com/reel/i" in text
+    assert "— X —\nx-texto" in text
+    assert "Facebook e Instagram ya los ha publicado Hermes" in text
+    assert "no los publiques" in text and "Tú solo: X con este texto" in text
+    assert "publícalo en Facebook" not in text

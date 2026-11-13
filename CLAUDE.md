@@ -633,12 +633,14 @@ it writes from. Sold to a client without one it goes quiet on every run.
   Actions secret), never the agents' shared one, and share one budget: $1
   per short and a daily cap (`SHORTS_AI_DAILY_CAP_USD`, a repo variable,
   default $2), enforced before any request. Text and figures stay Remotion's.
-- **Hermes publishes YouTube; SocialBot (Buzz) publishes Facebook, Instagram and X.**
+- **Hermes publishes YouTube, and Facebook and Instagram once `META_PUBLISH_MODE=live`; SocialBot (Buzz) publishes X and the browser-only networks.**
+  Meta goes through `plugins/shorts/social/meta.py`; the hand-off marks each network Hermes posted with
+  «Ya publicado por Hermes», which is what keeps SocialBot from posting it again (`shorts/STUDIO.md` §3.3, §3.6).
   Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
   (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image; the
   relay takes only metadata-free media, so stripped copies are attached); with
-  `SHORTS_BUZZ_CHANNEL` set the tool drops the Meta targets, so the two systems can
-  never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
+  `SHORTS_BUZZ_CHANNEL` set and Meta in shadow the tool drops the Meta targets, so the
+  two systems can never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
 - **The GEO Scout brief also goes to SocialBot, via Buzz #geo.** This happens
   only on BigLobster's job `be8a4add42b0`, and only through its `deliver`
   (Telegram plus the Buzz #geo channel), never through
