@@ -197,9 +197,24 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
 
 ### 3.3 Facebook + Instagram
 
-**Skip this section when shorts go to Buzz (§3.6):** Facebook and Instagram are
-then SocialBot's, and the tool ignores `META_*` even if they are set, so the
-two systems can never post the same short twice.
+**Hermes owns Facebook and Instagram from 2026-11-13 (§3.6).** `META_*` alone
+changes nothing: Meta posts only with `META_PUBLISH_MODE=live`. Until then the
+series run lists what it would have posted under `meta_shadow` in its report,
+and SocialBot keeps posting from the Buzz hand-off as before. With `live`, the
+hand-off marks each network Hermes posted with «Ya publicado por Hermes» and
+SocialBot's rules skip it, so one switch moves the network with no double post.
+
+Flow shorts go out as a Facebook Reel and an Instagram Reel marked
+`is_ai_generated` (their scenes are generated). Facebook Reels take 3–90 s
+through the API, so a longer short is left to SocialBot for Facebook, with a
+warning in the reply; Instagram takes up to 15 min. Series episodes go out as a
+regular Facebook Page video per language (`meta.facebook_video`).
+
+Token: a system user in Meta Business (Business settings → Users → System
+users) gives a Page token that does not expire; steps 3–4 give one too. Beyond
+the scopes in step 3, the comments and metrics jobs that follow need
+`pages_manage_engagement`, `pages_read_user_content`, `instagram_manage_comments`,
+`instagram_manage_insights` and `read_insights`: ask for them at once.
 
 1. Instagram must be a **professional** account linked to the BigLobster Facebook Page.
 2. developers.facebook.com → create an app (type Business). Development mode is
@@ -210,8 +225,12 @@ two systems can never post the same short twice.
 4. Exchange it for a long-lived user token, then `GET /me/accounts`. The Page's
    `access_token` from a long-lived user token does not expire.
 5. `GET /<page-id>?fields=instagram_business_account` gives the IG user id.
-6. Coolify env: `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`, `META_IG_USER_ID`.
-   Optional: `META_GRAPH_VERSION` (default `v23.0`).
+6. Coolify env: `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`, `META_IG_USER_ID`, then
+   stop and start the app. Optional: `META_GRAPH_VERSION` (default `v23.0`).
+   Never in `INJECT`: they are BigLobster's accounts, never a profile's.
+7. Shadow first (`META_PUBLISH_MODE` unset), read one Publisher report, then
+   `META_PUBLISH_MODE=live` and stop/start. Check the first live short has one
+   post per account and that SocialBot answered only for X.
 
 ### 3.4 Turn it on
 
@@ -271,16 +290,22 @@ uploaded with YouTube's `containsSyntheticMedia: true`.
 Not set through the Meta API: Meta's own "AI info" label. Check how Instagram and
 Facebook label the first live shorts with generated scenes before relying on it.
 
-### 3.6 Who publishes where: Hermes and Buzz (2026-10-10)
+### 3.6 Who publishes where: Hermes and Buzz (2026-10-10, revised 2026-11-13)
 
-BigLobster runs two agent teams. One factory and one owner per network:
+BigLobster runs two agent teams. One factory and one owner per network. On
+2026-11-13 Brais moved every network Hermes reaches by API to Hermes, starting
+with Facebook and Instagram (§3.3): SocialBot's Zernio tools cost a third of its
+context and Buzz stops when the Mac sleeps. Until `META_PUBLISH_MODE=live` the
+table below is still the 2026-10-10 split:
 
 | | Owner | Why |
 |---|---|---|
 | Shorts from blog posts | **Hermes** (this studio) | runs in the cloud 24/7, checks every figure, QA-gates every render. VideoDesk in Buzz no longer makes them |
 | Bespoke videos, edits of Brais's recordings, clips | **VideoDesk** + **Guionista** (Buzz) | creative work that needs conversation and Brais's "aprobado vN" |
 | YouTube | **Hermes** | official API (§3.2) |
-| Facebook, Instagram, X | **SocialBot** (Buzz) | already runs those accounts: Zernio, community replies, DMs, UTMs, its calendar |
+| Facebook, Instagram | **Hermes** from `META_PUBLISH_MODE=live` (shorts: Reels; episodes: a Page video per language) | it already holds the master; SocialBot's containers cannot download it |
+| X; Instagram for episodes | **SocialBot** (Buzz), until the next phase moves X to `xurl` | X has no free API path in Hermes yet |
+| Reddit, community sites, Facebook groups, Messenger | **SocialBot** | they need a browser session on the Mac |
 
 The relay accepts only canonical media: a file with metadata or a
 non-canonical metadata channel is refused with a 422 (found on the first live

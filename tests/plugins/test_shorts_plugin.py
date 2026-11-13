@@ -446,3 +446,23 @@ def test_temp_workdir_is_cleaned_up_even_when_rendering_fails(stub_render, tmp_p
         render_mod.render_short({"scenes": [{"vo": "one"}]}, tmp_path / "a.mp4")
 
     assert created and not Path(created[0]).exists()
+
+
+# ---------------------------------------------------------------------------
+# studio_tool._enabled_targets: who owns Facebook and Instagram
+# ---------------------------------------------------------------------------
+
+def test_enabled_targets_meta_shadow_vs_live(monkeypatch):
+    from plugins.shorts import studio_tool as st
+
+    for k, v in {"SHORTS_BUZZ_CHANNEL": "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd",
+                 "BUZZ_RELAY_URL": "wss://relay.example", "BUZZ_PRIVATE_KEY": "nsec1test",
+                 "BUZZ_AUTH_TAG": "[]", "META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "tok",
+                 "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
+                 "YOUTUBE_REFRESH_TOKEN": "r"}.items():
+        monkeypatch.setenv(k, v)
+    assert st._enabled_targets() == ["youtube"]          # shadow: Facebook and Instagram stay SocialBot's
+    monkeypatch.setenv("META_PUBLISH_MODE", "live")
+    assert st._enabled_targets() == ["youtube", "facebook", "instagram_reel", "instagram_story"]
+    monkeypatch.delenv("META_IG_USER_ID")
+    assert st._enabled_targets() == ["youtube", "facebook"]

@@ -499,9 +499,10 @@ def _enabled_targets() -> list[str]:
     if youtube.configured():
         targets.append("youtube")
     if buzz_share.configured():
-        # Facebook and Instagram are SocialBot's once shorts go to Buzz: two
-        # publishers on one account would double-post (shorts/STUDIO.md).
-        return targets
+        # Facebook and Instagram stay SocialBot's while Meta is in shadow; with
+        # META_PUBLISH_MODE=live Hermes posts them and the hand-off asks only for X.
+        if meta.publish_mode() != "live":
+            return targets
     if meta.configured():
         targets.append("facebook")
     if meta.configured(instagram=True):
@@ -547,12 +548,15 @@ def _action_publish(args: dict[str, Any]) -> str:
             result = youtube.upload(files["master"], files.get("thumb"), files.get("srt"), social,
                                     entry["lang"], synthetic=synthetic)
         elif target == "facebook":
-            result = meta.facebook_reel(files["master"], social.get("facebook") or social.get("instagram") or "")
+            result = meta.facebook_reel(files["master"], social.get("facebook") or social.get("instagram") or "",
+                                        ai_generated=synthetic)
         elif target == "instagram_reel":
             result = meta.instagram(files["master"], kind="reel", caption=social.get("instagram") or "",
-                                    cover=files.get("cover"), pending_container=done.get("pending"))
+                                    cover=files.get("cover"), pending_container=done.get("pending"),
+                                    ai_generated=synthetic)
         else:
-            result = meta.instagram(files["story"], kind="story", pending_container=done.get("pending"))
+            result = meta.instagram(files["story"], kind="story", pending_container=done.get("pending"),
+                                    ai_generated=synthetic)
     except (youtube.YouTubeError, meta.MetaError) as exc:
         ledger.update(request_id, note=f"{target} failed: {exc}")
         return _fail(f"{target}: {exc}")
@@ -666,8 +670,12 @@ def _action_handoff(args: dict[str, Any]) -> str:
     lines: list[str] = []
     if live and buzz_share.configured():
         youtube_url = ((entry.get("published") or {}).get("youtube") or {}).get("url")
+        pub = entry.get("published") or {}
+        published = {net: (pub.get(key) or {}).get("url")
+                     for net, key in (("facebook", "facebook"), ("instagram", "instagram_reel"))
+                     if (pub.get(key) or {}).get("url")} or None
         try:
-            sent = buzz_share.post(entry, files, social, youtube_url)
+            sent = buzz_share.post(entry, files, social, youtube_url, published=published)
         except buzz_share.BuzzError as exc:
             # Not marked: the next run hands it over again.
             return _fail(f"could not hand {request_id} to SocialBot in Buzz: {exc}")
@@ -675,8 +683,8 @@ def _action_handoff(args: dict[str, Any]) -> str:
         ledger.update(request_id, x_handoff_at=stamp, buzz_posted_at=stamp)
         lines += [f"🎬 Short {lang} publicado — {entry.get('title')}",
                   f"• YouTube: {youtube_url or 'no publicado'}",
-                  f"• Entregado a SocialBot en Buzz ({', '.join(sent['attached'])}) para Facebook, "
-                  "Instagram y X."]
+                  f"• Entregado a SocialBot en Buzz ({', '.join(sent['attached'])}) "
+                  + ("solo para X." if published else "para Facebook, Instagram y X.")]
     elif live:
         pub = entry.get("published") or {}
         lines.append(f"🎬 Short {lang} publicado — {entry.get('title')}")
