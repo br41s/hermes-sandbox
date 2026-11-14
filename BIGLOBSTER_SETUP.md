@@ -468,6 +468,33 @@ Job `ce583d11dedd` (profile `biglobster`, `0 6 * * *`). Three behaviours live in
   class contributes nothing. The hunter never writes or approves these files. Since
   2026-11-01 a `datos-propios` candidate wins every tie (PUERTA 5).
 
+## Community — BigLobster (FB/IG comments, diary, metrics; since 2026-11-14)
+
+One cron job in the default store, no workdir, toolset `social`
+(`plugins/social/`, tool `social_inbox`), prompt `social/community.prompt`,
+created by `scripts/setup_social_jobs.py` (run as `hermes`; `--dry-run` first).
+Schedule `0 8,11,14,17,20 * * *` Bangkok time. Each run:
+
+1. `metrics_daily`: once a day, the 14-day FB/IG table to Buzz Media Forgery
+   (Guionista reads it there; it replaced SocialBot's `metricas-zernio.md`).
+2. `diary_pending` / `diary_post`: each new Diario entry (ES and EN pages in the
+   sitemap) goes to Facebook as a link post and to Instagram as an image post
+   with the page's `og:image`. The first call only records a baseline: entries
+   already on the site were spread before Hermes did it. Posting needs
+   `META_PUBLISH_MODE=live`.
+3. `new_comments` / `reply` / `skip`: every FB/IG comment gets a reply except
+   spam and bots, which are skipped (Brais, 2026-11-14). Replies stay drafts in
+   the Telegram report until `SOCIAL_REPLY_MODE=live`; a draft from the shadow
+   days still gets its real reply once live. Never twice, at most
+   `SOCIAL_REPLIES_MAX_PER_DAY` (15) a day, the YouTube-reply text checks, and
+   only to comment ids the last `new_comments` offered: comment text is
+   untrusted.
+
+Env (Coolify app): `SOCIAL_METRICS_BUZZ_CHANNEL` (Media Forgery's UUID),
+`SOCIAL_REPLY_MODE`, optional `SOCIAL_REPLIES_MAX_PER_DAY`, `SOCIAL_SITE_URL`.
+It reuses `META_*` and the Buzz identity of the shorts jobs; none of it goes in
+`INJECT`. Ledger: `/opt/data/workspace/social/ledger.json`.
+
 ## Other content jobs after the 2026-11-01 demotion
 
 All prompt-only, so they reach the jobs only through `sync-prompt`:

@@ -32,6 +32,7 @@ if processing outlasts the budget, the container id is returned as
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,6 +49,10 @@ IG_UPLOAD_ATTEMPTS = 3    # Meta answers ProcessingFailedError to ~half of ident
 IG_RETRY_WAIT = 20.0
 
 REQUIRED_ENV = ("META_PAGE_ID", "META_PAGE_ACCESS_TOKEN")
+
+# A Graph API id: digits, optionally one underscore between two (``123_456``).
+# Anything else could walk into another endpoint through the URL path.
+COMMENT_ID = re.compile(r"^\d+(_\d+)?$")
 
 
 class MetaError(RuntimeError):
@@ -383,6 +388,8 @@ def ig_comments(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def reply_comment(network: str, comment_id: str, text: str) -> dict[str, Any]:
     """Reply to one comment as the Page (Facebook) or as the professional account (Instagram)."""
+    if not COMMENT_ID.fullmatch(comment_id):
+        raise MetaError("invalid comment id")
     if network == "facebook":
         if not configured():
             raise MetaError("Meta is not configured (META_PAGE_ID / META_PAGE_ACCESS_TOKEN)")
