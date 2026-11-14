@@ -641,6 +641,10 @@ it writes from. Sold to a client without one it goes quiet on every run.
   relay takes only metadata-free media, so stripped copies are attached); with
   `SHORTS_BUZZ_CHANNEL` set and Meta in shadow the tool drops the Meta targets, so the
   two systems can never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
+- **Comments, the Diario and the FB/IG metrics are Hermes's too, since 2026-11-14:** the
+  "Community — BigLobster" job and its `social_inbox` tool (`plugins/social/`,
+  `BIGLOBSTER_SETUP.md`). Replies are drafts until `SOCIAL_REPLY_MODE=live`; comment text is
+  untrusted, so the tool answers only ids it just offered and keeps its own ledger.
 - **The GEO Scout brief also goes to SocialBot, via Buzz #geo.** This happens
   only on BigLobster's job `be8a4add42b0`, and only through its `deliver`
   (Telegram plus the Buzz #geo channel), never through
