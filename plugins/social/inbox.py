@@ -46,6 +46,7 @@ import subprocess
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -402,25 +403,42 @@ def _site_url() -> str:
 
 
 def _fetch(url: str) -> str:
-    """GET ``url``; raises ``httpx.HTTPError`` on any transport or HTTP error."""
+    """GET ``url``; raises ``httpx.HTTPError`` on any transport, HTTP or off-site redirect."""
     with httpx.Client(timeout=30.0, follow_redirects=True) as client:
         resp = client.get(url)
         resp.raise_for_status()
+        host = (urlsplit(_site_url()).hostname or "").lower()
+        if (resp.url.host or "").lower() != host:
+            raise httpx.HTTPError(f"redirected off-site to {resp.url.host}")
         return resp.text
 
 
+def _own_image(url: str) -> bool:
+    """True only for an https image on our own site (or one of its subdomains)."""
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (urlsplit(_site_url()).hostname or "").lower()
+    name = (parsed.hostname or "").lower()
+    return (parsed.scheme == "https" and parsed.username is None and parsed.password is None
+            and port is None and bool(name) and (name == host or name.endswith("." + host)))
+
+
 def _page_meta(html: str) -> dict[str, str]:
-    """The page title and its Open Graph image and description, read with ``re``."""
+    """The page title and its first Open Graph image and description, read with ``re``."""
     title = _TITLE.search(html)
     og: dict[str, str] = {}
     for tag in _META_TAG.findall(html):
         attrs = {name.lower(): value for name, value in _META_ATTR.findall(tag)}
         prop = attrs.get("property", "").lower()
-        if prop in ("og:image", "og:description"):
+        if prop in ("og:image", "og:description") and prop not in og:
             og[prop] = attrs.get("content", "").strip()
+    description = " ".join(og.get("og:description", "").split())[:500]
     return {"title": " ".join(title.group(1).split()) if title else "",
             "image": og.get("og:image", ""),
-            "description": og.get("og:description", "")}
+            "description": description}
 
 
 def _diary_url(url: str) -> tuple[str, str] | None:
@@ -459,8 +477,9 @@ def _pending_entry(url: str, lang: str, number: str,
         logger.warning("diary_pending: skipping %s: %s", url, exc, exc_info=True)
         return None
     info = _page_meta(html)
+    image = info.get("image", "")
     return {"url": url, "lang": lang, "number": number,
-            "title": info.get("title", ""), "image": info.get("image", ""),
+            "title": info.get("title", ""), "image": image if _own_image(image) else "",
             "description": info.get("description", ""), "pending": pending}
 
 
@@ -478,6 +497,11 @@ def _action_diary_pending(args: dict[str, Any]) -> str:
             data["diary_baseline"] = True
             _save(data)
             return _ok(entries=[], baseline=len(found))
+        at = _now()
+        for url, _lang, _number in found:
+            if url not in data["diary"]:
+                data["diary"][url] = {"seen": at}
+        _save(data)
         entries = []
         for url, lang, number in found:
             item = _pending_entry(url, lang, number, data["diary"].get(url) or {})
@@ -500,6 +524,8 @@ def _publish_instagram(url: str, text: str) -> str:
         raise SocialError(f"reading {url}: {exc}") from exc
     if not image:
         raise SocialError("no og:image")
+    if not _own_image(image):
+        raise SocialError("og:image is not on our site")
     result = meta.instagram_image(image, text)
     if result.get("pending"):
         raise SocialError("Instagram is still processing; retry next run")
@@ -515,6 +541,10 @@ def _action_diary_post(args: dict[str, Any]) -> str:
         return _fail(f"url must be a diary page on {_site_url()}")
     with _locked():
         data = _load()
+        if not data["diary_baseline"]:
+            return _fail("run diary_pending first")
+        if url not in data["diary"]:
+            return _fail("url is not a diary entry discovered by diary_pending")
         parsed = _diary_url(url)
         entry = data["diary"].get(url) or {}
         if entry.get("baseline"):

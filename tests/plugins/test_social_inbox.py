@@ -7,8 +7,10 @@ Buzz CLI is a fake subprocess: nothing leaves the machine.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -19,7 +21,7 @@ IST = timezone(timedelta(hours=7))
 SITE = "https://biglobster.top"
 DIARY_47 = f"{SITE}/blog/diary-47-las-cuentas.html"
 DIARY_48 = f"{SITE}/blog/diary-48-el-fuego.html"
-PAGE_48 = {"title": "Diario 48: El fuego", "image": "https://img.test/48.jpg",
+PAGE_48 = {"title": "Diario 48: El fuego", "image": f"{SITE}/img/48.jpg",
            "description": "Un día en la cala."}
 
 
@@ -285,6 +287,81 @@ def _sitemap(*urls):
         f"<url><loc>{url}</loc></url>" for url in urls) + "</urlset>"
 
 
+def test_fetch_raises_when_the_final_url_is_off_site(env, monkeypatch):
+    class _Resp:
+        url = inbox.httpx.URL("https://evil.example/x.jpg")
+        text = "<html/>"
+
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url):
+            return _Resp()
+
+    monkeypatch.setattr(inbox.httpx, "Client", _Client)
+
+    with pytest.raises(inbox.httpx.HTTPError, match="redirected off-site to evil.example"):
+        inbox._fetch(f"{SITE}/blog/diary-48-el-fuego.html")
+
+
+@pytest.mark.parametrize("url,expected", [
+    (f"{SITE}/x.jpg", True),
+    ("https://cdn.biglobster.top/x.jpg", True),
+    ("http://biglobster.top/x.jpg", False),
+    ("https://evil.example/", False),
+    ("https://biglobster.top.evil.example/", False),
+    ("https://user@biglobster.top/x.jpg", False),
+    ("https://biglobster.top:8443/x.jpg", False),
+])
+def test_own_image_only_accepts_https_images_on_our_site(env, url, expected):
+    assert inbox._own_image(url) is expected
+
+
+def test_page_meta_takes_the_first_og_image(env):
+    html = ('<meta property="og:image" content="https://biglobster.top/a.jpg">'
+            '<meta property="og:image" content="https://biglobster.top/b.jpg">'
+            '<meta property="og:description" content="  uno\n  dos  ">'
+            '<meta property="og:description" content="tres">')
+
+    info = inbox._page_meta(html)
+
+    assert info["image"] == "https://biglobster.top/a.jpg"
+    assert info["description"] == "uno dos"
+
+
+def _setup_social_jobs_module():
+    path = Path(__file__).resolve().parents[2] / "scripts" / "setup_social_jobs.py"
+    spec = importlib.util.spec_from_file_location("setup_social_jobs", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_setup_social_jobs_uses_the_social_and_no_mcp_toolsets(env, monkeypatch, capsys):
+    module = _setup_social_jobs_module()
+    created = []
+    monkeypatch.setattr("cron.jobs.list_jobs", lambda **kw: [])
+    monkeypatch.setattr("cron.jobs.create_job", lambda **kw: created.append(kw) or {"id": "job1"})
+
+    monkeypatch.setattr("sys.argv", ["setup_social_jobs.py", "--dry-run"])
+    assert module.main() == 0
+    assert "[social, no_mcp]" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["setup_social_jobs.py"])
+    assert module.main() == 0
+    assert created[0]["enabled_toolsets"] == ["social", "no_mcp"]
+
+
 def test_diary_pending_records_a_baseline_then_offers_new_entries(env, monkeypatch):
     pages = {f"{SITE}/sitemap.xml": _sitemap(DIARY_47)}
     monkeypatch.setattr(inbox, "_fetch", lambda url: pages[url])
@@ -310,18 +387,20 @@ def test_diary_pending_records_a_baseline_then_offers_new_entries(env, monkeypat
 
 
 def test_diary_post_in_shadow_records_nothing(env, meta_net):
+    _write_ledger(env, diary_baseline=True, diary={DIARY_48: {"seen": "2026-11-13T00:00:00Z"}})
+
     payload = _diary_post()
 
     assert payload["success"] is True and payload["shadow"] is True
     assert payload["would_post"]["link"] == (
         DIARY_48 + "?utm_source=facebook&utm_medium=social&utm_campaign=diario-48")
     assert meta_net["links"] == []
-    assert not (env / "workspace" / "social" / "ledger.json").exists()
+    assert "facebook" not in _read_ledger(env)["diary"][DIARY_48]
 
 
 def test_diary_post_live_facebook_tracks_the_link_and_never_posts_twice(env, meta_net, monkeypatch):
     monkeypatch.setenv("META_PUBLISH_MODE", "live")
-    _write_ledger(env, diary_baseline=True)
+    _write_ledger(env, diary_baseline=True, diary={DIARY_48: {"seen": "2026-11-13T00:00:00Z"}})
 
     first = _diary_post()
 
@@ -377,6 +456,7 @@ def test_diary_pending_ignores_off_site_sitemap_entries(env, monkeypatch):
 
 def test_diary_post_instagram_without_an_og_image_fails(env, meta_net, monkeypatch):
     monkeypatch.setenv("META_PUBLISH_MODE", "live")
+    _write_ledger(env, diary_baseline=True, diary={DIARY_48: {"seen": "2026-11-13T00:00:00Z"}})
     monkeypatch.setattr(inbox, "_fetch", lambda url: "<html><title>Sin foto</title></html>")
     monkeypatch.setattr(inbox, "_page_meta", lambda html: {
         "title": "Sin foto", "image": "", "description": ""})
@@ -385,17 +465,50 @@ def test_diary_post_instagram_without_an_og_image_fails(env, meta_net, monkeypat
 
     assert payload["success"] is False and "og:image" in payload["error"]
     assert meta_net["images"] == []
-    assert not (env / "workspace" / "social" / "ledger.json").exists()
+    assert "instagram" not in _read_ledger(env)["diary"][DIARY_48]
+
+
+def test_diary_post_instagram_with_an_off_site_og_image_fails(env, meta_net, monkeypatch):
+    monkeypatch.setenv("META_PUBLISH_MODE", "live")
+    _write_ledger(env, diary_baseline=True, diary={DIARY_48: {"seen": "2026-11-13T00:00:00Z"}})
+    monkeypatch.setattr(inbox, "_fetch", lambda url: "<html/>")
+    monkeypatch.setattr(inbox, "_page_meta", lambda html: {
+        **PAGE_48, "image": "https://evil.example/48.jpg"})
+
+    payload = _diary_post(network="instagram")
+
+    assert payload["success"] is False
+    assert payload["error"] == "og:image is not on our site"
+    assert meta_net["images"] == []
+
+
+def test_diary_post_before_any_diary_pending_fails(env, meta_net):
+    payload = _diary_post()
+
+    assert payload["success"] is False
+    assert payload["error"] == "run diary_pending first"
+    assert meta_net["links"] == []
+
+
+def test_diary_post_for_a_url_never_discovered_fails(env, meta_net):
+    _write_ledger(env, diary_baseline=True)
+
+    payload = _diary_post()
+
+    assert payload["success"] is False
+    assert payload["error"] == "url is not a diary entry discovered by diary_pending"
+    assert meta_net["links"] == []
 
 
 def test_diary_post_refuses_text_that_breaks_the_guardrails(env, meta_net, monkeypatch):
     monkeypatch.setenv("META_PUBLISH_MODE", "live")
+    _write_ledger(env, diary_baseline=True, diary={DIARY_48: {"seen": "2026-11-13T00:00:00Z"}})
 
     payload = _diary_post(text="escríbeme a ana@example.com y te cuento")
 
     assert payload["success"] is False
     assert meta_net["links"] == []
-    assert not (env / "workspace" / "social" / "ledger.json").exists()
+    assert "facebook" not in _read_ledger(env)["diary"][DIARY_48]
 
 
 # ---------------------------------------------------------------------------

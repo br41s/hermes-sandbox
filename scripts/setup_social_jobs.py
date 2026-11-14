@@ -18,6 +18,11 @@ The job is deliberately created in the default store (no `-p`) and WITHOUT
   by side"), so the community job does not queue behind another one.
 
 The schedule is in the configured Hermes timezone, which this script prints.
+
+The job gets only the ``social`` toolset plus the ``no_mcp`` sentinel: cron
+treats a per-job list as an allowlist and merges every enabled MCP server into
+it (``cron/scheduler.py::_merge_mcp_into_per_job_toolsets``), while ``no_mcp``
+stops that merge, so no MCP tools reach the unattended job.
 """
 
 from __future__ import annotations
@@ -66,9 +71,9 @@ def main() -> int:
             print(f"= {spec['name']} exists ({job['id']}); re-pointing prompt and toolsets")
             if not args.dry_run:
                 update_job(job["id"], {"prompt": prompt, "prompt_source": spec["prompt_source"],
-                                       "enabled_toolsets": ["social"]})
+                                       "enabled_toolsets": ["social", "no_mcp"]})
             continue
-        print(f"+ {spec['name']}: '{schedule}' → {args.deliver}, toolsets [social]")
+        print(f"+ {spec['name']}: '{schedule}' → {args.deliver}, toolsets [social, no_mcp]")
         if args.dry_run:
             continue
         created = create_job(
@@ -77,7 +82,7 @@ def main() -> int:
             name=spec["name"],
             deliver=args.deliver,
             model=args.model,
-            enabled_toolsets=["social"],
+            enabled_toolsets=["social", "no_mcp"],
             prompt_source=spec["prompt_source"],
         )
         print(f"  created {created['id']}")
