@@ -303,7 +303,7 @@ def page_comments(posts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             try:
                 body = _json(client.get(f"{graph()}/{post['id']}/comments", params={
                     "filter": "toplevel", "order": "reverse_chronological",
-                    "fields": "id,from{id,name},message,created_time,comments.limit(25){from{id}}",
+                    "fields": "id,from{id,name},message,created_time,comments.limit(100){from{id}}",
                     "limit": 50, "access_token": _token()}), "read Facebook comments")
             except MetaError as exc:
                 logger.warning("page_comments: skipping post %s: %s", post.get("id"), exc)
@@ -369,7 +369,7 @@ def ig_comments(media: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for item in media:
             try:
                 body = _json(client.get(f"{graph()}/{item['id']}/comments", params={
-                    "fields": "id,username,text,timestamp,replies{username}",
+                    "fields": "id,username,text,timestamp,replies.limit(100){username}",
                     "limit": 50, "access_token": _token()}), "read Instagram comments")
             except MetaError as exc:
                 logger.warning("ig_comments: skipping media %s: %s", item.get("id"), exc)
