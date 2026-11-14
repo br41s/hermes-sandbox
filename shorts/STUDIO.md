@@ -310,7 +310,8 @@ table below is still the 2026-10-10 split:
 | Bespoke videos, edits of Brais's recordings, clips | **VideoDesk** + **Guionista** (Buzz) | creative work that needs conversation and Brais's "aprobado vN" |
 | YouTube | **Hermes** | official API (§3.2) |
 | Facebook, Instagram | **Hermes** from `META_PUBLISH_MODE=live` (shorts: Reels; episodes: a Page video per language) | it already holds the master; SocialBot's containers cannot download it |
-| X; Instagram for episodes | **SocialBot** (Buzz), until the next phase moves X to `xurl` | X has no free API path in Hermes yet |
+| Facebook and Instagram comments, the Diario posts, the daily FB/IG metrics | **Hermes**, job "Community — BigLobster" (`BIGLOBSTER_SETUP.md`), since 2026-11-14 | the same Meta token; SocialBot no longer needs Zernio |
+| X | **Brais by hand**, from the hand-off (Brais, 2026-11-14) | X API access is a follow-up (`xurl`) |
 | Reddit, community sites, Facebook groups, Messenger | **SocialBot** | they need a browser session on the Mac |
 
 The relay accepts only canonical media: a file with metadata or a
