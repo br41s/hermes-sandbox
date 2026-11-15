@@ -43,8 +43,12 @@ Skip `## Contribution Rubric` unless opening an upstream PR — we run a fork.
 
 **A customer or project is a Hermes profile.** Native profiles (`hermes_cli/profiles.py`)
 give per-profile isolated memory, workspace, git credentials, skills and cron. We do not
-build a namespacing layer on top. Live profiles: `default`, `grow-shop` (real client), and
-the `hermes-*` role profiles.
+build a namespacing layer on top. Live profiles: `default`, `grow-shop` (real client),
+`team` (BigLobster's internal roles moved off the Buzz fleet from 2026-11-15; topic 9014;
+plan in the workspace's `tasks/buzz-to-hermes-migration.md`), and the `hermes-*` role profiles.
+A new profile needs `hermes profile create <name>` in the pod before the deploy that ships
+its `docker/profiles/<name>/`: boot only acts on profiles that already have a `SOUL.md`, and
+never replaces one, so the bundled SOUL is copied over the default by hand once.
 
 Profile-scoped delegation runs in a **subprocess** with `HERMES_HOME=<profile home>` — the
 web server is pinned to `default`, and in-process env mutation would race.
