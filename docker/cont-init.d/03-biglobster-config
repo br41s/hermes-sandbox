@@ -512,6 +512,23 @@ chmod +x "$HERMES_HOME/scripts/incident_sweep.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/incident_sweep.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/incident_sweep.sh"
 
+# --- 5g: seed the weekly technical SEO check (overwrite every boot to stay current) ---
+# Weekly technical check of biglobster.top: sitemap vs live pages, HTML basics,
+# robots.txt, llms.txt and PageSpeed for a few key pages. no_agent, default
+# store, BigLobster topic 2; silent when nothing changed since last week.
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "0 9 * * 1" --no-agent --script seo_tech_check.sh --deliver "telegram:-1004224848555:2" --name "SEO técnico — biglobster.top"
+as_hermes mkdir -p "$HERMES_HOME/scripts"
+cat > "$HERMES_HOME/scripts/seo_tech_check.sh" <<'TECH'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+exec .venv/bin/python onsite-seo/tech_check.py
+TECH
+chmod +x "$HERMES_HOME/scripts/seo_tech_check.sh"
+chown hermes:hermes "$HERMES_HOME/scripts/seo_tech_check.sh" 2>/dev/null || true
+echo "[03-biglobster] Seeded scripts/seo_tech_check.sh"
+
 # --- 5d: seed the upstream-drift cron script (overwrite every boot to stay current) ---
 # Weekly upstream-drift report. Merge cost is superlinear in ELAPSED TIME (10
 # days of drift measured ~23 conflicted files; 2 months measured 44), so the
