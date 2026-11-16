@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest  # fork: no Blacksmith runners here
     timeout-minutes: 20
     steps:
-      - uses: useblacksmith/checkout@2b9fe87d796feea153b455ec2f3125b471a7b0e7  # v1
+      - uses: useblacksmith/checkout@75c49b6ed30ce59336e9252425796cfcfac155f8  # v1
         with:
           ref: ${{ inputs.commit }}
 
