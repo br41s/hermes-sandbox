@@ -536,7 +536,7 @@ class TestCorreoQueRompe:
         correos = [b"From: Nadie <nadie@ejemplo.com>\nSubject: Re: Hola\n\nme interesa",
                    b"From: News <hola@otra.com>\nSubject: Sigue\n\nhola"]
         monkeypatch.setattr(inbox, "texto", lambda v: (_ for _ in ()).throw(LookupError("x-unknown")))
-        rc, out, err, base = _leer(home, monkeypatch, capsys, correos)
+        rc, out, err, _base_dir = _leer(home, monkeypatch, capsys, correos)
         assert rc == 0
         assert "1 correos no se pudieron leer" in out
         assert "otra.com" in out
