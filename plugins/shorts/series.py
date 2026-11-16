@@ -131,7 +131,7 @@ import subprocess
 import time
 from datetime import datetime, timezone, UTC
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 from plugins.shorts import buzz_share
@@ -568,24 +568,21 @@ def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_
         raise SeriesError(f"could not hand the short to SocialBot: {exc}") from exc
 
 
-def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any],
-                   key: str, report: dict[str, Any]) -> None:
+def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cover: Optional[Path],
+                   srt: Optional[Path], save: Callable[[], None], report: dict[str, Any]) -> None:
     """Upload the Short and hand it to SocialBot; each step is recorded, so a retry does only what is left."""
     from plugins.shorts.social import meta, youtube
 
-    video = _download(item["video"], work / "master.mp4")
-    cover = _download(item["portada"], work / "cover.jpg") if item.get("portada") else None
     if not entry.get("youtube"):
         seconds = _check_short(video)
         if cover:
             _check_thumb(cover)
-        srt = _download(item["srt"], work / "short.srt") if item.get("srt") else None
         social = {"youtube": {"title": item["titulo"], "description": item["descripcion"], "tags": item["etiquetas"]}}
         result = youtube.upload(video, cover, srt, social, item["idioma"], synthetic=True, short=True,
                                 privacy=env("SERIES_YOUTUBE_PRIVACY", "public") or "public")
         entry["youtube"] = {**result, "seconds": round(seconds, 1),
                             "at": datetime.now(UTC).isoformat(timespec="seconds")}
-        _save_entry(ledger, key, entry)
+        save()
     meta_live = meta.publish_mode() == "live"
     text_fb = item["redes"].get("facebook") or item["redes"].get("instagram") or item["descripcion"]
     text_ig = item["redes"].get("instagram") or item["descripcion"]
@@ -593,13 +590,13 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
         if entry["youtube"]["seconds"] <= 90:
             entry["facebook"] = {**meta.facebook_reel(video, text_fb, ai_generated=True),
                                  "at": datetime.now(UTC).isoformat(timespec="seconds")}
-            _save_entry(ledger, key, entry)
+            save()
         else:
             warnings = entry["youtube"].setdefault("warnings", [])
             warning = "Facebook: dura más de 90 s, Reels no lo admite; se lo pide a SocialBot"
             if warning not in warnings:
                 warnings.append(warning)
-                _save_entry(ledger, key, entry)
+                save()
     if meta_live and meta.configured(instagram=True) and not (
             (entry.get("instagram") or {}).get("id") or (entry.get("instagram") or {}).get("failed")):
         try:
@@ -612,14 +609,14 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
             warning = "Instagram: Meta rechazó la subida del vídeo; se lo pide a SocialBot"
             if warning not in warnings:
                 warnings.append(warning)
-            _save_entry(ledger, key, entry)
+            save()
         else:
             if result.get("pending"):
                 entry["instagram"] = {"pending": result["pending"]}
-                _save_entry(ledger, key, entry)
+                save()
                 raise SeriesPending("Instagram is still processing the reel")
             entry["instagram"] = {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
-            _save_entry(ledger, key, entry)
+            save()
     if meta.configured() and not meta_live:
         report["meta_shadow"].append({"short": item["short"], "facebook": text_fb[:120],
                                       "instagram": text_ig[:120]})
@@ -628,7 +625,16 @@ def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledg
                      if (entry.get(net) or {}).get("url")} or None
         entry["handoff"] = _hand_off(item, video, cover, entry["youtube"]["url"], published=published)
         entry["handoff_at"] = datetime.now(UTC).isoformat(timespec="seconds")
-        _save_entry(ledger, key, entry)
+        save()
+
+
+def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any],
+                   key: str, report: dict[str, Any]) -> None:
+    """Download the Short's files, then publish it; each step is recorded, so a retry does only what is left."""
+    video = _download(item["video"], work / "master.mp4")
+    cover = _download(item["portada"], work / "cover.jpg") if item.get("portada") else None
+    srt = _download(item["srt"], work / "short.srt") if not entry.get("youtube") and item.get("srt") else None
+    _publish_files(item, entry, video, cover, srt, lambda: _save_entry(ledger, key, entry), report)
 
 
 def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:

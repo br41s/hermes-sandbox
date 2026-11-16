@@ -8,7 +8,7 @@ Config (environment of the profile that runs the shorts jobs):
 
     SHORTS_STUDIO_GITHUB_TOKEN   fine-grained PAT on the studio repo:
                                  Actions read/write, Contents read/write
-                                 (write only for avatar clip uploads)
+                                 (write only for avatar clip and Flow input uploads)
     SHORTS_STUDIO_REPO           default br41s/hermes-sandbox
     SHORTS_STUDIO_REF            default main — the workflow must exist there
 """
@@ -30,6 +30,7 @@ API = "https://api.github.com"
 UPLOADS = "https://uploads.github.com"
 WORKFLOW = "shorts-studio.yml"
 AVATAR_RELEASE_TAG = "shorts-avatars"
+FLOW_RELEASE_TAG = "shorts-flow-inputs"
 TIMEOUT = 60.0
 MAX_ARTIFACT_BYTES = 400 * 1024 * 1024
 
@@ -190,6 +191,54 @@ def upload_avatar_clip(path: Path, name: str) -> dict[str, Any]:
     # The API URL (not browser_download_url) is what works for a private repo
     # with a token and Accept: application/octet-stream — see build.py.
     return {"id": asset["id"], "url": asset["url"], "name": asset["name"], "size": asset.get("size")}
+
+
+# ---------------------------------------------------------------------------
+# Flow inputs — the owner's encrypted footage on its way to the renderer
+# ---------------------------------------------------------------------------
+
+def _flow_release(client) -> dict[str, Any]:
+    resp = client.get(f"{API}/repos/{repo()}/releases/tags/{FLOW_RELEASE_TAG}")
+    if resp.status_code == 200:
+        return resp.json()
+    if resp.status_code != 404:
+        _check(resp, "find Flow release")
+    resp = client.post(f"{API}/repos/{repo()}/releases", json={
+        "tag_name": FLOW_RELEASE_TAG,
+        "name": "Shorts Flow inputs",
+        "body": "Encrypted Google Flow footage on its way to the renderer. Each asset is deleted "
+                "once its render is collected. Managed by Hermes — do not edit by hand.",
+        "prerelease": True,
+    })
+    _check(resp, "create Flow release")
+    return resp.json()
+
+
+def upload_flow_input(data: bytes, name: str) -> dict[str, Any]:
+    """Upload already-encrypted footage as a release asset; returns its API download URL."""
+    with _client(timeout=300) as client:
+        release = _flow_release(client)
+        for asset in release.get("assets", []):
+            if asset.get("name") == name:
+                client.delete(f"{API}/repos/{repo()}/releases/assets/{asset['id']}")
+        resp = client.post(
+            f"{UPLOADS}/repos/{repo()}/releases/{release['id']}/assets",
+            params={"name": name},
+            content=data,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+    _check(resp, "upload Flow input")
+    asset = resp.json()
+    return {"id": asset["id"], "url": asset["url"], "name": asset["name"], "size": asset.get("size")}
+
+
+def delete_flow_input(asset_id: int) -> None:
+    """Delete one Flow input asset; a 404 means it is already gone, which is what we want."""
+    with _client() as client:
+        resp = client.delete(f"{API}/repos/{repo()}/releases/assets/{asset_id}")
+    if resp.status_code == 404:
+        return
+    _check(resp, f"delete Flow input {asset_id}")
 
 
 def wait_seconds(started: float, budget: float) -> float:
