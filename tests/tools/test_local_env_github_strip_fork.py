@@ -6,7 +6,7 @@ Moved out of test_local_env_blocklist.py so upstream's file merges clean.
 import os
 from unittest.mock import MagicMock, patch
 
-from tools.environments.local import LocalEnvironment
+from tools.environments.local import LocalEnvironment, build_subprocess_env
 
 
 # Upstream's test_local_env_blocklist.py dropped these helpers in v0.22; kept here.
@@ -116,3 +116,15 @@ class TestTier1AppliesToTerminalPath:
         })
         assert "GITHUB_TOKEN" not in result_env
         assert "GH_TOKEN" not in result_env
+
+    def test_build_subprocess_env_strips_prospector_gmail_app_password(self):
+        """Fork: growth/inbox.py reads the app password from the team .env, never from a
+        child process env, so it is stripped like the other Tier-1 secrets."""
+        with patch.dict(os.environ, {
+            "PATH": "/usr/bin:/bin",
+            "PROSPECTOR_GMAIL_APP_PASSWORD": "gmail-app-password",
+        }, clear=True):
+            result_env = build_subprocess_env()
+
+        assert "PROSPECTOR_GMAIL_APP_PASSWORD" not in result_env
+        assert result_env.get("PATH") == "/usr/bin:/bin"

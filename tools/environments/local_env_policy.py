@@ -424,6 +424,8 @@ _ALWAYS_STRIP_KEYS: frozenset[str] = frozenset({
     # enumerated here to stay stripped on the inherit_credentials=True path.
     "GATEWAY_RELAY_ID", "GATEWAY_RELAY_SECRET", "GATEWAY_RELAY_DELIVERY_KEY",
     "EMAIL_PASSWORD", "HERMES_DASHBOARD_SESSION_TOKEN",
+    # fork: Prospector's Gmail app password; growth/inbox.py reads it from the team .env file, never from env
+    "PROSPECTOR_GMAIL_APP_PASSWORD",
     # Dashboard auth: the basic-auth password and session-signing secret, the OIDC client
     # secret and the drain bearer. They let a holder mint or forge dashboard sessions, and no
     # child (credentialed CLIs included) consumes them.
