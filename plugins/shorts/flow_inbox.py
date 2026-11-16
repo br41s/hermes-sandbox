@@ -128,8 +128,8 @@ def _now() -> str:
 def _rclone(args: list[str]) -> str:
     cmd = ["rclone", "--config", rclone_config(), *args]
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=600, check=False)
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise FlowError(f"rclone {args[0]} failed: {exc}") from exc
     if done.returncode != 0:
@@ -166,8 +166,8 @@ def _read_text(carpeta: str, path: str) -> Optional[str]:
     """One small file's text; None when it is not there (a folder may still be uploading)."""
     cmd = ["rclone", "--config", rclone_config(), "cat", f"{drive_remote()}/{carpeta}/{path}"]
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=600, check=False)
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("rclone cat %s/%s: %s", carpeta, path, exc)
         return None
