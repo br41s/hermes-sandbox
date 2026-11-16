@@ -529,3 +529,23 @@ class TestRespuestasImapSinDatos:
         salida = capsys.readouterr().out
         assert "otra.com" in salida
         assert "tienda.com" not in salida
+
+
+class TestCorreoQueRompe:
+    def test_one_unreadable_message_is_counted_and_the_rest_still_reported(self, home, monkeypatch, capsys):
+        correos = [b"From: Nadie <nadie@ejemplo.com>\nSubject: Re: Hola\n\nme interesa",
+                   b"From: News <hola@otra.com>\nSubject: Sigue\n\nhola"]
+        monkeypatch.setattr(inbox, "texto", lambda v: (_ for _ in ()).throw(LookupError("x-unknown")))
+        rc, out, err, base = _leer(home, monkeypatch, capsys, correos)
+        assert rc == 0
+        assert "1 correos no se pudieron leer" in out
+        assert "otra.com" in out
+        assert "LookupError" in err
+        assert inbox.main() == 0
+        assert capsys.readouterr().out == ""
+
+    def test_ledger_key_ignores_a_reused_message_id(self, home, monkeypatch, capsys):
+        a = b"From: Nadie <nadie@ejemplo.com>\nMessage-ID: <x@y>\nSubject: Re: Hola\n\nuno"
+        b = b"From: Nadie <nadie@ejemplo.com>\nMessage-ID: <x@y>\nSubject: Re: Hola\n\ndos"
+        _, out, _, _ = _leer(home, monkeypatch, capsys, [a, b])
+        assert "uno" in out and "dos" in out
