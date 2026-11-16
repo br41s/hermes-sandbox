@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 TIMEOUT = 300.0
 PROCESS_BUDGET = 240.0
 POLL_EVERY = 10.0
-IG_UPLOAD_ATTEMPTS = 3    # Meta answers ProcessingFailedError to ~half of identical uploads (2026-11-13)
+IG_UPLOAD_ATTEMPTS = 3    # Meta cuts ingest at ~33 s: a 400 ProcessingFailedError; retries send a 720p copy (2026-11-16)
 IG_RETRY_WAIT = 20.0
 
 REQUIRED_ENV = ("META_PAGE_ID", "META_PAGE_ACCESS_TOKEN")
@@ -168,6 +169,24 @@ def _cover_url(client, cover: Path) -> Optional[str]:
     return images[0]["source"] if images else None
 
 
+def _container_status(client, container_id: str) -> str:
+    """One status read, no polling: did Meta finish the container despite the 400?
+
+    An unreadable status counts as "not finished", so the retry goes on: this read
+    must never turn a retryable upload failure into a fatal one.
+    """
+    import httpx
+
+    try:
+        info = _json(client.get(f"{graph()}/{container_id}",
+                                params={"fields": "status_code,status", "access_token": _token()}),
+                     "container status")
+    except (MetaError, httpx.HTTPError) as exc:
+        logger.warning("Instagram container %s status unreadable (%s); retrying the upload", container_id, exc)
+        return ""
+    return info.get("status_code", "")
+
+
 def _wait_container(client, container_id: str, budget: float) -> str:
     deadline = time.time() + budget
     status = ""
@@ -192,6 +211,69 @@ def _publish_container(client, container_id: str) -> dict[str, Any]:
     info = _json(client.get(f"{graph()}/{media['id']}",
                             params={"fields": "permalink", "access_token": _token()}), "permalink")
     return {"id": media["id"], "url": info.get("permalink")}
+
+
+def _lighter_copy(video: Path) -> Optional[Path]:
+    """A 720-px-wide copy of ``video``: Meta's ingest is bounded by pixels x frames, not by MB."""
+    out = video.with_name(video.stem + ".ig720.mp4")
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-vf", "scale='min(720,iw)':-2",
+                        "-c:v", "libx264", "-profile:v", "high", "-preset", "veryfast", "-crf", "20",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                        str(out)],
+                       check=True, stdin=subprocess.DEVNULL, capture_output=True, timeout=300)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("Instagram 720p copy failed (%s); retrying with the full-resolution video", exc)
+        out.unlink(missing_ok=True)
+        return None
+    return out
+
+
+def _upload_with_retries(client, ig: str, data: dict[str, Any], video: Path, kind: str,
+                         warnings: list[str]) -> str:
+    """Fresh container per attempt; retries carry a 720p copy. Returns the container id.
+
+    A ``ProcessingFailedError`` is sometimes spurious: one status read decides whether
+    Meta already finished that very container before the retry throws it away.
+    """
+    last: Optional[MetaError] = None
+    light: Optional[Path] = None
+    light_used = False
+    container_id = ""
+    try:
+        for attempt in range(1, IG_UPLOAD_ATTEMPTS + 1):
+            container = _json(client.post(f"{graph()}/{ig}/media", data=data), f"create {kind} container")
+            container_id = container["id"]
+            if attempt == 2:
+                light = _lighter_copy(video)
+            source = light if light is not None else video
+            try:
+                _rupload(client, f"https://rupload.facebook.com/ig-api-upload/{_v()}/{container_id}", source)
+                last = None
+                light_used = source is not video
+                break
+            except MetaError as exc:
+                if not ("ProcessingFailedError" in str(exc) or "HTTP 5" in str(exc)):
+                    raise
+                last = exc
+                if "ProcessingFailedError" not in str(exc):
+                    if attempt < IG_UPLOAD_ATTEMPTS:
+                        time.sleep(IG_RETRY_WAIT)
+                    continue
+                time.sleep(IG_RETRY_WAIT)
+                if _container_status(client, container_id) == "FINISHED":
+                    last = None
+                    light_used = source is not video
+                    warnings.append("Instagram answered ProcessingFailedError but finished processing the upload")
+                    break
+        if last is not None:
+            raise MetaError(f"Instagram upload failed after {IG_UPLOAD_ATTEMPTS} attempts: {last}")
+    finally:
+        if light is not None:
+            light.unlink(missing_ok=True)
+    if light_used:
+        warnings.append("Instagram got a 720p copy: the full-resolution upload ran past Meta's processing deadline")
+    return container_id
 
 
 def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path] = None,
@@ -226,22 +308,7 @@ def instagram(video: Path, *, kind: str, caption: str = "", cover: Optional[Path
                 raise MetaError(f"unknown Instagram kind {kind!r}")
             if ai_generated:
                 data["is_ai_generated"] = "true"
-            last: Optional[MetaError] = None
-            for attempt in range(1, IG_UPLOAD_ATTEMPTS + 1):
-                container = _json(client.post(f"{graph()}/{ig}/media", data=data), f"create {kind} container")
-                container_id = container["id"]
-                try:
-                    _rupload(client, f"https://rupload.facebook.com/ig-api-upload/{_v()}/{container_id}", video)
-                    last = None
-                    break
-                except MetaError as exc:
-                    if not ("ProcessingFailedError" in str(exc) or "HTTP 5" in str(exc)):
-                        raise
-                    last = exc
-                    if attempt < IG_UPLOAD_ATTEMPTS:
-                        time.sleep(IG_RETRY_WAIT)
-            if last is not None:
-                raise MetaError(f"Instagram upload failed after {IG_UPLOAD_ATTEMPTS} attempts: {last}")
+            container_id = _upload_with_retries(client, ig, data, video, kind, warnings)
 
         status = _wait_container(client, container_id, PROCESS_BUDGET)
         if status != "FINISHED":

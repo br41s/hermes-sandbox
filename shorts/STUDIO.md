@@ -210,9 +210,14 @@ Flow shorts go out as a Facebook Reel and an Instagram Reel marked
 through the API, so a longer short is left to SocialBot for Facebook, with a
 warning in the reply; Instagram takes up to 15 min.
 
-Meta answers `ProcessingFailedError` to about half of identical Instagram uploads
-(2026-11-13, same file, minutes apart), so `meta.instagram` tries 3 fresh containers
-20 s apart. If all three fail, the short does not block: Hermes records
+Meta answers HTTP 400 `ProcessingFailedError` when its ingest of an Instagram upload
+runs past ~33 s, and ingest time grows with the video's duration, resolution and frame
+rate, not its size (measured 2026-11-16): ≤30 s at 1080p goes in, 30–40 s is luck, a
+42 s 1080p short failed ~18 times in a row while the same video at 720p went in 2/2.
+The 400 is also sometimes spurious: the container finishes anyway. So
+`meta.instagram` tries 3 containers 20 s apart, checks a container's status after
+its 400 and publishes it if it finished, and sends the 2nd and 3rd attempts as a
+720p copy (warned in the reply). If all three fail, the short does not block: Hermes records
 `instagram.failed`, warns in the reply and hands Instagram and X to SocialBot, and it
 never tries Instagram again for that short. Series episodes go out as a
 regular Facebook Page video per language (`meta.facebook_video`).
