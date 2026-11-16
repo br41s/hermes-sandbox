@@ -18,6 +18,7 @@ const flowDefaults: FlowProps = {
   words: [],
   articleUrl: 'https://biglobster.top/',
   brand: {name: 'BigLobster', site: 'biglobster.top'},
+  overlays: [],
 };
 
 export const RemotionRoot: React.FC = () => (

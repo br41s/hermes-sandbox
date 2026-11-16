@@ -48,6 +48,13 @@ LONG_FOOTAGE_S = 30.0         # Guionista packs aim at <=30 s; longer is flagged
 ALLOWED_HOSTS = {"biglobster.top", "www.biglobster.top"}
 FOOTAGE_FINDING_PREFIXES = ("frozen picture", "black frames")
 FOOTAGE_FINDING_SILENCE = re.compile(r"^\d+(\.\d+)?s of silence at")
+OVERLAY_LIMIT = 12
+OVERLAY_POSITIONS = {"top", "bottom"}
+OVERLAY_MAX_DELAY_S = 5.0
+OVERLAY_MAX_TEXT = 40
+CUT_THRESHOLDS = (0.35, 0.25, 0.45)
+MIN_CAPTION_S = 0.8
+PTS_TIME = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 
 
 def _check_lang(raw: dict[str, Any], problems: list[str]) -> str:
@@ -157,6 +164,73 @@ def _check_brand(raw: dict[str, Any], problems: list[str]) -> str:
     return brand
 
 
+def _check_overlays(raw: dict[str, Any], problems: list[str]) -> list[dict[str, Any]]:
+    raw_overlays = raw.get("overlays", [])
+    if raw_overlays is None:
+        raw_overlays = []
+    if not isinstance(raw_overlays, list):
+        problems.append("overlays: must be a list")
+        return []
+    if len(raw_overlays) > OVERLAY_LIMIT:
+        problems.append(f"overlays: max {OVERLAY_LIMIT}, got {len(raw_overlays)}")
+
+    overlays: list[dict[str, Any]] = []
+    for i, raw_overlay in enumerate(raw_overlays):
+        if not isinstance(raw_overlay, dict):
+            problems.append(f"overlays[{i}]: must be an object")
+            continue
+
+        raw_clip = raw_overlay.get("clip")
+        if isinstance(raw_clip, bool) or not isinstance(raw_clip, int) or raw_clip < 0:
+            problems.append(f"overlays[{i}].clip: must be an integer >= 0, got {raw_clip!r}")
+            clip = 0
+        else:
+            clip = raw_clip
+
+        position = raw_overlay.get("position")
+        if position not in OVERLAY_POSITIONS:
+            problems.append(f"overlays[{i}].position: must be 'top' or 'bottom', got {position!r}")
+            position = "top"
+
+        raw_delay = raw_overlay.get("delay_s", 0.0)
+        if (
+            isinstance(raw_delay, bool)
+            or not isinstance(raw_delay, (int, float))
+            or not (0.0 <= float(raw_delay) <= OVERLAY_MAX_DELAY_S)
+        ):
+            problems.append(
+                f"overlays[{i}].delay_s: must be a number in 0..{OVERLAY_MAX_DELAY_S:.0f}, "
+                f"got {raw_delay!r}"
+            )
+            delay = 0.0
+        else:
+            delay = float(raw_delay)
+
+        raw_text = raw_overlay.get("text")
+        text = raw_text.strip() if isinstance(raw_text, str) else ""
+        if not (1 <= len(text) <= OVERLAY_MAX_TEXT):
+            problems.append(
+                f"overlays[{i}].text: must be 1..{OVERLAY_MAX_TEXT} chars after strip, got {len(text)}"
+            )
+
+        overlays.append({"clip": clip, "position": position, "delay_s": delay, "text": text})
+    return overlays
+
+
+def _check_expected_clips(raw: dict[str, Any], problems: list[str]) -> int | None:
+    raw_expected = raw.get("expected_clips")
+    if raw_expected is None:
+        return None
+    if (
+        isinstance(raw_expected, bool)
+        or not isinstance(raw_expected, int)
+        or not (1 <= raw_expected <= 8)
+    ):
+        problems.append(f"expected_clips: must be an integer in 1..8, got {raw_expected!r}")
+        return None
+    return raw_expected
+
+
 def validate(raw: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalise a flow package, or raise :class:`BuildError`."""
     if not isinstance(raw, dict):
@@ -178,6 +252,8 @@ def validate(raw: dict[str, Any]) -> dict[str, Any]:
         problems.append("request_id: must be a non-empty string when provided")
 
     brand = _check_brand(raw, problems)
+    overlays = _check_overlays(raw, problems)
+    expected_clips = _check_expected_clips(raw, problems)
 
     if problems:
         raise BuildError("\n".join(problems))
@@ -189,6 +265,8 @@ def validate(raw: dict[str, Any]) -> dict[str, Any]:
         "cover": cover,
         "footage": footage,
         "brand": brand,
+        "overlays": overlays,
+        "expected_clips": expected_clips,
     }
     if isinstance(request_id, str) and request_id.strip():
         norm["request_id"] = request_id.strip()
@@ -260,6 +338,85 @@ def timing(footage_s: float) -> dict[str, Any]:
         "total_frames": total,
         "total_s": total / FPS,
     }
+
+
+def parse_scene_cuts(stderr: str) -> list[float]:
+    """Every distinct scene cut ffmpeg's ``showinfo`` reported, in seconds.
+
+    Two cuts closer than half a second are one transition seen twice, not two
+    clips.
+    """
+    cuts: list[float] = []
+    for moment in sorted(float(m.group(1)) for m in PTS_TIME.finditer(stderr)):
+        if not cuts or moment - cuts[-1] >= 0.5:
+            cuts.append(moment)
+    return cuts
+
+
+def detect_cuts(path: Path, threshold: float) -> list[float]:
+    """Scene cuts in ``path`` at ffmpeg's ``scene`` threshold."""
+    out = media.run(
+        [
+            media.binary("ffmpeg"), "-hide_banner", "-i", str(path),
+            "-vf", f"select='gt(scene,{threshold})',showinfo",
+            "-an", "-f", "null", "-",
+        ],
+        "scene cuts",
+        300,
+    )
+    return parse_scene_cuts(out.stderr or "")
+
+
+def segments(cuts: list[float], footage_s: float) -> list[tuple[float, float]]:
+    """The clips between ``cuts``, the first from 0 and the last to the end."""
+    starts = [0.0, *cuts]
+    ends = [*cuts, footage_s]
+    return list(zip(starts, ends))
+
+
+def clip_segments(
+    path: Path, footage_s: float, expected: int | None
+) -> tuple[list[tuple[float, float]] | None, str | None]:
+    """Cut ``path`` into its clips, or say why the pack does not match the footage."""
+    default: list[tuple[float, float]] | None = None
+    for threshold in CUT_THRESHOLDS:
+        try:
+            found = segments(detect_cuts(path, threshold), footage_s)
+        except media.MediaError as exc:      # captions are a bonus: never fail the render over them
+            return None, f"rótulos sin poner: no se pudieron detectar las tomas ({exc})"
+        if default is None:
+            default = found
+        if expected is None:
+            return default, None
+        if len(found) == expected:
+            return found, None
+    assert default is not None
+    warning = (
+        f"rótulos sin poner: el vídeo tiene {len(default)} tomas y el pack {expected} clips"
+    )
+    return None, warning
+
+
+def overlay_frames(
+    overlays: list[dict[str, Any]], segs: list[tuple[float, float]], fps: int
+) -> list[dict[str, Any]]:
+    """Frame windows for the captions that land inside their clip and linger long enough."""
+    frames: list[dict[str, Any]] = []
+    for overlay in overlays:
+        clip = overlay["clip"]
+        if clip >= len(segs):
+            continue
+        start = segs[clip][0] + overlay["delay_s"]
+        end = segs[clip][1]
+        if end - start < MIN_CAPTION_S:
+            continue
+        frames.append({
+            "text": overlay["text"],
+            "position": overlay["position"],
+            "fromFrame": round(start * fps),
+            "durationInFrames": round((end - start) * fps),
+        })
+    return sorted(frames, key=lambda frame: frame["fromFrame"])
 
 
 def resolve_path(package_path: Path, rel: str) -> Path:
@@ -357,6 +514,13 @@ def build(package_path: Path, raw: dict[str, Any], out: Path, remotion_dir: Path
     words = words_from_heard(heard)
     _log(f"flow: {footage_s:.2f}s footage, {len(words)} words")
 
+    overlays_warning: str | None = None
+    overlays: list[dict[str, Any]] = []
+    if pkg["overlays"]:
+        segs, overlays_warning = clip_segments(dest, footage_s, pkg["expected_clips"])
+        if segs is not None:
+            overlays = overlay_frames(pkg["overlays"], segs, FPS)
+
     t = timing(footage_s)
     brand = BRANDS[pkg["brand"]]
     props = {
@@ -369,6 +533,7 @@ def build(package_path: Path, raw: dict[str, Any], out: Path, remotion_dir: Path
         "words": [{k: w[k] for k in ("text", "startMs", "endMs", "page")} for w in words],
         "articleUrl": pkg["article_url"],
         "brand": brand,
+        "overlays": overlays,
     }
     props_path = work / "flow_props.json"
     props_path.write_text(json.dumps(props, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -442,6 +607,8 @@ def build(package_path: Path, raw: dict[str, Any], out: Path, remotion_dir: Path
     )
     # The owner's footage is his to fix; a re-render cannot change it.
     report = footage_findings_to_warnings(report)
+    if overlays_warning:
+        report["warnings"].append(overlays_warning)
     report["cover"] = qa.check_still(cover_path)
     if not report["cover"]["passed"]:
         report["passed"] = False
@@ -455,6 +622,7 @@ def build(package_path: Path, raw: dict[str, Any], out: Path, remotion_dir: Path
         "article_url": pkg["article_url"],
         "duration_s": round(t["total_s"], 3),
         "footage_s": round(footage_s, 3),
+        "overlays_placed": len(props["overlays"]),
         "files": {
             "master": "master.mp4",
             "cover": "cover.jpg",

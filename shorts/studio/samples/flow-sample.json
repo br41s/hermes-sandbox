@@ -9,5 +9,11 @@
  },
  "footage": {
   "path": "footage.mp4"
- }
+ },
+ "expected_clips": 2,
+ "overlays": [
+  {"clip": 0, "position": "top", "delay_s": 0, "text": "¿Tu tienda vacía?"},
+  {"clip": 0, "position": "bottom", "delay_s": 1, "text": "Atrae más clientes hoy"},
+  {"clip": 1, "position": "top", "delay_s": 0.5, "text": "Perfil al 40 % = no sales"}
+ ]
 }
