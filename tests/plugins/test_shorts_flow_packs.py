@@ -421,7 +421,7 @@ def test_record_lesson_keeps_only_a_real_difference(env, drive):
     filmed = GOOD.replace("Atrae más clientes hoy", "Atrae más clientes esta semana")
     path = flow_packs.record_lesson(CARPETA, filmed)
     assert path is not None and path.is_file()
-    body = path.read_text(encoding="utf-8")
+    body = path.read_text(encoding="utf-8-sig")
     assert body.startswith("--- escrito") and "+++ rodado" in body
     assert "+| 1 | abajo | 1 | Atrae más clientes esta semana |" in body
 
@@ -433,6 +433,6 @@ def test_record_lesson_without_a_stored_pack_writes_nothing(env):
 def test_the_guide_example_passes_the_validator():
     """The writer copies the example in its prompt: if the tool rejects it, every pack starts wrong."""
     root = Path(__file__).resolve().parents[2]
-    guide = (root / "shorts" / "biglobster-flow-guionista.prompt").read_text(encoding="utf-8")
+    guide = (root / "shorts" / "biglobster-flow-guionista.prompt").read_text(encoding="utf-8-sig")
     example = guide.split("la forma es esta)\n\n", 1)[1].split("\n══", 1)[0]
     assert flow_packs.validate(example, "2026-11-16_es-seo-local-pymes-espana-2026") == []

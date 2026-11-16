@@ -559,7 +559,7 @@ def test_discovery_keeps_the_owners_edits_of_the_pack_as_a_lesson(env, drive, st
     flow_inbox.advance()
     lesson = flow_packs._lessons_dir() / f"{carpeta}.diff"
     assert lesson.is_file()
-    body = lesson.read_text(encoding="utf-8")
+    body = lesson.read_text(encoding="utf-8-sig")
     assert "--- escrito" in body and "+++ rodado" in body
     assert "+| 1 | abajo | 1 | Atrae más clientes esta semana |" in body
     assert flow_inbox._load()[carpeta]["pack"] == edited

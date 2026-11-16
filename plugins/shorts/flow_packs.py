@@ -490,7 +490,7 @@ def _lessons(limit: int = 5) -> list[dict[str, str]]:
         return []
     paths = [path for path in folder.glob("*.diff") if path.is_file()]
     paths.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return [{"carpeta": path.stem, "diff": path.read_text(encoding="utf-8").strip()[:4000]}
+    return [{"carpeta": path.stem, "diff": path.read_text(encoding="utf-8-sig").strip()[:4000]}
             for path in paths[:limit]]
 
 
@@ -563,7 +563,7 @@ def release(carpeta: str) -> dict[str, Any]:
     path = _root() / f"{carpeta}.md"
     if not path.is_file():
         raise flow_inbox.FlowError(f"{carpeta}: the stored pack is missing")
-    markdown = path.read_text(encoding="utf-8")
+    markdown = path.read_text(encoding="utf-8-sig")
     problems = validate(markdown, carpeta)
     if problems:
         raise flow_inbox.FlowError("; ".join(problems))
@@ -580,7 +580,7 @@ def record_lesson(carpeta: str, filmed: str) -> Optional[Path]:
     original_path = _root() / f"{carpeta}.md"
     if not original_path.is_file():
         return None
-    original = [line.rstrip() for line in original_path.read_text(encoding="utf-8").splitlines()]
+    original = [line.rstrip() for line in original_path.read_text(encoding="utf-8-sig").splitlines()]
     shot = [line.rstrip() for line in str(filmed or "").splitlines()]
     if original == shot:
         return None
