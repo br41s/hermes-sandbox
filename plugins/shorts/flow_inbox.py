@@ -277,6 +277,7 @@ def _collect(carpeta: str, entry: dict[str, Any], ledger: dict[str, Any], report
         stamp = str(entry.get("dispatched_at") or entry.get("created_at") or "")
         age = time.time() - calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
         if age > RENDER_TIMEOUT_S:
+            _drop_asset(entry)                      # no run will ever read it: never leave the blob behind
             _render_failed(carpeta, entry, "no render run found an hour after dispatch", ledger, report)
         return
     entry["run_id"] = run["id"]

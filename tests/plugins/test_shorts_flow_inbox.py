@@ -488,3 +488,17 @@ def test_preview_shows_qa_findings_from_the_owners_footage(env):
     message = flow_inbox._preview("2026-11-14_es-seo-local-google-maps", entry)
     assert "⚠️ En tu vídeo: 2.1s of silence at 4.0s" in message
     assert "footage: " not in message
+
+
+def test_a_render_that_never_starts_deletes_its_encrypted_input(env, drive, studio):
+    """hermes-auditor on #526: the timeout path popped asset_id without deleting the blob."""
+    _seed(drive)
+    flow_inbox.advance()
+    flow_inbox.render(CARPETA, ARTICLE, "Sales en Google Maps", "SEO local", 2.5)
+    ledger = flow_inbox._load()
+    ledger[CARPETA].update(run_id=None, dispatched_at="2020-01-01T00:00:00Z")
+    flow_inbox._save(ledger)
+    flow_inbox.advance()
+    entry = flow_inbox._load()[CARPETA]
+    assert studio["deleted"] == [1]
+    assert entry["state"] == "new" and "asset_id" not in entry
