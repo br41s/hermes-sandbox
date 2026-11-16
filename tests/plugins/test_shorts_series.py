@@ -1036,14 +1036,32 @@ def _no_sleep(monkeypatch):
     return slept
 
 
+def _ig_light_copy(monkeypatch):
+    """Fake 720p conversion: writes ``b"light"`` beside the video, records each call."""
+    from plugins.shorts.social import meta as meta_mod
+
+    calls = []
+
+    def fake(video):
+        calls.append(video)
+        out = video.with_name("v.ig720.mp4")
+        out.write_bytes(b"light")
+        return out
+
+    monkeypatch.setattr(meta_mod, "_lighter_copy", fake)
+    return calls
+
+
 def test_meta_instagram_retries_a_processing_failure_with_a_fresh_container(tmp_path, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _ig_env(monkeypatch)
     slept = _no_sleep(monkeypatch)
+    light_calls = _ig_light_copy(monkeypatch)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"abc")
-    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, PROCESSING_FAILED,
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c2"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
                                {"id": "c3"}, {"success": True}, {"status_code": "FINISHED"},
                                {"id": "media1"}, {"permalink": "https://www.instagram.com/reel/m1/"}])
     monkeypatch.setattr(meta_mod, "_client", lambda: client)
@@ -1051,10 +1069,15 @@ def test_meta_instagram_retries_a_processing_failure_with_a_fresh_container(tmp_
     result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
 
     assert result["id"] == "media1" and result["url"] == "https://www.instagram.com/reel/m1/"
-    uploads = [url for url, _kw in client.calls if "/ig-api-upload/" in url]
+    uploads = [(url, kw) for url, kw in client.calls if "/ig-api-upload/" in url]
     assert len([url for url, _kw in client.calls if url.endswith("/media")]) == 3
-    assert [url.rsplit("/", 1)[-1] for url in uploads] == ["c1", "c2", "c3"]
+    assert [url.rsplit("/", 1)[-1] for url, _kw in uploads] == ["c1", "c2", "c3"]
+    assert [kw["content"] for _url, kw in uploads] == [b"abc", b"light", b"light"]
+    assert len(light_calls) == 1
     assert slept == [meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT]
+    assert "Instagram got a 720p copy: the full-resolution upload ran past Meta's processing deadline" \
+        in result["warnings"]
+    assert not video.with_name("v.ig720.mp4").exists()
 
 
 def test_meta_instagram_gives_up_after_three_processing_failures(tmp_path, monkeypatch):
@@ -1062,10 +1085,12 @@ def test_meta_instagram_gives_up_after_three_processing_failures(tmp_path, monke
 
     _ig_env(monkeypatch)
     slept = _no_sleep(monkeypatch)
+    _ig_light_copy(monkeypatch)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"abc")
-    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, PROCESSING_FAILED,
-                               {"id": "c3"}, PROCESSING_FAILED])
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c2"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c3"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"}])
     monkeypatch.setattr(meta_mod, "_client", lambda: client)
 
     with pytest.raises(meta_mod.MetaError) as exc:
@@ -1074,7 +1099,8 @@ def test_meta_instagram_gives_up_after_three_processing_failures(tmp_path, monke
     assert str(exc.value).startswith("Instagram upload failed after 3 attempts")
     assert "ProcessingFailedError" in str(exc.value)
     assert len([url for url, _kw in client.calls if "/ig-api-upload/" in url]) == 3
-    assert slept == [meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT]
+    assert slept == [meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT, meta_mod.IG_RETRY_WAIT]
+    assert not video.with_name("v.ig720.mp4").exists()
 
 
 def test_meta_instagram_does_not_retry_other_errors(tmp_path, monkeypatch):
@@ -1082,6 +1108,7 @@ def test_meta_instagram_does_not_retry_other_errors(tmp_path, monkeypatch):
 
     _ig_env(monkeypatch)
     slept = _no_sleep(monkeypatch)
+    light_calls = _ig_light_copy(monkeypatch)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"abc")
     client = _MetaFlakyClient([{"id": "c1"}, (400, {"error": {"message": "Invalid OAuth access token."}})])
@@ -1092,6 +1119,7 @@ def test_meta_instagram_does_not_retry_other_errors(tmp_path, monkeypatch):
 
     assert len([url for url, _kw in client.calls if "/ig-api-upload/" in url]) == 1
     assert slept == []
+    assert light_calls == []
 
 
 def test_meta_instagram_stages_the_cover_once_across_retries(tmp_path, monkeypatch):
@@ -1099,13 +1127,15 @@ def test_meta_instagram_stages_the_cover_once_across_retries(tmp_path, monkeypat
 
     _ig_env(monkeypatch)
     _no_sleep(monkeypatch)
+    _ig_light_copy(monkeypatch)
     video = tmp_path / "v.mp4"
     video.write_bytes(b"abc")
     cover = tmp_path / "cover.jpg"
     cover.write_bytes(b"\xff\xd8\xff\xe0cover")
     client = _MetaFlakyClient([{"id": "photo1"},
                                {"images": [{"width": 1080, "source": "https://cdn.example/cover.jpg"}]},
-                               {"id": "c1"}, PROCESSING_FAILED, {"id": "c2"}, {"success": True},
+                               {"id": "c1"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c2"}, {"success": True},
                                {"status_code": "FINISHED"}, {"id": "media1"},
                                {"permalink": "https://www.instagram.com/reel/m1/"}])
     monkeypatch.setattr(meta_mod, "_client", lambda: client)
@@ -1115,6 +1145,107 @@ def test_meta_instagram_stages_the_cover_once_across_retries(tmp_path, monkeypat
     assert len([url for url, _kw in client.calls if url.endswith("/photos")]) == 1
     containers = [kw["data"] for url, kw in client.calls if url.endswith("/media")]
     assert [data.get("cover_url") for data in containers] == ["https://cdn.example/cover.jpg"] * 2
+
+
+def test_meta_instagram_publishes_a_container_that_finished_despite_the_400(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    slept = _no_sleep(monkeypatch)
+    light_calls = _ig_light_copy(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"status_code": "FINISHED"},
+                               {"status_code": "FINISHED"}, {"id": "media1"},
+                               {"permalink": "https://www.instagram.com/reel/m1/"}])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert result["id"] == "media1" and result["url"] == "https://www.instagram.com/reel/m1/"
+    assert len([url for url, _kw in client.calls if url.endswith("/media")]) == 1
+    assert len([url for url, _kw in client.calls if "/ig-api-upload/" in url]) == 1
+    assert light_calls == []
+    assert slept == [meta_mod.IG_RETRY_WAIT]
+    assert "Instagram answered ProcessingFailedError but finished processing the upload" in result["warnings"]
+
+
+def test_meta_instagram_warns_720p_when_the_light_copy_finished_despite_the_400(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    _no_sleep(monkeypatch)
+    _ig_light_copy(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c2"}, PROCESSING_FAILED, {"status_code": "FINISHED"},
+                               {"status_code": "FINISHED"}, {"id": "media1"},
+                               {"permalink": "https://www.instagram.com/reel/m1/"}])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert result["id"] == "media1"
+    assert any("720p" in warning for warning in result["warnings"])
+    assert not video.with_name("v.ig720.mp4").exists()
+
+
+def test_meta_instagram_retries_with_the_original_when_the_light_copy_fails(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    _no_sleep(monkeypatch)
+    monkeypatch.setattr(meta_mod, "_lighter_copy", lambda video: None)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, {"status_code": "IN_PROGRESS"},
+                               {"id": "c2"}, {"success": True}, {"status_code": "FINISHED"},
+                               {"id": "media1"}, {"permalink": "https://www.instagram.com/reel/m1/"}])
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    uploads = [kw["content"] for url, kw in client.calls if "/ig-api-upload/" in url]
+    assert uploads == [b"abc", b"abc"]
+    assert not any("720p" in warning for warning in result["warnings"])
+
+
+def test_lighter_copy_returns_none_and_cleans_up_when_ffmpeg_fails(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+
+    def failing_run(args, **kw):
+        Path(args[-1]).write_bytes(b"partial")
+        raise meta_mod.subprocess.CalledProcessError(1, "ffmpeg")
+
+    monkeypatch.setattr(meta_mod.subprocess, "run", failing_run)
+
+    assert meta_mod._lighter_copy(video) is None
+    assert not video.with_name("v.ig720.mp4").exists()
+
+
+def test_lighter_copy_asks_ffmpeg_for_720_wide(tmp_path, monkeypatch):
+    from plugins.shorts.social import meta as meta_mod
+
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    seen = {}
+
+    def recording_run(args, **kw):
+        seen.update(kw)
+        seen["args"] = args
+        Path(args[-1]).write_bytes(b"light")
+
+    monkeypatch.setattr(meta_mod.subprocess, "run", recording_run)
+
+    out = meta_mod._lighter_copy(video)
+
+    assert out == video.with_name("v.ig720.mp4") and out.exists()
+    assert "scale='min(720,iw)':-2" in seen["args"]
+    assert seen["stdin"] is meta_mod.subprocess.DEVNULL
 
 
 def test_a_flow_short_marks_its_meta_posts_as_ai_generated(env, buzz, short_uploads, monkeypatch):
