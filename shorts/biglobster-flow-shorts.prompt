@@ -31,8 +31,11 @@ FLUJO (una pasada por ejecución)
    - `cover_kicker` (hasta 40 caracteres, puede ir vacío): otra frase corta que
      también se diga y se entienda sola. Nunca una cifra suelta («133 abogados,
      3 meses» no se entiende).
+     Si el pack trae una sección `## Portada`, empieza por su `Título:` y su
+     `Rótulo:`: ya están escritos con esta regla.
    - `cover_frame_s`: el segundo del fotograma de la portada. Por defecto 2.5;
      cámbialo solo si el pack dice que en ese momento no se ve la cara.
+   Los rótulos del pack (`## Rótulos`) los pone la herramienta sola: no los pases.
    Si la carpeta trae `error`, es el intento anterior que falló: cuéntalo en
    el informe en una línea.
 

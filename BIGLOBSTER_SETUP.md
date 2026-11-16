@@ -844,3 +844,9 @@ One-time setup:
 4. As `hermes`, from the hermes-sandbox clone:
    `scripts/setup_shorts_jobs.py --dry-run`, then the same without `--dry-run`.
    The Flow schedule can be changed with `--flow-schedule`.
+5. The same script also creates "Flow Guionista — BigLobster" (daily 09:30, pinned to
+   `moonshotai/kimi-k3.1-pro`), which writes the script packs into `Flow/<carpeta>/`.
+   Its first 3 packs wait in `/opt/data/workspace/shorts/flow/packs/` until someone runs
+   `flow_packs.release("<carpeta>")` in the pod as hermes. Env: `FLOW_PACK_LANGS`
+   (`es,en`), `FLOW_PACKS_WAITING_MAX` (3), `FLOW_PACK_REVIEW_FIRST` (3).
+   `shorts/STUDIO.md` §3.10.
