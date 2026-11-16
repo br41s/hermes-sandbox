@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create (or re-point) the two BigLobster Shorts cron jobs. Idempotent.
+"""Create (or re-point) the three BigLobster Shorts cron jobs. Idempotent.
 
     .venv/bin/python3 scripts/setup_shorts_jobs.py --dry-run
     .venv/bin/python3 scripts/setup_shorts_jobs.py
@@ -7,7 +7,7 @@
 Run as `hermes`, never root (root flips jobs.json ownership), from the
 hermes-sandbox clone (prompt_source paths resolve against it).
 
-Both jobs are deliberately created in the default store (no `-p`) and WITHOUT
+All three jobs are deliberately created in the default store (no `-p`) and WITHOUT
 `workdir`:
 
 * they run in the default profile, whose process env carries the studio and
@@ -22,6 +22,12 @@ Both jobs are deliberately created in the default store (no `-p`) and WITHOUT
 Schedules are in the configured Hermes timezone, which this script prints.
 The publisher runs twice: once after the producer's renders finish, and once
 later to finish anything Instagram was still processing.
+
+The Flow job is the third one: it reads the owner's Google Drive
+(`Flow/<carpeta>/`), renders each folder in the farm and writes the result back
+to Drive for review. It runs hourly from 08 to 23 in the Hermes timezone, and
+it never waits on a render either: each run moves every Drive folder one step
+forward.
 """
 
 from __future__ import annotations
@@ -48,6 +54,12 @@ JOBS = [
         "flag": "publisher",
         "default_schedule": "20 9,13 * * *",
     },
+    {
+        "name": "Flow Shorts — BigLobster",
+        "prompt_source": "shorts/biglobster-flow-shorts.prompt",
+        "flag": "flow",
+        "default_schedule": "5 8-23 * * *",
+    },
 ]
 
 
@@ -55,8 +67,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--producer-schedule", default=JOBS[0]["default_schedule"])
     parser.add_argument("--publisher-schedule", default=JOBS[1]["default_schedule"])
+    parser.add_argument("--flow-schedule", default=JOBS[2]["default_schedule"])
     parser.add_argument("--deliver", default="telegram")
-    parser.add_argument("--model", default=None, help="Optional model override for both jobs")
+    parser.add_argument("--model", default=None, help="Optional model override for all three jobs")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -70,7 +83,8 @@ def main() -> int:
         print("Hermes timezone: (could not resolve — check `hermes config`)")
 
     existing = {j.get("name"): j for j in list_jobs(include_disabled=True)}
-    schedules = {"producer": args.producer_schedule, "publisher": args.publisher_schedule}
+    schedules = {"producer": args.producer_schedule, "publisher": args.publisher_schedule,
+                 "flow": args.flow_schedule}
     for spec in JOBS:
         prompt = (REPO_ROOT / spec["prompt_source"]).read_text(encoding="utf-8-sig")
         schedule = schedules[spec["flag"]]

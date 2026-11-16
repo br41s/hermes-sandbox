@@ -64,6 +64,9 @@ jobs:
         # voice and text are proven and the two voices can be compared.
         sample: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["package"]' || '["en","es"]') }}
         engine: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["default"]' || '["kokoro","azure"]') }}
+        # A push also renders the flow sample once, so the flow composition is
+        # proven; a dispatch renders only its own package.
+        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[]' || '[{"sample":"flow","engine":"kokoro"}]') }}
     env:
       REQUEST_ID: ${{ inputs.request_id || format('smoke-{0}-{1}', matrix.sample, matrix.engine) }}
       # The free voice (plugins/shorts/studio/voice.py): per language, its own
@@ -87,6 +90,8 @@ jobs:
       # with its own daily limit on openrouter.ai, and only on a real dispatch:
       # the push smoke test never spends.
       SHORTS_OPENROUTER_API_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.SHORTS_OPENROUTER_API_KEY || '' }}
+      # Flow format: the Fernet key that decrypts the owner's footage (a release asset).
+      FLOW_ASSET_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.FLOW_ASSET_KEY || '' }}
       SHORTS_AI_DAILY_CAP_USD: ${{ vars.SHORTS_AI_DAILY_CAP_USD || '2.00' }}
       SHORTS_AI_SHORT_BUDGET_USD: ${{ vars.SHORTS_AI_SHORT_BUDGET_USD || '1.00' }}
       SHORTS_AI_PRICE_PER_SECOND: ${{ vars.SHORTS_AI_PRICE_PER_SECOND || '0.015' }}
@@ -122,7 +127,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends ffmpeg
           python -m pip install --quiet "edge-tts==7.2.8" "httpx>=0.28,<1" \
-            "kokoro-onnx==0.6.1" "faster-whisper==1.2.1"
+            "kokoro-onnx==0.6.1" "faster-whisper==1.2.1" "cryptography==50.0.2"
           ffmpeg -version | head -1
 
       - name: Install Remotion
@@ -159,6 +164,11 @@ jobs:
             printf '%s' "$PACKAGE_B64" | base64 -d | gunzip > "$RUNNER_TEMP/short/package.json"
           else
             cp "shorts/studio/samples/${{ matrix.sample }}-sample.json" "$RUNNER_TEMP/short/package.json"
+            if [ "${{ matrix.sample }}" = "flow" ]; then
+              # A test pattern with a tone stands in for the owner's footage: the smoke proves the composition, mux, outro and cover.
+              ffmpeg -loglevel error -f lavfi -i testsrc2=s=720x1280:r=24:d=8 -f lavfi -i sine=frequency=330:sample_rate=48000:duration=8 \
+                -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$RUNNER_TEMP/short/footage.mp4"
+            fi
           fi
           # The request id is stamped by the workflow, never trusted from the payload.
           python - <<'PY'

@@ -76,3 +76,17 @@ export type ShortProps = {
   cover: {title: string; kicker: string};
   thumb: {title: string};
 };
+
+export type FlowProps = {
+  lang: 'en' | 'es';
+  /** Path under the public dir of the owner's footage. */
+  footage: string;
+  footageFrames: number;
+  /** First frame of the outro card: it fades in over the footage's last 0.5 s. */
+  outroFrom: number;
+  outroFrames: number;
+  durationInFrames: number;
+  words: Word[];
+  articleUrl: string;
+  brand: {name: string; site: string};
+};

@@ -59,7 +59,12 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
         "(long videos, both languages) and the Google-Flow shorts (#publicar-short) on YouTube, hands those "
         "shorts to SocialBot and replies in Buzz with the links; no arguments. "
         "performance: read-only, how the published shorts did on YouTube — each short's views as a "
-        "multiple of the channel median, and the median multiple per hook_pattern, lang and palette."
+        "multiple of the channel median, and the median multiple per hook_pattern, lang and palette. "
+        "flow: advance the owner's Google Drive Flow folders; lists what needs a cover or texts, what "
+        "waits for his `publica <carpeta>`, and what was published. "
+        "flow_render: send one new folder's footage, encrypted, to the renderer with the cover you chose. "
+        "flow_texts: write the YouTube texts and the one-line network copies of a rendered folder, then "
+        "hand it to the owner for review."
     ),
     "parameters": {
         "type": "object",
@@ -67,7 +72,8 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
             "action": {
                 "type": "string",
                 "enum": ["posts", "article", "ledger", "submit", "status", "publish",
-                         "handoff", "avatars", "avatar_upload", "mark", "series", "performance"],
+                         "handoff", "avatars", "avatar_upload", "mark", "series", "performance",
+                         "flow", "flow_render", "flow_texts"],
             },
             "lang": {"type": "string", "enum": ["en", "es"],
                      "description": "posts: which blog feed to read. avatars/avatar_upload: the clip's language."},
@@ -93,6 +99,26 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
                      "description": "avatar_upload: exactly what the avatar says in the clip."},
             "state": {"type": "string", "enum": ["published", "skipped"], "description": "mark: final state."},
             "note": {"type": "string", "description": "mark: one line on why."},
+            "carpeta": {"type": "string",
+                        "description": "flow_render/flow_texts: the Drive folder name, as `flow` listed it."},
+            "article_url": {"type": "string",
+                            "description": "flow_render: the biglobster.top article the pack is about "
+                                           "(its `Artículo:` line)."},
+            "cover_title": {"type": "string",
+                            "description": "flow_render: cover title, 3-60 characters: a phrase the "
+                                           "characters SAY in the video (from the pack's spoken lines), "
+                                           "never the article's title."},
+            "cover_kicker": {"type": "string",
+                             "description": "flow_render: short label above the title, up to 40 "
+                                            "characters; may be empty."},
+            "cover_frame_s": {"type": "number",
+                              "description": "flow_render: second of the video used for the cover (a clean "
+                                             "frame, face visible); default 2.5."},
+            "metadata": {
+                "type": "object",
+                "description": "flow_texts: {titulo, descripcion, etiquetas[], redes{instagram, facebook, "
+                               "x}} — the same fields as #publicar-short; each redes text one line.",
+            },
         },
         "required": ["action"],
     },
@@ -753,6 +779,51 @@ def _action_performance(args: dict[str, Any]) -> str:
     return _ok(**report)
 
 
+def _action_flow(args: dict[str, Any]) -> str:
+    from plugins.shorts import flow_inbox, github_studio, series
+
+    if not flow_inbox.configured():
+        return _fail("flow: not configured (FLOW_ASSET_KEY, SHORTS_STUDIO_GITHUB_TOKEN, rclone)")
+    try:
+        return _ok(**flow_inbox.advance())
+    except (flow_inbox.FlowError, series.SeriesError, github_studio.StudioError) as exc:
+        return _fail(f"flow: {exc}")
+
+
+def _action_flow_render(args: dict[str, Any]) -> str:
+    from plugins.shorts import flow_inbox, github_studio, series
+
+    if not flow_inbox.configured():
+        return _fail("flow: not configured (FLOW_ASSET_KEY, SHORTS_STUDIO_GITHUB_TOKEN, rclone)")
+    try:
+        return _ok(**flow_inbox.render(
+            (args.get("carpeta") or "").strip(),
+            (args.get("article_url") or "").strip(),
+            args.get("cover_title") or "",
+            args.get("cover_kicker") or "",
+            args.get("cover_frame_s"),
+        ))
+    except (flow_inbox.FlowError, series.SeriesError, github_studio.StudioError) as exc:
+        return _fail(f"flow_render: {exc}")
+
+
+def _action_flow_texts(args: dict[str, Any]) -> str:
+    from plugins.shorts import flow_inbox, github_studio, series
+
+    if not flow_inbox.configured():
+        return _fail("flow: not configured (FLOW_ASSET_KEY, SHORTS_STUDIO_GITHUB_TOKEN, rclone)")
+    raw = args.get("metadata")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError as exc:
+            return _fail(f"metadata is not valid JSON: {exc}")
+    try:
+        return _ok(**flow_inbox.texts((args.get("carpeta") or "").strip(), raw or {}))
+    except (flow_inbox.FlowError, series.SeriesError, github_studio.StudioError) as exc:
+        return _fail(f"flow_texts: {exc}")
+
+
 _ACTIONS = {
     "posts": _action_posts,
     "article": _action_article,
@@ -766,6 +837,9 @@ _ACTIONS = {
     "mark": _action_mark,
     "series": _action_series,
     "performance": _action_performance,
+    "flow": _action_flow,
+    "flow_render": _action_flow_render,
+    "flow_texts": _action_flow_texts,
 }
 
 

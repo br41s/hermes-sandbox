@@ -645,6 +645,7 @@ it writes from. Sold to a client without one it goes quiet on every run.
   relay takes only metadata-free media, so stripped copies are attached); with
   `SHORTS_BUZZ_CHANNEL` set and Meta in shadow the tool drops the Meta targets, so the
   two systems can never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
+- **Flow shorts come from Drive since 2026-11-16, not from VideoDesk.** The owner drops `Flow/<carpeta>/` (Flow export + `prompts.md`); the job "Flow Shorts — BigLobster" (default store, `shorts` toolset, hourly) renders it as format `flow`, writes `final/` back to Drive and publishes only after `publica <carpeta>` in Telegram, read from the default profile's `state.db` by `plugins/shorts/approval.py`. The raw clip crosses the public repo Fernet-encrypted (`FLOW_ASSET_KEY`, Coolify + Actions secret) and its release asset is deleted at collect. `shorts/STUDIO.md` §3.9.
 - **Comments, the Diario and the FB/IG metrics are Hermes's too, since 2026-11-14:** the
   "Community — BigLobster" job and its `social_inbox` tool (`plugins/social/`,
   `BIGLOBSTER_SETUP.md`). Replies are drafts until `SOCIAL_REPLY_MODE=live`; comment text is
