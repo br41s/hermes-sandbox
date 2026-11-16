@@ -128,8 +128,8 @@ def _now() -> str:
 def _rclone(args: list[str]) -> str:
     cmd = ["rclone", "--config", rclone_config(), *args]
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=600, check=False)
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise FlowError(f"rclone {args[0]} failed: {exc}") from exc
     if done.returncode != 0:
@@ -166,8 +166,8 @@ def _read_text(carpeta: str, path: str) -> Optional[str]:
     """One small file's text; None when it is not there (a folder may still be uploading)."""
     cmd = ["rclone", "--config", rclone_config(), "cat", f"{drive_remote()}/{carpeta}/{path}"]
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=600, check=False)
+        done = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.warning("rclone cat %s/%s: %s", carpeta, path, exc)
         return None
@@ -235,9 +235,17 @@ def _discover(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             shutil.rmtree(_root() / name, ignore_errors=True)
             report["failed"].append({"carpeta": name, "error": entry["error"]})
             continue
-        entry.update(seconds=round(float(seconds), 1), pack=_read_text(name, "prompts.md") or "")
+        pack_text = _read_text(name, "prompts.md") or ""
+        entry.update(seconds=round(float(seconds), 1), pack=pack_text)
         ledger[name] = entry
         _save(ledger)
+        try:
+            # The owner edits the pack in Drive while he films: what he changed is the lesson.
+            from plugins.shorts import flow_packs
+
+            flow_packs.record_lesson(name, pack_text)
+        except Exception:
+            logger.exception("flow: could not record the owner's edits for %s", name)
 
 
 def _drop_asset(entry: dict[str, Any]) -> None:
@@ -614,9 +622,15 @@ def render(carpeta: str, article_url: str, cover_title: str, cover_kicker: str =
     except (TypeError, ValueError) as exc:
         raise FlowError(f"FLOW_ASSET_KEY is not a usable Fernet key: {exc}") from exc
     asset = github_studio.upload_flow_input(data, f"{request_id}.bin")
+    from plugins.shorts import flow_packs
+
+    pack = flow_packs.parse(str(entry.get("pack") or ""))
     pkg = {"format": "flow", "lang": entry.get("lang"), "article_url": url,
            "cover": {"title": title, "kicker": kicker, "frame_s": frame_s},
-           "footage": {"url": asset["url"], "encrypted": True}}
+           "footage": {"url": asset["url"], "encrypted": True},
+           # The pack's on-screen captions and how many clips he must have filmed; the
+           # renderer uses them to check the takes and to place the rótulos.
+           "overlays": pack["overlays"], "expected_clips": len(pack["clips"]) or None}
     try:
         details = github_studio.dispatch(request_id, pkg)
     except Exception as exc:  # health: allow BLE001 -- any dispatch failure must still delete the asset

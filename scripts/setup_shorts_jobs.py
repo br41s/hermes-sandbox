@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create (or re-point) the three BigLobster Shorts cron jobs. Idempotent.
+"""Create (or re-point) the BigLobster Shorts cron jobs. Idempotent.
 
     .venv/bin/python3 scripts/setup_shorts_jobs.py --dry-run
     .venv/bin/python3 scripts/setup_shorts_jobs.py
@@ -7,7 +7,7 @@
 Run as `hermes`, never root (root flips jobs.json ownership), from the
 hermes-sandbox clone (prompt_source paths resolve against it).
 
-All three jobs are deliberately created in the default store (no `-p`) and WITHOUT
+All the jobs are deliberately created in the default store (no `-p`) and WITHOUT
 `workdir`:
 
 * they run in the default profile, whose process env carries the studio and
@@ -28,6 +28,10 @@ The Flow job is the third one: it reads the owner's Google Drive
 to Drive for review. It runs hourly from 08 to 23 in the Hermes timezone, and
 it never waits on a render either: each run moves every Drive folder one step
 forward.
+
+The Flow Guionista writes the script pack Brais films, once a day, into the same
+Drive folder (`Flow/<carpeta>/prompts.md`); `plugins/shorts/flow_packs.py`
+validates it. It is the only job here pinned to its own model (JOBS "model").
 """
 
 from __future__ import annotations
@@ -60,6 +64,16 @@ JOBS = [
         "flag": "flow",
         "default_schedule": "5 8-23 * * *",
     },
+    {
+        # Writes the script packs Brais films in Flow. A creative job, so it is
+        # pinned to a stronger model than the fleet default; Claude, GPT and
+        # Gemini answer 403 on this OpenRouter account (checked 2026-11-16).
+        "name": "Flow Guionista — BigLobster",
+        "prompt_source": "shorts/biglobster-flow-guionista.prompt",
+        "flag": "guionista",
+        "default_schedule": "30 9 * * *",
+        "model": "moonshotai/kimi-k3.1-pro",
+    },
 ]
 
 
@@ -68,8 +82,9 @@ def main() -> int:
     parser.add_argument("--producer-schedule", default=JOBS[0]["default_schedule"])
     parser.add_argument("--publisher-schedule", default=JOBS[1]["default_schedule"])
     parser.add_argument("--flow-schedule", default=JOBS[2]["default_schedule"])
+    parser.add_argument("--guionista-schedule", default=JOBS[3]["default_schedule"])
     parser.add_argument("--deliver", default="telegram")
-    parser.add_argument("--model", default=None, help="Optional model override for all three jobs")
+    parser.add_argument("--model", default=None, help="Optional model override for every job")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -84,7 +99,7 @@ def main() -> int:
 
     existing = {j.get("name"): j for j in list_jobs(include_disabled=True)}
     schedules = {"producer": args.producer_schedule, "publisher": args.publisher_schedule,
-                 "flow": args.flow_schedule}
+                 "flow": args.flow_schedule, "guionista": args.guionista_schedule}
     for spec in JOBS:
         prompt = (REPO_ROOT / spec["prompt_source"]).read_text(encoding="utf-8-sig")
         schedule = schedules[spec["flag"]]
@@ -103,7 +118,7 @@ def main() -> int:
             schedule=schedule,
             name=spec["name"],
             deliver=args.deliver,
-            model=args.model,
+            model=args.model or spec.get("model"),
             enabled_toolsets=["shorts"],
             prompt_source=spec["prompt_source"],
         )

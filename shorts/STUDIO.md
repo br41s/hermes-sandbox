@@ -658,9 +658,50 @@ still fail the render, because those are the farm's.
 The rclone remote's root folder is the one holding `HermesBackups/`; `Flow/` is
 created next to it.
 
+**On-screen captions (2026-11-16).** A pack's `## Rótulos` table (clip, arriba/abajo,
+delay, text) reaches the renderer as `overlays`, with `expected_clips` from the pack.
+The renderer finds the cuts between the Flow takes with ffmpeg's scene detection
+(thresholds 0.35, 0.25, 0.45) and shows each caption over its clip, as a cream card
+above the karaoke or below the brand mark. When the number of takes does not match
+the pack's clips, or detection fails, the short renders **without** captions and the
+preview says so. A pack in the old free-form format has no table, so no captions.
+
 **Not in v1:** re-rendering after a subtitle fix (the captions come from the
 footage and are burned in, so a fix means a new render by hand) and 16:9
 episodes (the Flow format is vertical).
+
+### 3.10 The Flow Guionista: script packs written in Hermes (2026-11-16)
+
+**Why.** The Buzz Guionista's packs needed heavy rewrites, and from 2026-11-11 they
+mixed Galician and Portuguese into the Spanish: the bot's own memory file had drifted
+and it re-read it every heartbeat. Most of its 17 KB prompt was process, not craft.
+
+**How it works.** The job "Flow Guionista — BigLobster" (default store, `shorts`
+toolset, daily 09:30 Bangkok, pinned to `moonshotai/kimi-k3.1-pro` because Claude,
+GPT and Gemini answer 403 on this OpenRouter account) writes at most one pack per run:
+
+1. `flow_pack_next`: the language whose last pack is oldest (`FLOW_PACK_LANGS`,
+   default `es,en`), the newest article of that feed without a pack or a short, its
+   text, the fixed `voice_line`, and the owner's last 5 edits as lessons. `blocked`
+   while `FLOW_PACKS_WAITING_MAX` (3) packs wait for him to film.
+2. `flow_pack_write`: `plugins/shorts/flow_packs.py` validates the pack and writes it to
+   `Flow/<carpeta>/prompts.md`. The craft lives in the prompt
+   (`shorts/biglobster-flow-guionista.prompt`); the hard rules live in the validator:
+   4-6 clips of 3-10 s and 45 s at most; Lucía and Martín named in every clip after
+   clip 0 with the voice line verbatim ("…they speak Spain Spanish with a light Galician
+   accent", or English); spoken lines of 3-30 words in the short's language; prompts in
+   English ending "No music, no subtitles, no text on screen."; 3 or more Galician or
+   Portuguese marker words anywhere outside the prompts refuse the pack; the sections
+   and the Rótulos table the renderer reads.
+
+**Review.** The first `FLOW_PACK_REVIEW_FIRST` (3) packs stay in
+`workspace/shorts/flow/packs/` in state `review`. A human reads (and may edit) the
+stored file, then runs `flow_packs.release(carpeta)` in the pod, which validates it
+again and uploads it.
+
+**Lessons.** When a folder gets its video, the inbox diffs the pack as written with the
+`prompts.md` the owner filmed from and keeps it in `packs/lessons/<carpeta>.diff`
+(`flow_packs.record_lesson`). `flow_pack_next` hands the newest five to the writer.
 
 ## 4. Avatars (Google Flow: Martín, Lucía)
 

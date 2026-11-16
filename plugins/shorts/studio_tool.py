@@ -64,7 +64,10 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
         "waits for his `publica <carpeta>`, and what was published. "
         "flow_render: send one new folder's footage, encrypted, to the renderer with the cover you chose. "
         "flow_texts: write the YouTube texts and the one-line network copies of a rendered folder, then "
-        "hand it to the owner for review."
+        "hand it to the owner for review. "
+        "flow_pack_next: the next article to script for the owner's Flow shorts, its text, the fixed "
+        "voice line and the owner's recent edits as lessons; or why not now. "
+        "flow_pack_write: validates a pack and writes it to the owner's Drive, or holds it for review."
     ),
     "parameters": {
         "type": "object",
@@ -73,7 +76,7 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "enum": ["posts", "article", "ledger", "submit", "status", "publish",
                          "handoff", "avatars", "avatar_upload", "mark", "series", "performance",
-                         "flow", "flow_render", "flow_texts"],
+                         "flow", "flow_render", "flow_texts", "flow_pack_next", "flow_pack_write"],
             },
             "lang": {"type": "string", "enum": ["en", "es"],
                      "description": "posts: which blog feed to read. avatars/avatar_upload: the clip's language."},
@@ -100,7 +103,8 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
             "state": {"type": "string", "enum": ["published", "skipped"], "description": "mark: final state."},
             "note": {"type": "string", "description": "mark: one line on why."},
             "carpeta": {"type": "string",
-                        "description": "flow_render/flow_texts: the Drive folder name, as `flow` listed it."},
+                        "description": "flow_render/flow_texts/flow_pack_write: the Drive folder name, "
+                                       "as `flow` listed it (flow_pack_next suggests the next one)."},
             "article_url": {"type": "string",
                             "description": "flow_render: the biglobster.top article the pack is about "
                                            "(its `Artículo:` line)."},
@@ -119,6 +123,8 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
                 "description": "flow_texts: {titulo, descripcion, etiquetas[], redes{instagram, facebook, "
                                "x}} — the same fields as #publicar-short; each redes text one line.",
             },
+            "markdown": {"type": "string",
+                         "description": "flow_pack_write: the whole pack, in the format the guide shows."},
         },
         "required": ["action"],
     },
@@ -824,6 +830,29 @@ def _action_flow_texts(args: dict[str, Any]) -> str:
         return _fail(f"flow_texts: {exc}")
 
 
+def _action_flow_pack_next(args: dict[str, Any]) -> str:
+    from plugins.shorts import flow_inbox, flow_packs, github_studio, series
+
+    if not flow_inbox.configured():
+        return _fail("flow: not configured (FLOW_ASSET_KEY, SHORTS_STUDIO_GITHUB_TOKEN, rclone)")
+    try:
+        return _ok(**flow_packs.next_pack())
+    except (flow_inbox.FlowError, series.SeriesError, github_studio.StudioError) as exc:
+        return _fail(f"flow_pack_next: {exc}")
+
+
+def _action_flow_pack_write(args: dict[str, Any]) -> str:
+    from plugins.shorts import flow_inbox, flow_packs, github_studio, series
+
+    if not flow_inbox.configured():
+        return _fail("flow: not configured (FLOW_ASSET_KEY, SHORTS_STUDIO_GITHUB_TOKEN, rclone)")
+    try:
+        return _ok(**flow_packs.write((args.get("carpeta") or "").strip(),
+                                      str(args.get("markdown") or "")))
+    except (flow_inbox.FlowError, series.SeriesError, github_studio.StudioError) as exc:
+        return _fail(f"flow_pack_write: {exc}")
+
+
 _ACTIONS = {
     "posts": _action_posts,
     "article": _action_article,
@@ -840,6 +869,8 @@ _ACTIONS = {
     "flow": _action_flow,
     "flow_render": _action_flow_render,
     "flow_texts": _action_flow_texts,
+    "flow_pack_next": _action_flow_pack_next,
+    "flow_pack_write": _action_flow_pack_write,
 }
 
 

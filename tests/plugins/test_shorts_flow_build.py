@@ -39,6 +39,55 @@ def test_flow_sample_is_valid(sample):
     assert pkg["cover"] == {"title": "Sales en Google Maps o no existes", "kicker": "SEO local", "frame_s": 2.5}
     assert pkg["footage"] == {"path": "footage.mp4"}
     assert pkg["brand"] == "biglobster"
+    assert pkg["expected_clips"] == 2
+    assert pkg["overlays"] == [
+        {"clip": 0, "position": "top", "delay_s": 0.0, "text": "¿Tu tienda vacía?"},
+        {"clip": 0, "position": "bottom", "delay_s": 1.0, "text": "Atrae más clientes hoy"},
+        {"clip": 1, "position": "top", "delay_s": 0.5, "text": "Perfil al 40 % = no sales"},
+    ]
+
+
+def test_validate_defaults_the_new_optional_fields(sample):
+    sample.pop("overlays")
+    sample.pop("expected_clips")
+    pkg = flow_mod.validate(sample)
+    assert pkg["overlays"] == [] and pkg["expected_clips"] is None
+
+
+@pytest.mark.parametrize(
+    "overlay, expected",
+    [
+        ({"clip": 0, "position": "middle", "delay_s": 0, "text": "x"}, "overlays[0].position"),
+        ({"clip": 0, "position": "top", "delay_s": 0, "text": "x" * 41}, "overlays[0].text"),
+        ({"clip": 0, "position": "top", "delay_s": 6, "text": "x"}, "overlays[0].delay_s"),
+        ({"clip": -1, "position": "top", "delay_s": 0, "text": "x"}, "overlays[0].clip"),
+    ],
+)
+def test_validate_rejects_a_bad_overlay(sample, overlay, expected):
+    sample["overlays"] = [overlay]
+    with pytest.raises(BuildError) as excinfo:
+        flow_mod.validate(sample)
+    assert expected in str(excinfo.value)
+
+
+def test_validate_reports_every_bad_overlay_together(sample):
+    sample["overlays"] = [
+        {"clip": -1, "position": "middle", "delay_s": 6, "text": "x" * 41},
+        *[{"clip": i, "position": "top", "delay_s": 0, "text": f"t{i}"} for i in range(12)],
+    ]
+    with pytest.raises(BuildError) as excinfo:
+        flow_mod.validate(sample)
+    message = str(excinfo.value)
+    assert "overlays: max 12, got 13" in message
+    assert "overlays[0].clip" in message and "overlays[0].position" in message
+    assert "overlays[0].delay_s" in message and "overlays[0].text" in message
+
+
+def test_validate_rejects_nine_expected_clips(sample):
+    sample["expected_clips"] = 9
+    with pytest.raises(BuildError) as excinfo:
+        flow_mod.validate(sample)
+    assert "expected_clips" in str(excinfo.value)
 
 
 def test_validate_rejects_article_url_on_another_host(sample):
@@ -230,6 +279,82 @@ def test_footage_floor_keeps_the_outro_over_the_qa_minimum():
 
 
 # ---------------------------------------------------------------------------
+# clip boundaries and overlays
+# ---------------------------------------------------------------------------
+
+SHOWINFO = """
+[Parsed_showinfo_1 @ 0x7f8a] n:0 pts:121 pts_time:4.04 duration:1 pos:1 fmt:yuv420p
+frame=   15 fps=0.0 q=-0.0 size=N/A time=00:00:04.04 bitrate=N/A speed=1.2x
+[Parsed_showinfo_1 @ 0x7f8a] n:1 pts:126 pts_time:4.2 duration:1 pos:2 fmt:yuv420p
+[Parsed_showinfo_1 @ 0x7f8a] n:2 pts:285 pts_time:9.5 duration:1 pos:3 fmt:yuv420p
+[Parsed_showinfo_1 @ 0x7f8a] n:3 pts:N/A pts_time:N/A duration:N/A pos:4 fmt:yuv420p
+"""
+
+
+def test_parse_scene_cuts_drops_the_cut_half_a_second_apart():
+    assert flow_mod.parse_scene_cuts(SHOWINFO) == [4.04, 9.5]
+
+
+def test_parse_scene_cuts_without_cuts_is_empty():
+    assert flow_mod.parse_scene_cuts("frame=  1 fps=0.0 q=0.0 size=N/A") == []
+
+
+def test_segments_close_the_last_clip_at_the_footage_end():
+    assert flow_mod.segments([4.0, 9.5], 15.0) == [(0, 4.0), (4.0, 9.5), (9.5, 15.0)]
+    assert flow_mod.segments([], 12.0) == [(0, 12.0)]
+
+
+def test_clip_segments_retries_until_the_expected_count(tmp_path, monkeypatch):
+    calls = []
+    cuts = {0.35: [1.0, 2.0], 0.25: [1.0, 2.0, 3.0]}
+
+    def fake_detect(path, threshold):
+        calls.append(threshold)
+        return cuts[threshold]
+
+    monkeypatch.setattr(flow_mod, "detect_cuts", fake_detect)
+    segs, warning = flow_mod.clip_segments(tmp_path / "footage.mp4", 10.0, 4)
+    assert calls == [0.35, 0.25]
+    assert warning is None
+    assert segs == [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, 10.0)]
+
+
+def test_clip_segments_without_expectation_keeps_the_default_threshold(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_detect(path, threshold):
+        calls.append(threshold)
+        return [5.0]
+
+    monkeypatch.setattr(flow_mod, "detect_cuts", fake_detect)
+    segs, warning = flow_mod.clip_segments(tmp_path / "footage.mp4", 10.0, None)
+    assert calls == [0.35]
+    assert warning is None
+    assert segs == [(0.0, 5.0), (5.0, 10.0)]
+
+
+def test_clip_segments_warns_with_both_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(flow_mod, "detect_cuts", lambda path, threshold: [5.0])
+    segs, warning = flow_mod.clip_segments(tmp_path / "footage.mp4", 10.0, 4)
+    assert segs is None
+    assert warning == "rótulos sin poner: el vídeo tiene 2 tomas y el pack 4 clips"
+
+
+def test_overlay_frames_place_captions_over_their_clip_at_thirty_fps():
+    segs = [(0.0, 4.0), (4.0, 9.5)]
+    overlays = [
+        {"clip": 0, "position": "top", "delay_s": 0.5, "text": "uno"},
+        {"clip": 1, "position": "bottom", "delay_s": 0.0, "text": "dos"},
+        {"clip": 5, "position": "top", "delay_s": 0.0, "text": "fuera"},
+        {"clip": 0, "position": "bottom", "delay_s": 3.5, "text": "corta"},
+    ]
+    assert flow_mod.overlay_frames(overlays, segs, 30) == [
+        {"text": "uno", "position": "top", "fromFrame": 15, "durationInFrames": 105},
+        {"text": "dos", "position": "bottom", "fromFrame": 120, "durationInFrames": 165},
+    ]
+
+
+# ---------------------------------------------------------------------------
 # footage_findings_to_warnings
 # ---------------------------------------------------------------------------
 
@@ -315,3 +440,12 @@ def test_build_dispatches_the_flow_format(tmp_path, monkeypatch):
     assert calls["package_path"] == package
     assert calls["raw"] == {"format": "flow", "lang": "es"}
     assert calls["offline"] is False
+
+
+def test_a_failed_scene_detection_skips_the_captions_not_the_render(monkeypatch):
+    def broken(path, threshold):
+        raise flow_mod.media.MediaError("scene cuts failed: boom")
+
+    monkeypatch.setattr(flow_mod, "detect_cuts", broken)
+    segs, warning = flow_mod.clip_segments(Path("x.mp4"), 20.0, 4)
+    assert segs is None and warning.startswith("rótulos sin poner: no se pudieron detectar las tomas")

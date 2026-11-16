@@ -22,6 +22,34 @@ const OutroFade: React.FC<{outroFrames: number; articleUrl: string; pal: Palette
   );
 };
 
+const Caption: React.FC<{text: string; position: 'top' | 'bottom'; pal: Palette; durationInFrames: number}> = ({text, position, pal, durationInFrames}) => {
+  const frame = useCurrentFrame();
+  const enter = interpolate(frame, [0, 8], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const exit = interpolate(frame, [durationInFrames - 6, durationInFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const rise = interpolate(frame, [0, 8], [30, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const anchor = position === 'top' ? {top: SAFE.top + 110} : {bottom: 1920 - SAFE.bottom + 430};
+  return (
+    <div style={{position: 'absolute', left: SAFE.left, right: 1080 - SAFE.right + 20, ...anchor}}>
+      <div style={{
+        display: 'inline-block',
+        maxWidth: '100%',
+        background: pal.card,
+        color: pal.text,
+        fontFamily: FONT,
+        fontWeight: 850,
+        fontSize: text.length > 24 ? 52 : 62,
+        lineHeight: 1.1,
+        padding: '18px 28px',
+        borderRadius: 18,
+        borderLeft: `10px solid ${pal.accent}`,
+        boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+        opacity: enter * exit,
+        transform: `translateY(${rise}px)`,
+      }}>{text}</div>
+    </div>
+  );
+};
+
 export const Flow: React.FC<FlowProps> = (props) => {
   const pal = palette('brand');
   return (
@@ -33,6 +61,11 @@ export const Flow: React.FC<FlowProps> = (props) => {
           <div style={{fontFamily: FONT, fontWeight: 850, fontSize: 32, letterSpacing: 6, color: '#FFFFFF', textTransform: 'uppercase', textShadow: '0 3px 14px rgba(0,0,0,0.7)'}}>{props.brand.name}</div>
         </div>
       </Sequence>
+      {props.overlays.map((o, i) => (
+        <Sequence key={`${o.fromFrame}-${i}`} from={o.fromFrame} durationInFrames={o.durationInFrames} name="caption">
+          <Caption text={o.text} position={o.position} pal={pal} durationInFrames={o.durationInFrames} />
+        </Sequence>
+      ))}
       <Karaoke words={props.words} pal={pal} />
       <Sequence from={props.outroFrom} durationInFrames={props.outroFrames} name="outro">
         <OutroFade outroFrames={props.outroFrames} articleUrl={props.articleUrl} pal={pal} lang={props.lang} brand={props.brand} />

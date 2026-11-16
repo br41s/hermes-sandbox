@@ -89,4 +89,6 @@ export type FlowProps = {
   words: Word[];
   articleUrl: string;
   brand: {name: string; site: string};
+  /** On-screen captions from the pack, placed over their clip. */
+  overlays: {text: string; position: 'top' | 'bottom'; fromFrame: number; durationInFrames: number}[];
 };
