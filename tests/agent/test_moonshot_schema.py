@@ -397,3 +397,33 @@ class TestUnionTypeList:
         assert sort["type"] == "string"
         assert sort["enum"] == ["asc", "desc"]
         assert params["properties"]["sort"]["type"] == ["string", "null"]
+
+
+class TestFreeFormObjects:
+    """tool_call's ``arguments`` is an object with no properties. With only the
+    ``required: []`` rule 4 adds, kimi read it as the empty object and sent ``{}``
+    (production loop, 2026-11-16); marking it open fixed it."""
+
+    def test_property_less_object_is_marked_open(self):
+        params = {"type": "object", "properties": {"calls": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"name": {"type": "string"},
+                           "arguments": {"type": "object", "description": "Arguments matching the tool schema."}},
+            "required": ["name", "arguments"]}}}, "required": ["calls"]}
+        out = sanitize_moonshot_tool_parameters(params)
+        arguments = out["properties"]["calls"]["items"]["properties"]["arguments"]
+        assert arguments["additionalProperties"] is True
+        assert arguments["required"] == []
+
+    def test_object_with_properties_is_left_closed_as_written(self):
+        out = sanitize_moonshot_tool_parameters({"type": "object", "properties": {"a": {"type": "string"}}})
+        assert "additionalProperties" not in out
+
+    def test_an_explicit_additional_properties_is_kept(self):
+        out = sanitize_moonshot_tool_parameters({"type": "object", "properties": {
+            "o": {"type": "object", "additionalProperties": False}}})
+        assert out["properties"]["o"]["additionalProperties"] is False
+
+    def test_top_level_parameters_are_never_opened(self):
+        out = sanitize_moonshot_tool_parameters({"type": "object"})
+        assert "additionalProperties" not in out

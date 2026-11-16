@@ -82,6 +82,14 @@ def _repair_schema(node: Any) -> Any:
     # Rule 4.
     if repaired.get("type") == "object":
         repaired = _ensure_required_array(repaired)
+        # A free-form object (no properties, e.g. tool_call's ``arguments``) plus the
+        # ``required: []`` above reads as "the empty object": kimi-k3 sent ``{}`` 3/3 times
+        # through tool_call, kimi-k3.1-pro looped 13 calls in production (2026-11-16).
+        # Saying it is open restored the arguments 6/6.
+        # Only a schema that declares no ``properties`` at all: ``properties: {}`` is a
+        # tool that takes no arguments, and stays closed.
+        if "properties" not in repaired and "additionalProperties" not in repaired:
+            repaired["additionalProperties"] = True
 
     return repaired
 
@@ -137,6 +145,9 @@ def sanitize_moonshot_tool_parameters(parameters: Any) -> dict[str, Any]:
     repaired = _repair_schema(copy.deepcopy(parameters))
     if not isinstance(repaired, dict):
         return _empty_object_schema()
+    # The tool's own parameters stay as written: only nested free-form objects open up.
+    if "additionalProperties" not in parameters:
+        repaired.pop("additionalProperties", None)
     # Top-level must be an object schema.
     repaired["type"] = "object"
     repaired.setdefault("properties", {})
