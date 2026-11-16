@@ -354,7 +354,7 @@ const Bubble: React.FC<{loop?: string | null; loopFrames: number; photo?: string
 };
 
 /** The close, the same in every short: the full article on the site, then follow us. */
-const OutroCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'; brand: {name: string; site: string}}> = ({beat, pal, lang, brand}) => {
+export const OutroCard: React.FC<{beat: Beat; pal: Palette; lang: 'en' | 'es'; brand: {name: string; site: string}}> = ({beat, pal, lang, brand}) => {
   const frame = useCurrentFrame();
   const copy = COPY[lang];
   const bare = (beat.url ?? '').replace(/^https?:\/\//, '').replace(/\/$/, '');

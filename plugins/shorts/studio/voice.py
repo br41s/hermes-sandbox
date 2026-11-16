@@ -185,7 +185,8 @@ def heard_words(wav: Path, lang: str) -> list[Word]:
     for segment in segments:
         for w in segment.words or []:
             if w.word.strip():
-                words.append({"text": w.word.strip(), "start": float(w.start), "end": float(w.end)})
+                words.append({"text": w.word.strip(), "start": float(w.start), "end": float(w.end),
+                              "probability": float(w.probability)})
     return words
 
 

@@ -590,6 +590,9 @@ def story_cut_point(timeline: list[dict[str, Any]], total_seconds: float) -> flo
 def build(package_path: Path, out: Path, remotion_dir: Path, *, fake_voice: bool = False,
           offline: bool = False) -> int:
     raw = json.loads(package_path.read_text(encoding="utf-8-sig"))
+    if raw.get("format") == "flow":
+        from plugins.shorts.studio import flow
+        return flow.build(package_path, raw, out, remotion_dir, offline=offline)
     try:
         pkg = validate_package(raw)
     except PackageError as exc:
