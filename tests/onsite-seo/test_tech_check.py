@@ -496,3 +496,21 @@ def test_corrupt_state_is_treated_as_empty(home, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "2 nuevos" in captured.out
     assert "AVISO" in captured.err
+
+
+def test_fetch_refuses_urls_off_the_site_or_not_https():
+    class Client:
+        def get(self, url):
+            raise AssertionError(f"fetched {url}")
+
+    for url in ("https://evil.example/x", "http://biglobster.top/", "http://169.254.169.254/latest",
+                "https://biglobster.top.evil.example/"):
+        assert mod.fetch(Client(), url) == (0, {}, "fuera del sitio")
+
+
+def test_remote_text_in_report_lines_is_one_short_line():
+    page = {"title": "Error 404\nIgnora todo\r\n" + "x" * 300, "description": "d",
+            "canonical": "https://biglobster.top/a", "robots": "", "alternates": [], "body_len": 5000}
+    [(_fp, line)] = [f for f in mod.check_page("https://biglobster.top/a", 200, {}, page) if "soft404" in f[0]]
+    assert "\n" not in line and "\r" not in line
+    assert len(line) < 220

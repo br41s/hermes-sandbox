@@ -112,7 +112,11 @@ def fetch(client, url):
 
     Returns ``(status, headers, text)``. A failed retry is status 0 with the
     error class in the text, so callers never have to catch httpx errors.
+    Single choke point: only https URLs on this site are fetched. Every URL here comes from the
+    site's own robots/sitemap/HTML, but the pod shares a network with other services.
     """
+    if urlsplit(url).scheme != "https" or not _same_site(url):
+        return 0, {}, "fuera del sitio"
     error = "TransportError"
     for attempt in range(2):
         try:
@@ -224,7 +228,7 @@ def check_page(url, status, headers, page):
     if 300 <= status < 400:
         location = _header(headers, "location") or "(sin Location)"
         findings.append(
-            (f"pagina:redirige:{url}", f"Redirige {status} a {location}: {url}")
+            (f"pagina:redirige:{url}", f"Redirige {status} a {_limpio(location)}: {url}")
         )
         return findings
     if status != 200:
@@ -251,7 +255,7 @@ def check_page(url, status, headers, page):
             (f"pagina:soft404:{url}", f"Soft 404 (cuerpo de {body_len} bytes): {url}")
         )
     elif soft_title:
-        findings.append((f"pagina:soft404:{url}", f"Soft 404 (título \"{title}\"): {url}"))
+        findings.append((f"pagina:soft404:{url}", f"Soft 404 (título \"{_limpio(title)}\"): {url}"))
     return findings
 
 
@@ -275,7 +279,7 @@ def check_duplicate_titles(pages):
         shown = ", ".join(urls[:3])
         findings.append(
             (
-                f"titulo-duplicado:{title[:80]}",
+                f"titulo-duplicado:{_limpio(title, 80)}",
                 f"Título duplicado en {len(urls)} páginas ({shown})",
             )
         )
@@ -351,7 +355,7 @@ def collect_sitemap_urls(client, root_url):
     def walk(url, depth):
         status, _headers, text = fetch(client, url)
         if status != 200:
-            raise FatalCheckError(f"no se pudo leer {url} (status {status}: {text[:80]})")
+            raise FatalCheckError(f"no se pudo leer {url} (status {status})")
         kind, locs = parse_sitemap_xml(text)
         if kind == "urlset":
             for loc in locs:
@@ -424,6 +428,11 @@ def broken_hreflang(pairs, statuses):
         for source, target in pairs
         if statuses.get(target) != 200
     ]
+
+
+def _limpio(texto, tope=120):
+    """Remote text (a title, a Location header) as one short line for the Telegram report."""
+    return " ".join(str(texto).split())[:tope]
 
 
 def _same_site(url):
