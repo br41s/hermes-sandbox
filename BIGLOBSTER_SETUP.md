@@ -895,3 +895,35 @@ One-time setup:
 4. As `hermes`: `hermes -p team cron create "0 7-22 * * *" --no-agent --script
    prospector_inbox.sh --deliver telegram --name "Prospector — bandeja"`, then
    `hermes -p team cron run <id>`. The first run reports the last 3 days.
+
+## SEO técnico — biglobster.top (weekly live check; since 2026-11-16)
+
+This keeps the two checks of the retired Buzz bot SEODesk that earned their keep, PageSpeed and technical health. It runs as a `no_agent` script, `onsite-seo/tech_check.py`, with no model.
+
+**What it checks, on the live site:**
+- every sitemap URL: status, redirects, soft 404, title, description, canonical, `noindex`;
+- duplicate titles;
+- hreflang coverage and broken targets;
+- robots.txt: Google, Bing, Apple and the AI crawlers must be allowed;
+- llms.txt links;
+- PageSpeed mobile for the home pages, the pricing pages and the heaviest page. It uses Google's "poor" thresholds and prefers field data.
+
+**What it reports:**
+- only what changed since last week: new findings in full, plus counts of the persisting and resolved ones;
+- nothing at all on a stable week;
+- state in `/opt/data/workspace/seo-tech/estado.json`.
+
+**Fixes stay with a developer** (owner or Claude Code). Its past findings (CLS from `lib/toc.mjs`, hreflang in a template, sitemap 404s) were site code, not content. Hermes's SEO agent works page by page and may not touch the sitemap or robots.
+
+- **Job:** "SEO técnico — biglobster.top"
+  - default store;
+  - `0 9 * * 1` (Mondays, Hermes timezone);
+  - script `seo_tech_check.sh`, which boot seeds into `/opt/data/scripts/` (`03-biglobster-config` §5g);
+  - delivers to the BigLobster topic (`telegram:-1004224848555:2`).
+- **Env (Coolify app):** `PSI_API_KEY`, for the PageSpeed Insights API (Google Cloud → enable "PageSpeed Insights API" → API key restricted to that API). Without it, the anonymous quota often answers 429. A 429 is reported as a note, never as a finding.
+
+One-time setup:
+
+1. Create the key and set `PSI_API_KEY` in Coolify. It is read from the service env, because the job is in the default store.
+2. Deploy.
+3. As `hermes`, run `hermes cron create "0 9 * * 1" --no-agent --script seo_tech_check.sh --deliver "telegram:-1004224848555:2" --name "SEO técnico — biglobster.top"`, then `hermes cron run <id>`. The first run lists every current finding as new.
