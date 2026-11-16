@@ -280,13 +280,13 @@ def _guardar_ledger(ruta: Path, ledger: dict) -> None:
     os.replace(tmp, ruta)
 
 
-def _clave(m: Message) -> str:
-    """Message-ID recortado o, si falta, sha256 de Date|From|Subject."""
+def _clave(m: Message, crudo: bytes) -> str:
+    """Message-ID recortado o, si falta, sha256 del mensaje entero: dos correos distintos con el
+    mismo Date/From/Subject (informes de entrega sin Message-ID) no deben colapsar en uno."""
     message_id = (m.get("Message-ID") or "").strip()
     if message_id:
         return message_id
-    material = "|".join(str(m.get(h, "")) for h in ("Date", "From", "Subject"))
-    return "sha256:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return "sha256:" + hashlib.sha256(crudo).hexdigest()
 
 
 def _extracto(cuerpo: str, tope: int) -> str:
@@ -360,13 +360,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             im.login(usuario, password)
             im.select("INBOX", readonly=True)
             _, ids = im.search(None, "SINCE", desde)
-            for i in ids[0].split():
+            # imaplib answers ("OK", [None]) when the server sends no untagged SEARCH/FETCH
+            # data, e.g. a message archived from another client between SEARCH and FETCH.
+            # Skip it: one vanished message must not stop the whole digest.
+            for i in (ids[0] or b"").split() if ids else []:
                 _, datos = im.fetch(i, "(BODY.PEEK[])")
+                if not datos or not isinstance(datos[0], tuple):
+                    continue
                 m = email.message_from_bytes(datos[0][1], policy=policy.default)
                 de = parseaddr(m.get("From", ""))[1].lower()
                 if de == usuario.lower():
                     continue
-                clave = _clave(m)
+                clave = _clave(m, datos[0][1])
                 if clave in vistos:
                     continue
                 rebote = rebote_de(m, nuestros)

@@ -148,7 +148,7 @@ def _leer(home, monkeypatch, capsys, correos, *,
     return rc, capturado.out, capturado.err, base
 
 
-class Rebotes:
+class TestRebotes:
     def test_rebote_permanente_de_un_correo_nuestro(self):
         r = inbox.rebote_de(rebote(), NUESTROS)
         assert r == {"para": "nadie@ejemplo.com", "accion": "failed", "estado": "5.1.1"}  # sin texto libre
@@ -191,7 +191,7 @@ class Rebotes:
         assert inbox.rebote_de(rebote(para="Nadie@Ejemplo.COM"), NUESTROS) is not None
 
 
-class Registro:
+class TestRegistro:
     def test_lineas_validas(self):
         r = registro("# nota\n\nfacebookmail.com | - | socialbot/facebook-avisos.md | grupos\n"
                      "google.com | SC-noreply@google.com | seo/avisos-gsc.md | Search Console\n"
@@ -224,7 +224,7 @@ class Registro:
         assert "facebookmail.com" in [x["dominio"] for x in r]
 
 
-class Avisos:
+class TestAvisos:
     def setup_method(self):
         self.reglas = registro("facebookmail.com | - | socialbot/facebook-avisos.md | grupos\n"
                                "google.com | sc-noreply@google.com | seo/avisos-gsc.md | Search Console\n")
@@ -266,7 +266,7 @@ class Avisos:
         assert self.aviso("cualquiera@gmail.com", auth("gmail.com")) is None
 
 
-class RegistroReal:
+class TestRegistroReal:
     """Los servicios activados el 10-10 con las cabeceras de sus correos reales
     (Gmail: dmarc=pass header.from=<dominio raíz>). Zernio se retiró el 14-11:
     sus correos ya no se derivan a nadie."""
@@ -291,7 +291,7 @@ class RegistroReal:
         assert inbox.aviso_de("hello@launchllama.co", [], self.reglas, set()) is None
 
 
-class LeerConocidos:
+class TestLeerConocidos:
     def test_rebote_permanente_va_a_no_contactar_aunque_cite_la_baja(self, home, monkeypatch, capsys):
         rc, out, _, base = _leer(home, monkeypatch, capsys, [rebote().as_bytes()])
         assert rc == 0
@@ -384,7 +384,7 @@ class LeerConocidos:
         assert (base / "no-contactar.txt").read_text(encoding="utf-8") == "nadie@ejemplo.com\n"
 
 
-class Bandeja:
+class TestBandeja:
     def test_a_second_run_with_the_same_mailbox_prints_nothing(self, home, monkeypatch, capsys):
         aviso = ("From: Facebook <notification@facebookmail.com>\nSubject: Nueva publicación\n"
                  "Authentication-Results: mx.google.com; dmarc=pass header.from=facebookmail.com\n\nTexto del grupo")
@@ -492,3 +492,40 @@ class Bandeja:
         assert "viejo" not in ledger["vistos"]
         assert "borde" in ledger["vistos"]
         assert "reciente" in ledger["vistos"]
+
+
+class BuzonSinDatos(BuzonFalso):
+    """imaplib's ("OK", [None]) answers: no untagged SEARCH, or a FETCH for a message that vanished."""
+
+    def __init__(self, correos, *, search_vacio=False, fetch_vacio=()):
+        super().__init__(correos)
+        self.search_vacio, self.fetch_vacio = search_vacio, set(fetch_vacio)
+
+    def search(self, *a):
+        return ("OK", [None]) if self.search_vacio else super().search(*a)
+
+    def fetch(self, i, _):
+        return ("OK", [None]) if int(i) in self.fetch_vacio else super().fetch(i, _)
+
+
+class TestRespuestasImapSinDatos:
+    def test_search_without_untagged_data_is_an_empty_inbox(self, home, monkeypatch, capsys):
+        base = _base(home)
+        _registro_csv(base)
+        _credenciales(monkeypatch)
+        monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", lambda *a, **k: BuzonSinDatos([], search_vacio=True))
+        assert inbox.main() == 0
+        assert capsys.readouterr().out == ""
+        assert (base / "bandeja-vista.json").exists()
+
+    def test_a_message_gone_before_fetch_is_skipped_and_the_rest_reported(self, home, monkeypatch, capsys):
+        correos = [b"From: Ido <ido@tienda.com>\nSubject: Ya no esta\n\nx",
+                   b"From: News <hola@otra.com>\nSubject: Sigue\n\nhola"]
+        base = _base(home)
+        _registro_csv(base)
+        _credenciales(monkeypatch)
+        monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", lambda *a, **k: BuzonSinDatos(correos, fetch_vacio={0}))
+        assert inbox.main() == 0
+        salida = capsys.readouterr().out
+        assert "otra.com" in salida
+        assert "tienda.com" not in salida
