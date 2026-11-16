@@ -30,6 +30,7 @@ Config (service env of the profile that runs the Flow job):
 from __future__ import annotations
 
 import calendar
+import contextlib
 import json
 import logging
 import os
@@ -44,6 +45,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from cryptography.fernet import Fernet
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl; the pod is Linux
+    fcntl = None
 
 from plugins.shorts import approval, github_studio, series
 from plugins.shorts._env import env
@@ -115,6 +121,30 @@ def _load() -> dict[str, Any]:
 
 def _save(ledger: dict[str, Any]) -> None:
     series._save(ledger, _ledger_path())
+
+
+@contextlib.contextmanager
+def _single_runner():
+    """One Flow step at a time, across processes.
+
+    The hourly job and the chat agent both call the tool: on 2026-11-16 the owner's
+    ``publica`` woke the chat agent, both runs read ``ready`` and the Short went to
+    Facebook twice. The loser is told to come back, never left waiting.
+    """
+    if fcntl is None:
+        yield
+        return
+    path = _root() / ".lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise FlowError("another Flow run is working on the folders; try again in a few minutes") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _now() -> str:
@@ -556,6 +586,7 @@ def _advance_entry(carpeta: str, entry: dict[str, Any], ledger: dict[str, Any],
         handler(carpeta, entry, ledger, report)
 
 
+@_single_runner()
 def advance() -> dict[str, Any]:
     """Move every Flow folder one step forward.
 
@@ -585,6 +616,7 @@ def advance() -> dict[str, Any]:
 # The agent's two steps: the cover, then the texts
 # ---------------------------------------------------------------------------
 
+@_single_runner()
 def render(carpeta: str, article_url: str, cover_title: str, cover_kicker: str = "",
            cover_frame_s: float = 2.5) -> dict[str, Any]:
     """Send a ``new`` folder's footage, encrypted, to the renderer with the cover the agent chose."""
@@ -648,6 +680,7 @@ def render(carpeta: str, article_url: str, cover_title: str, cover_kicker: str =
     return {"carpeta": carpeta, "request_id": request_id, "state": "rendering"}
 
 
+@_single_runner()
 def texts(carpeta: str, metadata: dict[str, Any]) -> dict[str, Any]:
     """Validate the agent's texts, write them to Drive for the owner to review, and wait for ``publica``."""
     ledger = _load()

@@ -614,6 +614,13 @@ user message the owner's. A message in a topic bound to another profile (Team)
 lands in that profile's `state.db` and does **not** count. Limitation, stated
 plainly: anyone the group allowlist admits can approve.
 
+**One Flow step at a time.** The `publica` message also wakes the chat agent in
+that thread, which may call `shorts_studio flow` itself while the hourly job is
+running. `advance`, `render` and `texts` take an exclusive `flock` on
+`workspace/shorts/flow/.lock`; a second caller gets "another Flow run is working"
+and does nothing. Without it, both runs read `ready` and on 2026-11-16 the
+Short went to Facebook twice.
+
 **Transit.** The repo is public, so the raw clip never crosses it in the clear: it
 goes to the runner as a **Fernet-encrypted release asset** (tag
 `shorts-flow-inputs`), and the asset is deleted when the render is collected, pass
