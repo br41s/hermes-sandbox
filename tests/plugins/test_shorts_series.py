@@ -1170,6 +1170,37 @@ def test_meta_instagram_publishes_a_container_that_finished_despite_the_400(tmp_
     assert "Instagram answered ProcessingFailedError but finished processing the upload" in result["warnings"]
 
 
+def test_meta_instagram_retries_when_the_status_read_after_the_400_fails(tmp_path, monkeypatch):
+    import httpx
+
+    from plugins.shorts.social import meta as meta_mod
+
+    _ig_env(monkeypatch)
+    _no_sleep(monkeypatch)
+    _ig_light_copy(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"abc")
+    client = _MetaFlakyClient([{"id": "c1"}, PROCESSING_FAILED, (500, {"error": {"message": "boom"}}),
+                               {"id": "c2"}, PROCESSING_FAILED, "transport",
+                               {"id": "c3"}, {"success": True}, {"status_code": "FINISHED"},
+                               {"id": "media1"}, {"permalink": "https://www.instagram.com/reel/m1/"}])
+    get = client.get
+
+    def flaky_get(url, **kw):
+        if client.script and client.script[0] == "transport":
+            client.script.pop(0)
+            raise httpx.ConnectError("connection reset")
+        return get(url, **kw)
+
+    monkeypatch.setattr(client, "get", flaky_get)
+    monkeypatch.setattr(meta_mod, "_client", lambda: client)
+
+    result = meta_mod.instagram(video, kind="reel", caption="Texto IG")
+
+    assert result["id"] == "media1"
+    assert [url.rsplit("/", 1)[-1] for url, _kw in client.calls if "/ig-api-upload/" in url] == ["c1", "c2", "c3"]
+
+
 def test_meta_instagram_warns_720p_when_the_light_copy_finished_despite_the_400(tmp_path, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 

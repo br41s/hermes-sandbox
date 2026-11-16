@@ -170,10 +170,20 @@ def _cover_url(client, cover: Path) -> Optional[str]:
 
 
 def _container_status(client, container_id: str) -> str:
-    """One status read, no polling: did Meta finish the container despite the 400?"""
-    info = _json(client.get(f"{graph()}/{container_id}",
-                            params={"fields": "status_code,status", "access_token": _token()}),
-                 "container status")
+    """One status read, no polling: did Meta finish the container despite the 400?
+
+    An unreadable status counts as "not finished", so the retry goes on: this read
+    must never turn a retryable upload failure into a fatal one.
+    """
+    import httpx
+
+    try:
+        info = _json(client.get(f"{graph()}/{container_id}",
+                                params={"fields": "status_code,status", "access_token": _token()}),
+                     "container status")
+    except (MetaError, httpx.HTTPError) as exc:
+        logger.warning("Instagram container %s status unreadable (%s); retrying the upload", container_id, exc)
+        return ""
     return info.get("status_code", "")
 
 
