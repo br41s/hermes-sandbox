@@ -429,6 +429,27 @@ def test_only_an_approval_after_the_short_was_ready_counts(env, drive, studio, p
     assert not (env / "workspace" / "shorts" / "flow" / CARPETA).exists()
 
 
+def test_a_second_run_while_one_is_publishing_is_turned_away(env, drive, studio, published, monkeypatch):
+    # 2026-11-16: the chat agent and the hourly job both ran flow on a ready Short.
+    _to_ready(env, drive, studio)
+    _messages(env, [(f"publica {CARPETA}", flow_inbox._load()[CARPETA]["ready_at"] + 10)])
+    seen = []
+    publish_files = series._publish_files
+
+    def publish_while_another_run_comes_in(*args, **kwargs):
+        with pytest.raises(flow_inbox.FlowError, match="another Flow run"):
+            flow_inbox.advance()
+        seen.append("turned away")
+        return publish_files(*args, **kwargs)
+
+    monkeypatch.setattr(series, "_publish_files", publish_while_another_run_comes_in)
+    report = flow_inbox.advance()
+    assert seen == ["turned away"]
+    assert [item["carpeta"] for item in report["published"]] == [CARPETA]
+    assert len(published) == 1
+    assert flow_inbox.advance()["published"] == []   # the lock is released afterwards
+
+
 def test_the_owners_edit_of_the_texts_is_what_gets_published(env, drive, studio, published):
     _to_ready(env, drive, studio)
     edited = {**TEXTOS, "titulo": "El título que el dueño prefirió en Drive"}
