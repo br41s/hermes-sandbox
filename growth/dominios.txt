@@ -1,0 +1,28 @@
+# Servicios cuyos correos a biglobstertop@gmail.com lee Prospector (growth/inbox.py).
+# Vive en el repo hermes-sandbox, en growth/dominios.txt, y se copia a la imagen. Los agentes no pueden
+# editarlo: si un agente pudiera añadir un dominio, uno que leyera una web hostil se daría acceso a sí
+# mismo. Los cambios van por PR.
+#
+#   dominio | remitente | destino | motivo
+#
+#   dominio    dominio del remitente; vale también un subdominio suyo. Solo se muestra el correo si Gmail certifica
+#              que viene de ese dominio (dmarc=pass con ese header.from). Un proveedor público (gmail.com,
+#              outlook.com...) no puede ir aquí sin remitente: DMARC pass de gmail.com no dice quién escribe.
+#   remitente  dirección exacta que vale, o `-` para todo el dominio. En dominios anchos (google.com) pon siempre
+#              la dirección: si no, entra cualquier correo de Google, alertas de seguridad de la cuenta incluidas.
+#   destino    se conserva por compatibilidad de formato; en v1 se ignora.
+#   motivo     para qué estamos dados de alta (texto libre).
+#
+# Además se ven solos los rebotes de lo que enviamos, las respuestas a nuestros correos y los correos de los
+# dominios de empresa a los que hemos escrito (correo-enviados.csv): no hace falta listarlos aquí.
+
+facebookmail.com | - | socialbot/facebook-avisos.md | avisos de los grupos de Facebook que Brais reenvía
+google.com | sc-noreply@google.com | seo/avisos-gsc.md | avisos de Search Console
+
+# Activos desde 2026-10-10, con correos reales de la bandeja (Gmail: dmarc=pass, header.from=zernio.com y launchllama.co).
+# Zernio retirado el 14-11: Hermes publica Facebook e Instagram por la API de Meta.
+launchllama.co | hello@launchllama.co | seo/avisos-directorios.md | ficha en Launch Llama (revisión, publicación, pedidos)
+
+# Propuesta: Brais abrió esta cuenta con Google. Se activa cuando se vea un correo real y se confirme el dominio que
+# de verdad lo envía (si no coincide, DMARC lo deja fuera sin avisar).
+# theresanaiforthat.com | - | seo/avisos-directorios.md | ficha en There's An AI For That

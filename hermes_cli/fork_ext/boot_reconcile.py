@@ -328,10 +328,24 @@ def rental_langfuse_pin(public_key: str, secret_key: str) -> dict:
 # line is stripped, never left stale.
 RENTAL_PASSTHROUGH = ("BL_SITE_AUTOMATION_KEY", "TYPESAFE_API_KEY")
 
+# Prospector's Gmail account, pinned into the `team` profile .env only; growth/inbox.py
+# reads them from that file. Unset in the service env means the lines are stripped.
+TEAM_GMAIL_KEYS = ("PROSPECTOR_GMAIL_USER", "PROSPECTOR_GMAIL_APP_PASSWORD")
+
 
 def pin_rental_passthrough(env_path: Path, home: Path, environ: Mapping[str, str]) -> None:
     """Write ``RENTAL_PASSTHROUGH``'s set keys into a rental .env; strip the unset ones."""
     values = {var: _resolve(home, environ, var) for var in RENTAL_PASSTHROUGH}
+    _pin_vars(env_path, {var: val for var, val in values.items() if val})
+    unset = [var for var, val in values.items() if not val]
+    if unset and env_path.exists():
+        current = env_path.read_text(encoding="utf-8-sig")
+        env_path.write_text(_strip_vars(current, unset), encoding="utf-8")
+
+
+def pin_team_gmail(env_path: Path, home: Path, environ: Mapping[str, str]) -> None:
+    """Write ``TEAM_GMAIL_KEYS``' set keys into the team .env; strip the unset ones."""
+    values = {var: _resolve(home, environ, var) for var in TEAM_GMAIL_KEYS}
     _pin_vars(env_path, {var: val for var, val in values.items() if val})
     unset = [var for var, val in values.items() if not val]
     if unset and env_path.exists():
@@ -397,6 +411,9 @@ def sync_envs(home: Path, environ: Mapping[str, str]) -> None:
         else:
             exclude, why = (), ""
         sync_env_file(prof_env, environ, exclude=exclude)
+        if prof.name == "team":
+            pin_team_gmail(prof_env, home, environ)
+            print(f"[03-biglobster] Pinned Prospector Gmail keys in {prof_env}")
         if is_rented_tenant(prof_env):
             # The exclude only stops FUTURE overwrites — a profile that already
             # picked up EXA_API_KEY/HUGGINGFACE_API_KEY from a boot before that
