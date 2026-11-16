@@ -61,7 +61,8 @@ render: the producer submits and exits, the publisher collects what finished.
 | `plugins/shorts/{ledger,github_studio}.py` | Ledger; dispatch/collect client |
 | `plugins/shorts/social/{youtube,meta}.py` | Publishers |
 | `shorts/biglobster-shorts-{producer,publisher}.prompt` | The two agents |
-| `scripts/setup_shorts_jobs.py` | Creates the two cron jobs |
+| `shorts/biglobster-flow-shorts.prompt` | The third agent: the owner's Flow folders from Drive (§3.9) |
+| `scripts/setup_shorts_jobs.py` | Creates the three cron jobs |
 | `scripts/youtube_oauth.py` | Mints the YouTube refresh token (run locally, once) |
 | `shorts/CHECKLIST.md` | The manual checklist, revised (Spanish) |
 
@@ -383,6 +384,7 @@ Setup, once:
   - It replies in the thread with the `youtube.com/shorts/` link, mentioning the sender, and hands the Short to SocialBot in the shorts channel with `buzz_share.post`, the same message as the blog Shorts: master, cover (JPEG only; the relay refuses PNG), YouTube link, and the `redes` texts, or the description where one is missing. There is no Story cut, so the message drops the Story and SocialBot posts the Reel, Facebook and X only.
   - Same ledger (`"kind": "short"`, keyed by the message id), same 3 attempts and "sender told once". A failed hand-off is retried without uploading again; a second message for a Flow folder already on YouTube is refused. A Short costs about 2,050 units (upload, captions, cover), so `SERIES_SHORTS_MAX_PER_DAY` (default 2) is its own cap, apart from `SERIES_MAX_PER_DAY`. With the blog shorts and one episode that adds up to more than the 10,000 daily units, so lower one of the caps when they all run.
   - Without `SHORTS_BUZZ_CHANNEL` the Short is still published and the reply says it was not handed to SocialBot.
+- **Flow shorts come from Drive since 2026-11-16 (§3.9).** The `#publicar-short` Buzz path stays in the code (the `series` run still understands it, for the SEODesk/VideoDesk keys), but it has no sender while the fleet is stopped.
 - **Shorts covers:** the Shorts shelf and tab show a frame YouTube picks, not the thumbnail set with `thumbnails.set` (that one only reaches search and the channel grid, and the Data API cannot set the shelf image). So every Short opens with its `Thumb` still for the first 15 frames (0.5 s, `COVER_FRAMES` in `remotion/src/Short.tsx`, under QA's 1 s freeze limit). It is the frame YouTube is most likely to pick and the one Brais chooses in Studio when it picks another.
 
 Setup, once:
@@ -568,6 +570,97 @@ short. Everything else is free. QA accepts the silence of Martín's turn
 Framing: `presenter.FACE_Y` is where each photo's face is (Martín's loop),
 and `SETTING_FACE_Y` where the setting prompt puts Lucía's; the zoom and the
 bubble centre on them.
+
+### 3.9 Flow shorts from Google Drive (2026-11-16)
+
+**Why.** VideoDesk finished the owner's Flow shorts by hand on his Mac — subtitles,
+logo, end card, cover — until the Buzz fleet stopped on 2026-11-15. This does the
+same steps in the render farm, and Hermes publishes them.
+
+**The owner's part.** One folder in Google Drive, `Flow/<carpeta>/`, next to
+`HermesBackups/`. `<carpeta>` is the Guionista pack folder name,
+`AAAA-MM-DD_<es|en>-<tema>`. Inside:
+
+| File | What it is |
+|---|---|
+| one `.mp4` | the Flow export: vertical, with audio, 8 to 60 s (footage plus the 4.5 s the outro adds must clear QA's 12 s floor). Two `.mp4` files and the run stops on that folder |
+| `prompts.md` | the Guionista pack. Its `Artículo:` line is the article the short is about |
+
+The cover phrase, the texts and the publishing are Hermes's.
+
+**The states.** `new → rendering → rendered → ready → publishing → published`, and
+`failed` after 3 render attempts or 3 publish attempts. The **tool** moves every
+state but two: the **agent** picks the cover phrase (`flow_render`) and writes the
+texts (`flow_texts`). Nothing waits on a render — each run of the job moves every
+Drive folder one step forward. A folder name is taken once: to retry a `failed`
+or published folder, upload it again under a new name.
+
+**Review.** When the render lands, `final/` in Drive holds `short.mp4`,
+`portada.jpg`, `captions.srt`, `transcripcion.txt` and `textos.json`, and the
+Telegram preview carries the video, the cover, the flags (the first word is late,
+over 30 s, no speech at all, doubtful words, a cover phrase that is not heard in
+the video) and every text (YouTube, Instagram, Facebook, X). The cover phrase is
+picked from the pack before the transcript exists, and the owner sometimes changes
+the lines in Flow, hence that last flag. **What is in `final/` when he approves is
+what gets published**: he may edit `textos.json`, or replace `portada.jpg` (or
+even `short.mp4`) in Drive first.
+
+**Approval.** `publica <carpeta>`, as a **user message** in the BigLobster Telegram
+group, after the preview. It is read by `plugins/shorts/approval.py` from the
+default profile's `state.db` (read-only), never from the agent: an agent that
+would publish without approval would also claim it had approval. Only the
+Telegram adapter's allowlisted senders get a message in, which is what makes a
+user message the owner's. A message in a topic bound to another profile (Team)
+lands in that profile's `state.db` and does **not** count. Limitation, stated
+plainly: anyone the group allowlist admits can approve.
+
+**Transit.** The repo is public, so the raw clip never crosses it in the clear: it
+goes to the runner as a **Fernet-encrypted release asset** (tag
+`shorts-flow-inputs`), and the asset is deleted when the render is collected, pass
+or fail.
+
+**What the renderer does** (format `flow`: `plugins/shorts/studio/flow.py` +
+`shorts/studio/remotion/src/Flow.tsx`):
+
+- faster-whisper hears the footage, and the words it hears become a 3-word
+  karaoke in the brand red;
+- the brand mark sits on top (rotated square + name);
+- the tip format's outro card fades in over the last 0.5 s of the footage;
+- the footage's own audio is two-pass normalised to -14 LUFS;
+- the cover is a frame of the video (second 2.5 by default) through the existing
+  `Cover` still.
+
+No cover frames at the start: the face and the first word are the opening.
+
+QA findings that come from the footage itself (a frozen picture, black frames, a
+long silence) are **warnings** in this format, not failures: a re-render cannot
+change his footage, and he watches every video before approving it. The technical
+checks (resolution, frame rate, codecs, loudness, duration against the timeline)
+still fail the render, because those are the farm's.
+
+**Caps and gates.**
+
+- `FLOW_MAX_PER_DAY` (default 2) published per UTC day — the YouTube quota.
+- The same publish gate as the series: in shadow mode (`SHORTS_PUBLISH_MODE`
+  unset) nothing is published.
+- The X text goes to the owner in the preview; he posts it by hand.
+- With `SHORTS_BUZZ_CHANNEL` set, the usual hand-off post goes to Buzz as well.
+
+**Config.**
+
+| Variable | Where | Default |
+|---|---|---|
+| `FLOW_ASSET_KEY` | Coolify env **and** the Actions secret of the same name (same value). Generate one with `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` | — |
+| `FLOW_DRIVE_REMOTE` | Coolify env | `hermesdrive:Flow` |
+| `FLOW_RCLONE_CONFIG` | Coolify env | `$HERMES_HOME/.config/rclone/rclone.conf` |
+| `FLOW_MAX_PER_DAY` | Coolify env | 2 |
+
+The rclone remote's root folder is the one holding `HermesBackups/`; `Flow/` is
+created next to it.
+
+**Not in v1:** re-rendering after a subtitle fix (the captions come from the
+footage and are burned in, so a fix means a new render by hand) and 16:9
+episodes (the Flow format is vertical).
 
 ## 4. Avatars (Google Flow: Martín, Lucía)
 

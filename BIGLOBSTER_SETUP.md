@@ -806,3 +806,41 @@ Post-deploy verified live: v0.15.1, gateway RUNNING, Telegram OK, `/api/delegate
    - `tests/plugins/image_gen/test_huggingface_provider.py` — 16 tests covering metadata, availability, model resolution, generate (successful save, 503 cold-start, API errors, network error, URL pattern, auth header, aspect ratios), and registration.
 
 4. **Existing test fixes** (`tests/plugins/image_gen/test_openai_provider.py`, `test_openai_codex_provider.py`): 9 tests were failing due to missing `openai` package in the dev environment. Fixed by injecting a `MagicMock` into `sys.modules["openai"]` via pytest fixtures — tests now pass without requiring the optional `openai` package installed.
+
+---
+
+## Flow Shorts — BigLobster (Drive → render → review → publish; since 2026-11-16)
+
+The third shorts job replaces the retired Buzz bot VideoDesk (the Buzz fleet is
+stopped since 2026-11-15): Brais drops `Flow/<carpeta>/` (the Flow export +
+`prompts.md`) in his Google Drive, Hermes renders it in the farm (format
+`flow`), writes `final/` back to Drive for review and publishes it to
+YouTube/Facebook/Instagram only after Brais writes `publica <carpeta>` in
+Telegram. Details: `shorts/STUDIO.md` §3.9.
+
+- **Job:** "Flow Shorts — BigLobster", prompt `shorts/biglobster-flow-shorts.prompt`,
+  default store, toolset `shorts`, schedule `5 8-23 * * *` (hourly, 08–23 in the
+  Hermes timezone). Created by `scripts/setup_shorts_jobs.py` (run as `hermes`).
+- **Env (Coolify app):** `FLOW_ASSET_KEY` (Fernet key; **the same value** as the
+  `FLOW_ASSET_KEY` Actions secret), `FLOW_DRIVE_REMOTE` (default
+  `hermesdrive:Flow`), `FLOW_RCLONE_CONFIG` (default
+  `$HERMES_HOME/.config/rclone/rclone.conf`), `FLOW_MAX_PER_DAY` (default 2).
+  None of them goes in `INJECT`.
+- **Approval:** `publica <carpeta>` as a user message in the BigLobster Telegram
+  group, read from the default profile's `state.db` by `plugins/shorts/approval.py`
+  (read-only). A message in a topic bound to another profile does not count.
+
+One-time setup:
+
+1. In Drive, create `Flow/` next to `HermesBackups/` — the rclone remote's root
+   folder is the one holding `HermesBackups/`, and `Flow/` is created next to it.
+2. Generate the Fernet key and set the **same value** in both places:
+   ```sh
+   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+   Coolify app env `FLOW_ASSET_KEY`, and the repo secret `FLOW_ASSET_KEY`
+   (Settings → Secrets → Actions).
+3. Deploy (`scripts/deploy.sh`): the plugin and the prompt are baked into the image.
+4. As `hermes`, from the hermes-sandbox clone:
+   `scripts/setup_shorts_jobs.py --dry-run`, then the same without `--dry-run`.
+   The Flow schedule can be changed with `--flow-schedule`.
