@@ -14,13 +14,55 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
-from plugins.shorts import flow_inbox, github_studio, series
+from plugins.shorts import flow_inbox, flow_packs, github_studio, series
 
 CHAT = "42"
 CARPETA = "2026-11-14_es-seo-local"
 CARPETA_B = "2026-11-15_es-google-maps"
 ARTICLE = "https://biglobster.top/ia-para-pymes/seo-local"
 PACK = "Artículo: https://biglobster.top/ia-para-pymes/seo-local\n\nClip 1: «Tu negocio sale en Maps»\n"
+
+# A pack in the format plugins/shorts/flow_packs.py validates: the folder's language, four
+# clips of 3 s, the two characters in clips 1-3, and two on-screen captions.
+PACK_ARTICLE = "https://biglobster.top/es/ia-para-pymes/seo-local"
+_CLIP_0 = (
+    "Wide shot of the shop at dawn, with the street empty and the shutter down.\n"
+    f"{flow_packs.PROMPT_END}"
+)
+_CLIP_LINE = (
+    "Medium shot of Lucía and Martín at the counter while the shop opens.\n"
+    f"{flow_packs.VOICE_LINE['es']}\n"
+    'Lucía says: "He buscado tu tienda en Google Maps y no aparece por ninguna parte."\n'
+    'Martín answers: "Eso me dice un cliente cada semana y la competencia sale antes."\n'
+    f"{flow_packs.PROMPT_END}"
+)
+
+
+def _flow_clip(number: int, prompt: str) -> str:
+    return f"### Clip {number} — plano (3 s)\n```\n{prompt}\n```\n"
+
+
+FLOW_PACK = (
+    "# Tu tienda no aparece en Google Maps\n\n"
+    f"Artículo: {PACK_ARTICLE}\n"
+    "Idioma: es\n\n"
+    "## Historia\nLa tienda que no sale en el mapa pierde clientes cada día.\n\n"
+    "## Clips\n"
+    f"{_flow_clip(0, _CLIP_0)}\n"
+    f"{_flow_clip(1, _CLIP_LINE)}\n"
+    f"{_flow_clip(2, _CLIP_LINE)}\n"
+    f"{_flow_clip(3, _CLIP_LINE)}\n"
+    "## Rótulos\n"
+    "| Clip | Posición | Retardo (s) | Texto |\n"
+    "|---|---|---|---|\n"
+    "| 0 | arriba | 0 | ¿Tu tienda vacía? |\n"
+    "| 1 | abajo | 1 | Atrae más clientes hoy |\n\n"
+    "## Portada\n"
+    "Título: Tu tienda no aparece en Google\n"
+    "Rótulo: SEO local\n\n"
+    "## Antes de rodar\n"
+    "- Graba en vertical.\n"
+)
 
 TEXTOS = {
     "titulo": "Tu negocio sale en Google Maps o no existe",
@@ -502,3 +544,43 @@ def test_a_render_that_never_starts_deletes_its_encrypted_input(env, drive, stud
     entry = flow_inbox._load()[CARPETA]
     assert studio["deleted"] == [1]
     assert entry["state"] == "new" and "asset_id" not in entry
+
+
+# ---------------------------------------------------------------------------
+# The script packs: lessons from the owner's edits, captions and clip count to the render
+# ---------------------------------------------------------------------------
+
+def test_discovery_keeps_the_owners_edits_of_the_pack_as_a_lesson(env, drive, studio):
+    carpeta = "2026-11-14_es-guion-nuevo"
+    flow_packs.write(carpeta, FLOW_PACK)
+    edited = FLOW_PACK.replace("Atrae más clientes hoy", "Atrae más clientes esta semana")
+    _put(drive, carpeta, "footage.mp4", b"flow footage")
+    _put(drive, carpeta, "prompts.md", edited)
+    flow_inbox.advance()
+    lesson = flow_packs._lessons_dir() / f"{carpeta}.diff"
+    assert lesson.is_file()
+    body = lesson.read_text(encoding="utf-8")
+    assert "--- escrito" in body and "+++ rodado" in body
+    assert "+| 1 | abajo | 1 | Atrae más clientes esta semana |" in body
+    assert flow_inbox._load()[carpeta]["pack"] == edited
+
+
+def test_render_sends_the_packs_captions_and_clip_count(env, drive, studio):
+    _seed(drive, pack=FLOW_PACK)
+    flow_inbox.advance()
+    flow_inbox.render(CARPETA, ARTICLE, "Tu tienda sale en Maps", "SEO local")
+    package = studio["dispatched"][0]["package"]
+    assert package["overlays"] == [
+        {"clip": 0, "position": "top", "delay_s": 0.0, "text": "¿Tu tienda vacía?"},
+        {"clip": 1, "position": "bottom", "delay_s": 1.0, "text": "Atrae más clientes hoy"},
+    ]
+    assert package["expected_clips"] == 4
+
+
+def test_render_of_a_pack_without_rotulos_sends_no_captions(env, drive, studio):
+    _seed(drive)                                    # the old free-text pack
+    flow_inbox.advance()
+    flow_inbox.render(CARPETA, ARTICLE, "Tu negocio sale en Maps")
+    package = studio["dispatched"][0]["package"]
+    assert package["overlays"] == []
+    assert package["expected_clips"] is None
