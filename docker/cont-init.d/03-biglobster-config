@@ -646,6 +646,25 @@ MERGE
     echo "[03-biglobster] Seeded profiles/auditor/scripts/merge_on_green.sh"
 fi
 
+# --- 5f: seed Prospector's inbox reader into the TEAM profile ---
+# Prospector's inbox reader (no_agent, hourly, Team topic): reads the Gmail
+# inbox over IMAP and prints a short Spanish digest. Empty stdout = no delivery.
+# No LLM is involved: the mail comes from strangers and its text is data, never
+# instructions. Register the job ONCE (after deploy, in the container shell):
+#   hermes -p team cron create "0 7-22 * * *" --no-agent --script prospector_inbox.sh --deliver telegram --name "Prospector — bandeja"
+if [ -d "$HERMES_HOME/profiles/team" ]; then
+    as_hermes mkdir -p "$HERMES_HOME/profiles/team/scripts"
+    cat > "$HERMES_HOME/profiles/team/scripts/prospector_inbox.sh" <<'PROSPECTOR'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+exec .venv/bin/python -m growth.inbox
+PROSPECTOR
+    chmod +x "$HERMES_HOME/profiles/team/scripts/prospector_inbox.sh"
+    chown hermes:hermes "$HERMES_HOME/profiles/team/scripts/prospector_inbox.sh" 2>/dev/null || true
+    echo "[03-biglobster] Seeded profiles/team/scripts/prospector_inbox.sh"
+fi
+
 # --- 6: per-profile repo sync (clone on first boot, pull on subsequent boots) ---
 # Any profile with a repos.txt gets its listed GitHub repos cloned into
 # <profile>/workspace/<repo-name>/. Format: one "owner/repo" per line;

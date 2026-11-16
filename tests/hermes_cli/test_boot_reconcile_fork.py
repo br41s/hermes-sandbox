@@ -100,6 +100,48 @@ def test_a_dir_without_soul_is_not_a_profile(home):
     assert _env(ghost / ".env") == "A=1\n"
 
 
+# ── Prospector's Gmail keys ────────────────────────────────────────────────────
+
+
+def test_team_gmail_keys_are_pinned_only_in_the_team_profile(home, capsys):
+    team = _profile(home, "team", "PROSPECTOR_GMAIL_USER=stale\nOTHER=1\n")
+    other = _profile(home, "biglobster")
+    br.sync_envs(home, {"PROSPECTOR_GMAIL_USER": "prospector@ejemplo.com",
+                        "PROSPECTOR_GMAIL_APP_PASSWORD": "app-password"})
+    env = _env(team / ".env")
+    assert env.count("PROSPECTOR_GMAIL_USER=") == 1
+    assert "PROSPECTOR_GMAIL_USER=prospector@ejemplo.com\n" in env
+    assert "PROSPECTOR_GMAIL_APP_PASSWORD=app-password\n" in env
+    assert "PROSPECTOR_GMAIL" not in _env(other / ".env")
+    assert "PROSPECTOR_GMAIL" not in _env(home / ".env")
+    assert f"Pinned Prospector Gmail keys in {team / '.env'}" in capsys.readouterr().out
+
+
+def test_team_gmail_pin_strips_unset_keys(tmp_path):
+    home = tmp_path / "data"
+    home.mkdir()
+    env_path = home / "profiles" / "team" / ".env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text("PROSPECTOR_GMAIL_USER=stale\nPROSPECTOR_GMAIL_APP_PASSWORD=stale\nOTHER=1\n",
+                        encoding="utf-8")
+    br.pin_team_gmail(env_path, home, {})
+    assert _env(env_path) == "OTHER=1\n"
+
+
+def test_team_gmail_pin_writes_set_keys_and_resolves_from_the_main_env(tmp_path):
+    (tmp_path / ".env").write_text("PROSPECTOR_GMAIL_USER=from-file@ejemplo.com\n", encoding="utf-8")
+    env_path = tmp_path / "profiles" / "team" / ".env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text("PROSPECTOR_GMAIL_USER=old\nPROSPECTOR_GMAIL_USER=older\nOTHER=1\n",
+                        encoding="utf-8")
+    br.pin_team_gmail(env_path, tmp_path, {"PROSPECTOR_GMAIL_APP_PASSWORD": "app-password"})
+    env = _env(env_path)
+    assert "OTHER=1\n" in env
+    assert env.count("PROSPECTOR_GMAIL_USER=") == 1
+    assert "PROSPECTOR_GMAIL_USER=from-file@ejemplo.com\n" in env
+    assert "PROSPECTOR_GMAIL_APP_PASSWORD=app-password\n" in env
+
+
 # ── config.yaml ────────────────────────────────────────────────────────────────
 
 

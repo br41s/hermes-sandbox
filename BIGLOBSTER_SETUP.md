@@ -851,6 +851,51 @@ One-time setup:
    (`es,en`), `FLOW_PACKS_WAITING_MAX` (3), `FLOW_PACK_REVIEW_FIRST` (3).
    `shorts/STUDIO.md` §3.10.
 
+## Prospector — bandeja (Gmail inbox → Team topic; since 2026-11-16)
+
+Replaces the inbox half of the retired Buzz bot Prospector (stopped 2026-11-15).
+**No model runs:** a `no_agent` cron script (`growth/inbox.py`) reads
+`biglobstertop@gmail.com` over IMAP. It appends bounces and unsubscribes to
+`no-contactar.txt` and prints what is new: replies to our mail, bounces, and notices
+from the services in `growth/dominios.txt`. Hermes delivers that to the Team topic
+(9014). A quiet hour prints nothing. Mail from strangers never reaches an LLM: the
+app password sits in the pod, and an agent that read hostile mail could use it.
+Sending is not ported; the cold-mail pause of 2026-10-19 still holds.
+
+- **Job:** "Prospector — bandeja", `team` store, `0 7-22 * * *` (team timezone,
+  Asia/Bangkok), script `prospector_inbox.sh`, which boot seeds into
+  `profiles/team/scripts/` (`03-biglobster-config` §5f).
+- **State:** `/opt/data/profiles/team/workspace/growth/`:
+  - `correo-enviados.csv`: the old sent-mail log, read only. It is how replies and
+    bounces are recognised.
+  - `no-contactar.txt`: append only.
+  - `bandeja-vista.json`: messages and foreign domains already reported, each one
+    reported once.
+- **Registry:** `growth/dominios.txt`, in the image. Agents cannot edit it, so a hostile
+  page cannot widen what the reader shows. A new service is added by PR. A foreign
+  sender shows up only as its domain, once.
+- **Env (Coolify app):**
+  - `PROSPECTOR_GMAIL_USER` and `PROSPECTOR_GMAIL_APP_PASSWORD`. Boot pins both into
+    the `team` `.env` only (`boot_reconcile.py` `pin_team_gmail`), and the script reads
+    them from there.
+  - The password is in `_ALWAYS_STRIP_KEYS`, so no subprocess env carries it.
+  - An agent with a shell could still read the `.env` file. That limit is accepted,
+    the same as on Buzz.
+
+One-time setup:
+
+1. In Gmail (2-step verification on), create an app password "Hermes" at
+   https://myaccount.google.com/apppasswords. Revoke the old "Prospector" one.
+2. Set both variables in the Coolify app. Then deploy, or stop and start the app;
+   a gateway restart does not re-run cont-init.
+3. Copy the state from the Mac:
+   `~/fizz/salida/growth/{correo-enviados.csv,no-contactar.txt,leads.csv,vigilar.csv}`
+   goes to `/opt/data/profiles/team/workspace/growth/`, owned `hermes:hermes`.
+   `leads.csv` and `vigilar.csv` are kept as an archive.
+4. As `hermes`: `hermes -p team cron create "0 7-22 * * *" --no-agent --script
+   prospector_inbox.sh --deliver telegram --name "Prospector — bandeja"`, then
+   `hermes -p team cron run <id>`. The first run reports the last 3 days.
+
 ## SEO técnico — biglobster.top (weekly live check; since 2026-11-16)
 
 This keeps the two checks of the retired Buzz bot SEODesk that earned their keep, PageSpeed and technical health. It runs as a `no_agent` script, `onsite-seo/tech_check.py`, with no model.
