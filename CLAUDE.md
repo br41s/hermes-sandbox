@@ -50,6 +50,13 @@ A new profile needs `hermes profile create <name>` in the pod before the deploy 
 its `docker/profiles/<name>/`: boot only acts on profiles that already have a `SOUL.md`, and
 never replaces one, so the bundled SOUL is copied over the default by hand once.
 
+**Prospector's inbox is a script, not an agent** (`growth/inbox.py`, job "Prospector — bandeja" in the
+`team` store, since 2026-11-16). The Gmail app password (`PROSPECTOR_GMAIL_APP_PASSWORD`, Coolify, pinned
+into the `team` `.env` only) can send mail, so no LLM ever reads the inbox. Mail from strangers is
+prompt-injection input. Do not hand the inbox to an agent or a tool, and keep the password in
+`_ALWAYS_STRIP_KEYS`. Sending is not ported; if it ever is, the approval must check the sender's
+Telegram user id. `BIGLOBSTER_SETUP.md` "Prospector — bandeja".
+
 Profile-scoped delegation runs in a **subprocess** with `HERMES_HOME=<profile home>` — the
 web server is pinned to `default`, and in-process env mutation would race.
 
