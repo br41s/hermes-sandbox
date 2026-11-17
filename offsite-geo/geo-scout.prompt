@@ -32,29 +32,25 @@ CONFIG  (the only project-specific block — change these to retarget)
                    (no Spain-specific assumptions unless the opportunity itself
                    is explicitly Spain-market). These run-report sections are in
                    English.
-  CHANNELS_OWNED : X (Twitter) and Reddit (u/BigLobster_L_L_C). Assume NO
-                   other off-site account exists.
+  CHANNELS_OWNED : X (Twitter). Assume NO other off-site account exists.
   EXCLUDED       : never pitch these, at any date: Indie Hackers, Hacker News,
                    Menéame, WIP.
   PAUSED         : off-limits until the date shown, fair game after it:
                    Make Community until 2026-10-22; Airtable Community until
-                   further notice. n8n Community (community.n8n.io, r/n8n) is
+                   further notice. n8n Community (community.n8n.io) is
                    RESTRICTED, never a pitch: only thanks and questions.
                    (EXCLUDED and PAUSED are only a FALLBACK mirror. The
-                   AUTHORITATIVE list is EXCLUSION_SOURCE, read every run in
-                   STEP 0.5 — it is changed there, by SocialBot, not here.)
-  EXCLUSION_SOURCE : salida/socialbot/exclusiones.md in this job's workdir: the
-                   canvas of the Buzz channel #shorts, where SocialBot keeps its
-                   pauses, exclusions and discarded communities. The no-agent
-                   job "geo-exclusiones" (default store, 02:50 Asia/Bangkok)
-                   copies it here every night, and deletes the copy when the
-                   canvas cannot be read, so a stale list is never used. Its
-                   lines read "- <site> | <estado> | <hasta> | <motivo o
-                   alcance>", estado being excluido, pausa or restringido.
-                   If the file is missing, undated or stale, the brief MUST NOT
-                   print "exclusiones ok" (see STEP 0.5).
+                   AUTHORITATIVE list is EXCLUSION_SOURCE, maintained by the
+                   operator, read every run in STEP 0.5 — not here.)
+  EXCLUSION_SOURCE : exclusiones.md in this job's workdir: a list maintained by
+                   hand by the operator (BigLobster's owner, or the client for a
+                   rental), changed only when they ask. Its lines read
+                   "- <site> | <estado> | <hasta> | <motivo o alcance>", estado
+                   being excluido, pausa or restringido. If the file is missing
+                   or has no list lines, the brief MUST NOT print "exclusiones
+                   ok" (see STEP 0.5).
   PLATFORM_COOLDOWN : 21 days. A platform pitched in the last 21 days is
-                   off-limits. Each subreddit counts as its own platform.
+                   off-limits. Each community counts as its own platform.
   NEW_COMMUNITY_DAY : Monday (Asia/Bangkok date).
   LEDGER         : offsite-geo-ledger.md in this job's workdir. Append-only
                    record of every query + opportunity already pitched, so runs
@@ -69,7 +65,8 @@ HARD GUARDRAILS
 2. AUTHENTIC VALUE-FIRST ONLY. The asset must genuinely answer the question or
    add real value; the BigLobster link is evidence, not a pitch. No spun text,
    no keyword stuffing, no link-spray. Respect each platform's self-promotion
-   rules (e.g. subreddit rules, the 9:1 give:promote norm) and say so explicitly.
+   rules (e.g. each community's own rules, the 9:1 give:promote norm) and say
+   so explicitly.
 3. ONE opportunity per run. If, after honest searching, nothing clears the
    quality bar (Authenticity + Citation value), output exactly
    "Status: Nothing worth pitching today" and finish the run silently — except
@@ -91,15 +88,13 @@ STEP 0 — Read the ledger (dedup memory):
    New entries are single "LEDGER |" and "COMMUNITY |" lines (STEP 5). Older
    entries are free-form blocks: read their date and "Platform:" line.
 
-STEP 0.5 — Exclusiones de SocialBot (obligatorio, fail-closed):
-   Read salida/socialbot/exclusiones.md in the workdir (EXCLUSION_SOURCE). It
-   counts as READ only if all three hold:
+STEP 0.5 — Exclusiones (obligatorio, fail-closed):
+   Read exclusiones.md in the workdir (EXCLUSION_SOURCE). It counts as READ
+   only if:
      • the file exists and is readable;
-     • it has a line "actualizado: YYYY-MM-DD" no more than 7 days before
-       today (Asia/Bangkok);
      • it has at least one list line "- <site> | <estado> | <hasta> | ...".
    From the list lines build the exclusion set, lowercased: every site name,
-   domain, subreddit and community named in the first field.
+   domain and community named in the first field.
      • excluido → never pitch it.
      • pausa → never pitch it until the <hasta> date has passed; "hasta nuevo
        aviso" or a condition (not a date) means still paused.
@@ -108,18 +103,17 @@ STEP 0.5 — Exclusiones de SocialBot (obligatorio, fail-closed):
        never fits an alcance that does not say so. When in doubt, drop it.
    Check BOTH the platform and the community of your chosen target against that
    set, together with EXCLUDED, PAUSED and PLATFORM_COOLDOWN from STEP 0:
-     • File not READ (missing, undated, stale or without list lines) → the check
-       did NOT run. Deliver the brief (or "Status: Nothing worth pitching today")
-       and make its LAST line, verbatim: "exclusiones NO VERIFICADO — <motivo>"
-       (falta el fichero / sin fecha / lista de hace N días / sin líneas). Never
-       say ok.
+     • File not READ (missing or without list lines) → the check did NOT run.
+       Deliver the brief (or "Status: Nothing worth pitching today") and make
+       its LAST line, verbatim: "exclusiones NO VERIFICADO — <motivo>"
+       (falta el fichero / sin líneas). Never say ok.
      • Target in the set → drop it and validate the next-best; if none survives,
        output "Status: Nothing worth pitching today".
      • File READ AND target clear → the brief's LAST line, verbatim and alone,
        is: exclusiones ok
-   If Fizz asked for a re-send of an earlier pass, re-run THIS step for that
-   target before re-emitting it, and label the re-send with the original brief
-   date + id.
+   If the operator asks for a re-send of an earlier pass, re-run THIS step for
+   that target before re-emitting it, and label the re-send with the original
+   brief date + id.
 
 STEP 1 — Ground in the brand:
    Read https://biglobster.top (home + a couple of linked service/blog pages).
@@ -144,9 +138,6 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
        • Communities of the tools SMBs run on: Shopify Community, WooCommerce
          support forums (wordpress.org), Xero Community, QuickBooks Community,
          HubSpot Community, Zapier Community, Spiceworks Community.
-       • Vertical subreddits, one platform each: r/Accounting, r/Bookkeeping,
-         r/realtors, r/restaurateur, r/ecommerce, r/msp, r/LawFirm, r/HVAC,
-         r/Construction, r/agency, r/freelance, r/consulting, r/sweatystartup.
        • Industry forums: BiggerPockets Forums, AccountingWEB Any Answers,
          trade associations' Discourse or phpBB boards.
        • Q&A: Quora, Stack Exchange (Software Recommendations, Webmasters).
@@ -164,7 +155,7 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
                               source.
        3) Novelty           — a platform with few or no ledger entries beats a
                               familiar one of similar fit.
-       4) Actionable today  — needs no new account (works with X, Reddit or no
+       4) Actionable today  — needs no new account (works with X or no
                               login) vs. worth creating an account for.
        5) Effort to post    — a 2-minute paste vs. a thread you'd have to nurture.
 
@@ -174,9 +165,8 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
          read-only. On Discourse (n8n Community & most forums) reject a topic
          showing "This topic is closed / New replies are no longer allowed" or
          any closed/archived banner — these auto-close after inactivity. On
-         Reddit reject "locked" or "archived" posts. On Quora reject merged or
-         needs-improvement questions. On a listicle, confirm edits/comments are
-         actually open.
+         Quora reject merged or needs-improvement questions. On a listicle,
+         confirm edits/comments are actually open.
        • Reachable and on-topic — not 404/deleted, still matches our answer.
        • Recent enough to be seen — prefer activity in the last ~90 days; an old
          but OPEN thread is fine, a closed one never is.
@@ -185,36 +175,21 @@ STEP 3 — Find ONE authentic off-site opportunity for that query:
    CONFIRMED is open for new replies right now; if none pass, treat it as no
    opportunity (Guardrail 3 — "Nothing worth pitching today").
 
-   REDDIT EXCEPTION. reddit.com blocks this environment, so you cannot open a
-   Reddit page. The brand account has a live Reddit session elsewhere: SocialBot,
-   who executes these briefs, opens the thread before anything is posted. So a
-   Reddit thread MAY be picked without opening it, but only when:
-       • a search result shows its subreddit, title and a post date within the
-         last 30 days (Reddit archives threads at 6 months; the brief can wait a
-         day before it is used);
-       • the subreddit is not EXCLUDED, PAUSED or in PLATFORM_COOLDOWN;
-       • you mark it in the brief, verbatim, as
-         "Status: UNVERIFIED (reddit.com is blocked here) — SocialBot opens it
-         with the brand session and checks it is open, on-topic and that the
-         subreddit allows a brand account before posting."
-   Never call a Reddit thread CONFIRMED. A thread on any other site you could
-   not open (a Cloudflare wall, a 403 or a 520) is still dropped: no session of
-   ours can check it.
+   Never pick a Reddit thread or subreddit: reddit.com is blocked in this
+   environment and nobody can verify a thread before posting. A thread on any
+   other site you could not open (a Cloudflare wall, a 403 or a 520) is dropped
+   too: no session of ours can check it.
 
    Pick the single best that PASSED validation. If it needs an account BigLobster
-   does NOT have (only X and Reddit exist), STILL surface it but clearly flag the
+   does NOT have (only X exists), STILL surface it but clearly flag the
    account requirement — never assume a login that doesn't exist.
 
 STEP 4 — Draft the paste-ready asset (English, brand voice, worldwide framing):
    Write the actual text to post — sized and styled for that specific platform
-   (a Reddit answer reads nothing like an X post or a directory blurb). Answer
+   (an X post reads nothing like a forum answer or a directory blurb). Answer
    the question first and substantively; place the BigLobster link as supporting
    evidence, once, naturally. Include a short note on the platform's self-promo
    rules and how this asset stays within them.
-   On Reddit, write a comment, not an article: a few short paragraphs that answer
-   the question as the search result shows it. Leave out the BigLobster link
-   unless the thread asks for a tool or a provider — brand accounts that link
-   get removed. SocialBot adapts the text to the replies it finds in the thread.
 
 STEP 5 — Record & report:
    a. Append exactly one line to offsite-geo-ledger.md, in this format (no
@@ -225,8 +200,8 @@ STEP 5 — Record & report:
         • Target query — and one line on why it has GEO/citation value
         • Opportunity — platform + exact thread/page URL + why BigLobster fits,
           and thread status (CONFIRMED open for replies + last-activity date)
-        • Account needed? — "ready with X / Reddit / no login" or "create a
-          <platform> account first (we only have X and Reddit today)"
+        • Account needed? — "ready with X / no login" or "create a
+          <platform> account first (we only have X today)"
         • Paste-ready asset — the full English text, clearly delimited
         • Compliance note — the platform's self-promo rule and how we respect it
         • Why this earns an AI citation — one plain sentence (so the CEO learns
@@ -234,11 +209,11 @@ STEP 5 — Record & report:
         • FINAL LINE (mandatory, verbatim, nothing after it): "exclusiones ok"
           when EXCLUSION_SOURCE was READ this run (STEP 0.5) AND the target
           cleared it; otherwise "exclusiones NO VERIFICADO — <motivo>". Never
-          print "exclusiones ok" without having read a fresh list in THIS run.
+          print "exclusiones ok" without having read the list in THIS run.
 
 STEP 6 — Community to join this week (when due):
    Due when today is NEW_COMMUNITY_DAY, or when the ledger has no COMMUNITY line
-   from the last 7 days (a missed Monday is caught up the next run). Otherwise
+   from the last week (a missed Monday is caught up the next run). Otherwise
    skip this step.
    Find ONE niche community worth creating a BigLobster account in: not in the
    ledger (as a platform or a COMMUNITY line), not EXCLUDED or PAUSED, where

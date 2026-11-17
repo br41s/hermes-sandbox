@@ -1,8 +1,8 @@
 """The Facebook Page + Instagram community inbox: new comments, replies, daily metrics.
 
 The cron agent asks for what changed (``new_comments``), answers one comment
-(``reply``), discards one (``skip``) and once a day publishes the metrics
-table to Buzz (``metrics_daily``). Every write goes through the same three
+(``reply``), discards one (``skip``) and once a day receives the metrics
+table for its report (``metrics_daily``). Every write goes through the same three
 rails:
 
 * **Shadow by default.** ``reply`` only calls Meta when
@@ -31,7 +31,6 @@ Config (service env of the profile that runs the job):
     META_IG_USER_ID                        the linked professional account
     SOCIAL_REPLY_MODE                      ``live`` replies; anything else is shadow
     SOCIAL_REPLIES_MAX_PER_DAY             default 15
-    SOCIAL_METRICS_BUZZ_CHANNEL            channel for the daily table
     SOCIAL_SITE_URL                        default https://biglobster.top
 """
 
@@ -42,7 +41,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -50,7 +48,6 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from plugins.shorts import buzz_share
 from plugins.shorts import post_upload
 from plugins.shorts._env import env
 from plugins.shorts.social import meta
@@ -62,7 +59,6 @@ except ImportError:  # pragma: no cover - non-Unix: no cross-process lock, like 
 
 logger = logging.getLogger(__name__)
 
-BUZZ_TIMEOUT = 120
 COMMENT_LIMIT = 500
 NEW_COMMENTS_SHOWN = 30
 METRICS_DAYS = 14
@@ -104,8 +100,8 @@ SOCIAL_INBOX_SCHEMA: dict[str, Any] = {
         "new_comments); it stays in shadow mode unless SOCIAL_REPLY_MODE=live, "
         "refuses a comment already answered, and respects the daily cap. "
         "action='skip' records a comment as intentionally ignored, with a "
-        "reason. action='metrics_daily' posts the 14-day FB/IG metrics table "
-        "to the Buzz channel, once per day. action='diary_pending' lists new "
+        "reason. action='metrics_daily' returns the 14-day FB/IG metrics table "
+        "for the report, once per day. action='diary_pending' lists new "
         "BigLobster diary entries that are not spread yet; the first call ever "
         "only records a baseline of the entries already on the site. "
         "action='diary_post' spreads one of them (url, network, text), staying "
@@ -356,42 +352,19 @@ def _table(rows: list[dict[str, Any]], today: str) -> str:
     return "\n".join(lines)
 
 
-def _post_to_buzz(channel: str, content: str) -> None:
-    binary = buzz_share.cli()
-    if not binary:
-        raise SocialError("the buzz CLI is not installed in this image")
-    try:
-        done = subprocess.run([binary, "messages", "send", "--channel", channel, "--content", "-"],
-                              input=content, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=BUZZ_TIMEOUT, env=buzz_share._child_env(),
-                              check=False)
-    except subprocess.TimeoutExpired as exc:
-        raise SocialError(f"buzz messages send timed out after {BUZZ_TIMEOUT}s") from exc
-    if done.returncode != 0:
-        tail = " / ".join((done.stderr or done.stdout or "").strip().splitlines()[-4:])
-        raise SocialError(f"buzz messages send failed ({done.returncode}): {tail[:400]}")
-
-
 def _action_metrics_daily(args: dict[str, Any]) -> str:
     with _locked():
         today = _today()
         data = _load()
         if data.get("metrics_posted") == today:
             return _ok(already=True)
-        channel = env("SOCIAL_METRICS_BUZZ_CHANNEL")
-        if not channel:
-            return _fail("SOCIAL_METRICS_BUZZ_CHANNEL is not set")
         try:
             rows = meta.post_metrics(METRICS_DAYS)
         except meta.MetaError as exc:
             return _fail(f"metrics: {exc}")
-        try:
-            _post_to_buzz(channel, _table(rows, today))
-        except SocialError as exc:
-            return _fail(str(exc))
         data["metrics_posted"] = today
         _save(data)
-        return _ok(posted=True, rows=len(rows))
+        return _ok(table=_table(rows, today), rows=len(rows))
 
 
 # ---------------------------------------------------------------------------
