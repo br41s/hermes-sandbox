@@ -884,8 +884,9 @@ Sending is not ported; the cold-mail pause of 2026-10-19 still holds.
 
 One-time setup:
 
-1. In Gmail (2-step verification on), create an app password "Hermes" at
-   https://myaccount.google.com/apppasswords. Revoke the old "Prospector" one.
+1. Reuse the Gmail app password the Buzz Prospector used: same account, and its only other
+   copy, inside the stopped Buzz container, goes when Colima is removed. Create a new one at
+   https://myaccount.google.com/apppasswords only if that one is lost or leaked.
 2. Set both variables in the Coolify app. Then deploy, or stop and start the app;
    a gateway restart does not re-run cont-init.
 3. Copy the state from the Mac:
