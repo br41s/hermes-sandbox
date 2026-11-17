@@ -325,80 +325,40 @@ that the live cron prompt never had). As of 2026-07-09 both files just point at
 their canonical `.prompt` file in this repo and explain how to sync a change —
 do not re-expand them into full copies of the workflow.
 
-**The Off-Site GEO Scout hands its brief to SocialBot (since 2026-10-16).** The
-BigLobster job `be8a4add42b0` ("Off-Site GEO Scout — BigLobster", profile
-`biglobster`, `0 3 * * *` +07:00) delivers to two targets:
+**The Off-Site GEO Scout delivers to Telegram only.** The Buzz fleet was
+retired on 2026-11-17. The BigLobster job `be8a4add42b0` ("Off-Site GEO Scout
+— BigLobster", profile `biglobster`, `0 3 * * *` +07:00) delivers to one
+target:
 
 ```
-deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
+deliver: telegram:-1004224848555:2
 ```
 
-- The second target is the Buzz channel **#geo**. Hermes posts there as its own
-  Buzz identity, through the **primary gateway's Buzz adapter**. Two things
-  make that work:
-  - **The primary route** (since 2026-10-17). `/opt/data/config.yaml` →
-    `gateway.profile_routes` holds:
+The owner reads the brief in Telegram and posts it by hand.
 
-    ```yaml
-    - name: geo-scout:biglobster:buzz
-      platform: buzz
-      chat_id: 'afe75be1-3618-4b43-a9f1-d64387b04c72'
-      profile: biglobster
-    ```
-
-    `biglobster` is a satellite profile, and its cron scope is only its own
-    `.env`, which holds no `BUZZ_*` credentials. Without the route, the cron
-    preflight (`cron/scheduler_preflight.py`, `_preflight_check_delivery`)
-    reads Buzz as unconnected and blocks the **whole job**, Telegram included.
-    That is what happened on 2026-10-17 at 03:00: no brief that day. Testing
-    from a `docker exec` shell hides this, because that shell has the
-    container's global `BUZZ_*`. Reproduce with
-    `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
-  - **Membership.** Hermes must stay a member of #geo, or the send fails while
-    Telegram still delivers (`last_delivery_error`).
-- What the route does and does not touch:
-  - It lets biglobster's cron reach #geo and no other channel. #shorts stays
-    unrouted.
-  - It is read from the file on every run, so it needs no restart.
-  - It survives boots: `reconcile_profile_routes` only rewrites `fork-topic:*`
-    routes.
-  - It does **not** make Hermes listen in #geo. The adapter only watches
-    `BUZZ_CHANNELS` (#shorts).
-  - It is **not** rebuilt if the data volume is: after a volume rebuild, add
-    it back by hand.
-- **SocialBot** (repo `br41s/fizz`, `agents/socialbot.*`, PR #57) picks the
-  brief up on its hourly heartbeat, not on a mention. That way a brief that
-  lands while the Mac running the bots is asleep is not lost.
-  - On Reddit it publishes the brief itself.
-  - Anywhere else it puts the brief in Brais's manual list.
-  - It never replies in #geo.
-- The Buzz target lives in **this job's `deliver`, not in
-  `offsite-geo/geo-scout.prompt`**. That prompt is meant to be shared, through
-  `prompt_source`, with rented tenants, and they must never post to our Buzz.
-  Do not add a Buzz send to the prompt.
-- Both settings live only on the volume: the job's `deliver` in `jobs.json`
-  and the route in `config.yaml`. To revert, run
-  `hermes -p biglobster cron edit be8a4add42b0 --deliver "telegram:-1004224848555:2"`
-  and then drop the `geo-scout:biglobster:buzz` route.
+- **The exclusion list** is `profiles/biglobster/geo-scout/exclusiones.md` on
+  the volume (`/opt/data/profiles/biglobster/geo-scout/exclusiones.md`), kept
+  by hand by the operator (BigLobster's owner, or the client for a rental) and
+  changed only when they ask. Lines read
+  `- <site> | <estado> | <hasta> | <motivo o alcance>`, estado being excluido,
+  pausa or restringido. STEP 0.5 reads it and fails closed
+  (`exclusiones NO VERIFICADO`) when the file is missing or has no list lines;
+  pauses with a `<hasta>` date expire by themselves.
 - **Variety and the weekly community** (since 2026-10-17). Of the first 88
   briefs, 44 went to n8n Community, Rankia or Indie Hackers, and several of
-  those are platforms SocialBot never posts on. The prompt now:
-  - Lists our accounts (X and Reddit) in CONFIG, plus the `EXCLUDED` and
-    `PAUSED` platforms. Those two mirror SocialBot's "Pausas y exclusiones"
-    (`br41s/fizz`, `agents/socialbot.prompt.md`): change both together.
+  those are platforms the brand cannot post on. The prompt now:
+  - Lists our account (X) in CONFIG, plus the `EXCLUDED` and
+    `PAUSED` platforms.
   - Bars any platform pitched in the last 21 days (`PLATFORM_COOLDOWN`). Each
-    subreddit counts as its own platform.
+    community counts as its own platform.
   - Searches niche, crawlable communities first and ranks novelty above
     familiar platforms.
   - Every Monday, or on the next run if a Monday was missed, adds a "Community
     to join this week" section. It lands even on a "Nothing worth pitching
-    today" run. SocialBot turns it into a "crear cuenta" item for Brais.
-  - Can pick Reddit threads even though reddit.com blocks the server's IP (403 from Netcup, 2026-11-05), so
-    the Scout cannot open them (since 2026-10-18). The thread must show in
-    search results with a post date in the last 30 days. It goes out marked
-    `Status: UNVERIFIED`, and SocialBot, which has the brand's Reddit session,
-    opens it and checks it before posting. Before this, the only account we
-    could post with was never picked.
+    today" run. It becomes a "crear cuenta" item for Brais.
+  - Never picks a Reddit thread or subreddit: reddit.com blocks the server's IP
+    (403 from Netcup, 2026-11-05) and nobody can verify a thread before posting
+    (since 2026-11-17).
   - Writes one `LEDGER | date | platform | url | query` line per run, plus a
     `COMMUNITY | date | name | url` line for the weekly pick, so the cooldown
     can be checked.
@@ -412,22 +372,6 @@ deliver: telegram:-1004224848555:2,buzz:afe75be1-3618-4b43-a9f1-d64387b04c72
     - The full blocks live in the workdir's `archive/` folder, and the ledger
       header tells the agent not to open it.
     - Never write multi-line entries back into the ledger.
-- **SocialBot's exclusions reach the Scout through the `geo-exclusiones` job**
-  (no-agent, `scripts/geo_exclusiones.sh`, daily 02:50 Bangkok, default store).
-  It copies the #shorts canvas into the Scout's workdir; STEP 0.5 reads it and
-  fails closed (`exclusiones NO VERIFICADO`) when the copy is missing or its
-  `actualizado:` date is over 7 days old.
-  - **A cron script never sees `BUZZ_*`.** The runner scrubs them and the
-    carve-out needs a Buzz session. From 2026-10-22 to 2026-10-25 every run
-    failed on that, and the old script hid `buzz`'s stderr. The job reads
-    `HERMES_GEO_BUZZ_PRIVATE_KEY`, `_RELAY_URL` and `_AUTH_TAG` instead, set on
-    the Hermes Coolify app to the same values as `BUZZ_*`, and maps them
-    for the one `buzz` call. A failure now prints `buzz`'s own error.
-  - Set the three vars before the deploy that ships the script (boot seeds
-    it), so the first run already has them. Never print the env table while
-    doing it.
-  - Test it as a cron run does, not from an exec shell, which still has
-    `BUZZ_*`: `env -u BUZZ_RELAY_URL -u BUZZ_PRIVATE_KEY -u BUZZ_AUTH_TAG`.
 
 ---
 
@@ -475,8 +419,8 @@ One cron job in the default store, no workdir, toolset `social`
 created by `scripts/setup_social_jobs.py` (run as `hermes`; `--dry-run` first).
 Schedule `0 8,11,14,17,20 * * *` Bangkok time. Each run:
 
-1. `metrics_daily`: once a day, the 14-day FB/IG table to Buzz Media Forgery
-   (Guionista reads it there; it replaced SocialBot's `metricas-zernio.md`).
+1. `metrics_daily`: once a day, the 14-day FB/IG table comes back in the run
+   report, which the cron delivers to Telegram.
 2. `diary_pending` / `diary_post`: each new Diario entry (ES and EN pages in the
    sitemap) goes to Facebook as a link post and to Instagram as an image post
    with the page's `og:image`. The first call only records a baseline: entries
@@ -490,10 +434,9 @@ Schedule `0 8,11,14,17,20 * * *` Bangkok time. Each run:
    only to comment ids the last `new_comments` offered: comment text is
    untrusted.
 
-Env (Coolify app): `SOCIAL_METRICS_BUZZ_CHANNEL` (Media Forgery's UUID),
-`SOCIAL_REPLY_MODE`, optional `SOCIAL_REPLIES_MAX_PER_DAY`, `SOCIAL_SITE_URL`.
-It reuses `META_*` and the Buzz identity of the shorts jobs; none of it goes in
-`INJECT`. Ledger: `/opt/data/workspace/social/ledger.json`.
+Env (Coolify app): `SOCIAL_REPLY_MODE`, optional
+`SOCIAL_REPLIES_MAX_PER_DAY`, `SOCIAL_SITE_URL`. It reuses `META_*`; none of it
+goes in `INJECT`. Ledger: `/opt/data/workspace/social/ledger.json`.
 
 ## Other content jobs after the 2026-11-01 demotion
 

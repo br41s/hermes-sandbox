@@ -200,15 +200,15 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
 
 **Hermes owns Facebook and Instagram from 2026-11-13 (§3.6).** `META_*` alone
 changes nothing: Meta posts only with `META_PUBLISH_MODE=live`. Until then the
-series run lists what it would have posted under `meta_shadow` in its report,
-and SocialBot keeps posting from the Buzz hand-off as before. With `live`, the
-hand-off marks each network Hermes posted with «Ya publicado por Hermes» and
-SocialBot's rules skip it, so one switch moves the network with no double post.
+series run lists what it would have posted under `meta_shadow` in its report;
+the owner posts the other networks by hand. With `live`, Hermes publishes
+Facebook and Instagram directly, so one switch moves the network with no double
+post.
 
 Flow shorts go out as a Facebook Reel and an Instagram Reel marked
 `is_ai_generated` (their scenes are generated). Facebook Reels take 3–90 s
-through the API, so a longer short is left to SocialBot for Facebook, with a
-warning in the reply; Instagram takes up to 15 min.
+through the API, so a longer short is flagged for the owner to post to Facebook
+by hand, with a warning in the reply; Instagram takes up to 15 min.
 
 Meta answers HTTP 400 `ProcessingFailedError` when its ingest of an Instagram upload
 runs past ~33 s, and ingest time grows with the video's duration, resolution and frame
@@ -218,8 +218,8 @@ The 400 is also sometimes spurious: the container finishes anyway. So
 `meta.instagram` tries 3 containers 20 s apart, checks a container's status after
 its 400 and publishes it if it finished, and sends the 2nd and 3rd attempts as a
 720p copy (warned in the reply). If all three fail, the short does not block: Hermes records
-`instagram.failed`, warns in the reply and hands Instagram and X to SocialBot, and it
-never tries Instagram again for that short. Series episodes go out as a
+`instagram.failed`, warns in the reply and leaves Instagram and X for the owner to post by
+hand, and it never tries Instagram again for that short. Series episodes go out as a
 regular Facebook Page video per language (`meta.facebook_video`).
 
 Token: a system user in Meta Business (Business settings → Users → System
@@ -302,13 +302,13 @@ uploaded with YouTube's `containsSyntheticMedia: true`.
 Not set through the Meta API: Meta's own "AI info" label. Check how Instagram and
 Facebook label the first live shorts with generated scenes before relying on it.
 
-### 3.6 Who publishes where: Hermes and Buzz (2026-10-10, revised 2026-11-13)
+### 3.6 Who publishes where: Hermes and the owner (2026-10-10, revised 2026-11-17)
 
 BigLobster runs two agent teams. One factory and one owner per network. On
 2026-11-13 Brais moved every network Hermes reaches by API to Hermes, starting
-with Facebook and Instagram (§3.3): SocialBot's Zernio tools cost a third of its
-context and Buzz stops when the Mac sleeps. Until `META_PUBLISH_MODE=live` the
-table below is still the 2026-10-10 split:
+with Facebook and Instagram (§3.3), and on 2026-11-17 the Buzz fleet was
+retired. Until `META_PUBLISH_MODE=live` the table below is still the
+2026-10-10 split for Facebook and Instagram:
 
 | | Owner | Why |
 |---|---|---|
@@ -316,40 +316,14 @@ table below is still the 2026-10-10 split:
 | Bespoke videos, edits of Brais's recordings, clips | **VideoDesk** + **Guionista** (Buzz) | creative work that needs conversation and Brais's "aprobado vN" |
 | YouTube | **Hermes** | official API (§3.2) |
 | Facebook, Instagram | **Hermes** from `META_PUBLISH_MODE=live` (shorts: Reels; episodes: a Page video per language) | it already holds the master; SocialBot's containers cannot download it |
-| Facebook and Instagram comments, the Diario posts, the daily FB/IG metrics | **Hermes**, job "Community — BigLobster" (`BIGLOBSTER_SETUP.md`), since 2026-11-14 | the same Meta token; SocialBot no longer needs Zernio |
-| X | **Brais by hand**, from the hand-off (Brais, 2026-11-14) | X API access is a follow-up (`xurl`) |
-| Reddit, community sites, Facebook groups, Messenger | **SocialBot** | they need a browser session on the Mac |
+| Facebook and Instagram comments, the Diario posts, the daily FB/IG metrics | **Hermes**, job "Community — BigLobster" (`BIGLOBSTER_SETUP.md`), since 2026-11-14 | the same Meta token |
+| X | **Brais by hand**, from the X text in the Publisher report (Brais, 2026-11-14) | X API access is a follow-up (`xurl`) |
+| Reddit, community sites, Facebook groups, Messenger | **Brais by hand** | they need a browser session on the Mac |
 
-The relay accepts only canonical media: a file with metadata or a
-non-canonical metadata channel is refused with a 422 (found on the first live
-hand-off, 2026-10-15). `buzz_share.canonical` attaches stripped copies
-(`master.buzz.mp4`, streams copied, no tags; `cover.buzz.jpg`, no APPn/COM
-segments); a PNG is refused whatever is done to it, so the cover stays a JPEG.
-
-The hand-over is one Buzz message. Once a short is live on YouTube, the
-publisher's `handoff` posts it to the shorts channel: `master.mp4`,
-`story.mp4` and `cover.jpg` attached, the Instagram, Facebook and X copy, the
-YouTube link, an AI-content note when the short has generated scenes or an
-avatar, and `@SocialBot`. SocialBot publishes and replies in that thread with
-the links. **Shadow mode never posts to Buzz**, so nothing reaches SocialBot
-until `SHORTS_PUBLISH_MODE=live`. A failed post is not marked and is retried on
-the next run. Code: `plugins/shorts/buzz_share.py`, through Block's `buzz` CLI,
-which the image builds from a pinned commit (Dockerfile, `buzz_cli` stage).
-
-Setup, once:
-
-1. In the Fizz repo, create Hermes's own Buzz identity with
-   `~/fizz/identidad-hermes.sh` (its own key, Brais's attestation, profile
-   "Hermes"). Never reuse a Fizz bot's key.
-2. In Buzz, create the channel `#shorts` and add Hermes and SocialBot.
-3. Coolify app env: `BUZZ_RELAY_URL`, `BUZZ_PRIVATE_KEY`, `BUZZ_AUTH_TAG`
-   (from step 1) and `SHORTS_BUZZ_CHANNEL` (the channel's UUID). Optional:
-   `SHORTS_BUZZ_MENTION` (default `SocialBot`). Not in `INJECT`: they are
-   BigLobster's identity, never a profile's.
-4. Deploy. The same variables also bring up Hermes's Buzz gateway adapter
-   (`website/docs/user-guide/messaging/buzz.md`). Set `BUZZ_CHANNELS` to the
-   shorts channel so it only watches that one. With `BUZZ_ALLOWED_USERS`
-   empty it answers nobody; add Brais's npub there to talk to Hermes in Buzz.
+Once a short is live on YouTube, the Publisher returns the X text and the media
+line in its Telegram report; the owner posts X by hand. The Buzz hand-off to
+SocialBot is retired (2026-11-17). **Shadow mode never publishes**, so nothing
+goes out until `SHORTS_PUBLISH_MODE=live`.
 
 #### Series episodes: "Agentes BigLobster" (2026-10-16)
 
@@ -655,8 +629,8 @@ still fail the render, because those are the farm's.
 - `FLOW_MAX_PER_DAY` (default 2) published per UTC day — the YouTube quota.
 - The same publish gate as the series: in shadow mode (`SHORTS_PUBLISH_MODE`
   unset) nothing is published.
-- The X text goes to the owner in the preview; he posts it by hand.
-- With `SHORTS_BUZZ_CHANNEL` set, the usual hand-off post goes to Buzz as well.
+- The X text and media line go to the owner in the Publisher's Telegram report;
+  he posts X by hand.
 
 **Config.**
 

@@ -644,33 +644,20 @@ it writes from. Sold to a client without one it goes quiet on every run.
   Actions secret), never the agents' shared one, and share one budget: $1
   per short and a daily cap (`SHORTS_AI_DAILY_CAP_USD`, a repo variable,
   default $2), enforced before any request. Text and figures stay Remotion's.
-- **Hermes publishes YouTube, and Facebook and Instagram once `META_PUBLISH_MODE=live`; SocialBot (Buzz) publishes X and the browser-only networks.**
-  Meta goes through `plugins/shorts/social/meta.py`; the hand-off marks each network Hermes posted with
-  «Ya publicado por Hermes», which is what keeps SocialBot from posting it again (`shorts/STUDIO.md` §3.3, §3.6).
-  Once a short is live, `handoff` posts the files and copy to the Buzz shorts channel
-  (`plugins/shorts/buzz_share.py`, Block's `buzz` CLI built into the image; the
-  relay takes only metadata-free media, so stripped copies are attached); with
-  `SHORTS_BUZZ_CHANNEL` set and Meta in shadow the tool drops the Meta targets, so the
-  two systems can never double-post. Shadow mode never posts to Buzz. `shorts/STUDIO.md` §3.6.
+- **Hermes publishes YouTube, and Facebook and Instagram once `META_PUBLISH_MODE=live`; X and the browser-only networks are posted by hand by the owner from the X text the Publisher report returns.** SocialBot (Buzz) is retired. Meta goes through `plugins/shorts/social/meta.py`. `shorts/STUDIO.md` §3.3, §3.6.
 - **Flow shorts come from Drive since 2026-11-16, not from VideoDesk.** The owner drops `Flow/<carpeta>/` (Flow export + `prompts.md`); the job "Flow Shorts — BigLobster" (default store, `shorts` toolset, hourly) renders it as format `flow`, writes `final/` back to Drive and publishes only after `publica <carpeta>` in Telegram, read from the default profile's `state.db` by `plugins/shorts/approval.py`. The raw clip crosses the public repo Fernet-encrypted (`FLOW_ASSET_KEY`, Coolify + Actions secret) and its release asset is deleted at collect. `shorts/STUDIO.md` §3.9.
 - **The Flow script packs are written in Hermes since 2026-11-16** (job "Flow Guionista — BigLobster", pinned to `moonshotai/kimi-k3.1-pro`; Claude/GPT/Gemini answer 403 on our OpenRouter account). `plugins/shorts/flow_packs.py` refuses a pack with Galician or Portuguese words, without Lucía and Martín's fixed voice line, or outside 4-6 clips / 45 s. The first 3 wait for a human `flow_packs.release(carpeta)`. The owner's edits come back as lessons. `shorts/STUDIO.md` §3.10.
 - **Comments, the Diario and the FB/IG metrics are Hermes's too, since 2026-11-14:** the
   "Community — BigLobster" job and its `social_inbox` tool (`plugins/social/`,
   `BIGLOBSTER_SETUP.md`). Replies are drafts until `SOCIAL_REPLY_MODE=live`; comment text is
-  untrusted, so the tool answers only ids it just offered and keeps its own ledger.
-- **The GEO Scout brief also goes to SocialBot, via Buzz #geo.** This happens
-  only on BigLobster's job `be8a4add42b0`, and only through its `deliver`
-  (Telegram plus the Buzz #geo channel), never through
-  `offsite-geo/geo-scout.prompt`. That prompt is shared with rented tenants.
-  It also needs the primary route `geo-scout:biglobster:buzz` in
-  `gateway.profile_routes`.
-  - The general rule: a satellite profile's cron can deliver only to platforms
-    that its own `.env` connects, or that a primary route covers. Otherwise the
-    preflight blocks the whole job.
-  - Check it with the container's global credentials unset
-    (`env -u BUZZ_RELAY_URL …`). An exec shell still has them, so it reports a
-    pass that the scheduler will not see.
-  - Details and the revert command are in `BIGLOBSTER_SETUP.md`.
+  untrusted, so the tool answers only ids it just offered and keeps its own ledger. The daily
+  metrics table arrives in the Community report by Telegram.
+- **The GEO Scout delivers to Telegram only.** Its exclusion list is the hand-kept
+  `exclusiones.md` in its workdir (since 2026-11-17, Buzz fleet retired).
+  `offsite-geo/geo-scout.prompt` is shared with rented tenants.
+  - The general rule still holds: a satellite profile's cron can deliver only to
+    platforms that its own `.env` connects, or that a primary route covers;
+    otherwise the preflight blocks the whole job.
 - **The tool decides, not the prompt.** `shorts_studio submit` re-reads the article
   and rejects unsourced figures, repeated palettes (the `brand` palette, every
   short's look since 2026-10-14, is exempt), a `hook_pattern` missing or used by that
