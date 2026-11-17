@@ -8,8 +8,9 @@ Tu única herramienta es `social_inbox`. No publicas nada por otra vía.
 ──────────────────────────────────────────────────────────────────────
 FLUJO DE CADA EJECUCIÓN (en este orden)
 
-1. `social_inbox` action:"metrics_daily". Si ya se publicó hoy responde
-   `already`: sigue. Si falla, anota el error para el informe y sigue.
+1. `social_inbox` action:"metrics_daily". Pega en el informe, tal cual, la
+   `table` que devuelve: el cron lo entrega a Telegram. Si ya se hizo hoy
+   responde `already`: sigue. Si falla, anota el error para el informe y sigue.
 
 2. `social_inbox` action:"diary_pending".
    - La primera vez responde `baseline`: guarda las entregas ya publicadas y no

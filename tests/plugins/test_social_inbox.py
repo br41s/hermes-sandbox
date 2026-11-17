@@ -1,8 +1,8 @@
 """Tests for the `social` plugin (Facebook Page + Instagram comments inbox).
 
 Meta's Graph API is mocked everywhere (a scripted fake client for the two
-functions tested for real, plain monkeypatched stand-ins for the rest) and the
-Buzz CLI is a fake subprocess: nothing leaves the machine.
+functions tested for real, plain monkeypatched stand-ins for the rest): nothing
+leaves the machine.
 """
 
 from __future__ import annotations
@@ -75,10 +75,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path, raising=False)
     for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "tok", "META_IG_USER_ID": "2"}.items():
         monkeypatch.setenv(k, v)
-    for k in ("SOCIAL_REPLY_MODE", "SOCIAL_REPLIES_MAX_PER_DAY", "SOCIAL_METRICS_BUZZ_CHANNEL",
+    for k in ("SOCIAL_REPLY_MODE", "SOCIAL_REPLIES_MAX_PER_DAY",
               "META_PUBLISH_MODE", "SOCIAL_SITE_URL"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setattr(inbox.buzz_share, "cli", lambda: "/usr/local/bin/buzz")
     return tmp_path
 
 
@@ -520,27 +519,13 @@ ROW = {"fecha": "2026-11-13", "red": "facebook", "enlace": "https://www.facebook
        "compartidos": 0, "guardados": None}
 
 
-def test_metrics_daily_posts_once_per_day_and_fails_without_a_channel(env, meta_net, monkeypatch):
+def test_metrics_daily_returns_the_table_once_per_day(env, meta_net):
     meta_net["rows"] = [ROW]
-    sent = []
 
-    def fake_run(args, **kw):
-        sent.append((args, kw))
-        return type("Done", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(inbox.subprocess, "run", fake_run)
-
-    missing = json.loads(inbox.handle_social_inbox({"action": "metrics_daily"}))
-    assert missing["success"] is False and "SOCIAL_METRICS_BUZZ_CHANNEL" in missing["error"]
-    assert sent == [] and not (env / "workspace" / "social" / "ledger.json").exists()
-
-    monkeypatch.setenv("SOCIAL_METRICS_BUZZ_CHANNEL", "chan-1")
     first = json.loads(inbox.handle_social_inbox({"action": "metrics_daily"}))
-    assert first["success"] is True and first["posted"] is True and first["rows"] == 1
-    args, kw = sent[0]
-    assert args[1:5] == ["messages", "send", "--channel", "chan-1"]
-    assert args[-2:] == ["--content", "-"]
-    body = kw["input"]
+
+    assert first["success"] is True and first["rows"] == 1
+    body = first["table"]
     assert body.startswith("📊 Métricas FB/IG últimos 14 días (Hermes, " + _today() + " ICT)")
     assert "| Fecha | Red | Enlace | Tipo | Alcance | Vistas | Likes | Com | Shares | Saves |" in body
     assert "| 2026-11-13 | facebook |" in body
@@ -549,17 +534,18 @@ def test_metrics_daily_posts_once_per_day_and_fails_without_a_channel(env, meta_
 
     second = json.loads(inbox.handle_social_inbox({"action": "metrics_daily"}))
     assert second["success"] is True and second["already"] is True
-    assert len(sent) == 1
+    assert "table" not in second
 
 
-def test_metrics_daily_leaves_the_day_unposted_when_the_cli_fails(env, meta_net, monkeypatch):
-    monkeypatch.setenv("SOCIAL_METRICS_BUZZ_CHANNEL", "chan-1")
-    monkeypatch.setattr(inbox.subprocess, "run", lambda *a, **kw: type(
-        "Done", (), {"returncode": 1, "stdout": "", "stderr": "relay refused"})())
+def test_metrics_daily_leaves_the_day_unposted_when_meta_fails(env, monkeypatch):
+    def refuse(days=14):
+        raise inbox.meta.MetaError("insights unavailable")
+
+    monkeypatch.setattr(inbox.meta, "post_metrics", refuse)
 
     payload = json.loads(inbox.handle_social_inbox({"action": "metrics_daily"}))
 
-    assert payload["success"] is False and "relay refused" in payload["error"]
+    assert payload["success"] is False and "insights unavailable" in payload["error"]
     assert not (env / "workspace" / "social" / "ledger.json").exists()
 
 
