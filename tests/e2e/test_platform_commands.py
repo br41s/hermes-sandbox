@@ -143,7 +143,12 @@ class TestAuthorization:
         event = make_event(platform, "/help")
         adapter.send.reset_mock()
         await adapter.handle_message(event)
-        await asyncio.sleep(0.3)
+        # Poll like send_and_capture: the pairing path does DB work on worker threads, so a
+        # fixed 0.3 s lost the race on slow CI runners (discord, 2 of 60 runs).
+        for _ in range(40):
+            if adapter.send.called:
+                break
+            await asyncio.sleep(0.05)
 
         # The adapter.send is called directly by the authorization path
         # (not via _send_with_retry), so check it was called with a pairing message
