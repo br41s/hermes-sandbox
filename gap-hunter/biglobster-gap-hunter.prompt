@@ -97,6 +97,8 @@ española y ya NO es el destino por defecto para contenido nuevo.
      omite los tags hreflang cuando no hay mapeo, así que esto es seguro).
    - El cuerpo empieza directamente con `<header class="article-hero container">`:
      breadcrumb, article-cover, article-tags, H1, article-summary.
+   - La `<img>` de article-cover es el LCP de la página: lleva `loading="eager"` y
+     `fetchpriority="high"`. Las demás imágenes del artículo, `loading="lazy"`.
    - **PROHIBIDO** incluir `<!DOCTYPE>`, `<html>`, `<head>`, nav, mobile-nav,
      footer, botón WhatsApp o cookie banner — los pone el layout. Si tu archivo
      contiene `<html>` o `<footer class="site-footer">` está MAL.
@@ -293,7 +295,7 @@ después. Un fallo ruidoso se arregla el mismo día; uno disimulado dura meses.
 - [ ] Frontmatter tiene `"lang": "en"` y `"permalink": "/blog/<slug>.html"` (sin prefijo)
 - [ ] NO tocaste blog.html, sitemap.xml, feed.xml, web/*.html ni site/_includes/
 - [ ] NO añadiste entrada en site/_data/langmap.json (no hay traducción real que mapear)
-- [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía)
+- [ ] El héroe tiene article-cover con imagen FOTO REALISTA JPG (no SVG, no infografía), con `loading="eager" fetchpriority="high"`
 - [ ] La cover tiene mínimo 2 personas de ambos géneros
 - [ ] Ninguna pantalla de dispositivo mira directamente a cámara (de perfil/ángulo/espaldas)
 - [ ] La cover muestra un objeto o lugar propio de ESTE artículo y el momento que cuenta; su línea está en cover-ledger.md y no repite entorno, encuadre ni objeto-clave de las últimas 8
