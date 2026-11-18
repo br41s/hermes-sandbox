@@ -194,10 +194,11 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
         order = [r['text'] for r in peer.requests if r['model'] == 'original' and r['text'] in FOLLOWERS]
         assert order == list(FOLLOWERS), order
         assert executed(compacting['text'][:12]) == before['compacting_requests'], 'compacted turn replayed'
-        compacted = [str(c) for _, _, c in before['compacted']]
+        # The wire strips surrounding whitespace; the in-flight turn's row is stored as sent (trailing space).
+        compacted = [str(c).strip() for _, _, c in before['compacted']]
         for name in FOLLOWERS:
             wire = next(r['wire'] for r in peer.requests if r['text'] == name)
-            turns = [str(m.get('content', '')) for m in json.loads(wire) if m.get('role') != 'system']
+            turns = [str(m.get('content', '')).strip() for m in json.loads(wire) if m.get('role') != 'system']
             # The follower runs on the transcript committed before the restart, not the pre-compression one.
             # Where the tail cut lands is the compressor's call (budget, 1.5x soft ceiling, and which turn
             # crosses the trigger), so assert the invariant, not a boundary: the compacted rows lead the
