@@ -194,6 +194,10 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
         order = [r['text'] for r in peer.requests if r['model'] == 'original' and r['text'] in FOLLOWERS]
         assert order == list(FOLLOWERS), order
         assert executed(compacting['text'][:12]) == before['compacting_requests'], 'compacted turn replayed'
+        print('JOURNEY_REQUESTS ' + json.dumps([
+            (r['model'], r['text'][:12], len(r['wire']), [str(m.get('content', ''))[:14] for m in json.loads(r['wire'])])
+            for r in peer.requests]))
+        print('JOURNEY_COMPACTED ' + json.dumps([(role, str(c)[:24], len(str(c))) for _, role, c in before['compacted']]))
         for name in FOLLOWERS:
             wire = next(r['wire'] for r in peer.requests if r['text'] == name)
             # protect_first_n keeps PRESSURE_0 verbatim; the compacted middle is only inside the summary.
