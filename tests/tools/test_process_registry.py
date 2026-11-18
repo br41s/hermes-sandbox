@@ -28,6 +28,25 @@ def registry():
 
 
 @pytest.fixture(autouse=True)
+def _no_owner_death_supervisor(monkeypatch):
+    """Keep the owner-death supervisor (hermes_cli.process_identity) out of this file.
+
+    ``spawn_local`` hands every job's process group to ``own_process_groups``, which
+    prunes groups that no longer exist (``os.killpg(pgid, 0)``) and, if any survive,
+    starts ``process_supervisor.sh`` through ``subprocess.Popen``. These tests invent
+    pids (1111, 5555) and patch ``subprocess.Popen`` to capture the job's command;
+    whether the invented pgid exists is up to the host, so on a runner where it does
+    the supervisor start landed in the capture (``assert 2 == 1``), and in the PTY
+    test, which does not patch Popen, it started a real supervisor. The supervisor is
+    covered by tests/hermes_cli/test_process_identity_supervisor.py.
+    """
+    monkeypatch.setattr(
+        "hermes_cli.process_identity._update_supervised_pgids",
+        lambda verb, pgids: None,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_systemd_scope_cache():
     """Reset the cached ``systemd-run --user --scope`` availability flag
     before each test so a probe run on a real systemd host (where
