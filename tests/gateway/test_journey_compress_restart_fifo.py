@@ -194,17 +194,18 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
         order = [r['text'] for r in peer.requests if r['model'] == 'original' and r['text'] in FOLLOWERS]
         assert order == list(FOLLOWERS), order
         assert executed(compacting['text'][:12]) == before['compacting_requests'], 'compacted turn replayed'
-        print('JOURNEY_REQUESTS ' + json.dumps([
-            (r['model'], r['text'][:12], len(r['wire']), [str(m.get('content', ''))[:14] for m in json.loads(r['wire'])])
-            for r in peer.requests]))
-        print('JOURNEY_COMPACTED ' + json.dumps([(role, str(c)[:24], len(str(c))) for _, role, c in before['compacted']]))
+        compacted = [str(c) for _, _, c in before['compacted']]
         for name in FOLLOWERS:
             wire = next(r['wire'] for r in peer.requests if r['text'] == name)
-            # protect_first_n keeps PRESSURE_0 verbatim; the compacted middle is only inside the summary.
-            turns = [str(m.get('content', '')) for m in json.loads(wire)]
-            assert 'SUMMARY_RETAINED_FACTS' in wire and not any(t.startswith('PRESSURE_1 ') for t in turns), (
-                name, [t[:24] for t in turns], [(role, str(c)[:24]) for _, role, c in before['compacted']],
-                [(r['model'], r['text'][:12], len(r['wire'])) for r in peer.requests])
+            turns = [str(m.get('content', '')) for m in json.loads(wire) if m.get('role') != 'system']
+            # The follower runs on the transcript committed before the restart, not the pre-compression one.
+            # Where the tail cut lands is the compressor's call (budget, 1.5x soft ceiling, and which turn
+            # crosses the trigger), so assert the invariant, not a boundary: the compacted rows lead the
+            # request verbatim, the summary is on the wire, PRESSURE_0 stays (protect_first_n), and the
+            # first reply - between the protected head and the minimum tail - is only inside the summary.
+            assert turns[:len(compacted)] == compacted, (name, [t[:24] for t in turns], [c[:24] for c in compacted])
+            assert 'SUMMARY_RETAINED_FACTS' in wire and turns[0].startswith('PRESSURE_0 '), (name, [t[:24] for t in turns])
+            assert not any(t.startswith('ACK_PRESSURE_0') for t in turns), (name, [t[:24] for t in turns])
         settled = admissions()
         assert {r['target_session_id'] for r in settled} == {sid}
         assert [r['request_id'] for r in settled][-3:] == list(FOLLOWERS)
