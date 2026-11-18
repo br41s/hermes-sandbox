@@ -18,6 +18,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -58,6 +59,13 @@ def checkout_base(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_CRON_CHECKOUT_DIR", str(base))
     monkeypatch.delenv("HERMES_CRON_ISOLATE_WORKDIR", raising=False)
     return base
+
+
+@pytest.fixture(autouse=True)
+def _no_network_git(monkeypatch):
+    """Keep git off the network: the https origin above then fails fast and
+    locally, so provisioning exercises the warn-and-continue path."""
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +314,7 @@ class TestCrossDeviceFallback:
             def __init__(self, rc, out="", err=""):
                 self.returncode, self.stdout, self.stderr = rc, out, err
 
-        def fake_git(args, cwd=None, timeout=300):
+        def fake_git(args, cwd=None, timeout=300, **_kw):
             calls.append(args)
             if args[0] == "clone":
                 if "--no-hardlinks" not in args:
@@ -337,6 +345,107 @@ class TestCrossDeviceFallback:
             sched._provision_isolated_checkout("job", "bl", "/fake/src")
 
 
+# ---------------------------------------------------------------------------
+# _sync_to_origin_default — the clone starts at origin's default branch tip
+# ---------------------------------------------------------------------------
+
+class TestSyncToOriginDefault:
+    def test_clone_starts_at_origin_default_branch_tip(self, tmp_path, checkout_base, monkeypatch):
+        """The shared tree can be months stale and parked on an unpushed branch
+        (2026-11-18: 682 commits behind). The clone must come from origin's
+        default branch tip, not from the source tree's HEAD."""
+        import cron.fork_ext.isolated_checkout as sched
+        monkeypatch.setattr(sched, "_FETCH_ALLOW_PROTOCOL", "file")  # local bare upstream
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
+
+        upstream = tmp_path / "up.git"
+        _git(["init", "-q", "--bare", "-b", "main", str(upstream)], tmp_path)
+
+        seed = tmp_path / "seed"
+        _git(["clone", "-q", str(upstream), str(seed)], tmp_path)
+        _git(["config", "user.email", "hermes@agent.local"], seed)
+        _git(["config", "user.name", "hermes"], seed)
+        (seed / "a.txt").write_text("A", encoding="utf-8")
+        _git(["add", "."], seed)
+        _git(["commit", "-q", "-m", "A"], seed)
+        _git(["push", "-q", "origin", "main"], seed)
+
+        # The shared tree, cloned at commit A and never pulled since.
+        source = tmp_path / "shared"
+        _git(["clone", "-q", str(upstream), str(source)], tmp_path)
+        _git(["config", "user.email", "hermes@agent.local"], source)
+        _git(["config", "user.name", "hermes"], source)
+
+        # Upstream moves ahead of the shared tree.
+        (seed / "b.txt").write_text("B", encoding="utf-8")
+        _git(["add", "."], seed)
+        _git(["commit", "-q", "-m", "B"], seed)
+        _git(["push", "-q", "origin", "main"], seed)
+        upstream_sha = subprocess.run(
+            ["git", "rev-parse", "main"],
+            cwd=str(upstream), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        # The shared tree is parked on an unpushed branch.
+        _git(["checkout", "-q", "-b", "stale-branch"], source)
+        (source / "c.txt").write_text("C", encoding="utf-8")
+        _git(["add", "."], source)
+        _git(["commit", "-q", "-m", "C"], source)
+
+        eff, cleanup = _provision_isolated_checkout("job", "bl", str(source))
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=eff, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=eff, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            assert branch == "main"
+            assert sha == upstream_sha
+            assert (Path(eff) / "b.txt").exists()
+            assert not (Path(eff) / "c.txt").exists()
+        finally:
+            _cleanup_isolated_checkout(cleanup)
+
+    def test_fetch_failure_keeps_source_head_and_warns(self, source_repo, checkout_base, caplog):
+        """An unreachable origin must not fail the run: the clone stays on the
+        source tree's committed HEAD and a warning is logged."""
+        from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
+
+        caplog.set_level(logging.WARNING, logger="cron.scheduler")
+        eff, cleanup = _provision_isolated_checkout("job", "bl", str(source_repo))
+        try:
+            assert (Path(eff) / "web" / "article.html").read_text() == "<h1>v1</h1>\n"
+            assert any("could not sync to origin" in r.message for r in caplog.records)
+        finally:
+            _cleanup_isolated_checkout(cleanup)
+
+    def test_sync_timeout_does_not_fail_closed(self, checkout_base, monkeypatch):
+        """subprocess.TimeoutExpired is a SubprocessError; letting it escape
+        would fail the job closed. A failed sync must only warn."""
+        import cron.fork_ext.isolated_checkout as sched
+
+        class R:
+            def __init__(self, rc, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def fake_git(args, cwd=None, timeout=300, **_kw):
+            if args[0] == "clone":
+                return R(0)
+            if args[:2] == ["remote", "get-url"]:
+                return R(0, out="https://github.com/x/y.git")
+            if args[0] == "fetch":
+                raise subprocess.TimeoutExpired(cmd="git fetch", timeout=120)
+            return R(0)
+
+        monkeypatch.setattr(sched, "_is_git_worktree", lambda p: True)
+        monkeypatch.setattr(sched, "_git", fake_git)
+        _eff, cleanup = sched._provision_isolated_checkout("job", "bl", "/fake/src")
+        sched._cleanup_isolated_checkout(cleanup)
+
+
 class TestSweep:
     def test_sweeps_old_keeps_fresh(self, checkout_base):
         from cron.fork_ext.isolated_checkout import _sweep_stale_checkouts
@@ -354,3 +463,107 @@ class TestSweep:
         assert not old.exists()
         assert fresh.exists()
         assert unrelated.exists()  # not our prefix — left alone
+
+
+class TestSchedulerCredentialIsolation:
+    """The scheduler's fetch must never run a credential helper copied from the
+    shared tree: agents can write that tree's .git/config, and the scheduler's
+    env holds every service secret (security review 2026-11-18)."""
+
+    @pytest.mark.parametrize("key", ["credential.helper", "credential.https://example.com.helper"])
+    def test_copied_helper_is_not_run(self, tmp_path, monkeypatch, key):
+        from cron.fork_ext.isolated_checkout import _SCHEDULER_CREDENTIALS
+
+        repo = tmp_path / "clone"
+        repo.mkdir()
+        _git(["init", "-q"], repo)
+        marker = tmp_path / "helper-ran"
+        _git(["config", key, f"!touch {marker}"], repo)
+        monkeypatch.setenv("HOME", str(tmp_path))  # empty store, no global config
+        monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
+
+        def fill(extra):
+            subprocess.run(
+                ["git", *extra, "credential", "fill"], cwd=repo,
+                input="protocol=https\nhost=example.com\n\n",
+                capture_output=True, text=True, check=False,
+            )
+
+        fill([])  # control: without the reset the planted helper runs
+        assert marker.exists()
+        marker.unlink()
+        fill(list(_SCHEDULER_CREDENTIALS))
+        assert not marker.exists()
+
+    def test_fetch_and_set_head_use_scheduler_credentials(self, checkout_base, monkeypatch):
+        import cron.fork_ext.isolated_checkout as sched
+
+        calls = []
+
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def fake_git(args, cwd=None, timeout=300, **_kw):
+            calls.append(list(args))
+            if args[:2] == ["remote", "get-url"]:
+                return R(out="https://github.com/x/y.git")
+            if "symbolic-ref" in args:
+                return R(out="origin/main\n")
+            return R()
+
+        monkeypatch.setattr(sched, "_is_git_worktree", lambda p: True)
+        monkeypatch.setattr(sched, "_git", fake_git)
+        _eff, cleanup = sched._provision_isolated_checkout("job", "bl", "/fake/src")
+        network = [c for c in calls if "fetch" in c or "set-head" in c]
+        assert len(network) == 2
+        for c in network:
+            assert c[:len(sched._SCHEDULER_CREDENTIALS)] == list(sched._SCHEDULER_CREDENTIALS)
+        sched._cleanup_isolated_checkout(cleanup)
+
+    def test_logged_reason_drops_url_credentials(self, checkout_base, monkeypatch, caplog):
+        import cron.fork_ext.isolated_checkout as sched
+
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def fake_git(args, cwd=None, timeout=300, **_kw):
+            if args[:2] == ["remote", "get-url"]:
+                return R(out="https://github.com/x/y.git")
+            if "fetch" in args:
+                return R(128, err="fatal: unable to access 'HTTPS://x-access-token:ghp_SECRET@github.com/x/y.git/' "
+                                  "token ghp_" + "A" * 36)
+            return R()
+
+        caplog.set_level(logging.WARNING, logger="cron.scheduler")
+        monkeypatch.setattr(sched, "_is_git_worktree", lambda p: True)
+        monkeypatch.setattr(sched, "_git", fake_git)
+        _eff, cleanup = sched._provision_isolated_checkout("job", "bl", "/fake/src")
+        text = " ".join(r.getMessage() for r in caplog.records)
+        assert "could not sync to origin" in text
+        assert "ghp_SECRET" not in text
+        assert "ghp_" + "A" * 36 not in text
+        sched._cleanup_isolated_checkout(cleanup)
+
+    def test_ext_transport_never_runs_even_if_config_allows_it(self, tmp_path, monkeypatch):
+        """The origin URL comes from the agent-writable shared tree. Even with
+        `protocol.ext.allow=always` in a config, the scheduler's fetch must not
+        run an `ext::` command."""
+        import cron.fork_ext.isolated_checkout as sched
+
+        repo = tmp_path / "clone"
+        repo.mkdir()
+        _git(["init", "-q"], repo)
+        marker = tmp_path / "ext-ran"
+        _git(["remote", "add", "origin", f"ext::sh -c touch% {marker}"], repo)
+        _git(["config", "protocol.ext.allow", "always"], repo)
+        monkeypatch.delenv("GIT_ALLOW_PROTOCOL", raising=False)
+
+        # control: with ext allowed by config, a plain fetch runs the planted command
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, capture_output=True, check=False, timeout=30)
+        assert marker.exists()
+        marker.unlink()
+        sched._git([*sched._SCHEDULER_CREDENTIALS, "fetch", "origin"], cwd=str(repo), timeout=30,
+                   allow_protocol=sched._FETCH_ALLOW_PROTOCOL)
+        assert not marker.exists()

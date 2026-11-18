@@ -12,6 +12,7 @@ in this module's globals.
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from hermes_cli._subprocess_compat import windows_hide_flags
+from tools.environments.local import build_subprocess_env
 
 # Same logger as before the move, so agent.log lines keep their
 # ``cron.scheduler`` name and tests patching ``cron.scheduler.logger`` still
@@ -40,10 +42,12 @@ logger = logging.getLogger("cron.scheduler")
 # Fix: when an agent job's workdir is a git working tree, the scheduler runs the
 # agent in an EPHEMERAL local clone of that tree (one per run) and removes it
 # afterwards. The agent physically cannot reach the shared tree, so two agents
-# running close together can never clobber each other's uncommitted work. A fresh
-# clone always starts from clean committed origin/main, so prior-run leftovers
-# vanish too. The per-URL atomic commit+push-to-main flow is unchanged — it just
-# happens inside the clone.
+# running close together can never clobber each other's uncommitted work. The
+# clone is then fetched from origin and checked out at the tip of origin's
+# default branch, so prior-run leftovers and a stale shared tree both vanish; if
+# that fetch fails, the run continues on the shared tree's committed HEAD and a
+# warning is logged (job prompts still fetch on their own). The per-URL atomic
+# commit+push-to-main flow is unchanged — it just happens inside the clone.
 #
 # Scope: AGENT jobs only. no_agent script jobs keep their configured workdir
 # (they rely on stable absolute paths and are read-mostly). Disable globally with
@@ -79,7 +83,9 @@ def _is_git_worktree(path: str) -> bool:
         return False
 
 
-def _git(args: list, cwd: Optional[str] = None, timeout: int = 300) -> subprocess.CompletedProcess:
+def _git(
+    args: list, cwd: Optional[str] = None, timeout: int = 300, allow_protocol: Optional[str] = None
+) -> subprocess.CompletedProcess:
     popen_kwargs = {"creationflags": windows_hide_flags()} if sys.platform == "win32" else {}
     # `-c safe.directory=*` so cloning/reading the source tree works even when it
     # is owned by a different user than the one running the scheduler (a recurring
@@ -93,6 +99,20 @@ def _git(args: list, cwd: Optional[str] = None, timeout: int = 300) -> subproces
         text=True,
         timeout=timeout,
         check=False,
+        # Never let a scheduler git call block on an interactive credential
+        # prompt: the tick loop is headless, so a prompt would hang the run.
+        # Same env as before (no scrub, no profile-home swap: the credential
+        # `store` lives in the gateway's HOME), plus two overrides.
+        # GIT_ALLOW_PROTOCOL overrides every protocol.* config, so a transport
+        # enabled in a copied or planted config cannot run.
+        env=build_subprocess_env(
+            scrub_secrets=False,
+            inherit_profile_home=False,
+            extra={
+                "GIT_TERMINAL_PROMPT": "0",
+                **({"GIT_ALLOW_PROTOCOL": allow_protocol} if allow_protocol else {}),
+            },
+        ),
         **popen_kwargs,
     )
 
@@ -117,6 +137,64 @@ def _strip_url_credentials(url: str) -> str:
                 return scheme + rest[at + 1:]
             return url
     return url
+
+
+# The fetch runs in the scheduler (gateway) process, whose env holds every
+# service secret. The clone's credential helper is copied from the shared tree,
+# which agents can write, so a `credential.helper=!cmd` planted there would run
+# here with those secrets. Reset the helper list and use only the scheduler's
+# own `store` (~/.git-credentials of the gateway's HOME).
+_SCHEDULER_CREDENTIALS = ("-c", "credential.helper=", "-c", "credential.helper=store")
+# The origin URL is copied from that tree too, so the fetch may use only these
+# transports. git refuses `ext::` by default, but a `protocol.ext.allow` in a
+# config would win over `-c protocol.allow=never`; GIT_ALLOW_PROTOCOL does not.
+_FETCH_ALLOW_PROTOCOL = "https:ssh"
+# `scheme://user:secret@` and GitHub token shapes in a git error message; scrubbed before logging.
+_URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+_TOKEN_SHAPES = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
+
+
+def _sync_to_origin_default(job_id: str, ephemeral: str) -> Optional[str]:
+    """Fetch origin and check out its default branch tip in the clone.
+
+    Returns the branch name on success; on ANY failure logs a WARNING and
+    returns None, leaving the clone on the source tree's HEAD (the
+    pre-2026-11-18 behaviour). Never raises.
+    """
+    # The source tree's refs/remotes/origin/* are its LOCAL branches, and
+    # ``git clone --local`` checks out its HEAD — so the clone is as stale as
+    # the shared tree (2026-11-18: 682 commits behind, HEAD on an unpushed
+    # branch). Fetching origin here is what makes the clone current.
+    def _kept(step: str, reason) -> None:
+        logger.warning(
+            "Job '%s': isolated checkout kept the source tree's HEAD; could not sync to origin (%s): %s",
+            job_id, step, _TOKEN_SHAPES.sub("***", _URL_USERINFO.sub(r"\1", str(reason)))[:300],
+        )
+
+    step = "fetch"
+    try:
+        for step, args, timeout in (
+            ("fetch", [*_SCHEDULER_CREDENTIALS, "fetch", "--quiet", "--prune", "origin"], 120),
+            ("set-head", [*_SCHEDULER_CREDENTIALS, "remote", "set-head", "origin", "--auto"], 60),
+            ("symbolic-ref", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], 60),
+        ):
+            res = _git(args, cwd=ephemeral, timeout=timeout, allow_protocol=_FETCH_ALLOW_PROTOCOL)
+            if res.returncode != 0:
+                return _kept(step, res.stderr.strip())
+        head_ref = res.stdout.strip()
+        branch = head_ref[len("origin/"):] if head_ref.startswith("origin/") else ""
+        if not branch or branch.startswith("-"):
+            return _kept(step, f"bad origin/HEAD: {head_ref!r}")
+        step = "checkout"
+        res = _git(["checkout", "--quiet", "-B", branch, f"origin/{branch}", "--"], cwd=ephemeral)
+        if res.returncode != 0:
+            return _kept(step, res.stderr.strip())
+        return branch
+    except (subprocess.SubprocessError, OSError) as e:
+        # Timeouts land here too (TimeoutExpired is a SubprocessError): a sync
+        # that fails must not escape, because the caller converts it into
+        # IsolatedCheckoutError and the job fails closed.
+        return _kept(step, e)
 
 
 def _provision_isolated_checkout(
@@ -146,6 +224,7 @@ def _provision_isolated_checkout(
 
     slug = "".join(c for c in (profile or "x") if c.isalnum() or c in "-_") or "x"
     ephemeral = tempfile.mkdtemp(prefix=f"{_CHECKOUT_PREFIX}{slug}-{job_id}-", dir=base)
+    branch: Optional[str] = None
 
     try:
         # Local clone: hardlinks objects from the source — fast and disk-cheap.
@@ -185,6 +264,13 @@ def _provision_isolated_checkout(
                     continue
                 key, value = line.split(" ", 1)
                 _git(["config", "--local", key, value], cwd=ephemeral)
+
+        # The local clone carries the source tree's HEAD and its LOCAL branches,
+        # so it is only as fresh as the shared tree. Fetch origin's default
+        # branch and check out its tip instead — AFTER the config copy above,
+        # because the fetch needs the copied credential helper.
+        if src_origin.returncode == 0 and src_origin.stdout.strip():
+            branch = _sync_to_origin_default(job_id, ephemeral)
     except IsolatedCheckoutError:
         shutil.rmtree(ephemeral, ignore_errors=True)
         raise
@@ -192,7 +278,13 @@ def _provision_isolated_checkout(
         shutil.rmtree(ephemeral, ignore_errors=True)
         raise IsolatedCheckoutError(f"provisioning isolated checkout failed: {e}") from e
 
-    logger.info("Job '%s': isolated checkout %s (from %s)", job_id, ephemeral, workdir)
+    logger.info(
+        "Job '%s': isolated checkout %s (from %s, on %s)",
+        job_id,
+        ephemeral,
+        workdir,
+        branch or "source HEAD",
+    )
     return ephemeral, ephemeral
 
 
