@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from hermes_cli._subprocess_compat import windows_hide_flags
+from tools.environments.local import build_subprocess_env
 
 # Same logger as before the move, so agent.log lines keep their
 # ``cron.scheduler`` name and tests patching ``cron.scheduler.logger`` still
@@ -100,13 +101,18 @@ def _git(
         check=False,
         # Never let a scheduler git call block on an interactive credential
         # prompt: the tick loop is headless, so a prompt would hang the run.
-        env={
-            **os.environ,
-            "GIT_TERMINAL_PROMPT": "0",
-            # GIT_ALLOW_PROTOCOL overrides every protocol.* config, so a
-            # transport enabled in a copied or planted config cannot run.
-            **({"GIT_ALLOW_PROTOCOL": allow_protocol} if allow_protocol else {}),
-        },
+        # Same env as before (no scrub, no profile-home swap: the credential
+        # `store` lives in the gateway's HOME), plus two overrides.
+        # GIT_ALLOW_PROTOCOL overrides every protocol.* config, so a transport
+        # enabled in a copied or planted config cannot run.
+        env=build_subprocess_env(
+            scrub_secrets=False,
+            inherit_profile_home=False,
+            extra={
+                "GIT_TERMINAL_PROMPT": "0",
+                **({"GIT_ALLOW_PROTOCOL": allow_protocol} if allow_protocol else {}),
+            },
+        ),
         **popen_kwargs,
     )
 
