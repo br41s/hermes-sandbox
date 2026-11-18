@@ -314,7 +314,7 @@ class TestCrossDeviceFallback:
             def __init__(self, rc, out="", err=""):
                 self.returncode, self.stdout, self.stderr = rc, out, err
 
-        def fake_git(args, cwd=None, timeout=300):
+        def fake_git(args, cwd=None, timeout=300, **_kw):
             calls.append(args)
             if args[0] == "clone":
                 if "--no-hardlinks" not in args:
@@ -350,10 +350,12 @@ class TestCrossDeviceFallback:
 # ---------------------------------------------------------------------------
 
 class TestSyncToOriginDefault:
-    def test_clone_starts_at_origin_default_branch_tip(self, tmp_path, checkout_base):
+    def test_clone_starts_at_origin_default_branch_tip(self, tmp_path, checkout_base, monkeypatch):
         """The shared tree can be months stale and parked on an unpushed branch
         (2026-11-18: 682 commits behind). The clone must come from origin's
         default branch tip, not from the source tree's HEAD."""
+        import cron.fork_ext.isolated_checkout as sched
+        monkeypatch.setattr(sched, "_FETCH_ALLOW_PROTOCOL", "file")  # local bare upstream
         from cron.fork_ext.isolated_checkout import _provision_isolated_checkout, _cleanup_isolated_checkout
 
         upstream = tmp_path / "up.git"
@@ -429,7 +431,7 @@ class TestSyncToOriginDefault:
             def __init__(self, rc, out="", err=""):
                 self.returncode, self.stdout, self.stderr = rc, out, err
 
-        def fake_git(args, cwd=None, timeout=300):
+        def fake_git(args, cwd=None, timeout=300, **_kw):
             if args[0] == "clone":
                 return R(0)
             if args[:2] == ["remote", "get-url"]:
@@ -502,7 +504,7 @@ class TestSchedulerCredentialIsolation:
             def __init__(self, rc=0, out="", err=""):
                 self.returncode, self.stdout, self.stderr = rc, out, err
 
-        def fake_git(args, cwd=None, timeout=300):
+        def fake_git(args, cwd=None, timeout=300, **_kw):
             calls.append(list(args))
             if args[:2] == ["remote", "get-url"]:
                 return R(out="https://github.com/x/y.git")
@@ -516,7 +518,7 @@ class TestSchedulerCredentialIsolation:
         network = [c for c in calls if "fetch" in c or "set-head" in c]
         assert len(network) == 2
         for c in network:
-            assert c[:4] == list(sched._SCHEDULER_CREDENTIALS)
+            assert c[:len(sched._SCHEDULER_CREDENTIALS)] == list(sched._SCHEDULER_CREDENTIALS)
         sched._cleanup_isolated_checkout(cleanup)
 
     def test_logged_reason_drops_url_credentials(self, checkout_base, monkeypatch, caplog):
@@ -526,11 +528,12 @@ class TestSchedulerCredentialIsolation:
             def __init__(self, rc=0, out="", err=""):
                 self.returncode, self.stdout, self.stderr = rc, out, err
 
-        def fake_git(args, cwd=None, timeout=300):
+        def fake_git(args, cwd=None, timeout=300, **_kw):
             if args[:2] == ["remote", "get-url"]:
                 return R(out="https://github.com/x/y.git")
             if "fetch" in args:
-                return R(128, err="fatal: unable to access 'HTTPS://x-access-token:ghp_SECRET@github.com/x/y.git/'")
+                return R(128, err="fatal: unable to access 'HTTPS://x-access-token:ghp_SECRET@github.com/x/y.git/' "
+                                  "token ghp_" + "A" * 36)
             return R()
 
         caplog.set_level(logging.WARNING, logger="cron.scheduler")
@@ -540,4 +543,27 @@ class TestSchedulerCredentialIsolation:
         text = " ".join(r.getMessage() for r in caplog.records)
         assert "could not sync to origin" in text
         assert "ghp_SECRET" not in text
+        assert "ghp_" + "A" * 36 not in text
         sched._cleanup_isolated_checkout(cleanup)
+
+    def test_ext_transport_never_runs_even_if_config_allows_it(self, tmp_path, monkeypatch):
+        """The origin URL comes from the agent-writable shared tree. Even with
+        `protocol.ext.allow=always` in a config, the scheduler's fetch must not
+        run an `ext::` command."""
+        import cron.fork_ext.isolated_checkout as sched
+
+        repo = tmp_path / "clone"
+        repo.mkdir()
+        _git(["init", "-q"], repo)
+        marker = tmp_path / "ext-ran"
+        _git(["remote", "add", "origin", f"ext::sh -c touch% {marker}"], repo)
+        _git(["config", "protocol.ext.allow", "always"], repo)
+        monkeypatch.delenv("GIT_ALLOW_PROTOCOL", raising=False)
+
+        # control: with ext allowed by config, a plain fetch runs the planted command
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, capture_output=True, check=False, timeout=30)
+        assert marker.exists()
+        marker.unlink()
+        sched._git([*sched._SCHEDULER_CREDENTIALS, "fetch", "origin"], cwd=str(repo), timeout=30,
+                   allow_protocol=sched._FETCH_ALLOW_PROTOCOL)
+        assert not marker.exists()

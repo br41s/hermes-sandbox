@@ -82,7 +82,9 @@ def _is_git_worktree(path: str) -> bool:
         return False
 
 
-def _git(args: list, cwd: Optional[str] = None, timeout: int = 300) -> subprocess.CompletedProcess:
+def _git(
+    args: list, cwd: Optional[str] = None, timeout: int = 300, allow_protocol: Optional[str] = None
+) -> subprocess.CompletedProcess:
     popen_kwargs = {"creationflags": windows_hide_flags()} if sys.platform == "win32" else {}
     # `-c safe.directory=*` so cloning/reading the source tree works even when it
     # is owned by a different user than the one running the scheduler (a recurring
@@ -98,7 +100,13 @@ def _git(args: list, cwd: Optional[str] = None, timeout: int = 300) -> subproces
         check=False,
         # Never let a scheduler git call block on an interactive credential
         # prompt: the tick loop is headless, so a prompt would hang the run.
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            # GIT_ALLOW_PROTOCOL overrides every protocol.* config, so a
+            # transport enabled in a copied or planted config cannot run.
+            **({"GIT_ALLOW_PROTOCOL": allow_protocol} if allow_protocol else {}),
+        },
         **popen_kwargs,
     )
 
@@ -131,8 +139,13 @@ def _strip_url_credentials(url: str) -> str:
 # here with those secrets. Reset the helper list and use only the scheduler's
 # own `store` (~/.git-credentials of the gateway's HOME).
 _SCHEDULER_CREDENTIALS = ("-c", "credential.helper=", "-c", "credential.helper=store")
-# `scheme://user:secret@` in a git error message; scrubbed before logging.
+# The origin URL is copied from that tree too, so the fetch may use only these
+# transports. git refuses `ext::` by default, but a `protocol.ext.allow` in a
+# config would win over `-c protocol.allow=never`; GIT_ALLOW_PROTOCOL does not.
+_FETCH_ALLOW_PROTOCOL = "https:ssh"
+# `scheme://user:secret@` and GitHub token shapes in a git error message; scrubbed before logging.
 _URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+_TOKEN_SHAPES = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
 
 
 def _sync_to_origin_default(job_id: str, ephemeral: str) -> Optional[str]:
@@ -149,7 +162,7 @@ def _sync_to_origin_default(job_id: str, ephemeral: str) -> Optional[str]:
     def _kept(step: str, reason) -> None:
         logger.warning(
             "Job '%s': isolated checkout kept the source tree's HEAD; could not sync to origin (%s): %s",
-            job_id, step, _URL_USERINFO.sub(r"\1", str(reason))[:300],
+            job_id, step, _TOKEN_SHAPES.sub("***", _URL_USERINFO.sub(r"\1", str(reason)))[:300],
         )
 
     step = "fetch"
@@ -159,15 +172,15 @@ def _sync_to_origin_default(job_id: str, ephemeral: str) -> Optional[str]:
             ("set-head", [*_SCHEDULER_CREDENTIALS, "remote", "set-head", "origin", "--auto"], 60),
             ("symbolic-ref", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], 60),
         ):
-            res = _git(args, cwd=ephemeral, timeout=timeout)
+            res = _git(args, cwd=ephemeral, timeout=timeout, allow_protocol=_FETCH_ALLOW_PROTOCOL)
             if res.returncode != 0:
                 return _kept(step, res.stderr.strip())
         head_ref = res.stdout.strip()
         branch = head_ref[len("origin/"):] if head_ref.startswith("origin/") else ""
-        if not branch:
+        if not branch or branch.startswith("-"):
             return _kept(step, f"bad origin/HEAD: {head_ref!r}")
         step = "checkout"
-        res = _git(["checkout", "--quiet", "-B", branch, f"origin/{branch}"], cwd=ephemeral)
+        res = _git(["checkout", "--quiet", "-B", branch, f"origin/{branch}", "--"], cwd=ephemeral)
         if res.returncode != 0:
             return _kept(step, res.stderr.strip())
         return branch
