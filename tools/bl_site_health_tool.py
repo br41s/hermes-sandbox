@@ -1070,7 +1070,11 @@ def _run_check(site_url: str, token: str) -> dict:
                         image_issues.append({"page": path, "src": img["src"], "issue": "missing_alt"})
                     elif img["src"].startswith("http") and site_url not in img["src"]:
                         image_issues.append({"page": path, "src": img["src"], "issue": "hotlinked"})
-                for href in _links_in(res["body"]):
+                # The catalogue listing's links are generated from the database at
+                # build time; they are no author's mistake, and on a 14,500-product
+                # shop they alone (391 on /productos) used up the whole link budget
+                # before any blog post was read (Shoroban, 2026-11).
+                for href in () if path in CATALOG_ROUTES else _links_in(res["body"]):
                     target = _normalize(href, site_url)
                     if target:
                         seen_links.setdefault(target, []).append(path)
@@ -1090,7 +1094,10 @@ def _run_check(site_url: str, token: str) -> dict:
         already[full.rstrip("/") + "/"] = page["status"]
     broken: list[dict] = []
     checked = 0
-    for target, found_on in seen_links.items():
+    # Other sites' links first, then the site's own: an author's dead external
+    # link or a CTA to a retired host is what nothing else notices, and the cap
+    # must not be spent on internal links before reaching it.
+    for target, found_on in sorted(seen_links.items(), key=lambda kv: kv[0].startswith(site_url)):
         status = already.get(target)
         if status is None:
             if checked >= LINK_CHECK_CAP:

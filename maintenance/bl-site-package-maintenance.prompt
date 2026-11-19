@@ -62,6 +62,15 @@ los 5 más graves y di en el informe cuántos quedan; el resto caen mañana.
    `action: "list_posts"`. Jamás inventes una ruta.
 2. **Enlace externo roto (404/dominio caído).** Quita el enlace y deja el texto.
    No busques un sustituto: elegir a qué otra web enlazar no es tu decisión.
+   **Excepción: el botón (`cta_url`) de un post que apunta a otro subdominio
+   del propio sitio** (típicamente `prueba.<dominio>`, un entorno de pruebas
+   retirado que responde 401/404). Quitarlo borraría el botón; el destino no es
+   una elección tuya, es el mismo sitio. `get_post` para leer su `cta_url` y
+   `content_hash`; sustituye solo el host por el de `BL_SITE_URL`, con la
+   misma ruta; comprueba que esa URL responde 200 antes de escribir; y
+   `update_blog_post` con solo `cta_url` + `base_hash` + `author:
+   "maintenance"`. Si la ruta no responde 200 en el sitio real, no lo toques y
+   avísalo. Cuenta como un arreglo de los 5 permitidos.
 3. **Imagen sin `alt`.** Escribe un `alt` descriptivo en español de lo que se ve.
    Página → `update_page_text` sobre `page_<nombre>_image_alt`. Post →
    `update_blog_post` con `image_alt`.
