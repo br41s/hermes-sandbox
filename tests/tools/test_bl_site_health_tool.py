@@ -245,6 +245,17 @@ def test_catalogue_links_do_not_spend_the_budget_before_the_blog(monkeypatch):
     assert not any("/productos/p" in u for u in urls)
 
 
+def test_a_lookalike_host_is_not_the_clients_own_site(monkeypatch):
+    """Internal means the same host; a prefix match would call cliente.example.evil.test internal."""
+    lookalike = SITE + ".evil.test/x"
+    result = run(monkeypatch, overrides={
+        SITE + "/blog/post-vivo": {"status": 200, "body": page(body=f'<a href="{lookalike}">x</a>')},
+        lookalike: {"status": 404},
+    })
+    broken = {b["url"]: b for b in result["broken_links"]}
+    assert broken[lookalike]["internal"] is False
+
+
 def test_mailto_and_anchors_are_never_checked(monkeypatch):
     result = run(monkeypatch)
     assert not any("mailto:" in b["url"] for b in result["broken_links"])
