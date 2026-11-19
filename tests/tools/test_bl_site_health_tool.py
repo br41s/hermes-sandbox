@@ -229,6 +229,33 @@ def test_broken_internal_and_external_links_are_found(monkeypatch):
     assert "/" in urls[SITE + "/pagina-inventada"]["found_on"]
 
 
+def test_catalogue_links_do_not_spend_the_budget_before_the_blog(monkeypatch):
+    """/productos lists hundreds of build-generated links; with a cap of 5 they used to
+    exhaust it, so a dead CTA on a blog post was never looked at (Shoroban, 2026-11)."""
+    monkeypatch.setattr(health, "LINK_CHECK_CAP", 5)
+    shelf = "".join(f'<a href="/productos/p{i}">p{i}</a>' for i in range(10))
+    result = run(monkeypatch, overrides={
+        SITE + "/productos": {"status": 200, "body": page(body=shelf)},
+        SITE + "/blog/post-vivo": {
+            "status": 200, "body": page(body='<a href="https://retirado.example/contacto">CTA</a>')},
+        "https://retirado.example/contacto": {"status": 401},
+    })
+    urls = {b["url"] for b in result["broken_links"]}
+    assert "https://retirado.example/contacto" in urls
+    assert not any("/productos/p" in u for u in urls)
+
+
+def test_a_lookalike_host_is_not_the_clients_own_site(monkeypatch):
+    """Internal means the same host; a prefix match would call cliente.example.evil.test internal."""
+    lookalike = SITE + ".evil.test/x"
+    result = run(monkeypatch, overrides={
+        SITE + "/blog/post-vivo": {"status": 200, "body": page(body=f'<a href="{lookalike}">x</a>')},
+        lookalike: {"status": 404},
+    })
+    broken = {b["url"]: b for b in result["broken_links"]}
+    assert broken[lookalike]["internal"] is False
+
+
 def test_mailto_and_anchors_are_never_checked(monkeypatch):
     result = run(monkeypatch)
     assert not any("mailto:" in b["url"] for b in result["broken_links"])

@@ -389,6 +389,15 @@ bloquea la publicación.
    `excerpt`, `badges`, `cta_url`, `cta_label` y, si la tienes, `image_url` +
    `image_alt`. Confirma que la respuesta trae `"success": true` y
    `"status": "published"`.
+5. **Publicar es llamar a la herramienta, nunca escribir la llamada.** El
+   cuerpo del artículo solo viaja dentro de la llamada a `bl_site_publish`;
+   no lo pegues en tu mensaje ni escribas la llamada como texto (etiquetas
+   `<｜DSML｜…>`, JSON con `"name": "bl_site_publish"`): un texto así no ejecuta
+   nada y la guía no se publica, aunque el cron lo dé por terminado. Si
+   la llamada no se pudo hacer o la respuesta no trae `"success": true`,
+   reinténtala una vez, con la llamada real; si sigue sin publicar, empieza
+   tu respuesta final con `[CRON_FAILURE]` en una línea sola y explica qué
+   falló. Solo es `[SILENT]` cuando de verdad no hay nada que publicar.
 
 ### Respuesta final
 

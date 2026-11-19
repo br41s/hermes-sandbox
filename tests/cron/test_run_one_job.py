@@ -99,6 +99,31 @@ def test_run_one_job_agent_declared_failure_is_delivered_verbatim(monkeypatch):
     assert "model service" not in delivered[0]
 
 
+def test_run_one_job_leaked_dsml_tool_call_is_a_failed_run(monkeypatch):
+    """A tool call the model wrote as text never ran: the run must not be recorded healthy,
+    even when prose precedes the markup (that prose is why the empty-response retry skips it)."""
+    calls = _patch_pipeline(
+        monkeypatch,
+        final='Ahora publico el artículo.\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name="tool_call">',
+    )
+
+    s.run_one_job({"id": "dsml-leak", "name": "guide", "deliver": "telegram"})
+
+    assert calls[-1] == ("mark", "dsml-leak", False)
+
+
+def test_run_one_job_quoted_dsml_tag_without_a_call_stays_successful(monkeypatch):
+    """Naming the markup (the prompt does, a report on the leak would) is not leaking a call."""
+    calls = _patch_pipeline(
+        monkeypatch,
+        final="Publicada. Nada de etiquetas <｜DSML｜…> ni <｜DSML｜invoke> escritas como texto.",
+    )
+
+    s.run_one_job({"id": "dsml-quoted", "name": "guide", "deliver": "telegram"})
+
+    assert calls[-1] == ("mark", "dsml-quoted", True)
+
+
 def test_run_one_job_marker_mentioned_in_report_stays_successful(monkeypatch):
     """Only the exact first line is control text; quoted markers remain report content."""
     calls = _patch_pipeline(

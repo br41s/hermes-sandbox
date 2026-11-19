@@ -300,6 +300,12 @@ def _normalized(text: Optional[str]) -> str:
     return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
+def _is_internal(target: str, site_url: str) -> bool:
+    """True when ``target`` is on the client's own host. By host, never by prefix:
+    ``https://cliente.example.evil.test/x`` starts with ``https://cliente.example``."""
+    return urllib.parse.urlsplit(target).netloc.lower() == urllib.parse.urlsplit(site_url).netloc.lower()
+
+
 def _normalize(href: str, site_url: str) -> Optional[str]:
     """Absolute URL for a checkable link, or None for one we deliberately skip."""
     href = href.strip()
@@ -1070,7 +1076,11 @@ def _run_check(site_url: str, token: str) -> dict:
                         image_issues.append({"page": path, "src": img["src"], "issue": "missing_alt"})
                     elif img["src"].startswith("http") and site_url not in img["src"]:
                         image_issues.append({"page": path, "src": img["src"], "issue": "hotlinked"})
-                for href in _links_in(res["body"]):
+                # The catalogue listing's links are generated from the database at
+                # build time; they are no author's mistake, and on a 14,500-product
+                # shop they alone (391 on /productos) used up the whole link budget
+                # before any blog post was read (Shoroban, 2026-11).
+                for href in () if path in CATALOG_ROUTES else _links_in(res["body"]):
                     target = _normalize(href, site_url)
                     if target:
                         seen_links.setdefault(target, []).append(path)
@@ -1090,7 +1100,10 @@ def _run_check(site_url: str, token: str) -> dict:
         already[full.rstrip("/") + "/"] = page["status"]
     broken: list[dict] = []
     checked = 0
-    for target, found_on in seen_links.items():
+    # Other sites' links first, then the site's own: an author's dead external
+    # link or a CTA to a retired host is what nothing else notices, and the cap
+    # must not be spent on internal links before reaching it.
+    for target, found_on in sorted(seen_links.items(), key=lambda kv: _is_internal(kv[0], site_url)):
         status = already.get(target)
         if status is None:
             if checked >= LINK_CHECK_CAP:
@@ -1106,7 +1119,7 @@ def _run_check(site_url: str, token: str) -> dict:
             broken.append({
                 "url": target,
                 "status": status,
-                "internal": target.startswith(site_url),
+                "internal": _is_internal(target, site_url),
                 "found_on": sorted(set(found_on)),
             })
 

@@ -546,6 +546,18 @@ SILENT_MARKER = "[SILENT]"
 CRON_FAILURE_MARKER = "[CRON_FAILURE]"
 
 
+# A model that writes its tool call as text (DeepSeek's DSML serialization) ends the turn with that
+# text as the final answer: the call never ran, yet the run reads as healthy. The Product Guide Agent
+# lost the guides of 2026-11-01 and 2026-11-13 this way, both recorded ``last_status: ok``.
+# The serialization itself, not the bare prefix: a report that quotes `<｜DSML｜…>` (this job's own
+# prompt does) is not a leaked call. The model writes a space after the pipe (`<｜DSML｜ invoke ...`).
+_DSML_LEAK_RE = re.compile(r"<｜DSML｜\s*invoke\s+name\s*=")
+_DSML_LEAK_ERROR = (
+    "The model wrote a tool call as text (DSML markup) instead of making it, so that call never "
+    "ran and nothing it was meant to do (publish, write, update) happened. The saved run output "
+    "holds the text it wrote.")
+
+
 def _cron_failure_marker_error(text: str) -> Optional[str]:
     """Return failure evidence when an agent response declares a cron failure.
 
@@ -3366,6 +3378,8 @@ def _apply_agent_failure_marker(job: dict, success: bool, error, final_response)
         marker_error = _cron_failure_marker_error(final_response)
         if marker_error is not None:
             return False, marker_error, True
+        if _DSML_LEAK_RE.search(final_response or ""):
+            return False, _DSML_LEAK_ERROR, True
     return success, error, False
 
 
