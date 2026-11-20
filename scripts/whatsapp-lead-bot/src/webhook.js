@@ -61,6 +61,35 @@ const SMALL_TALK_REPLY = {
   en: "I'm this website's AI assistant. Whenever you're ready, tell me how I can help.",
 };
 
+// AI Act art. 50(1), in force since 2 Aug 2026: the visitor must know from the
+// first message that they are talking to an AI. The system prompt asks for it,
+// but a prompt is a request, not a guarantee, so the first reply the bot sends
+// in a conversation is checked here and the disclosure is prepended when the
+// model left it out. Later turns are untouched.
+const AI_DISCLOSURE = {
+  es: "Soy el asistente de inteligencia artificial de esta web.",
+  en: "I'm this website's AI assistant.",
+};
+// Fail-closed: only our own fixed sentence counts as the disclosure. A keyword
+// check would pass a reply like "sí, usamos IA" that never says the visitor is
+// talking to one. The system prompt tells the model not to introduce itself,
+// so the sentence is not said twice.
+const OWN_DISCLOSURES = Object.values(AI_DISCLOSURE);
+
+// Pure, exported for testing.
+export function withAiDisclosure(text, lang, isFirstBotMessage) {
+  const body = String(text || "");
+  if (!isFirstBotMessage || OWN_DISCLOSURES.some((d) => body.trimStart().startsWith(d))) return text;
+  return `${AI_DISCLOSURE[lang] || AI_DISCLOSURE.es} ${body}`;
+}
+
+// Pure, exported for testing. bot_turn_count is a conversation attribute the
+// widget SDK could also write, so anything but a positive integer counts as
+// "no bot message yet" and the disclosure goes out.
+export function isFirstBotTurn(turnCount) {
+  return !(Number.isInteger(turnCount) && turnCount > 0);
+}
+
 // Pure, exported for testing: what a small-talk turn sends. The model's reply
 // when it answered normally. If it gave up or failed, its text says it cannot
 // help, which is wrong for a greeting, so a fixed reply takes its place, in the
@@ -418,7 +447,7 @@ async function processTurn(payload, { reclaimed = false } = {}) {
       modelOutput?.detected_language ||
       requestedHumanLanguage(visitorMessage) ||
       languageFromBrowser(conversationSnapshot?.additional_attributes?.browser_language);
-    const outbound = escalationMessage({ reason: decision.reason, modelOutput, lang });
+    const outbound = withAiDisclosure(escalationMessage({ reason: decision.reason, modelOutput, lang }), lang, isFirstBotTurn(turnCount));
     await chatwoot.sendMessage(accountId, conversationId, outbound);
     await chatwoot.setStatus(accountId, conversationId, "open");
     await chatwoot.addLabels(accountId, conversationId, ["needs-attention"]);
@@ -450,7 +479,8 @@ async function processTurn(payload, { reclaimed = false } = {}) {
   }
 
   const notice = reclaimed ? RECLAIM_NOTICE[modelOutput.detected_language] || RECLAIM_NOTICE.es : null;
-  await chatwoot.sendMessage(accountId, conversationId, notice ? `${notice}\n\n${modelOutput.reply}` : modelOutput.reply);
+  const reply = withAiDisclosure(modelOutput.reply, modelOutput.detected_language, isFirstBotTurn(turnCount));
+  await chatwoot.sendMessage(accountId, conversationId, notice ? `${notice}\n\n${reply}` : reply);
   await chatwoot.setCustomAttributes(accountId, conversationId, {
     bot_turn_count: turnCount + 1,
     lead_need: modelOutput.lead.need || existingAttributes.lead_need || null,
