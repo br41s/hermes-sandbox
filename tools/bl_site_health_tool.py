@@ -311,6 +311,11 @@ def _normalize(href: str, site_url: str) -> Optional[str]:
     href = href.strip()
     if not href or href.startswith(("#", "mailto:", "tel:", "javascript:", "data:", "whatsapp:")):
         return None
+    # WhatsApp click-to-chat links are format-checked by _check_social_contact, and each
+    # page pre-fills its own text, so every one is a unique URL: on Shoroban 74 of the 120
+    # probes went to wa.me and the staging-host CTAs behind them were never reached.
+    if urllib.parse.urlsplit(href).netloc.lower() in ("wa.me", "api.whatsapp.com"):
+        return None
     if href.startswith("//"):
         return "https:" + href
     if href.startswith("/"):
