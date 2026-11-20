@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  withAiDisclosure,
   shouldProcess,
   resolvePresentedSecret,
   languageFromBrowser,
@@ -278,7 +279,25 @@ test("a real question the site cannot answer still hands off and alerts", async 
     assert.deepEqual(calls.statuses, ["open"], content);
     assert.equal(calls.labels, 1, content);
     assert.equal(calls.telegram, 1, content);
-    assert.ok(calls.sent[0].startsWith("No tengo información suficiente"), content);
+    // First bot turn: the handoff text comes after the AI disclosure (AI Act art. 50).
+    assert.ok(calls.sent[0].startsWith("Soy el asistente de inteligencia artificial de esta web. No tengo información suficiente"), content);
     assert.equal(calls.search, 1, content);
   }
+});
+
+test("first bot message always says it is an AI (AI Act art. 50)", () => {
+  assert.equal(
+    withAiDisclosure("Hola, ¿en qué te ayudo?", "es", true),
+    "Soy el asistente de inteligencia artificial de esta web. Hola, ¿en qué te ayudo?",
+  );
+  assert.equal(withAiDisclosure("Hi! How can I help?", "en", true), "I'm this website's AI assistant. Hi! How can I help?");
+  // Already disclosed: untouched.
+  const disclosed = "Hola, soy el asistente de IA de la tienda. ¿Qué buscas?";
+  assert.equal(withAiDisclosure(disclosed, "es", true), disclosed);
+  assert.equal(withAiDisclosure("Hi, I'm an AI assistant.", "en", true), "Hi, I'm an AI assistant.");
+  // Later turns: untouched. Unknown language: Spanish disclosure.
+  assert.equal(withAiDisclosure("Claro.", "es", false), "Claro.");
+  assert.ok(withAiDisclosure("Olá", "pt", true).startsWith("Soy el asistente"));
+  // "AI" inside another word is not a disclosure.
+  assert.ok(withAiDisclosure("Tenemos AIRE acondicionado.", "es", true).startsWith("Soy el asistente"));
 });
