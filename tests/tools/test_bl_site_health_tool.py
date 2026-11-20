@@ -256,6 +256,22 @@ def test_a_lookalike_host_is_not_the_clients_own_site(monkeypatch):
     assert broken[lookalike]["internal"] is False
 
 
+def test_whatsapp_links_do_not_spend_the_link_budget(monkeypatch):
+    """Each page pre-fills its own wa.me text, so they are all unique URLs: 74 of Shoroban's 120
+    probes went to them and the dead CTA behind them was never reached (2026-11-20)."""
+    monkeypatch.setattr(health, "LINK_CHECK_CAP", 3)
+    chat = "".join(f'<a href="https://wa.me/34600000000?text=pagina{i}">w</a>' for i in range(8))
+    result = run(monkeypatch, overrides={
+        SITE + "/blog/post-vivo": {
+            "status": 200,
+            "body": page(body=chat + '<a href="https://retirado.example/contacto">CTA</a>')},
+        "https://retirado.example/contacto": {"status": 401},
+    })
+    urls = {b["url"] for b in result["broken_links"]}
+    assert "https://retirado.example/contacto" in urls
+    assert not any("wa.me" in u for u in urls)
+
+
 def test_mailto_and_anchors_are_never_checked(monkeypatch):
     result = run(monkeypatch)
     assert not any("mailto:" in b["url"] for b in result["broken_links"])
