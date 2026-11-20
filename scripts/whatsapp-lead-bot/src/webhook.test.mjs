@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   withAiDisclosure,
+  isFirstBotTurn,
   shouldProcess,
   resolvePresentedSecret,
   languageFromBrowser,
@@ -253,7 +254,8 @@ test("a greeting the model answers normally goes out as the model wrote it", asy
     content: "Hola!",
     modelOutput: { ...CANNOT_ANSWER, reply: "Hola, soy el asistente de IA de Shop.", answer_status: "answered", handoff: { required: false, reason: null } },
   });
-  assert.deepEqual(calls.sent, ["Hola, soy el asistente de IA de Shop."]);
+  // The model's words, after the fixed AI disclosure the first turn always carries.
+  assert.deepEqual(calls.sent, ["Soy el asistente de inteligencia artificial de esta web. Hola, soy el asistente de IA de Shop."]);
   assert.equal(calls.telegram, 0);
 });
 
@@ -291,13 +293,18 @@ test("first bot message always says it is an AI (AI Act art. 50)", () => {
     "Soy el asistente de inteligencia artificial de esta web. Hola, ¿en qué te ayudo?",
   );
   assert.equal(withAiDisclosure("Hi! How can I help?", "en", true), "I'm this website's AI assistant. Hi! How can I help?");
-  // Already disclosed: untouched.
-  const disclosed = "Hola, soy el asistente de IA de la tienda. ¿Qué buscas?";
-  assert.equal(withAiDisclosure(disclosed, "es", true), disclosed);
-  assert.equal(withAiDisclosure("Hi, I'm an AI assistant.", "en", true), "Hi, I'm an AI assistant.");
+  // Already starts with our own sentence (the small-talk reply): untouched.
+  const own = "Soy el asistente de inteligencia artificial de esta web. Cuando quieras, dime en qué puedo ayudarte.";
+  assert.equal(withAiDisclosure(own, "es", true), own);
+  // Fail-closed: mentioning AI is not disclosing it.
+  assert.ok(withAiDisclosure("Sí, usamos IA en nuestros servicios.", "es", true).startsWith("Soy el asistente"));
+  assert.ok(withAiDisclosure("Hi, I'm an AI assistant.", "en", true).startsWith("I'm this website's AI assistant."));
   // Later turns: untouched. Unknown language: Spanish disclosure.
   assert.equal(withAiDisclosure("Claro.", "es", false), "Claro.");
   assert.ok(withAiDisclosure("Olá", "pt", true).startsWith("Soy el asistente"));
-  // "AI" inside another word is not a disclosure.
-  assert.ok(withAiDisclosure("Tenemos AIRE acondicionado.", "es", true).startsWith("Soy el asistente"));
+});
+
+test("anything but a positive integer turn count counts as the first bot turn", () => {
+  for (const v of [0, -1, 1.5, NaN, Infinity]) assert.equal(isFirstBotTurn(v), true, String(v));
+  for (const v of [1, 6]) assert.equal(isFirstBotTurn(v), false, String(v));
 });
