@@ -876,7 +876,7 @@ One-time setup:
 
 Weekly check of every model we use, as a `no_agent` script (`model_watch/watch.py`) with no model. Same-family upgrades that are not dearer queue until the next deploy; everything else is only reported. Silent on a stable week.
 
-- **Job:** "Model watch — OpenRouter" — default store; `0 8 * * 1` (Mondays, Hermes timezone); script `model_watch.sh`, seeded every boot by `03-biglobster-config` §5h; delivers to Telegram (home channel); state in `/opt/data/model-watch/state.json`.
-- On the Mac, the OpenCode chains in `delegate.sh` are checked by `python3 -I model_watch/watch.py opencode`; its schedule is not installed yet.
+- **Job:** "Model watch — OpenRouter" (`88f22e0cc161`) — default store; `0 8 * * 1` (Mondays, Hermes timezone); script `model_watch.sh`, seeded every boot by `03-biglobster-config` §5h; delivers to Telegram (home channel); state in `/opt/data/model-watch/state.json`.
+- On the Mac, the OpenCode chains in `delegate.sh` are checked weekly by the launchd agent `top.biglobster.model-watch` (Mondays 09:00).
 - **Detail:** `ops/model-watch.md`.
 

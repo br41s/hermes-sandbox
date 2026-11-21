@@ -8,7 +8,7 @@ A weekly check of every model we use. One stdlib-only script, `model_watch/watch
   Script `model_watch.sh`, seeded every boot by `docker/cont-init.d/03-biglobster-config` §5h.
   Delivers to Telegram (home channel); no LLM runs. Silent when nothing changed since last week.
   State: `/opt/data/model-watch/state.json`.
-- **On Brais's Mac:** `python3 -I /Users/brais/VSCODE/hermes-sandbox/model_watch/watch.py opencode`, for the model chains in `/Users/brais/VSCODE/.claude/skills/opencode-delegate/delegate.sh` (workspace repo). Weekly; see "Mac schedule" below.
+- **On Brais's Mac:** `python3 -I /Users/brais/VSCODE/hermes-sandbox/model_watch/watch.py opencode`, for the model chains in `/Users/brais/VSCODE/.claude/skills/opencode-delegate/delegate.sh` (workspace repo). Weekly; see "Installed" below.
 
 ## The rule (Brais, 2026-11-21)
 
@@ -52,36 +52,27 @@ and was not exercised before merge. Check the first deploy that applies a queue.
 In OpenCode mode an automatic change is written straight into `delegate.sh` (chain lines only).
 Nothing is committed.
 
-## One-time setup
+## Installed (2026-11-21)
 
-(a) After the deploy, as `hermes` in the container:
+**Hermes:** job `88f22e0cc161` "Model watch — OpenRouter", default store, `0 8 * * 1` in the Hermes
+timezone (Asia/Bangkok), delivers to `telegram:-1004224848555`. Registered after the deploy of
+`2320da152`, as `hermes` (the wrapper from CLAUDE.md "Never run hermes in the container as root"):
 
 ```bash
 hermes cron create "0 8 * * 1" --no-agent --script model_watch.sh --deliver telegram --name "Model watch — OpenRouter"
-hermes cron run <id>
 ```
 
-The first run reports everything current. Use the wrapper from CLAUDE.md "Never run hermes in the container as root".
+Its first run (`hermes cron run 88f22e0cc161`) delivered the same report as the dry run below, which
+proves the `no_agent` script sees the model env vars.
 
-(b) Mac schedule: not installed yet. It needs Brais's OK because it is persistent config.
-Save as `~/Library/LaunchAgents/top.biglobster.model-watch.plist` (create `~/VSCODE/tasks/model-watch/` first):
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>top.biglobster.model-watch</string>
-  <key>StartCalendarInterval</key>
-  <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
-  <key>ProgramArguments</key>
-  <array><string>/usr/bin/python3</string><string>-I</string><string>/Users/brais/VSCODE/hermes-sandbox/model_watch/watch.py</string><string>opencode</string></array>
-  <key>StandardOutPath</key><string>/Users/brais/VSCODE/tasks/model-watch/opencode-latest.md</string>
-</dict>
-</plist>
-```
-
-Then `launchctl load ~/Library/LaunchAgents/top.biglobster.model-watch.plist` to enable it.
+**Mac:** launchd agent `top.biglobster.model-watch` (`~/Library/LaunchAgents/top.biglobster.model-watch.plist`),
+Mondays 09:00, runs `~/.local/bin/model-watch-opencode`. That wrapper does not run the checkout's copy,
+which may sit on a branch without `model_watch/`: it fetches `origin/main`, writes
+`model_watch/watch.py` from it to `~/VSCODE/tasks/model-watch/.watch.py`, runs it with Homebrew's
+`python3` (`/usr/bin/python3` is 3.9 and the script needs 3.11+), keeps the report as
+`tasks/model-watch/opencode-<date>.md` and `opencode-latest.md`, and shows a macOS notification when
+the report is not `Sin cambios.`. Turn it off with
+`launchctl bootout gui/$(id -u)/top.biglobster.model-watch`.
 
 ## First run, 2026-11-21 (dry run against the live config, approved by Brais)
 
