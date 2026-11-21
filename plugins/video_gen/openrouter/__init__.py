@@ -18,6 +18,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent.video_gen_provider import VideoGenProvider, error_response, save_url_video, success_response
+from hermes_cli.fork_ext.openrouter_data_policy import with_openrouter_data_policy
+from utils import base_url_host_matches
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +320,8 @@ class OpenRouterVideoGenProvider(VideoGenProvider):
         entry = self._entry(model_id)
         payload = _build_payload(entry, model=model_id, prompt=prompt, image_url=image_url, reference_image_urls=refs,
                                  duration=duration, aspect_ratio=aspect_ratio, resolution=resolution, audio=audio, seed=seed)
+        if base_url_host_matches(base_url, "openrouter.ai"):
+            payload = with_openrouter_data_policy(payload)
         session = self._session()
         try:
             submitted = session.post(f"{base_url}/videos", headers=headers, json=payload,

@@ -6722,6 +6722,11 @@ def _build_call_kwargs(
     if "response_format" in merged_extra:
         from agent.auxiliary_structured_output import without_unsupported_response_format
         merged_extra = without_unsupported_response_format(merged_extra, provider_norm, effective_base, model, task)
+    # fork: the operator's data-collection policy on every aux call OpenRouter serves (vision,
+    # titles, summaries, compression); the main turn sends it via _provider_preferences_for_agent.
+    if provider_norm == "openrouter" or base_url_host_matches(effective_base, "openrouter.ai"):
+        from hermes_cli.fork_ext.openrouter_data_policy import with_openrouter_data_policy
+        merged_extra = with_openrouter_data_policy(merged_extra)
     if merged_extra:
         kwargs["extra_body"] = merged_extra
     # Anthropic Messages adapters take reasoning via a private kwarg that plain OpenAI SDK clients

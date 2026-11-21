@@ -374,9 +374,13 @@ Gotchas, each of which cost a session. Detail in workspace `memories/decisions/h
   no provider (`meta/muse-image` and `qwen3.7-flash` had none). Where it is read: the gateway
   turn, the cron agent (`cron/scheduler.py` `_construct_cron_agent` passes it; a cron run reads
   its own profile's `config.yaml`), delegation, the auditor judge (`auditor/llm.py` adds it for
-  every model, `ignore` only for `deepseek/*`) and the WhatsApp bot. Where it is NOT: auxiliary
-  tasks (vision via `AUXILIARY_VISION_MODEL`, summaries; `agent/auxiliary_client.py`) and the
-  image/video plugins, which send no `provider` block. A `:free` model can never be the main
+  every model, `ignore` only for `deepseek/*`) and the WhatsApp bot. Since 2026-11-21 also
+  auxiliary tasks (vision via `AUXILIARY_VISION_MODEL`, titles, summaries, compression;
+  `agent/auxiliary_client.py` `_build_call_kwargs`) and the OpenRouter image/video plugins, all
+  through `hermes_cli/fork_ext/openrouter_data_policy.py`, which copies the profile's configured
+  value into `provider.data_collection`; a `:free` aux fallback model now fails routing instead
+  of answering. On `/images` and `/videos` OpenRouter documents `deny` as "no training" only,
+  not "no retention". A `:free` model can never be the main
   model any more (free models train on prompts and `deny` excludes them), and a model with no
   provider left answers 404: check one with `tasks/openrouter_deny_probe.py` from the workspace
   before pointing a profile at it.

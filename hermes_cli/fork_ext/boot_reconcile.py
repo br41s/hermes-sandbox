@@ -142,8 +142,8 @@ OVERRIDES = {
     # train on it. Replaces the account-wide Zero Data Retention switch, which left models
     # with no provider at all (meta/muse-image and qwen3.7-flash had 0 ZDR endpoints).
     # Read by the gateway turn (gateway/run_turn*.py), the cron agent (cron/scheduler.py)
-    # and delegation. NOT read by auxiliary tasks (vision, summaries: agent/auxiliary_client.py)
-    # nor by the image/video plugins; the auditor judge sends its own (auditor/llm.py).
+    # and delegation; auxiliary tasks and the OpenRouter image/video plugins add it through
+    # fork_ext/openrouter_data_policy.py; the auditor judge sends its own (auditor/llm.py).
     # Forced like the rest of this table so a profile cannot opt itself out.
     ("provider_routing", "data_collection"): "deny",
     # Skill writes wait for a human (owner, 2026-10-23). Upstream v0.22 (e3d2e57c9e) lets the
