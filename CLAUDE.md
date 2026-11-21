@@ -691,6 +691,7 @@ it writes from. Sold to a client without one it goes quiet on every run.
 - `BIGLOBSTER_SETUP.md` — BigLobster profile wiring
 - `hermes-already-has-routines.md` — what upstream provides before you build scheduling
 - `shorts/STUDIO.md` — BigLobster shorts pipeline; `shorts/CHECKLIST.md` — the manual checklist, revised
+- `ops/model-watch.md` — weekly model check (OpenRouter + OpenCode chains); upgrades queue until the next deploy
 
 ## Before you build
 
