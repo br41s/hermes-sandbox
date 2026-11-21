@@ -1,0 +1,18 @@
+{
+  "data": [
+    {"name": "DeepSeek | deepseek/deepseek-v4-flash", "model_id": "deepseek/deepseek-v4-flash"},
+    {"name": "DeepSeek | deepseek/deepseek-v4.2-flash", "model_id": "deepseek/deepseek-v4.2-flash"},
+    {"name": "DeepSeek | deepseek/deepseek-v4.3-flash", "model_id": "deepseek/deepseek-v4.3-flash"},
+    {"name": "DeepSeek | deepseek/deepseek-v4.4-flash", "model_id": "deepseek/deepseek-v4.4-flash"},
+    {"name": "DeepSeek | deepseek/deepseek-v4.6-flash", "model_id": "deepseek/deepseek-v4.6-flash"},
+    {"name": "Qwen | qwen/qwen3.8-max", "model_id": "qwen/qwen3.8-max"},
+    {"name": "MiMo | mimo/mimo-v2.6-flash", "model_id": "mimo/mimo-v2.6-flash"},
+    {"name": "Kimi | kimi/kimi-k2-flash", "model_id": "kimi/kimi-k2-flash"},
+    {"name": "Kimi | kimi/kimi-k3-flash", "model_id": "kimi/kimi-k3-flash"},
+    {"name": "Qwen | qwen/qwen3.7-max", "model_id": "qwen/qwen3.7-max"},
+    {"name": "Qwen | qwen/qwen3.9-max", "model_id": "qwen/qwen3.9-max"},
+    {"name": "Qwen | qwen/qwen4-max", "model_id": "qwen/qwen4-max"},
+    {"name": "Seed | bytedance-seed/seedream-4.5", "model_id": "bytedance-seed/seedream-4.5"},
+    {"name": "Seed | bytedance-seed/seedream-5.0", "model_id": "bytedance-seed/seedream-5.0"}
+  ]
+}

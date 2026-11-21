@@ -1,0 +1,79 @@
+{
+  "data": [
+    {
+      "id": "kimi-k3.1-pro",
+      "family": "kimi-pro",
+      "canonical_id": "moonshotai/kimi-k3.1-pro",
+      "release_date": "2025-01-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.6
+          },
+          "output": {
+            "price": 2.4
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      },
+      "go": {
+        "limited_regions": false
+      }
+    },
+    {
+      "id": "kimi-k3.2-pro",
+      "family": "kimi-pro",
+      "canonical_id": "moonshotai/kimi-k3.2-pro",
+      "release_date": "2025-02-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.5
+          },
+          "output": {
+            "price": 2.0
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      },
+      "go": {
+        "limited_regions": false
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "family": "glm",
+      "canonical_id": "zhipu/glm-5.3",
+      "release_date": "2025-01-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.3
+          },
+          "output": {
+            "price": 1.2
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      },
+      "go": {
+        "limited_regions": true
+      }
+    }
+  ]
+}
