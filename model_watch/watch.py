@@ -62,6 +62,19 @@ IMAGE_TABLE_HEADER = "modelo | $/imagen | $/M img | fecha"
 
 CHAIN_LINE = re.compile(r'^(\s*(?:FREE|GO|MAX|ZEN)=")([^"]*)(")(.*)$')
 DAILY_SUFFIX = re.compile(r"(?:-\d{8}|-\d{4})$")
+# Catalog data is untrusted: a model id ends up inside delegate.sh (a bash script) and in
+# Coolify env values, so only plain ids pass, and only the model variables can be queued.
+SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")
+SAFE_STORE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+MODEL_ENV_VARS = frozenset({
+    "HERMES_DEFAULT_MODEL", "HERMES_FALLBACK_MODEL", "HERMES_AUDITOR_ORCHESTRATOR_MODEL",
+    "HERMES_AUDITOR_SYSTEM_MODEL", "HERMES_AUDITOR_CONTENT_MODEL", "AUXILIARY_VISION_MODEL",
+    "OPENROUTER_IMAGE_MODEL",
+})
+
+
+def _safe_id(value) -> bool:
+    return isinstance(value, str) and SAFE_MODEL_ID.fullmatch(value) is not None
 
 
 # ── Network access (the only place tests need to patch) ─────────────────────
@@ -369,7 +382,7 @@ def _judge_ok(record) -> bool:
 
 def _eligible_openrouter(site, current, cand, ctx: Context) -> bool:
     cand_id = str(cand.get("id") or "")
-    if not cand_id or cand_id == current.get("id") or ":" in cand_id:
+    if not _safe_id(cand_id) or cand_id == current.get("id") or ":" in cand_id:
         return False
     if cand_id.startswith("anthropic/") or cand_id.startswith("google/gemini"):
         return False
@@ -393,7 +406,7 @@ def _eligible_openrouter(site, current, cand, ctx: Context) -> bool:
 
 def _eligible_opencode(site, current, cand, ctx: Context) -> bool:
     cand_id = str(cand.get("id") or "")
-    if not cand_id or cand_id == current.get("id"):
+    if not _safe_id(cand_id) or cand_id == current.get("id"):
         return False
     if cand.get("type") != "chat":
         return False
@@ -1074,8 +1087,10 @@ def run_queue_env(args) -> int:
             continue
         old = entry.get("old")
         new = entry.get("new")
+        if not _safe_id(new):
+            continue
         for var in entry.get("env_vars") or []:
-            if os.environ.get(var) == old:
+            if var in MODEL_ENV_VARS and os.environ.get(var) == old:
                 print(f"{var}={new}")
     return 0
 
@@ -1096,6 +1111,8 @@ def run_apply_pins(args) -> int:
             continue
         old = entry.get("old")
         new = entry.get("new")
+        if not _safe_id(new):
+            continue
         env_vars = entry.get("env_vars") or []
         values = [os.environ.get(var) for var in env_vars]
         if all(value == new for value in values):
@@ -1103,6 +1120,10 @@ def run_apply_pins(args) -> int:
                 store = job.get("store") or "main"
                 job_id = job.get("id")
                 if not job_id:
+                    continue
+                if store != "main" and (
+                        not SAFE_STORE.fullmatch(str(store))
+                        or not (home / "profiles" / str(store)).is_dir()):
                     continue
                 store_home = home if store == "main" else home / "profiles" / store
                 with use_cron_store(store_home):
@@ -1168,7 +1189,10 @@ def _rewrite_chains(text, mapping):
         if not match:
             lines.append(line)
             continue
-        tokens = [mapping.get(token, token) for token in match.group(2).split()]
+        tokens = [
+            mapping[token] if _safe_id(mapping.get(token)) else token
+            for token in match.group(2).split()
+        ]
         unique = []
         for token in tokens:
             if token not in unique:

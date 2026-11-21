@@ -22,9 +22,13 @@ def test_queue_is_read_before_the_prompt_and_set_between_stop_and_start() -> Non
 
 
 def test_only_model_ids_reach_coolify() -> None:
-    pattern = re.search(r"grep -E '(\^\[A-Z\][^']+)'", TEXT).group(1)
+    pattern = re.search(r"grep -E '(\^\(HERMES_DEFAULT_MODEL[^']+)'", TEXT).group(1)
     ok = re.compile(pattern)
     assert ok.match("HERMES_DEFAULT_MODEL=deepseek/deepseek-v4.1-flash-1017")
+    assert ok.match("OPENROUTER_IMAGE_MODEL=qwen/qwen-image-2.1-turbo")
+    # queue.json is writable by agents: no other Coolify variable may ride the queue.
+    assert not ok.match("HERMES_FORK_SCOPE_PROCESS_ENV=0")
+    assert not ok.match("TELEGRAM_ALLOWED_USERS=123")
     assert not ok.match("HERMES_DEFAULT_MODEL=x; rm -rf /")
     assert not ok.match('HERMES_DEFAULT_MODEL=a"b')
 

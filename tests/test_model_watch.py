@@ -762,3 +762,54 @@ def test_aa_missing_note_lists_models_without_index(tmp_path, monkeypatch, capsy
     assert watch.main(["hermes", "--dry-run", "--hermes-home", str(home)]) == 0
     out = capsys.readouterr().out
     assert "Sin índice AA (no se comparan otras familias): mimo/mimo-v2.6-flash" in out
+
+
+# ── Untrusted catalog / queue data (security review, 2026-11-21) ─────────────
+
+
+def test_a_hostile_catalog_id_never_reaches_delegate_sh():
+    text = 'FREE="opencode/a-free opencode/b-free"\n'
+    bad = 'opencode/x"; touch /tmp/pwned; echo "'
+    out = watch._rewrite_chains(text, {"opencode/a-free": bad, "opencode/b-free": "opencode/c-free"})
+    assert out == 'FREE="opencode/a-free opencode/c-free"\n'
+
+
+def test_unsafe_ids_are_not_candidates():
+    site = watch.Site("x", "opencode/a", source="chain", catalog="opencode-zen")
+    ctx = watch.Context("opencode-zen")
+    cand = {"id": "opencode/$(id)", "type": "chat", "capabilities": {"tools": {"supported": True}}}
+    assert not watch._eligible_opencode(site, {"id": "opencode/a"}, cand, ctx)
+
+
+def test_queue_env_prints_only_model_variables_and_plain_ids(tmp_path, monkeypatch, capsys):
+    qdir = tmp_path / "model-watch"
+    qdir.mkdir()
+    (qdir / "queue.json").write_text(json.dumps({"entries": [
+        {"old": "a/m", "new": "a/m2", "env_vars": ["HERMES_DEFAULT_MODEL", "TELEGRAM_ALLOWED_USERS"],
+         "jobs": [], "status": "queued"},
+        {"old": "a/m", "new": "a/m2\nTELEGRAM_ALLOWED_USERS=1", "env_vars": ["HERMES_FALLBACK_MODEL"],
+         "jobs": [], "status": "queued"},
+    ]}))
+    for var in ("HERMES_DEFAULT_MODEL", "TELEGRAM_ALLOWED_USERS", "HERMES_FALLBACK_MODEL"):
+        monkeypatch.setenv(var, "a/m")
+    assert watch.main(["queue-env", "--hermes-home", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "HERMES_DEFAULT_MODEL=a/m2\n"
+
+
+def test_apply_pins_ignores_a_store_outside_profiles(tmp_path, monkeypatch):
+    qdir = tmp_path / "model-watch"
+    qdir.mkdir()
+    (qdir / "queue.json").write_text(json.dumps({"entries": [
+        {"old": "a/m", "new": "a/m2", "env_vars": [],
+         "jobs": [{"store": "../..", "id": "j1"}], "status": "queued"},
+    ]}))
+    calls = []
+    import cron.jobs as jobs_mod
+
+    def fake_store(home):
+        calls.append(home)
+        raise AssertionError("a store outside profiles/ must never be opened")
+
+    monkeypatch.setattr(jobs_mod, "use_cron_store", fake_store)
+    assert watch.main(["apply-pins", "--hermes-home", str(tmp_path)]) == 0
+    assert calls == []

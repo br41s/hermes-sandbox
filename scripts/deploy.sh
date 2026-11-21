@@ -441,13 +441,14 @@ fi
 # The weekly model_watch run queues same-family, same-or-cheaper model upgrades
 # instead of restarting anything. They take effect here: listed before the
 # prompt, set in Coolify while Hermes is stopped, and the boot's apply-pins
-# moves the cron jobs pinned to the old model. Only model ids pass the pattern
-# below. An image without model_watch, or any error, means "nothing queued".
+# moves the cron jobs pinned to the old model. queue.json sits on a volume agents
+# can write, so only the seven model variables and plain model ids pass below.
+# An image without model_watch, or any error, means "nothing queued".
 MODEL_QUEUE=""
 if [ "$SKIP_MODEL_QUEUE" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   MODEL_QUEUE="$(pod_exec /usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv \
       s6-setuidgid hermes sh -c 'cd /opt/hermes && HOME=/opt/data .venv/bin/python -m model_watch queue-env' \
-      2>/dev/null | tr -d '\r' | grep -E '^[A-Z][A-Z0-9_]*=[A-Za-z0-9][A-Za-z0-9._:/-]*$' || true)"
+      2>/dev/null | tr -d '\r' | grep -E '^(HERMES_DEFAULT_MODEL|HERMES_FALLBACK_MODEL|HERMES_AUDITOR_ORCHESTRATOR_MODEL|HERMES_AUDITOR_SYSTEM_MODEL|HERMES_AUDITOR_CONTENT_MODEL|AUXILIARY_VISION_MODEL|OPENROUTER_IMAGE_MODEL)=[A-Za-z0-9][A-Za-z0-9._:/-]*$' || true)"
   if [ -n "$MODEL_QUEUE" ]; then
     echo "→ Model updates queued (set in Coolify while Hermes is stopped; --skip-model-queue to leave them):"
     printf '%s\n' "$MODEL_QUEUE" | sed 's/^/    /'
