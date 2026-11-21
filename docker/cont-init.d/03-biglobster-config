@@ -529,6 +529,25 @@ chmod +x "$HERMES_HOME/scripts/seo_tech_check.sh"
 chown hermes:hermes "$HERMES_HOME/scripts/seo_tech_check.sh" 2>/dev/null || true
 echo "[03-biglobster] Seeded scripts/seo_tech_check.sh"
 
+# --- 5h: seed the weekly model watch (overwrite every boot to stay current) ---
+# Weekly check of the models Hermes uses on OpenRouter: newer same-family models
+# that are not dearer are queued for the next deploy, everything else is only
+# reported. no_agent, silent when nothing changed since last week.
+# Register the job ONCE (after deploy, in the container shell):
+#   hermes cron create "0 8 * * 1" --no-agent --script model_watch.sh --deliver telegram --name "Model watch — OpenRouter"
+as_hermes mkdir -p "$HERMES_HOME/scripts"
+cat > "$HERMES_HOME/scripts/model_watch.sh" <<'MWATCH'
+#!/bin/bash
+# Managed by docker/cont-init.d/03-biglobster-config — do not edit on the volume.
+cd /opt/hermes 2>/dev/null || exit 0
+exec .venv/bin/python -m model_watch hermes
+MWATCH
+chmod +x "$HERMES_HOME/scripts/model_watch.sh"
+chown hermes:hermes "$HERMES_HOME/scripts/model_watch.sh" 2>/dev/null || true
+echo "[03-biglobster] Seeded scripts/model_watch.sh"
+# Move cron jobs still pinned to an old model after deploy.sh updated the env.
+(cd /opt/hermes && as_hermes env HERMES_HOME="$HERMES_HOME" .venv/bin/python -m model_watch apply-pins) || echo "[03-biglobster] model_watch apply-pins failed (non-fatal)"
+
 # --- 5d: seed the upstream-drift cron script (overwrite every boot to stay current) ---
 # Weekly upstream-drift report. Merge cost is superlinear in ELAPSED TIME (10
 # days of drift measured ~23 conflicted files; 2 months measured 44), so the

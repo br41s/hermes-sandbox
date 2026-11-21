@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": "bytedance-seed/seedream-4.5",
+      "canonical_slug": "bytedance-seed/seedream-4.5",
+      "created": 1700000000,
+      "pricing": {"image": "0.030", "completion": "0.000000"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["image"]},
+      "supported_parameters": [],
+      "context_length": null
+    },
+    {
+      "id": "bytedance-seed/seedream-5.0",
+      "canonical_slug": "bytedance-seed/seedream-5.0",
+      "created": 1710000000,
+      "pricing": {"image": "0.020", "completion": "0.000000"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["image"]},
+      "supported_parameters": [],
+      "context_length": null
+    }
+  ]
+}

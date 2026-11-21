@@ -56,6 +56,10 @@
 #                   deploy even while a cron run is in flight. Without it the
 #                   script lists the runs a rollout would cut and asks (or,
 #                   with --yes, refuses).
+#   --skip-model-queue
+#                   leave the model updates queued by model_watch for a later
+#                   deploy. Without it they are listed before the prompt and
+#                   set in Coolify while Hermes is stopped (ops/model-watch.md).
 #
 set -euo pipefail
 
@@ -69,6 +73,7 @@ ASSUME_YES=0
 STATUS_ONLY=0
 DO_BUILD=0
 FORCE_IN_FLIGHT=0
+SKIP_MODEL_QUEUE=0
 VERIFY_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -77,6 +82,7 @@ while [ $# -gt 0 ]; do
     --yes|-y) ASSUME_YES=1; shift ;;
     --build) DO_BUILD=1; shift ;;
     --force-in-flight) FORCE_IN_FLIGHT=1; shift ;;
+    --skip-model-queue) SKIP_MODEL_QUEUE=1; shift ;;
     --verify-file) VERIFY_FILE="${2:-}"; [ -n "$VERIFY_FILE" ] || { echo "--verify-file needs a path" >&2; exit 2; }; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -431,6 +437,26 @@ else
   echo "  ⚠ could not ask the pod which runs are in flight — continuing" >&2
 fi
 
+# ── Model updates queued by model_watch ──────────────────────────────────────
+# The weekly model_watch run queues same-family, same-or-cheaper model upgrades
+# instead of restarting anything. They take effect here: listed before the
+# prompt, set in Coolify while Hermes is stopped, and the boot's apply-pins
+# moves the cron jobs pinned to the old model. queue.json sits on a volume agents
+# can write, so only the seven model variables and plain model ids pass below.
+# An image without model_watch, or any error, means "nothing queued".
+MODEL_QUEUE=""
+if [ "$SKIP_MODEL_QUEUE" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
+  MODEL_QUEUE="$(pod_exec /usr/bin/env PATH=/command:/usr/local/bin:/usr/bin:/bin /command/with-contenv \
+      s6-setuidgid hermes sh -c 'cd /opt/hermes && HOME=/opt/data .venv/bin/python -m model_watch queue-env' \
+      2>/dev/null | tr -d '\r' | grep -E '^(HERMES_DEFAULT_MODEL|HERMES_FALLBACK_MODEL|HERMES_AUDITOR_ORCHESTRATOR_MODEL|HERMES_AUDITOR_SYSTEM_MODEL|HERMES_AUDITOR_CONTENT_MODEL|AUXILIARY_VISION_MODEL|OPENROUTER_IMAGE_MODEL)=[A-Za-z0-9][A-Za-z0-9._:/-]*$' || true)"
+  if [ -n "$MODEL_QUEUE" ]; then
+    echo "→ Model updates queued (set in Coolify while Hermes is stopped; --skip-model-queue to leave them):"
+    printf '%s\n' "$MODEL_QUEUE" | sed 's/^/    /'
+  fi
+elif [ "$SKIP_MODEL_QUEUE" -eq 0 ]; then
+  echo "  [dry-run] docker exec <hermes container> ... python -m model_watch queue-env, then coolify PATCH /envs per line"
+fi
+
 if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   if [ "$DO_BUILD" -eq 1 ]; then
     confirm "Build and deploy $TAG? [y/N] "
@@ -484,6 +510,20 @@ fi
 
 echo "→ Pointing the app at $TAG and starting it"
 run coolify PATCH "" "{\"docker_registry_image_tag\":\"$TAG\"}"
+if [ -n "$MODEL_QUEUE" ]; then
+  echo "→ Setting the queued model variables in Coolify"
+  # A failed PATCH warns and goes on: Hermes is stopped here, and a partial set
+  # leaves the queue entry waiting (apply-pins only moves jobs once every
+  # variable of an entry carries the new model).
+  while IFS='=' read -r MW_KEY MW_VALUE; do
+    if coolify PATCH /envs "{\"key\":\"$MW_KEY\",\"value\":\"$MW_VALUE\"}"; then
+      echo "    ✓ $MW_KEY=$MW_VALUE"
+    else
+      echo "    ⚠ could not set $MW_KEY in Coolify — it stays on the old model" >&2
+    fi
+  done <<< "$MODEL_QUEUE"
+fi
+
 run coolify POST /start
 
 # ── Wait for the NEW container, not for 60 seconds ───────────────────────────

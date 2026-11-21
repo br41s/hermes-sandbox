@@ -1,0 +1,116 @@
+{
+  "data": [
+    {
+      "id": "deepseek-v4.1-flash-free",
+      "family": "deepseek-flash",
+      "canonical_id": "deepseek/deepseek-v4.1-flash",
+      "release_date": "2025-01-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.0
+          },
+          "output": {
+            "price": 0.0
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "family": "deepseek-flash",
+      "canonical_id": "deepseek/deepseek-v4.1-flash",
+      "release_date": "2025-01-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.14
+          },
+          "output": {
+            "price": 0.28
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      },
+      "context_length": 131072
+    },
+    {
+      "id": "deepseek-v4.2-flash",
+      "family": "deepseek-flash",
+      "canonical_id": "deepseek/deepseek-v4.2-flash",
+      "release_date": "2025-03-01",
+      "type": "chat",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.05
+          },
+          "output": {
+            "price": 0.1
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": true
+        }
+      },
+      "context_length": 131072
+    },
+    {
+      "id": "seedream-4.5",
+      "family": "seedream",
+      "canonical_id": "bytedance-seed/seedream-4.5",
+      "release_date": "2025-01-01",
+      "type": "image",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.0
+          },
+          "output": {
+            "price": 0.0
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": false
+        }
+      }
+    },
+    {
+      "id": "seedream-5.0",
+      "family": "seedream",
+      "canonical_id": "bytedance-seed/seedream-5.0",
+      "release_date": "2025-02-01",
+      "type": "image",
+      "cost": {
+        "text": {
+          "input": {
+            "price": 0.0
+          },
+          "output": {
+            "price": 0.0
+          }
+        }
+      },
+      "capabilities": {
+        "tools": {
+          "supported": false
+        }
+      }
+    }
+  ]
+}

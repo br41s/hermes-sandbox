@@ -871,3 +871,12 @@ One-time setup:
 1. Create the key and set `PSI_API_KEY` in Coolify. It is read from the service env, because the job is in the default store.
 2. Deploy.
 3. As `hermes`, run `hermes cron create "0 9 * * 1" --no-agent --script seo_tech_check.sh --deliver "telegram:-1004224848555:2" --name "SEO técnico — biglobster.top"`, then `hermes cron run <id>`. The first run lists every current finding as new.
+
+## Model watch (weekly; since 2026-11-21)
+
+Weekly check of every model we use, as a `no_agent` script (`model_watch/watch.py`) with no model. Same-family upgrades that are not dearer queue until the next deploy; everything else is only reported. Silent on a stable week.
+
+- **Job:** "Model watch — OpenRouter" — default store; `0 8 * * 1` (Mondays, Hermes timezone); script `model_watch.sh`, seeded every boot by `03-biglobster-config` §5h; delivers to Telegram (home channel); state in `/opt/data/model-watch/state.json`.
+- On the Mac, the OpenCode chains in `delegate.sh` are checked by `python3 -I model_watch/watch.py opencode`; its schedule is not installed yet.
+- **Detail:** `ops/model-watch.md`.
+

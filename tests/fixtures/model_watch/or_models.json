@@ -1,0 +1,155 @@
+{
+  "data": [
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "canonical_slug": "deepseek/deepseek-v4-flash",
+      "created": 1700000000,
+      "pricing": {"prompt": "0.00000014", "completion": "0.00000028"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools", "temperature"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 40}}
+    },
+    {
+      "id": "deepseek/deepseek-v4.2-flash",
+      "canonical_slug": "deepseek/deepseek-v4.2-flash",
+      "created": 1710000000,
+      "pricing": {"prompt": "0.00000010", "completion": "0.00000020"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools", "temperature"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 42}}
+    },
+    {
+      "id": "deepseek/deepseek-v4.3-flash",
+      "canonical_slug": "deepseek/deepseek-v4.3-flash",
+      "created": 1720000000,
+      "pricing": {"prompt": "0.00000020", "completion": "0.00000040"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools", "temperature"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 43}}
+    },
+    {
+      "id": "deepseek/deepseek-v4.4-flash",
+      "canonical_slug": "deepseek/deepseek-v4.4-flash",
+      "created": 1730000000,
+      "pricing": {"prompt": "0.00000001", "completion": "0.00000002"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 35}}
+    },
+    {
+      "id": "deepseek/deepseek-v4.6-flash",
+      "canonical_slug": "deepseek/deepseek-v4.6-flash",
+      "created": 1750000000,
+      "pricing": {"prompt": "0.00000012", "completion": "0.00000024"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 41}}
+    },
+    {
+      "id": "qwen/qwen3.8-max",
+      "canonical_slug": "qwen/qwen3.8-max",
+      "created": 1740000000,
+      "pricing": {"prompt": "0.00000001", "completion": "0.00000002"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 262144,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 55}}
+    },
+    {
+      "id": "mimo/mimo-v2.6-flash",
+      "canonical_slug": "mimo/mimo-v2.6-flash",
+      "created": 1740000000,
+      "pricing": {"prompt": "0.00000001", "completion": "0.00000002"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072
+    },
+    {
+      "id": "nvidia/nemotron-ultra",
+      "canonical_slug": "nvidia/nemotron-ultra",
+      "created": 1740000000,
+      "pricing": {"prompt": "0.00000001", "completion": "0.00000002"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 60}}
+    },
+    {
+      "id": "deepseek/deepseek-v4.5-flash:free",
+      "canonical_slug": "deepseek/deepseek-v4.5-flash",
+      "created": 1750000000,
+      "pricing": {"prompt": "0", "completion": "0"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 44}}
+    },
+    {
+      "id": "anthropic/claude-opus-9",
+      "canonical_slug": "anthropic/claude-opus-9",
+      "created": 1750000000,
+      "pricing": {"prompt": "0.00000100", "completion": "0.00000200"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 200000,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 70}}
+    },
+    {
+      "id": "kimi/kimi-k2-flash",
+      "canonical_slug": "kimi/kimi-k2-flash",
+      "created": 1700000000,
+      "pricing": {"prompt": "0.00000010", "completion": "0.00000020"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 30}}
+    },
+    {
+      "id": "kimi/kimi-k3-flash",
+      "canonical_slug": "kimi/kimi-k3-flash",
+      "created": 1750000000,
+      "pricing": {"prompt": "0.00000008", "completion": "0.00000016"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": [],
+      "context_length": 131072,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 33}}
+    },
+    {
+      "id": "qwen/qwen3.7-max",
+      "canonical_slug": "qwen/qwen3.7-max",
+      "created": 1700000000,
+      "pricing": {"prompt": "0.00000010", "completion": "0.00000020"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 262144,
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 50}}
+    },
+    {
+      "id": "qwen/qwen3.9-max",
+      "canonical_slug": "qwen/qwen3.9-max",
+      "created": 1750000000,
+      "pricing": {"prompt": "0.00000008", "completion": "0.00000016"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 262144,
+      "reasoning": {"mandatory": false, "supported_efforts": ["none", "high"]},
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 52}}
+    },
+    {
+      "id": "qwen/qwen4-max",
+      "canonical_slug": "qwen/qwen4-max",
+      "created": 1760000000,
+      "pricing": {"prompt": "0.00000005", "completion": "0.00000010"},
+      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+      "supported_parameters": ["tools"],
+      "context_length": 262144,
+      "reasoning": {"mandatory": true, "supported_efforts": ["high"]},
+      "benchmarks": {"artificial_analysis": {"intelligence_index": 54}}
+    }
+  ]
+}
