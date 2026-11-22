@@ -669,7 +669,11 @@ GPT and Gemini answer 403 on this OpenRouter account) writes at most one pack pe
 1. `flow_pack_next`: the language whose last pack is oldest (`FLOW_PACK_LANGS`,
    default `es,en`), the newest article of that feed without a pack or a short, its
    text, the fixed `voice_line`, and the owner's last 5 edits as lessons. `blocked`
-   while `FLOW_PACKS_WAITING_MAX` (3) packs wait for him to film.
+   while `FLOW_PACKS_WAITING_MAX` (3) packs wait for him to film. Packs in `review`
+   count as waiting, so the review gate alone fills the cap. That happened from
+   2026-11-20 to 11-22, and the writer answered `[SILENT]` every day. Since
+   2026-11-22 it reports the pause and the folders in Telegram, once per daily run,
+   until one is filmed or released. Only "no article left" stays silent.
 2. `flow_pack_write`: `plugins/shorts/flow_packs.py` validates the pack and writes it to
    `Flow/<carpeta>/prompts.md`. The craft lives in the prompt
    (`shorts/biglobster-flow-guionista.prompt`); the hard rules live in the validator:
@@ -678,7 +682,12 @@ GPT and Gemini answer 403 on this OpenRouter account) writes at most one pack pe
    accent", or English); spoken lines of 3-30 words in the short's language; prompts in
    English ending "No music, no subtitles, no text on screen."; 3 or more Galician or
    Portuguese marker words anywhere outside the prompts refuse the pack; the sections
-   and the Rótulos table the renderer reads.
+   and the Rótulos table the renderer reads. The prompt also carries two of the
+   owner's craft rules from 2026-11-22. First, spectacle, because the shorts were not
+   spreading: clip 0 is a visual hook from the first instant, every clip gets a camera
+   move and one impossible visual moment tied to the article, and about 18 spoken words
+   per 8 s. Second, international Spanish: wording common to Spain and Latin America,
+   and Spain's where there is none.
 
 **Review.** The first `FLOW_PACK_REVIEW_FIRST` (3) packs stay in
 `workspace/shorts/flow/packs/` in state `review`. A human reads (and may edit) the
