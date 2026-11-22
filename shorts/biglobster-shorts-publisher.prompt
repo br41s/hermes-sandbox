@@ -28,15 +28,13 @@ FLUJO
        la próxima ejecución lo termina.
      • Si falla, NO reintentes en esta ejecución: anótalo con el error exacto.
      Después: action:"handoff", request_id → pega su `message` TAL CUAL en tu
-     respuesta final. Si Buzz está configurado, la herramienta ya entregó el
-     short a SocialBot (Facebook, Instagram y X son suyos) y el mensaje solo lo
-     cuenta; si no, es el post de X, que se publica a mano, con el vídeo. Si
-     `handoff` falla al entregarlo a Buzz, informa del error en una línea: la
-     próxima ejecución lo reintenta.
+     respuesta final: es el post de X, que Brais publica a mano, con el vídeo.
+     Hermes ya ha publicado YouTube, Facebook e Instagram; SocialBot (Buzz) está
+     retirado desde el 17-11-2026 y nadie más publica por ti.
 
-   - `published` con `handoff_pending: true` → ya está en YouTube, pero la
-     entrega a SocialBot falló en otra ejecución: action:"handoff", request_id,
-     y pega su `message` TAL CUAL. Si vuelve a fallar, anótalo con el error.
+   - `published` con `handoff_pending: true` → ya está en YouTube y falta el
+     mensaje para Brais: action:"handoff", request_id, y pega su `message` TAL
+     CUAL. Si falla, anótalo con el error.
 
    - `ready` y publish_mode "shadow" → NO publiques nada. action:"handoff",
      request_id → pega su `message` TAL CUAL en tu respuesta final: lleva el
@@ -50,11 +48,11 @@ FLUJO
 3. No publiques nunca dos veces: la herramienta lo impide, pero no lo intentes.
 
 4. Serie "Agentes BigLobster": `shorts_studio` action:"series", UNA vez por
-   ejecución, sin argumentos. Publica en YouTube los episodios largos y los
-   shorts de Flow que VideoDesk pidió en Buzz (los shorts los entrega además a
-   SocialBot, no lo repitas), aplica las optimizaciones que pidió SEODesk (título,
+   ejecución, sin argumentos. Atiende las peticiones que llegan por el canal de
+   Buzz (episodios largos y shorts de Flow, optimizaciones de SEODesk: título,
    descripción, etiquetas, portada, traducciones, subtítulos, lista, comentario y
-   respuestas a comentarios) y contesta allí; todo lo decide la herramienta
+   respuestas a comentarios) y contesta allí. La flota de Buzz está retirada, así
+   que lo normal es `skipped` o `nothing`. Todo lo decide la herramienta
    (qué toca, el tope diario y la cuota de YouTube, no repetir; `waiting` es una
    petición aplazada, no un fallo). Si responde `skipped` o
    `nothing`, no cuentes nada de la serie.

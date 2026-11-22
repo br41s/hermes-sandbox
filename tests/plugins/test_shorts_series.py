@@ -336,10 +336,6 @@ def _short_request(**over):
     return f"{series.MARK_SHORT}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
 
 
-def _handoffs(buzz):
-    return [(a, kw) for a, kw in _sends(buzz) if "--file" in a]
-
-
 def _replies(buzz):
     return {a[a.index("--reply-to") + 1]: kw["input"] for a, kw in _sends(buzz) if "--reply-to" in a}
 
@@ -379,10 +375,10 @@ def test_parse_short_accepts_a_good_request_and_lists_every_problem(env):
         series.parse_short("hola")
 
 
-def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz, short_uploads):
+def test_a_flow_short_is_uploaded_and_replied_once(env, buzz, short_uploads):
     buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
     out = json.loads(st.handle_shorts_studio({"action": "series"}))
-    assert out["success"] and out["published"] == [{"short": FLOW, "handoff": True, "id": "flowVid0001",
+    assert out["success"] and out["published"] == [{"short": FLOW, "id": "flowVid0001",
                                                     "url": "https://youtube.com/shorts/flowVid0001", "privacy": "public"}]
     (up,) = short_uploads
     assert up["short"] is True and up["synthetic"] is True and up["privacy"] == "public" and up["lang"] == "es"
@@ -393,50 +389,15 @@ def test_a_flow_short_is_uploaded_replied_and_handed_to_socialbot_once(env, buzz
     assert set(replies) == {"e" * 64, "f" * 64} and "no está autorizado" in replies["f" * 64]
     reply_args = next(a for a, kw in _sends(buzz) if "--reply-to" in a and a[a.index("--reply-to") + 1] == "e" * 64)
     assert reply_args[reply_args.index("--mention") + 1] == VIDEODESK
-    assert "youtube.com/shorts/flowVid0001" in replies["e" * 64] and "SocialBot" in replies["e" * 64]
-
-    (args, kw), = _handoffs(buzz)
-    assert args[args.index("--channel") + 1] == "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd"
-    assert [Path(args[i + 1]).name for i, a in enumerate(args) if a == "--file"] == ["master.mp4", "cover.jpg"]
-    text = kw["input"]
-    assert "@SocialBot" in text and "youtube.com/shorts/flowVid0001" in text and f"id: {FLOW}" in text
-    assert "Texto IG #IA" in text and "Texto FB" in text and "Texto X" in text and "contenido IA" in text
-    assert "https://biglobster.top/es/blog/ia-empleados-junior/" in text
-    assert "Story" not in text and "Reel con cover.jpg como portada" in text
-    assert set(kw["env"]) <= {"PATH", "HOME", "BUZZ_RELAY_URL", "BUZZ_PRIVATE_KEY", "BUZZ_AUTH_TAG"}
+    assert "youtube.com/shorts/flowVid0001" in replies["e" * 64]
+    assert "SocialBot" not in replies["e" * 64]
     assert not any((env / "workspace" / "shorts" / "series").glob("*/*.mp4"))
 
     ledger = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())
     assert ledger["e" * 64]["kind"] == "short" and ledger["e" * 64]["youtube"]["id"] == "flowVid0001"
 
     again = series.run()
-    assert "published" not in again and len(short_uploads) == 1 and len(_sends(buzz)) == 3
-
-
-def test_the_hand_off_falls_back_to_the_description_without_redes(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request(redes=None, portada=None))]
-    series.run()
-    (args, kw), = _handoffs(buzz)
-    assert [Path(args[i + 1]).name for i, a in enumerate(args) if a == "--file"] == ["master.mp4"]
-    assert kw["input"].count("Qué cambia en tu pyme") == 3 and "Reel con cover.jpg" not in kw["input"]
-
-
-def test_a_png_cover_is_not_attached_to_the_hand_off(env, buzz, short_uploads, monkeypatch):
-    real = series._download
-
-    def png(url, dest):
-        real(url, dest)
-        if dest.name == "cover.jpg":
-            dest.write_bytes(b"\x89PNG\r\n\x1a\ncover")
-        return dest
-
-    monkeypatch.setattr(series, "_download", png)
-    buzz["events"] = [_event(_short_request())]
-    series.run()
-    (args, _kw), = _handoffs(buzz)
-    assert [Path(args[i + 1]).name for i, a in enumerate(args) if a == "--file"] == ["master.mp4"]
-    assert short_uploads[0]["thumb"].startswith(b"\x89PNG")
-    assert "sólo acepta JPEG" in _replies(buzz)["e" * 64]
+    assert "published" not in again and len(short_uploads) == 1 and len(_sends(buzz)) == 2
 
 
 def test_flow_shorts_have_their_own_daily_cap_apart_from_the_episodes(env, buzz, uploads):
@@ -480,26 +441,6 @@ def test_the_same_flow_short_is_not_uploaded_twice_from_two_messages(env, buzz, 
     assert "No puedo publicar este short" in _replies(buzz)["b" * 64]
 
 
-def test_a_failed_hand_off_is_retried_without_uploading_again(env, buzz, short_uploads, monkeypatch):
-    buzz["events"] = [_event(_short_request())]
-    real = series.subprocess.run
-
-    def refuse_files(args, **kw):
-        if "--file" in args:
-            return type("Done", (), {"returncode": 1, "stdout": "", "stderr": "relay said no"})()
-        return real(args, **kw)
-
-    monkeypatch.setattr(series.subprocess, "run", lambda args, **kw: refuse_files(args, **kw))
-    first = series.run()
-    assert first["failed"][0]["attempt"] == 1 and "relay said no" in first["failed"][0]["error"]
-    assert len(short_uploads) == 1 and not _replies(buzz)
-
-    monkeypatch.setattr(series.subprocess, "run", real)
-    out = series.run()
-    assert out["published"] and len(short_uploads) == 1 and len(_handoffs(buzz)) == 1
-    assert "youtube.com/shorts/flowVid0001" in _replies(buzz)["e" * 64]
-
-
 def test_the_sender_is_told_once_after_three_failed_attempts(env, buzz, short_uploads, monkeypatch):
     def broken(*a, **kw):
         raise youtube.YouTubeError("upload video: HTTP 503")
@@ -512,12 +453,13 @@ def test_the_sender_is_told_once_after_three_failed_attempts(env, buzz, short_up
     assert "tras 3 intentos" in kw["input"] and "HTTP 503" in kw["input"]
 
 
-def test_without_a_shorts_channel_the_short_is_published_and_the_sender_told(env, buzz, short_uploads, monkeypatch):
+def test_without_a_shorts_channel_the_short_is_published_and_no_buzz_notice(env, buzz, short_uploads, monkeypatch):
     monkeypatch.delenv("SHORTS_BUZZ_CHANNEL")
     buzz["events"] = [_event(_short_request())]
     out = series.run()
-    assert out["published"][0]["handoff"] is False and not _handoffs(buzz)
-    assert "falta SHORTS_BUZZ_CHANNEL" in _replies(buzz)["e" * 64]
+    assert out["published"] and len(short_uploads) == 1
+    reply = _replies(buzz)["e" * 64]
+    assert "SHORTS_BUZZ_CHANNEL" not in reply and "SocialBot" not in reply
 
 
 def test_check_short_wants_vertical_audio_and_five_to_180_seconds(monkeypatch, tmp_path):
@@ -762,7 +704,7 @@ PROCESSING_FAILED = (400, {"debug_info": {"retriable": False, "type": "Processin
                                           "message": "Request processing failed"}})
 
 
-def test_meta_shadow_by_default_publishes_nothing_to_meta_and_hands_off_as_before(env, buzz, short_uploads, monkeypatch):
+def test_meta_shadow_by_default_publishes_nothing_to_meta(env, buzz, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     monkeypatch.delenv("META_PUBLISH_MODE")
     calls = _meta_calls(monkeypatch)
@@ -770,12 +712,9 @@ def test_meta_shadow_by_default_publishes_nothing_to_meta_and_hands_off_as_befor
     out = series.run()
     assert calls == []
     assert out["meta_shadow"] == [{"short": FLOW, "facebook": "Texto FB", "instagram": "Texto IG #IA"}]
-    (_args, kw), = _handoffs(buzz)
-    assert "@SocialBot: publícalo en Facebook, Instagram (Reel con cover.jpg como portada) y X" in kw["input"]
-    assert "Ya publicado por Hermes" not in kw["input"] and "Texto IG #IA" in kw["input"]
 
 
-def test_meta_live_posts_fb_and_ig_reels_after_youtube_and_hands_off_only_x(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_posts_fb_and_ig_reels_after_youtube(env, buzz, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     calls = _meta_calls(monkeypatch)
     upload = youtube.upload
@@ -792,21 +731,13 @@ def test_meta_live_posts_fb_and_ig_reels_after_youtube_and_hands_off_only_x(env,
     assert calls[2][1]["kind"] == "reel"
     assert "meta_shadow" not in out
 
-    (_args, kw), = _handoffs(buzz)
-    text = kw["input"]
-    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
-    assert "Ya publicado por Hermes: https://www.instagram.com/reel/ig1/" in text
-    assert "@SocialBot: Facebook e Instagram ya los ha publicado Hermes (enlaces arriba): no los publiques." in text
-    assert "Tú solo: X con este texto" in text and "ENGAGEMENT.md" in text
-    assert "y X con estos textos y tus UTM" not in text and "Texto X" in text
-
     reply = _replies(buzz)["e" * 64]
     assert "Facebook: https://www.facebook.com/reel/fb1" in reply
     assert "Instagram: https://www.instagram.com/reel/ig1/" in reply
-    assert "solo para X." in reply
+    assert "SocialBot" not in reply
 
 
-def test_meta_live_ig_failure_falls_back_to_socialbot(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_ig_failure_asks_the_owner_to_upload_by_hand(env, buzz, short_uploads, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _meta_env(monkeypatch)
@@ -821,20 +752,11 @@ def test_meta_live_ig_failure_falls_back_to_socialbot(env, buzz, short_uploads, 
     assert out["published"] and len(short_uploads) == 1
     assert [c[0] for c in calls] == ["facebook"]
 
-    (_args, kw), = _handoffs(buzz)
-    text = kw["input"]
-    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
-    assert "Ya publicado por Hermes: https://www.instagram.com" not in text
-    assert "@SocialBot: Facebook ya lo ha publicado Hermes (enlace arriba): no lo publiques." in text
-    assert "Tú solo: Instagram y X con este texto" in text
-
     reply = _replies(buzz)["e" * 64]
-    assert "Instagram: Meta rechazó la subida del vídeo; se lo pide a SocialBot" in reply
-    assert "para Instagram y X." in reply and "solo para X." not in reply
+    assert "Instagram: Meta rechazó la subida del vídeo; súbelo a mano" in reply
     entry = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())["e" * 64]
     assert "HTTP 500" in entry["instagram"]["failed"] and entry["replied"]
 
-    # A later run does not send it to Instagram again: SocialBot has it.
     def boom(*a, **kw):
         raise AssertionError("Instagram is not retried once the fallback is recorded")
 
@@ -842,40 +764,6 @@ def test_meta_live_ig_failure_falls_back_to_socialbot(env, buzz, short_uploads, 
     again = series.run()
     assert "published" not in again
     assert [c[0] for c in calls] == ["facebook"] and len(short_uploads) == 1
-
-
-def test_meta_live_ig_failure_is_not_retried_after_a_failed_hand_off(env, buzz, short_uploads, monkeypatch):
-    from plugins.shorts.social import meta as meta_mod
-
-    _meta_env(monkeypatch)
-    calls = _meta_calls(monkeypatch)
-
-    def broken(*a, **kw):
-        raise meta_mod.MetaError("publish to Instagram: HTTP 500")
-
-    monkeypatch.setattr(meta_mod, "instagram", broken)
-    real = series.subprocess.run
-
-    def refuse_files(args, **kw):
-        if "--file" in args:
-            return type("Done", (), {"returncode": 1, "stdout": "", "stderr": "relay said no"})()
-        return real(args, **kw)
-
-    buzz["events"] = [_event(_short_request())]
-    monkeypatch.setattr(series.subprocess, "run", lambda args, **kw: refuse_files(args, **kw))
-    first = series.run()
-    assert first["failed"][0]["attempt"] == 1 and [c[0] for c in calls] == ["facebook"]
-
-    monkeypatch.setattr(series.subprocess, "run", real)
-
-    def boom(*a, **kw):
-        raise AssertionError("Instagram is not retried once the fallback is recorded")
-
-    monkeypatch.setattr(meta_mod, "instagram", boom)
-    out = series.run()
-    assert out["published"] and len(short_uploads) == 1
-    assert [c[0] for c in calls] == ["facebook"]
-    assert "Tú solo: Instagram y X con este texto" in _handoffs(buzz)[0][1]["input"]
 
 
 def test_meta_live_ig_pending_does_not_count_an_attempt(env, buzz, short_uploads, monkeypatch):
@@ -920,11 +808,9 @@ def test_meta_live_without_instagram_id_posts_only_facebook(env, buzz, short_upl
     buzz["events"] = [_event(_short_request())]
     out = series.run()
     assert [c[0] for c in calls] == ["facebook"] and out["published"]
-    text = _handoffs(buzz)[0][1]["input"]
-    assert "Ya publicado por Hermes: https://www.facebook.com/reel/fb1" in text
-    assert "— Instagram (Reel) —\nTexto IG #IA" in text
-    assert "@SocialBot: Facebook ya lo ha publicado Hermes (enlace arriba): no lo publiques." in text
-    assert "Tú solo: Instagram y X con este texto" in text
+    reply = _replies(buzz)["e" * 64]
+    assert "Facebook: https://www.facebook.com/reel/fb1" in reply
+    assert "SocialBot" not in reply
 
 
 def test_meta_live_episode_posts_one_facebook_video_per_language_once(env, buzz, uploads, monkeypatch):
@@ -1297,11 +1183,8 @@ def test_meta_live_short_over_90s_skips_facebook(env, buzz, short_uploads, monke
     out = series.run()
     assert out["published"] and [c[0] for c in calls] == ["instagram"]
 
-    (_args, kw), = _handoffs(buzz)
-    text = kw["input"]
-    assert "no lo publiques" in text and "Tú solo: Facebook y X con este texto" in text
     reply = _replies(buzz)["e" * 64]
-    assert "Facebook: dura más de 90 s, Reels no lo admite; se lo pide a SocialBot" in reply
+    assert "Facebook: dura más de 90 s, Reels no lo admite; súbelo a mano" in reply
 
 
 @pytest.mark.parametrize("value,expected", [(None, "shadow"), ("live", "live"), (" LIVE ", "live"),
