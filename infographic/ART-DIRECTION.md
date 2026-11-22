@@ -317,7 +317,7 @@ Already settled in the shipped config — no key to buy, nothing to build:
 
 | Lane | Provider | Model | Key |
 |---|---|---|---|
-| biglobster (and any profile with no `FAL_KEY`) | OpenRouter | `bytedance-seed/seedream-4.5` | the shared OpenRouter key |
+| biglobster (and any profile with no `FAL_KEY`) | OpenRouter | `microsoft/mai-image-2.7-flash`, falling back to `krea/krea-2-medium-turbo` (`OPENROUTER_IMAGE_FALLBACK_MODEL`, 2026-11-22) | the shared OpenRouter key |
 | rented tenant provisioned with `--fal-key` | in-tree FAL path | `fal-ai/flux-2/klein/9b` | the client's own `FAL_KEY` |
 
 `docker/cont-init.d/03-biglobster-config` stamps `image_gen.provider: openrouter`
