@@ -1035,29 +1035,8 @@ def test_a_direct_hook_passes(sample):
 
 
 # ---------------------------------------------------------------------------
-# Hand-off to SocialBot in Buzz
+# Hand-off: the X post for a human, and who owns Facebook and Instagram
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def buzz_env(monkeypatch):
-    for k, v in {"SHORTS_BUZZ_CHANNEL": "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd",
-                 "BUZZ_RELAY_URL": "wss://relay.example", "BUZZ_PRIVATE_KEY": "nsec1test",
-                 "BUZZ_AUTH_TAG": "[]", "META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "t",
-                 "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
-                 "YOUTUBE_REFRESH_TOKEN": "r"}.items():
-        monkeypatch.setenv(k, v)
-    # The relay's metadata rule has its own test; the hand-off tests attach the files as they are.
-    monkeypatch.setattr("plugins.shorts.buzz_share.canonical", lambda path: Path(path))
-
-
-def test_buzz_takes_meta_away_from_hermes(buzz_env, monkeypatch):
-    assert st._enabled_targets() == ["youtube"]
-    # Half-configured (no attestation): not a hand-off, so Meta stays Hermes's.
-    monkeypatch.delenv("BUZZ_AUTH_TAG")
-    assert "facebook" in st._enabled_targets()
-    monkeypatch.setenv("BUZZ_AUTH_TAG", "[]")
-    monkeypatch.delenv("SHORTS_BUZZ_CHANNEL")
-    assert "facebook" in st._enabled_targets() and "instagram_reel" in st._enabled_targets()
 
 
 def _ready_short(sample, submit_env, **fields):
@@ -1071,61 +1050,29 @@ def _ready_short(sample, submit_env, **fields):
     return rid
 
 
-def test_a_live_short_is_handed_to_socialbot_once(tip, submit_env, buzz_env, monkeypatch):
-    from plugins.shorts import buzz_share
+def test_enabled_targets_follow_youtube_and_meta_config(monkeypatch):
+    for k, v in {"META_PAGE_ID": "1", "META_PAGE_ACCESS_TOKEN": "tok",
+                 "META_IG_USER_ID": "2", "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
+                 "YOUTUBE_REFRESH_TOKEN": "r"}.items():
+        monkeypatch.setenv(k, v)
+    assert st._enabled_targets() == ["youtube", "facebook", "instagram_reel", "instagram_story"]
+    monkeypatch.delenv("META_IG_USER_ID")
+    assert st._enabled_targets() == ["youtube", "facebook"]
+    monkeypatch.delenv("YOUTUBE_REFRESH_TOKEN")
+    assert st._enabled_targets() == ["facebook"]
 
+
+def test_a_live_short_is_handed_off_for_x_once(tip, submit_env, monkeypatch):
     rid = _ready_short(tip, submit_env, state="published", synthetic=True,
                        published={"youtube": {"id": "yt1", "url": "https://youtube.com/shorts/yt1"}})
     monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
-    monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
-    calls = []
-
-    def fake_run(args, **kw):
-        calls.append((args, kw))
-        return type("Done", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
-
-    monkeypatch.setattr(buzz_share.subprocess, "run", fake_run)
     out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
-    assert out["success"] and "SocialBot" in out["message"] and "MEDIA:" not in out["message"]
-    args, kw = calls[0]
-    assert args[:5] == ["/usr/local/bin/buzz", "messages", "send", "--channel",
-                        "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd"]
-    assert sum(a == "--file" for a in args) == 3
-    assert "@SocialBot" in kw["input"] and "youtube.com/shorts/yt1" in kw["input"]
-    assert "contenido IA" in kw["input"]
-    # Only the Buzz credentials reach the CLI, never the rest of the process env.
-    assert set(kw["env"]) <= {"PATH", "HOME", "BUZZ_RELAY_URL", "BUZZ_PRIVATE_KEY", "BUZZ_AUTH_TAG"}
-    assert ledger.get(rid)["buzz_posted_at"]
+    assert out["success"] and "X — publícalo tú" in out["message"]
+    assert "https://youtube.com/shorts/yt1" in out["message"] and "MEDIA:" in out["message"]
+    assert ledger.get(rid)["x_handoff_at"]
 
     again = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
-    assert again.get("already") and len(calls) == 1
-
-
-def test_a_failed_buzz_post_is_retried_next_run(tip, submit_env, buzz_env, monkeypatch):
-    from plugins.shorts import buzz_share
-
-    rid = _ready_short(tip, submit_env, state="published")
-    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "live")
-    monkeypatch.setattr(buzz_share, "cli", lambda: "/usr/local/bin/buzz")
-    monkeypatch.setattr(buzz_share.subprocess, "run", lambda args, **kw: type(
-        "Done", (), {"returncode": 1, "stdout": "", "stderr": "relay said no"})())
-    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
-    assert not out["success"] and "relay said no" in out["error"]
-    assert not ledger.get(rid).get("x_handoff_at")
-
-
-def test_shadow_mode_never_posts_to_buzz(tip, submit_env, buzz_env, monkeypatch):
-    from plugins.shorts import buzz_share
-
-    rid = _ready_short(tip, submit_env, state="ready")
-    monkeypatch.delenv("SHORTS_PUBLISH_MODE", raising=False)
-
-    def boom(*a, **kw):
-        raise AssertionError("shadow mode must not post to Buzz")
-
-    monkeypatch.setattr(buzz_share, "post", boom)
-    out = json.loads(st.handle_shorts_studio({"action": "handoff", "request_id": rid}))
-    assert out["success"] and "[SHADOW]" in out["message"]
+    assert again.get("already")
 
 
 # ---------------------------------------------------------------------------
@@ -1923,61 +1870,6 @@ def test_going_live_picks_up_the_shorts_handed_over_in_shadow(home, tmp_path, mo
     out = json.loads(st.handle_shorts_studio({"action": "status"}))
     assert [s_["request_id"] for s_ in out["shorts"]] == ["es-today-1"]
     assert ledger.get("es-nofiles-1")["state"] == "handed_off"
-
-
-def test_the_hand_off_attaches_metadata_free_copies_for_the_relay(tmp_path, monkeypatch):
-    from plugins.shorts import buzz_share
-
-    def seg(marker, payload):
-        return bytes([0xFF, marker]) + (2 + len(payload)).to_bytes(2, "big") + payload
-
-    # A progressive-looking JPEG: SOI, APP0, COM, DQT, SOS + scan (with a stuffed FF00 and an RST),
-    # a second DHT and SOS, then an APP1 after the scans, EOI, and a trailer after the EOI.
-    scan1 = b"\x12\xff\x00\x34\xff\xd0\x56"
-    scan2 = b"\x78\x9a"
-    jpg_bytes = (b"\xff\xd8" + seg(0xE0, b"JFIF") + seg(0xFE, b"hello") + seg(0xDB, b"\x00\x01\x02")
-                 + seg(0xDA, b"\x01\x00") + scan1 + seg(0xC4, b"\x10") + seg(0xDA, b"\x01\x01") + scan2
-                 + seg(0xE1, b"Exif\x00\x00secret") + b"\xff\xd9" + b"TRAILER")
-    jpg = tmp_path / "cover.jpg"
-    jpg.write_bytes(jpg_bytes)
-    (tmp_path / "cover.buzz.jpg").write_bytes(b"planted")          # a sibling from the artifact is never trusted
-    clean = buzz_share.canonical(jpg)
-    assert clean == tmp_path / "cover.buzz.jpg"
-    assert clean.read_bytes() == (b"\xff\xd8" + seg(0xDB, b"\x00\x01\x02") + seg(0xDA, b"\x01\x00") + scan1
-                                  + seg(0xC4, b"\x10") + seg(0xDA, b"\x01\x01") + scan2 + b"\xff\xd9")
-    assert not (tmp_path / "cover.buzz.jpg.part").exists()
-    for bad, why in ((b"x", "not a JPEG"), (b"\xff\xd8" + seg(0xDB, b"\x00"), "without an end"),
-                     (b"\xff\xd8\xff\xdb\xff\xff", "malformed")):
-        with pytest.raises(buzz_share.BuzzError, match=why):
-            buzz_share.strip_jpeg(bad)
-    # An MP4: streams copied, every tag, chapter and encoder stamp dropped, written to a temp file first.
-    mp4 = _touch(tmp_path / "master.mp4")
-    calls = []
-
-    def fake_run(args, **kw):
-        calls.append(args)
-        Path(args[-1]).write_bytes(b"clean")
-        return type("Done", (), {"returncode": 0, "stdout": "", "stderr": ""})()
-
-    monkeypatch.setattr(buzz_share.shutil, "which", lambda name: "/usr/bin/ffmpeg")
-    monkeypatch.setattr(buzz_share.subprocess, "run", fake_run)
-    out = buzz_share.canonical(mp4)
-    assert out == tmp_path / "master.buzz.mp4" and out.read_bytes() == b"clean"
-    args = calls[0]
-    assert args[0] == "/usr/bin/ffmpeg" and args[-1].endswith("master.buzz.mp4.part")
-    assert args[args.index("-map_metadata") + 1] == "-1" and args[args.index("-c") + 1] == "copy"
-    assert args.count("+bitexact") == 3 and "-map_chapters" in args
-    # Other files go as they are; a failed ffmpeg is the hand-off's error and leaves nothing behind.
-    assert buzz_share.canonical(_touch(tmp_path / "captions.srt")) == tmp_path / "captions.srt"
-
-    def failing_run(args, **kw):
-        Path(args[-1]).write_bytes(b"half")
-        return type("Done", (), {"returncode": 1, "stdout": "", "stderr": "moov atom not found"})()
-
-    monkeypatch.setattr(buzz_share.subprocess, "run", failing_run)
-    with pytest.raises(buzz_share.BuzzError, match="moov atom"):
-        buzz_share.canonical(_touch(tmp_path / "story.mp4"))
-    assert not (tmp_path / "story.buzz.mp4").exists() and not (tmp_path / "story.buzz.mp4.part").exists()
 
 
 def test_a_published_short_whose_hand_off_failed_stays_listed_until_handed_off(home, tmp_path, monkeypatch):

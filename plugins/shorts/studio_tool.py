@@ -54,10 +54,7 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
         "posts → article → submit (renders in the cloud, ~5-10 min) → status (collects the "
         "finished video + QA) → publish. The tool keeps the ledger, checks every figure you "
         "use against the article, enforces a fresh palette/motif, and refuses to publish "
-        "anything that failed QA or while publishing is in shadow mode. series: publishes the "
-        "finished episodes of the 'Agentes BigLobster' series that VideoDesk requested in Buzz "
-        "(long videos, both languages) and the Google-Flow shorts (#publicar-short) on YouTube, hands those "
-        "shorts to SocialBot and replies in Buzz with the links; no arguments. "
+        "anything that failed QA or while publishing is in shadow mode. "
         "performance: read-only, how the published shorts did on YouTube — each short's views as a "
         "multiple of the channel median, and the median multiple per hook_pattern, lang and palette. "
         "flow: advance the owner's Google Drive Flow folders; lists what needs a cover or texts, what "
@@ -75,7 +72,7 @@ SHORTS_STUDIO_SCHEMA: dict[str, Any] = {
             "action": {
                 "type": "string",
                 "enum": ["posts", "article", "ledger", "submit", "status", "publish",
-                         "handoff", "avatars", "avatar_upload", "mark", "series", "performance",
+                         "handoff", "avatars", "avatar_upload", "mark", "performance",
                          "flow", "flow_render", "flow_texts", "flow_pack_next", "flow_pack_write"],
             },
             "lang": {"type": "string", "enum": ["en", "es"],
@@ -468,7 +465,7 @@ def _shadow_to_ready(entry: dict[str, Any]) -> dict[str, Any]:
         return entry
     if created < time.time() - LIVE_CATCHUP_DAYS * 86400 or "master" not in _files(entry):
         return entry
-    return ledger.update(entry["request_id"], state="ready", x_handoff_at=None, buzz_posted_at=None,
+    return ledger.update(entry["request_id"], state="ready", x_handoff_at=None,
                          note="handed to a human in shadow mode; the mode is live now, so it publishes")
 
 
@@ -495,7 +492,7 @@ def _action_status(args: dict[str, Any]) -> str:
         failed = entry.get("state") in ("qa_failed", "render_failed")
         if failed and entry.get("failure_reported") and not only:
             continue  # a failure is reported once, not on every run
-        # Published on YouTube but never handed to SocialBot (the hand-off failed
+        # Published on YouTube but never handed off (the hand-off failed
         # on 2026-10-15 and the next runs could not see it): listed until it is.
         handoff_pending = live and entry.get("state") == "published" and not entry.get("x_handoff_at")
         if entry.get("state") in ("rendering", "ready", "qa_failed", "render_failed") or handoff_pending or only:
@@ -524,17 +521,11 @@ def _action_status(args: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 def _enabled_targets() -> list[str]:
-    from plugins.shorts import buzz_share
     from plugins.shorts.social import meta, youtube
 
     targets = []
     if youtube.configured():
         targets.append("youtube")
-    if buzz_share.configured():
-        # Facebook and Instagram stay SocialBot's while Meta is in shadow; with
-        # META_PUBLISH_MODE=live Hermes posts them and the hand-off asks only for X.
-        if meta.publish_mode() != "live":
-            return targets
     if meta.configured():
         targets.append("facebook")
     if meta.configured(instagram=True):
@@ -667,16 +658,14 @@ def _action_avatars(args: dict[str, Any]) -> str:
 def _action_handoff(args: dict[str, Any]) -> str:
     """Build the human hand-off message for a finished short.
 
-    Live mode, Buzz configured: the files and every network's copy go to
-    SocialBot in Buzz (it owns Facebook, Instagram and X), and the message
-    here only reports it. Live mode without Buzz: the X post for a human
-    (X has no free API), after the automatic targets.
+    Live mode: the X post for a human (X has no free API), after the automatic
+    targets.
     Shadow mode: everything — files and every network's copy — and the short
-    moves to ``handed_off`` so it is not reported again. Never to Buzz.
+    moves to ``handed_off`` so it is not reported again.
     Paste ``message`` into your final response as-is: its MEDIA: lines are
     what attach the files on Telegram.
     """
-    from plugins.shorts import buzz_share, ledger
+    from plugins.shorts import ledger
 
     request_id = (args.get("request_id") or "").strip()
     try:
@@ -700,24 +689,7 @@ def _action_handoff(args: dict[str, Any]) -> str:
     social = pkg.get("social") or {}
     lang = entry.get("lang", "").upper()
     lines: list[str] = []
-    if live and buzz_share.configured():
-        youtube_url = ((entry.get("published") or {}).get("youtube") or {}).get("url")
-        pub = entry.get("published") or {}
-        published = {net: (pub.get(key) or {}).get("url")
-                     for net, key in (("facebook", "facebook"), ("instagram", "instagram_reel"))
-                     if (pub.get(key) or {}).get("url")} or None
-        try:
-            sent = buzz_share.post(entry, files, social, youtube_url, published=published)
-        except buzz_share.BuzzError as exc:
-            # Not marked: the next run hands it over again.
-            return _fail(f"could not hand {request_id} to SocialBot in Buzz: {exc}")
-        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        ledger.update(request_id, x_handoff_at=stamp, buzz_posted_at=stamp)
-        lines += [f"🎬 Short {lang} publicado — {entry.get('title')}",
-                  f"• YouTube: {youtube_url or 'no publicado'}",
-                  f"• Entregado a SocialBot en Buzz ({', '.join(sent['attached'])}) "
-                  + ("solo para X." if published else "para Facebook, Instagram y X.")]
-    elif live:
+    if live:
         pub = entry.get("published") or {}
         lines.append(f"🎬 Short {lang} publicado — {entry.get('title')}")
         for key, label in (("youtube", "YouTube"), ("instagram_reel", "Instagram"),
@@ -759,15 +731,6 @@ def _action_mark(args: dict[str, Any]) -> str:
     except (KeyError, ValueError) as exc:
         return _fail(str(exc))
     return _ok(request_id=request_id, state=entry["state"])
-
-
-def _action_series(args: dict[str, Any]) -> str:
-    from plugins.shorts import series
-
-    try:
-        return _ok(**series.run())
-    except series.SeriesError as exc:
-        return _fail(f"series: {exc}")
 
 
 def _action_performance(args: dict[str, Any]) -> str:
@@ -864,7 +827,6 @@ _ACTIONS = {
     "avatars": _action_avatars,
     "avatar_upload": _action_avatar_upload,
     "mark": _action_mark,
-    "series": _action_series,
     "performance": _action_performance,
     "flow": _action_flow,
     "flow_render": _action_flow_render,

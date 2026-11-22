@@ -1,251 +1,35 @@
-"""Tests for the "Agentes BigLobster" series: episode and Flow short requests from Buzz, published on YouTube.
+"""Tests for the Flow short publishing helpers: the vertical master check, the YouTube Short upload
+and the Meta Reels (``META_PUBLISH_MODE=live``, shadow by default).
 
-Buzz (the ``buzz`` CLI) and YouTube are faked; nothing leaves the machine.
+YouTube and Meta are faked; nothing leaves the machine.
 """
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
 
 from plugins.shorts import series
-from plugins.shorts import studio_tool as st
 from plugins.shorts.social import youtube
 
-RELAY = "https://relay.example"
-VIDEODESK = "d8" * 32
-SEODESK = "5e" * 32
-STRANGER = "ab" * 32
-SHORTS_CHANNEL = "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd"
-
-
-def _request(**over):
-    body = {
-        "episodio": "01", "agente": "content-gap-hunter",
-        "es": {"video": f"{RELAY}/media/{'1' * 64}.mp4", "srt": f"{RELAY}/media/{'2' * 64}.srt",
-               "titulo": "Content Gap Hunter: el artículo que te falta",
-               "descripcion": "Cómo trabaja el agente que encuentra los huecos de tu blog.",
-               "etiquetas": ["ia", "blog"]},
-        "en": {"video": f"{RELAY}/media/{'3' * 64}.mp4", "srt": None,
-               "titulo": "Content Gap Hunter: the article you're missing",
-               "descripcion": "How the agent that finds your blog's gaps works.",
-               "etiquetas": ["ai", "blog"]},
-    }
-    body.update(over)
-    return f"{series.MARK}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
-
-
-def _update(**over):
-    body = {
-        "episodio": "01", "agente": "content-gap-hunter",
-        "es": {"id": "esVideoId01", "titulo": "El artículo que te falta | Content Gap Hunter",
-               "descripcion": "0:00 El problema\n0:20 Cómo trabaja\n1:30 Qué recibes\n\n#SEO #IA",
-               "etiquetas": ["seo", "ia"], "portada": f"{RELAY}/media/{'4' * 64}.jpg"},
-    }
-    body.update(over)
-    return f"{series.MARK_UPDATE}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
+FLOW = "2026-10-21_es-ia-empleados-junior"
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_constants.get_hermes_home", lambda: tmp_path, raising=False)
-    for k, v in {"SERIES_BUZZ_CHANNEL": "f4a74eae-a548-56fe-9a2e-f89bfd929f0e",
-                 "SERIES_BUZZ_FROM": f"{VIDEODESK},{SEODESK}",
-                 "BUZZ_RELAY_URL": "wss://relay.example", "BUZZ_PRIVATE_KEY": "nsec1test", "BUZZ_AUTH_TAG": "[]",
-                 "YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s", "YOUTUBE_REFRESH_TOKEN": "r",
-                 "SHORTS_BUZZ_CHANNEL": "ccc2bc1a-7a82-5a8f-8c4e-57a070cbe7cd", "SHORTS_PUBLISH_MODE": "live"}.items():
+    for k, v in {"YOUTUBE_CLIENT_ID": "c", "YOUTUBE_CLIENT_SECRET": "s",
+                 "YOUTUBE_REFRESH_TOKEN": "r"}.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setattr(series.buzz_share, "cli", lambda: "/usr/local/bin/buzz")
-    monkeypatch.setattr(series, "_check_video", lambda path: 123.0)
     monkeypatch.setattr(series, "_check_short", lambda path: 42.0)
-    monkeypatch.setattr(series.buzz_share, "canonical", lambda path: Path(path))
     return tmp_path
-
-
-@pytest.fixture
-def buzz(monkeypatch):
-    """A fake channel: ``events`` is what `messages get` returns; every call is recorded."""
-    state = {"events": [], "calls": []}
-
-    def fake_run(args, **kw):
-        state["calls"].append((args, kw))
-        if args[1:3] == ["messages", "get"]:
-            chan = args[args.index("--channel") + 1]
-            out = json.dumps(state["events"] if chan != SHORTS_CHANNEL else state.get("shorts_events", []))
-        elif args[1:3] == ["media", "get"]:
-            dest = Path(args[args.index("-o") + 1])
-            dest.write_bytes(b"\xff\xd8\xff\xe0cover" if dest.name.startswith("cover") or "portada" in dest.name else b"video")
-            out = ""
-        else:
-            out = "{}"
-        return type("Done", (), {"returncode": 0, "stdout": out, "stderr": ""})()
-
-    monkeypatch.setattr(series.subprocess, "run", fake_run)
-    return state
-
-
-@pytest.fixture
-def uploads(monkeypatch):
-    done = []
-
-    def fake_upload(video, thumb, srt, social, lang, **kw):
-        done.append({"lang": lang, "srt": srt, "social": social, **kw})
-        vid = f"{lang}VideoId01"
-        return {"id": vid, "url": f"https://www.youtube.com/watch?v={vid}", "privacy": "public", "warnings": []}
-
-    monkeypatch.setattr(youtube, "upload", fake_upload)
-    return done
-
-
-NOW = int(time.time())   # lookalike requests are answered only while fresh
-
-
-def _event(content, pubkey=VIDEODESK, eid="e" * 64, at=100):
-    return {"id": eid, "pubkey": pubkey, "content": content, "created_at": at}
-
-
-def _sends(buzz):
-    return [(a, kw) for a, kw in buzz["calls"] if a[1:3] == ["messages", "send"]]
 
 
 def test_long_video_metadata_has_no_shorts_tag_and_own_privacy():
     social = {"youtube": {"title": "Content Gap Hunter: the article you're missing", "description": "d", "tags": ["a"]}}
     meta = youtube.build_metadata(social, "en", synthetic=False, privacy="unlisted")
     assert "#Shorts" not in meta["snippet"]["title"] and meta["status"]["privacyStatus"] == "unlisted"
-
-
-def test_parse_accepts_a_good_request_and_lists_every_problem(env):
-    item = series.parse(_request())
-    assert item["agente"] == "content-gap-hunter" and item["en"]["srt"] is None
-    with pytest.raises(series.SeriesError) as exc:
-        series.parse(_request(agente="Content Gap!", es={"video": "https://evil.example/media/x.mp4",
-                                                         "titulo": "x", "descripcion": "", "etiquetas": "ia"}))
-    text = str(exc.value)
-    assert "agente" in text and "es.video" in text and "es.titulo" in text and "es.etiquetas" in text
-    with pytest.raises(series.SeriesError):
-        series.parse("hola")
-
-
-def test_an_episode_is_published_in_both_languages_once(env, buzz, uploads):
-    buzz["events"] = [_event(_request()), _event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
-    out = json.loads(st.handle_shorts_studio({"action": "series"}))
-    assert out["success"] and len(out["published"]) == 1
-    assert [u["lang"] for u in uploads] == ["es", "en"]
-    assert all(u["short"] is False and u["privacy"] == "public" for u in uploads)
-    assert uploads[0]["srt"] is not None and uploads[1]["srt"] is None
-    assert uploads[0]["social"]["youtube"]["title"].startswith("Content Gap Hunter")
-    (stranger, _), (args, kw) = _sends(buzz)      # the stranger is answered ("not authorised"), not obeyed
-    assert stranger[stranger.index("--reply-to") + 1] == "f" * 64 and "--mention" not in stranger
-    assert args[args.index("--reply-to") + 1] == "e" * 64 and args[args.index("--mention") + 1] == VIDEODESK
-    assert "watch?v=esVideoId0" in kw["input"] and "watch?v=enVideoId0" in kw["input"]
-    assert "videosAgentes.json" in kw["input"]
-    # Only the Buzz credentials reach the CLI.
-    assert set(kw["env"]) <= {"PATH", "HOME", "BUZZ_RELAY_URL", "BUZZ_PRIVATE_KEY", "BUZZ_AUTH_TAG"}
-    # The downloaded masters are not kept.
-    assert not any((env / "workspace" / "shorts" / "series").glob("*/*.mp4"))
-
-    again = json.loads(st.handle_shorts_studio({"action": "series"}))
-    assert again["success"] and "published" not in again and len(uploads) == 2 and len(_sends(buzz)) == 2
-
-
-def test_one_episode_a_day_by_default(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1),
-                      _event(_request(episodio="02", agente="site-launch"), eid="b" * 64, at=2)]
-    out = series.run()
-    assert [p["agente"] for p in out["published"]] == ["content-gap-hunter"]
-    assert out["waiting"][0]["agente"] == "site-launch" and len(uploads) == 2
-
-
-def test_shadow_mode_publishes_nothing(env, buzz, uploads, monkeypatch):
-    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "shadow")
-    buzz["events"] = [_event(_request())]
-    assert "shadow" in series.run()["skipped"] and not uploads and not buzz["calls"]
-
-
-def test_a_malformed_request_is_answered_once_and_never_uploaded(env, buzz, uploads):
-    buzz["events"] = [_event(f"{series.MARK}\n{{not json")]
-    out = series.run()
-    assert out["invalid"] and not uploads
-    (_args, kw), = _sends(buzz)
-    assert "No puedo publicar" in kw["input"]
-    series.run()
-    assert len(_sends(buzz)) == 1
-
-
-def test_a_failed_language_is_retried_alone_next_run(env, buzz, uploads, monkeypatch):
-    buzz["events"] = [_event(_request())]
-    real = youtube.upload
-
-    def flaky(video, thumb, srt, social, lang, **kw):
-        if lang == "en":
-            raise youtube.YouTubeError("upload video: HTTP 503")
-        return real(video, thumb, srt, social, lang, **kw)
-
-    monkeypatch.setattr(youtube, "upload", flaky)
-    out = series.run()
-    assert out["failed"][0]["attempt"] == 1 and [u["lang"] for u in uploads] == ["es"] and not _sends(buzz)
-
-    monkeypatch.setattr(youtube, "upload", real)
-    out = series.run()
-    assert out["published"] and [u["lang"] for u in uploads] == ["es", "en"] and len(_sends(buzz)) == 1
-
-
-def test_not_configured_is_a_quiet_skip(tmp_path, monkeypatch):
-    monkeypatch.delenv("SERIES_BUZZ_CHANNEL", raising=False)
-    assert "not configured" in series.run()["skipped"]
-
-
-@pytest.fixture
-def updates(monkeypatch):
-    done = []
-
-    def fake_update(video_id, social, lang, thumb=None):
-        done.append({"id": video_id, "lang": lang, "social": social,
-                     "thumb": thumb.read_bytes() if thumb else None})
-        return {"id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}", "thumbnail": bool(thumb),
-                "warnings": []}
-
-    monkeypatch.setattr(youtube, "update", fake_update)
-    return done
-
-
-def test_parse_update_lists_every_problem(env):
-    item = series.parse_update(_update())
-    assert item["langs"] == ["es"] and item["es"]["portada"].endswith(".jpg")
-    with pytest.raises(series.SeriesError) as exc:
-        series.parse_update(_update(es={"id": "short", "titulo": "Un <título> largo", "descripcion": "corta",
-                                        "portada": "https://evil.example/x.jpg"}))
-    text = str(exc.value)
-    assert "es.id" in text and "es.descripcion" in text and "< and >" in text and "es.portada" in text
-    with pytest.raises(series.SeriesError, match="at least one language"):
-        series.parse_update(_update(es=None))
-
-
-def test_seodesk_optimises_a_published_episode_once(env, buzz, uploads, updates):
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1),
-                      _event(_update(), pubkey=SEODESK, eid="b" * 64, at=2),
-                      _event(_update(), pubkey=STRANGER, eid="c" * 64, at=3)]
-    out = series.run()
-    assert out["published"] and out["updated"] == [{"episodio": "01", "agente": "content-gap-hunter", "langs": ["es"]}]
-    (up,) = updates
-    assert up["id"] == "esVideoId01" and up["thumb"].startswith(b"\xff\xd8")
-    assert up["social"]["youtube"]["description"].startswith("0:00 El problema")
-    reply = [kw["input"] for a, kw in _sends(buzz) if a[a.index("--reply-to") + 1] == "b" * 64]
-    assert len(reply) == 1 and "actualizado" in reply[0] and "portada" in reply[0]
-    assert not any((env / "workspace" / "shorts" / "series").glob("u-*/*"))
-
-    again = series.run()
-    assert "updated" not in again and len(updates) == 1
-
-
-def test_an_update_for_a_video_outside_the_series_is_refused(env, buzz, uploads, updates):
-    buzz["events"] = [_event(_update(), pubkey=SEODESK)]
-    out = series.run()
-    assert out["invalid"] and "not a video of the series" in out["invalid"][0]["error"] and not updates
-    (_args, kw), = _sends(buzz)
-    assert "No puedo actualizar" in kw["input"]
 
 
 def test_youtube_update_rewrites_the_snippet_and_sets_the_cover(env, tmp_path, monkeypatch):
@@ -290,25 +74,6 @@ def test_youtube_update_rewrites_the_snippet_and_sets_the_cover(env, tmp_path, m
     assert any(c[1] == youtube.THUMB_URL for c in calls) and out["thumbnail"] is True
 
 
-def _short_update(rid="es-limite-decision-ia-pymes-2026-20261017040713", vid="shortVid001"):
-    body = {"short": rid, "es": {"id": vid, "titulo": "¿Dónde pones el límite a la IA en tu pyme?",
-                                 "descripcion": "La línea de decisión que tu equipo necesita, en una tarde. #IA #pymes",
-                                 "etiquetas": ["IA", "pymes"], "portada": None}}
-    return f"{series.MARK_UPDATE}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
-
-
-def test_seodesk_optimises_a_blog_short_only_with_its_own_id(env, buzz, uploads, updates, monkeypatch):
-    monkeypatch.setattr(series, "_short_ids", lambda: {"es-limite-decision-ia-pymes-2026-20261017040713": "shortVid001"})
-    buzz["events"] = [_event(_short_update(), pubkey=SEODESK, eid="a" * 64, at=1),
-                      _event(_short_update(vid="otherVid001"), pubkey=SEODESK, eid="b" * 64, at=2)]
-    out = series.run()
-    assert out["updated"] == [{"short": "es-limite-decision-ia-pymes-2026-20261017040713", "langs": ["es"]}]
-    assert [u["id"] for u in updates] == ["shortVid001"]
-    assert "is not a Short uploaded by Hermes" in out["invalid"][0]["error"]
-    replies = {a[a.index("--reply-to") + 1]: kw["input"] for a, kw in _sends(buzz)}
-    assert replies["a" * 64].startswith("Short es-limite") and "No puedo actualizar" in replies["b" * 64]
-
-
 def test_a_short_title_and_description_go_out_as_written(monkeypatch):
     social = {"youtube": {"title": "¿Dónde pones el límite a la IA?", "description": "d #IA", "tags": []}}
     snippet = youtube.build_metadata(social, "es", synthetic=False)["snippet"]
@@ -316,28 +81,20 @@ def test_a_short_title_and_description_go_out_as_written(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Flow shorts: #publicar-short
+# Flow shorts: the master check and the publish helpers
+# ---------------------------------------------------------------------------
 
 
-FLOW = "2026-10-21_es-ia-empleados-junior"
-
-
-def _short_request(**over):
-    body = {
+def _short_item(**over):
+    item = {
         "short": FLOW, "idioma": "es", "articulo": "https://biglobster.top/es/blog/ia-empleados-junior/",
-        "video": f"{RELAY}/media/{'5' * 64}.mp4", "srt": f"{RELAY}/media/{'6' * 64}.srt",
-        "portada": f"{RELAY}/media/{'7' * 64}.jpg",
         "titulo": "Tu empleado junior ya es una IA",
         "descripcion": "Qué cambia en tu pyme cuando el trabajo de entrada lo hace una IA.",
         "etiquetas": ["ia", "pymes"],
         "redes": {"instagram": "Texto IG #IA", "facebook": "Texto FB", "x": "Texto X"},
     }
-    body.update(over)
-    return f"{series.MARK_SHORT}\n```json\n{json.dumps(body, ensure_ascii=False)}\n```"
-
-
-def _replies(buzz):
-    return {a[a.index("--reply-to") + 1]: kw["input"] for a, kw in _sends(buzz) if "--reply-to" in a}
+    item.update(over)
+    return item
 
 
 @pytest.fixture
@@ -354,112 +111,38 @@ def short_uploads(monkeypatch):
     return done
 
 
-def test_parse_short_accepts_a_good_request_and_lists_every_problem(env):
-    item = series.parse_short(_short_request())
-    assert item["short"] == FLOW and item["idioma"] == "es" and item["redes"]["x"] == "Texto X"
-    bare = series.parse_short(_short_request(srt=None, portada=None, redes=None))
-    assert bare["srt"] is None and bare["portada"] is None and bare["redes"] == {"instagram": "", "facebook": "", "x": ""}
-    with pytest.raises(series.SeriesError) as exc:
-        series.parse_short(_short_request(short="Flow Short!", idioma="fr", articulo="http://biglobster.top/x",
-                                          video="https://evil.example/media/x.mp4", portada="https://evil.example/c.jpg",
-                                          titulo="x", descripcion="", etiquetas="ia", redes={"x": 5}))
-    text = str(exc.value)
-    for field in ("short:", "idioma", "articulo", "video", "portada", "titulo", "descripcion", "etiquetas", "redes"):
-        assert field in text
-    assert "es.titulo" not in text
-    for url in ("https://biglobster.top.evil.example/a", "https://user@biglobster.top/a", "https://example.com/biglobster.top"):
-        with pytest.raises(series.SeriesError, match="articulo"):
-            series.parse_short(_short_request(articulo=url))
-    assert series.parse_short(_short_request(articulo="https://www.biglobster.top/a"))["articulo"]
-    with pytest.raises(series.SeriesError):
-        series.parse_short("hola")
+def _publish(tmp_path, item=None, entry=None, cover=True, srt=True, report=None):
+    """Call ``series._publish_files`` on files on disk, recording every save in ``entry``."""
+    item = item or _short_item()
+    entry = {} if entry is None else entry
+    video = tmp_path / "master.mp4"
+    video.write_bytes(b"video")
+    cover_path = tmp_path / "cover.jpg"
+    if cover:
+        cover_path.write_bytes(b"\xff\xd8\xff\xe0cover")
+    srt_path = tmp_path / "captions.srt"
+    if srt:
+        srt_path.write_bytes(b"video")
+    report = report if report is not None else {"meta_shadow": []}
+
+    def save():
+        entry["saved"] = True
+
+    series._publish_files(item, entry, video, cover_path if cover else None, srt_path if srt else None,
+                          save, report)
+    return entry, report
 
 
-def test_a_flow_short_is_uploaded_and_replied_once(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request()), _event(_short_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
-    out = json.loads(st.handle_shorts_studio({"action": "series"}))
-    assert out["success"] and out["published"] == [{"short": FLOW, "id": "flowVid0001",
-                                                    "url": "https://youtube.com/shorts/flowVid0001", "privacy": "public"}]
+def test_a_flow_short_is_uploaded_as_a_youtube_short(env, short_uploads):
+    entry, _ = _publish(env)
     (up,) = short_uploads
     assert up["short"] is True and up["synthetic"] is True and up["privacy"] == "public" and up["lang"] == "es"
     assert up["thumb"].startswith(b"\xff\xd8") and up["srt"] == b"video"
     assert "article" not in up and up["social"]["youtube"]["tags"] == ["ia", "pymes"]
-
-    replies = _replies(buzz)
-    assert set(replies) == {"e" * 64, "f" * 64} and "no está autorizado" in replies["f" * 64]
-    reply_args = next(a for a, kw in _sends(buzz) if "--reply-to" in a and a[a.index("--reply-to") + 1] == "e" * 64)
-    assert reply_args[reply_args.index("--mention") + 1] == VIDEODESK
-    assert "youtube.com/shorts/flowVid0001" in replies["e" * 64]
-    assert "SocialBot" not in replies["e" * 64]
-    assert not any((env / "workspace" / "shorts" / "series").glob("*/*.mp4"))
-
-    ledger = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())
-    assert ledger["e" * 64]["kind"] == "short" and ledger["e" * 64]["youtube"]["id"] == "flowVid0001"
-
-    again = series.run()
-    assert "published" not in again and len(short_uploads) == 1 and len(_sends(buzz)) == 2
-
-
-def test_flow_shorts_have_their_own_daily_cap_apart_from_the_episodes(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)] + [
-        _event(_short_request(short=f"2026-10-21_es-tema-{n}"), eid=str(n) * 64, at=10 + n) for n in (1, 2, 3)]
-    out = series.run()
-    assert [p.get("short") or p["agente"] for p in out["published"]] == [
-        "content-gap-hunter", "2026-10-21_es-tema-1", "2026-10-21_es-tema-2"]
-    assert out["waiting"] == [{"short": "2026-10-21_es-tema-3", "why": "2 short(s) a day (YouTube quota)"}]
-    assert [u["short"] for u in uploads] == [False, False, True, True]
-
-
-def test_the_shorts_cap_is_configurable(env, buzz, short_uploads, monkeypatch):
-    monkeypatch.setenv("SERIES_SHORTS_MAX_PER_DAY", "1")
-    buzz["events"] = [_event(_short_request(short=f"2026-10-21_es-tema-{n}"), eid=str(n) * 64, at=n) for n in (1, 2)]
-    out = series.run()
-    assert len(out["published"]) == 1 and len(out["waiting"]) == 1 and len(short_uploads) == 1
-
-
-def test_shadow_mode_publishes_no_flow_short(env, buzz, short_uploads, monkeypatch):
-    monkeypatch.setenv("SHORTS_PUBLISH_MODE", "shadow")
-    buzz["events"] = [_event(_short_request())]
-    assert "shadow" in series.run()["skipped"] and not short_uploads and not buzz["calls"]
-
-
-def test_a_malformed_short_request_is_answered_once_and_never_uploaded(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request(articulo="https://evil.example/a", idioma="fr"))]
-    out = series.run()
-    assert out["invalid"] and not short_uploads
-    (_args, kw), = _sends(buzz)
-    assert "No puedo publicar este short" in kw["input"] and "articulo" in kw["input"] and "idioma" in kw["input"]
-    series.run()
-    assert len(_sends(buzz)) == 1
-
-
-def test_the_same_flow_short_is_not_uploaded_twice_from_two_messages(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request(), eid="a" * 64, at=1), _event(_short_request(), eid="b" * 64, at=2)]
-    out = series.run()
-    assert len(short_uploads) == 1 and out["published"][0]["short"] == FLOW
-    assert "is already on YouTube" in out["invalid"][0]["error"]
-    assert "No puedo publicar este short" in _replies(buzz)["b" * 64]
-
-
-def test_the_sender_is_told_once_after_three_failed_attempts(env, buzz, short_uploads, monkeypatch):
-    def broken(*a, **kw):
-        raise youtube.YouTubeError("upload video: HTTP 503")
-
-    monkeypatch.setattr(youtube, "upload", broken)
-    buzz["events"] = [_event(_short_request())]
-    assert [series.run()["failed"][0]["attempt"] for _ in range(3)] == [1, 2, 3]
-    assert "failed" not in series.run()
-    (_args, kw), = _sends(buzz)
-    assert "tras 3 intentos" in kw["input"] and "HTTP 503" in kw["input"]
-
-
-def test_without_a_shorts_channel_the_short_is_published_and_no_buzz_notice(env, buzz, short_uploads, monkeypatch):
-    monkeypatch.delenv("SHORTS_BUZZ_CHANNEL")
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
-    assert out["published"] and len(short_uploads) == 1
-    reply = _replies(buzz)["e" * 64]
-    assert "SHORTS_BUZZ_CHANNEL" not in reply and "SocialBot" not in reply
+    assert entry["youtube"]["id"] == "flowVid0001" and entry["youtube"]["seconds"] == 42.0
+    assert series._short_summary(_short_item(), entry) == (
+        f"Short {FLOW} publicado en YouTube por Hermes:\n"
+        "https://youtube.com/shorts/flowVid0001 (id flowVid0001, public)")
 
 
 def test_check_short_wants_vertical_audio_and_five_to_180_seconds(monkeypatch, tmp_path):
@@ -478,131 +161,9 @@ def test_check_short_wants_vertical_audio_and_five_to_180_seconds(monkeypatch, t
             series._check_short(tmp_path / "v.mp4")
 
 
-def test_seodesk_optimises_a_flow_short_with_its_folder_name(env, buzz, short_uploads, updates):
-    other = {"short": "2026-10-21_es-otro-tema", "es": {"id": "otherVid001", "titulo": "Otro título largo para el short",
-                                                        "descripcion": "Una descripción que supera los veinte caracteres.",
-                                                        "etiquetas": ["ia"]}}
-    body = {"short": FLOW, "es": {"id": "flowVid0001", "titulo": "Tu empleado junior ya es una IA | pymes",
-                                  "descripcion": "Qué cambia en tu pyme cuando el trabajo de entrada lo hace una IA. #IA",
-                                  "etiquetas": ["ia", "pymes"], "portada": None}}
-    mark = series.MARK_UPDATE
-    buzz["events"] = [_event(_short_request(), eid="a" * 64, at=1),
-                      _event(f"{mark}\n```json\n{json.dumps(body)}\n```", pubkey=SEODESK, eid="b" * 64, at=2),
-                      _event(f"{mark}\n```json\n{json.dumps(other)}\n```", pubkey=SEODESK, eid="c" * 64, at=3)]
-    out = series.run()
-    assert out["updated"] == [{"short": FLOW, "langs": ["es"]}]
-    assert [u["id"] for u in updates] == ["flowVid0001"]
-    assert "is not a Short uploaded by Hermes" in out["invalid"][0]["error"]
-    replies = _replies(buzz)
-    assert replies["b" * 64].startswith(f"Short {FLOW} actualizado") and "No puedo actualizar" in replies["c" * 64]
-
-
-def test_the_socialbot_message_is_unchanged_for_a_studio_short_with_its_story():
-    text = series.buzz_share.message({"lang": "es", "title": "T", "request_id": "r", "article_url": "u"},
-                                     {"instagram": "ig"}, "https://youtube.com/shorts/x",
-                                     ["master.mp4", "story.mp4", "cover.jpg"])
-    assert "(Reel; la Story es story.mp4, sin texto)" in text and "Instagram (Reel con cover.jpg como portada, y Story)" in text
-
-
-# ---- 2026-10-28 guards: duplicate episode, language in the short key, no silent drops ----
-
-def test_a_second_message_for_a_published_episode_is_refused_with_the_ids(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
-    series.run()
-    assert len(uploads) == 2
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1), _event(_request(), eid="b" * 64, at=2)]
-    out = series.run()
-    assert len(uploads) == 2 and "already published" in out["invalid"][0]["error"]
-    reply = _replies(buzz)["b" * 64]
-    assert "esVideoId01" in reply and "enVideoId01" in reply
-    series.run()
-    assert len([1 for a, _ in _sends(buzz) if "b" * 64 in a]) == 1
-
-
-def test_a_half_published_episode_resent_uploads_only_the_missing_language(env, buzz, uploads, monkeypatch):
-    monkeypatch.setenv("SERIES_MAX_PER_DAY", "5")
-    real = youtube.upload
-
-    def flaky(video, thumb, srt, social, lang, **kw):
-        if lang == "en":
-            raise youtube.YouTubeError("boom")
-        return real(video, thumb, srt, social, lang, **kw)
-
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
-    monkeypatch.setattr(youtube, "upload", flaky)
-    series.run()
-    monkeypatch.setattr(youtube, "upload", real)
-    buzz["events"] = [_event(_request(), eid="b" * 64, at=2)]
-    series.run()
-    assert [u["lang"] for u in uploads] == ["es", "en"]
-
-
-def test_a_flow_folder_in_the_other_language_is_not_a_duplicate(env, buzz, short_uploads):
-    buzz["events"] = [_event(_short_request(idioma="en"), eid="a" * 64, at=1),
-                      _event(_short_request(idioma="es"), eid="b" * 64, at=2),
-                      _event(_short_request(idioma="es"), eid="c" * 64, at=3)]
-    out = series.run()
-    assert [u["lang"] for u in short_uploads] == ["en", "es"]
-    assert "(es) is already on YouTube" in out["invalid"][0]["error"]
-
-
-def test_the_short_key_has_the_language():
-    assert series._short_key({"short": "f", "idioma": "es"}) != series._short_key({"short": "f", "idioma": "en"})
-
-
-def test_a_status_line_that_starts_with_the_marker_is_not_a_request(env, buzz, short_uploads):
-    # VideoDesk, 30-10: "#publicar-short EN LANZADO a @Hermes ..." was answered "the JSON block does not parse"
-    status = "#publicar-short EN LANZADO a @Hermes — evento vigente {a1948e46} en Media Forgery."
-    buzz["events"] = [_event(status, eid="a" * 64, at=NOW)]
-    out = series.run()
-    assert not out.get("invalid") and not short_uploads and _sends(buzz) == []
-
-
-def test_the_json_may_follow_the_marker_on_the_same_line(env, buzz, short_uploads):
-    same_line = _short_request().replace(f"{series.MARK_SHORT}\n", f"{series.MARK_SHORT} ", 1)
-    buzz["events"] = [_event(same_line, eid="a" * 64, at=1)]
-    series.run()
-    assert [u["lang"] for u in short_uploads] == ["es"]
-
-
-def test_a_request_with_the_marker_off_the_first_line_is_answered(env, buzz, uploads):
-    buzz["events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
-    out = series.run()
-    assert "PRIMERA línea" in _replies(buzz)["a" * 64] and out["invalid"] and not uploads
-    series.run()
-    assert len(_sends(buzz)) == 1
-
-
-def test_a_request_from_a_stranger_is_answered_but_never_acted_on(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), pubkey=STRANGER, eid="f" * 64, at=NOW)]
-    series.run()
-    assert not uploads and "no está autorizado" in _replies(buzz)["f" * 64]
-    (args, _), = _sends(buzz)
-    assert "--mention" not in args
-
-
-def test_a_request_in_the_shorts_channel_is_answered_there(env, buzz, uploads):
-    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW)]
-    series.run()
-    chans = [a[a.index("--channel") + 1] for a, _ in _sends(buzz)]
-    assert chans == [SHORTS_CHANNEL] and not uploads
-
-
-def test_an_old_lookalike_is_not_answered_on_the_first_deploy(env, buzz, uploads):
-    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="a" * 64, at=NOW - 3 * 3600)]
-    series.run()
-    assert _sends(buzz) == [] and not uploads
-
-
-def test_a_lookalike_with_a_bad_timestamp_is_skipped_and_the_run_goes_on(env, buzz, uploads):
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
-    buzz["shorts_events"] = [_event("@Hermes\n" + _update(), pubkey=SEODESK, eid="b" * 64, at="ayer")]
-    series.run()
-    assert uploads and "b" * 64 not in _replies(buzz)
-
-
 # ---------------------------------------------------------------------------
 # Meta (Facebook + Instagram): META_PUBLISH_MODE=live, and shadow by default
+# ---------------------------------------------------------------------------
 
 
 def _meta_env(monkeypatch, instagram=True):
@@ -633,14 +194,8 @@ def _meta_calls(monkeypatch):
         calls.append(("instagram", kw))
         return {"id": f"ig{n}", "url": f"https://www.instagram.com/reel/ig{n}/"}
 
-    def fake_video(video, title, description):
-        n = seq("facebook_video")
-        calls.append(("facebook_video", {"title": title, "description": description}))
-        return {"id": f"fbv{n}", "url": f"https://www.facebook.com/1/videos/fbv{n}"}
-
     monkeypatch.setattr(meta_mod, "facebook_reel", fake_reel)
     monkeypatch.setattr(meta_mod, "instagram", fake_instagram)
-    monkeypatch.setattr(meta_mod, "facebook_video", fake_video)
     return calls
 
 
@@ -704,17 +259,16 @@ PROCESSING_FAILED = (400, {"debug_info": {"retriable": False, "type": "Processin
                                           "message": "Request processing failed"}})
 
 
-def test_meta_shadow_by_default_publishes_nothing_to_meta(env, buzz, short_uploads, monkeypatch):
+def test_meta_shadow_by_default_publishes_nothing_to_meta(env, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     monkeypatch.delenv("META_PUBLISH_MODE")
     calls = _meta_calls(monkeypatch)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
+    _, report = _publish(env)
     assert calls == []
-    assert out["meta_shadow"] == [{"short": FLOW, "facebook": "Texto FB", "instagram": "Texto IG #IA"}]
+    assert report["meta_shadow"] == [{"short": FLOW, "facebook": "Texto FB", "instagram": "Texto IG #IA"}]
 
 
-def test_meta_live_posts_fb_and_ig_reels_after_youtube(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_posts_fb_and_ig_reels_after_youtube(env, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     calls = _meta_calls(monkeypatch)
     upload = youtube.upload
@@ -724,20 +278,17 @@ def test_meta_live_posts_fb_and_ig_reels_after_youtube(env, buzz, short_uploads,
         return upload(*a, **kw)
 
     monkeypatch.setattr(youtube, "upload", ordered_upload)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
+    entry, _ = _publish(env)
     assert [c[0] for c in calls] == ["youtube", "facebook", "instagram"]
     assert calls[1][1]["description"] == "Texto FB" and calls[2][1]["caption"] == "Texto IG #IA"
     assert calls[2][1]["kind"] == "reel"
-    assert "meta_shadow" not in out
 
-    reply = _replies(buzz)["e" * 64]
+    reply = series._short_summary(_short_item(), entry)
     assert "Facebook: https://www.facebook.com/reel/fb1" in reply
     assert "Instagram: https://www.instagram.com/reel/ig1/" in reply
-    assert "SocialBot" not in reply
 
 
-def test_meta_live_ig_failure_asks_the_owner_to_upload_by_hand(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_ig_failure_asks_the_owner_to_upload_by_hand(env, short_uploads, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _meta_env(monkeypatch)
@@ -747,26 +298,20 @@ def test_meta_live_ig_failure_asks_the_owner_to_upload_by_hand(env, buzz, short_
         raise meta_mod.MetaError("publish to Instagram: HTTP 500")
 
     monkeypatch.setattr(meta_mod, "instagram", broken)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
-    assert out["published"] and len(short_uploads) == 1
+    entry, _ = _publish(env)
     assert [c[0] for c in calls] == ["facebook"]
-
-    reply = _replies(buzz)["e" * 64]
-    assert "Instagram: Meta rechazó la subida del vídeo; súbelo a mano" in reply
-    entry = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())["e" * 64]
-    assert "HTTP 500" in entry["instagram"]["failed"] and entry["replied"]
+    assert "HTTP 500" in entry["instagram"]["failed"]
+    assert "Instagram: Meta rechazó la subida del vídeo; súbelo a mano" in series._short_summary(_short_item(), entry)
 
     def boom(*a, **kw):
         raise AssertionError("Instagram is not retried once the fallback is recorded")
 
     monkeypatch.setattr(meta_mod, "instagram", boom)
-    again = series.run()
-    assert "published" not in again
+    _publish(env, entry=entry)                  # a retry does only what is left
     assert [c[0] for c in calls] == ["facebook"] and len(short_uploads) == 1
 
 
-def test_meta_live_ig_pending_does_not_count_an_attempt(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_ig_pending_is_resumed_next_run(env, short_uploads, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _meta_env(monkeypatch)
@@ -778,24 +323,22 @@ def test_meta_live_ig_pending_does_not_count_an_attempt(env, buzz, short_uploads
 
     monkeypatch.setattr(meta_mod, "facebook_reel", lambda video, text, **kw: {"id": "fb1", "url": "https://facebook.com/reel/fb1"})
     monkeypatch.setattr(meta_mod, "instagram", pending_ig)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
-    assert out["waiting"] == [{"short": FLOW, "why": "Instagram still processing"}]
-    assert "failed" not in out and not _replies(buzz)
-    entry = json.loads((env / "workspace" / "shorts" / "series" / "ledger.json").read_text())["e" * 64]
-    assert entry["attempts"] == 0 and entry["instagram"] == {"pending": "container-1"}
+    entry = {}
+    with pytest.raises(series.SeriesPending):
+        _publish(env, entry=entry)
+    assert entry["instagram"] == {"pending": "container-1"}
 
     def resume_ig(video, **kw):
         pending.append(kw.get("pending_container"))
         return {"id": "ig1", "url": "https://instagram.com/reel/ig1"}
 
     monkeypatch.setattr(meta_mod, "instagram", resume_ig)
-    out = series.run()
+    _publish(env, entry=entry)
     assert pending == [None, "container-1"]
-    assert out["published"] and len(short_uploads) == 1
+    assert len(short_uploads) == 1
 
 
-def test_meta_live_without_instagram_id_posts_only_facebook(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_without_instagram_id_posts_only_facebook(env, short_uploads, monkeypatch):
     from plugins.shorts.social import meta as meta_mod
 
     _meta_env(monkeypatch, instagram=False)
@@ -805,69 +348,9 @@ def test_meta_live_without_instagram_id_posts_only_facebook(env, buzz, short_upl
         raise AssertionError("Instagram is not configured: it must not be called")
 
     monkeypatch.setattr(meta_mod, "instagram", boom)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
-    assert [c[0] for c in calls] == ["facebook"] and out["published"]
-    reply = _replies(buzz)["e" * 64]
-    assert "Facebook: https://www.facebook.com/reel/fb1" in reply
-    assert "SocialBot" not in reply
-
-
-def test_meta_live_episode_posts_one_facebook_video_per_language_once(env, buzz, uploads, monkeypatch):
-    _meta_env(monkeypatch)
-    calls = _meta_calls(monkeypatch)
-    fail = {"en": True}
-    upload = youtube.upload
-
-    def flaky_upload(video, thumb, srt, social, lang, **kw):
-        if lang == "en" and fail["en"]:
-            raise youtube.YouTubeError("boom")
-        return upload(video, thumb, srt, social, lang, **kw)
-
-    monkeypatch.setattr(youtube, "upload", flaky_upload)
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
-    series.run()
-    assert [c[1]["title"] for c in calls] == ["Content Gap Hunter: el artículo que te falta"]
-    assert calls[0][1]["description"] == "Cómo trabaja el agente que encuentra los huecos de tu blog."
-
-    fail["en"] = False
-    out = series.run()
-    assert out["published"]
-    assert [c[1]["title"] for c in calls] == ["Content Gap Hunter: el artículo que te falta",
-                                             "Content Gap Hunter: the article you're missing"]
-    reply = _replies(buzz)["a" * 64]
-    assert "   Facebook: https://www.facebook.com/1/videos/fbv1" in reply
-    assert "   Facebook: https://www.facebook.com/1/videos/fbv2" in reply
-    # Replied: a third run does nothing and posts nothing again.
-    series.run()
-    assert len(calls) == 2
-
-
-def test_meta_live_episode_facebook_failure_keeps_the_youtube_upload(env, buzz, uploads, monkeypatch):
-    from plugins.shorts.social import meta as meta_mod
-
-    _meta_env(monkeypatch)
-    calls = _meta_calls(monkeypatch)
-    post = meta_mod.facebook_video
-    es_title = "Content Gap Hunter: el artículo que te falta"
-    fail = {"es": True}
-
-    def flaky(video, title, description):
-        if fail["es"] and title == es_title:
-            raise meta_mod.MetaError("publish Facebook video: HTTP 500")
-        return post(video, title, description)
-
-    monkeypatch.setattr(meta_mod, "facebook_video", flaky)
-    buzz["events"] = [_event(_request(), eid="a" * 64, at=1)]
-    first = series.run()
-    assert first["failed"][0]["attempt"] == 1 and calls == []
-    assert [u["lang"] for u in uploads] == ["es"]      # the YouTube upload was kept
-
-    fail["es"] = False
-    out = series.run()
-    assert out["published"]
-    assert [u["lang"] for u in uploads].count("es") == 1 and [u["lang"] for u in uploads].count("en") == 1
-    assert [c[1]["title"] for c in calls] == [es_title, "Content Gap Hunter: the article you're missing"]
+    entry, _ = _publish(env)
+    assert [c[0] for c in calls] == ["facebook"]
+    assert "Facebook: https://www.facebook.com/reel/fb1" in series._short_summary(_short_item(), entry)
 
 
 def test_meta_facebook_reel_sends_is_ai_generated_only_when_asked(tmp_path, monkeypatch):
@@ -1165,26 +648,23 @@ def test_lighter_copy_asks_ffmpeg_for_720_wide(tmp_path, monkeypatch):
     assert seen["stdin"] is meta_mod.subprocess.DEVNULL
 
 
-def test_a_flow_short_marks_its_meta_posts_as_ai_generated(env, buzz, short_uploads, monkeypatch):
+def test_a_flow_short_marks_its_meta_posts_as_ai_generated(env, short_uploads, monkeypatch):
     _meta_env(monkeypatch)
     calls = _meta_calls(monkeypatch)
-    buzz["events"] = [_event(_short_request())]
-    series.run()
+    _publish(env)
     fb = next(c for c in calls if c[0] == "facebook")
     ig = next(c for c in calls if c[0] == "instagram")
     assert fb[1]["ai_generated"] is True and ig[1]["ai_generated"] is True
 
 
-def test_meta_live_short_over_90s_skips_facebook(env, buzz, short_uploads, monkeypatch):
+def test_meta_live_short_over_90s_skips_facebook(env, short_uploads, monkeypatch):
     monkeypatch.setattr(series, "_check_short", lambda path: 120.0)
     _meta_env(monkeypatch)
     calls = _meta_calls(monkeypatch)
-    buzz["events"] = [_event(_short_request())]
-    out = series.run()
-    assert out["published"] and [c[0] for c in calls] == ["instagram"]
+    entry, _ = _publish(env)
+    assert [c[0] for c in calls] == ["instagram"]
 
-    reply = _replies(buzz)["e" * 64]
-    assert "Facebook: dura más de 90 s, Reels no lo admite; súbelo a mano" in reply
+    assert "Facebook: dura más de 90 s, Reels no lo admite; súbelo a mano" in series._short_summary(_short_item(), entry)
 
 
 @pytest.mark.parametrize("value,expected", [(None, "shadow"), ("live", "live"), (" LIVE ", "live"),
@@ -1197,18 +677,3 @@ def test_meta_publish_mode_is_live_only_for_live(monkeypatch, value, expected):
     else:
         monkeypatch.setenv("META_PUBLISH_MODE", value)
     assert meta_mod.publish_mode() == expected
-
-
-def test_buzz_message_with_published_links_asks_only_for_x():
-    text = series.buzz_share.message({"lang": "es", "title": "T", "request_id": "r", "article_url": "u"},
-                                     {"instagram": "ig", "facebook": "fb", "x": "x-texto"},
-                                     "https://youtube.com/shorts/x", ["master.mp4", "cover.jpg"],
-                                     published={"facebook": "https://facebook.com/reel/f",
-                                                "instagram": "https://instagram.com/reel/i"})
-    assert "Ya publicado por Hermes: https://facebook.com/reel/f" in text
-    assert "Ya publicado por Hermes: https://instagram.com/reel/i" in text
-    assert "— Instagram (Reel) —\nYa publicado por Hermes: https://instagram.com/reel/i" in text
-    assert "— X —\nx-texto" in text
-    assert "Facebook e Instagram ya los ha publicado Hermes" in text
-    assert "no los publiques" in text and "Tú solo: X con este texto" in text
-    assert "publícalo en Facebook" not in text

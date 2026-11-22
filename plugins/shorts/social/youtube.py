@@ -1,10 +1,8 @@
-"""YouTube uploads through the YouTube Data API v3 (free, quota-based): the blog Shorts and,
-with ``short=False``, the long episodes of the "Agentes BigLobster" series (plugins/shorts/series.py).
-``update`` rewrites an uploaded video's title, description and tags and sets its thumbnail
-(about 100 units): SEODesk's optimisation of the series episodes. It can also carry the
-video's ``localizations`` (translated titles and descriptions), and ``localize`` adds those
-alone. ``api()`` is the authorised client for the other post-upload writes (captions, playlists,
-comments) that ``plugins/shorts/post_upload.py`` drives.
+"""YouTube uploads through the YouTube Data API v3 (free, quota-based): the blog Shorts and the
+Flow shorts. ``update`` rewrites an uploaded video's title, description and tags and sets its
+thumbnail (about 100 units). It can also carry the video's ``localizations`` (translated titles
+and descriptions), and ``localize`` adds those alone. ``api()`` is the authorised client for the
+other post-upload writes (captions, playlists, comments).
 
 Replaces the browser upload in YouTube Studio, which stopped on "Verify it's
 you" prompts. A short is any vertical video of 3 minutes or less; there is no
