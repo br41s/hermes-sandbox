@@ -20,7 +20,7 @@ web:
 image_gen:
   provider: openrouter
   openrouter:
-    model: bytedance-seed/seedream-4.5
+    model: microsoft/mai-image-2.7-flash
 video_gen:
   provider: openrouter
   openrouter:

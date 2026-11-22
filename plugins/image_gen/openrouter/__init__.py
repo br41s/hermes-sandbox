@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Quality-first default chain: OpenAI first, Gemini 3 Pro Image when it is gated /
 # unavailable / times out. Any explicit override is exact — no auto fallback.
+# fork: a *configured* model (env/config) may name one fallback with
+# <PREFIX>_IMAGE_FALLBACK_MODEL, e.g. OPENROUTER_IMAGE_FALLBACK_MODEL.
 DEFAULT_MODEL = "openai/gpt-5.4-image-2"
 _FALLBACK_MODEL = "google/gemini-3-pro-image"
 _DEFAULT_MODEL_CHAIN = (DEFAULT_MODEL, _FALLBACK_MODEL)
@@ -534,6 +536,11 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         self._runtime_name = runtime_name
         self._config_key = config_key
         self._model_env_var = model_env_var
+        # fork: OPENROUTER_IMAGE_MODEL -> OPENROUTER_IMAGE_FALLBACK_MODEL; no suffix, no fallback.
+        self._fallback_env_var = (
+            f"{model_env_var[:-len('_IMAGE_MODEL')]}_IMAGE_FALLBACK_MODEL"
+            if model_env_var.endswith("_IMAGE_MODEL") else None
+        )
         self._setup_schema = setup_schema
         self._live_models_cache: Optional[tuple] = None
         self._image_api_models_cache: Optional[tuple] = None
@@ -627,15 +634,25 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
 
     def _resolve_model_chain(self, explicit: Optional[str] = None) -> list[str]:
         """``model`` kwarg → ``*_IMAGE_MODEL`` env → ``image_gen.<provider>.model`` →
-        ``image_gen.model`` → default chain. Only the bare default chain carries a fallback."""
-        for candidate in (explicit, os.environ.get(self._model_env_var)):
-            if isinstance(candidate, str) and candidate.strip():
-                return [candidate.strip()]
+        ``image_gen.model`` → default chain. A caller's ``model`` is exact; a configured model
+        may name one fallback with ``<PREFIX>_IMAGE_FALLBACK_MODEL``, and only the bare default
+        chain carries its own built-in fallback (fork)."""
+        if isinstance(explicit, str) and explicit.strip():
+            return [explicit.strip()]
+        candidates = [os.environ.get(self._model_env_var)]
         cfg = _load_image_gen_config()
-        for candidate in (_dict_at(cfg, self._config_key).get("model"), cfg.get("model")):
+        candidates.extend((_dict_at(cfg, self._config_key).get("model"), cfg.get("model")))
+        for candidate in candidates:
             if isinstance(candidate, str) and candidate.strip():
-                return [candidate.strip()]
-        return list(_DEFAULT_MODEL_CHAIN)
+                model = candidate.strip()
+                break
+        else:
+            return list(_DEFAULT_MODEL_CHAIN)
+        # fork: a configured model may name one fallback, e.g. OPENROUTER_IMAGE_FALLBACK_MODEL.
+        fallback = (
+            (os.environ.get(self._fallback_env_var) or "").strip() if self._fallback_env_var else ""
+        )
+        return [model, fallback] if fallback and fallback != model else [model]
 
     def _generate_via_image_api(
         self, *, model_id: str, prompt: str, semantic_aspect: str, references: list[str],

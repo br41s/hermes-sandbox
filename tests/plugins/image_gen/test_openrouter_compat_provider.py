@@ -65,6 +65,12 @@ def _openrouter():
 class TestProviderClass:
 
 
+    @pytest.fixture(autouse=True)
+    def _no_fallback_env(self, monkeypatch):
+        """A developer's shell must not decide these chains (fork)."""
+        monkeypatch.delenv("OPENROUTER_IMAGE_FALLBACK_MODEL", raising=False)
+        monkeypatch.delenv("NOUS_IMAGE_FALLBACK_MODEL", raising=False)
+
     def test_capabilities_support_image_input(self):
         caps = _openrouter().capabilities()
         assert "image" in caps["modalities"]
@@ -108,6 +114,50 @@ class TestProviderClass:
             assert _openrouter()._resolve_model_chain("google/gemini-3-pro-image") == [
                 "google/gemini-3-pro-image"
             ]
+
+    # -- fork: one configured fallback model --------------------------------
+
+    def test_env_model_appends_fallback(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_IMAGE_MODEL", "microsoft/mai-image-2.7-flash")
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium-turbo")
+        assert _openrouter()._resolve_model_chain() == [
+            "microsoft/mai-image-2.7-flash", "krea/krea-2-medium-turbo"
+        ]
+
+    def test_fallback_equal_to_model_is_dropped(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_IMAGE_MODEL", "krea/krea-2-medium")
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium")
+        assert _openrouter()._resolve_model_chain() == ["krea/krea-2-medium"]
+
+    def test_blank_fallback_is_ignored(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_IMAGE_MODEL", "krea/krea-2-medium")
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "   ")
+        assert _openrouter()._resolve_model_chain() == ["krea/krea-2-medium"]
+
+    def test_config_model_appends_fallback(self, monkeypatch):
+        monkeypatch.delenv("OPENROUTER_IMAGE_MODEL", raising=False)
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium-turbo")
+        cfg = {"openrouter": {"model": "microsoft/mai-image-2.7-flash"}}
+        with patch("plugins.image_gen.openrouter._load_image_gen_config", return_value=cfg):
+            assert _openrouter()._resolve_model_chain() == [
+                "microsoft/mai-image-2.7-flash", "krea/krea-2-medium-turbo"
+            ]
+
+    def test_explicit_model_kwarg_ignores_fallback(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium-turbo")
+        cfg = {"model": "openai/gpt-image-2"}
+        with patch("plugins.image_gen.openrouter._load_image_gen_config", return_value=cfg):
+            assert _openrouter()._resolve_model_chain("google/gemini-3-pro-image") == [
+                "google/gemini-3-pro-image"
+            ]
+
+    def test_default_chain_ignores_fallback(self, monkeypatch):
+        from plugins.image_gen.openrouter import DEFAULT_MODEL, _FALLBACK_MODEL
+
+        monkeypatch.delenv("OPENROUTER_IMAGE_MODEL", raising=False)
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium-turbo")
+        with patch("plugins.image_gen.openrouter._load_image_gen_config", return_value={}):
+            assert _openrouter()._resolve_model_chain() == [DEFAULT_MODEL, _FALLBACK_MODEL]
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +624,32 @@ class TestImageApiSurface:
         assert "endpoints/zdr" in result["error"]
         assert "does not exist" not in result["error"]
         assert "_retryable" not in result
+
+    def test_retryable_404_moves_the_chain_to_the_fallback_model(self, monkeypatch):
+        """fork: a retryable failure on the configured model must reach its
+        <PREFIX>_IMAGE_FALLBACK_MODEL instead of failing the whole call."""
+        import requests as req_lib
+
+        monkeypatch.setenv("OPENROUTER_IMAGE_MODEL", "microsoft/mai-image-2.5")
+        monkeypatch.setenv("OPENROUTER_IMAGE_FALLBACK_MODEL", "krea/krea-2-medium-turbo")
+        not_found = MagicMock()
+        not_found.status_code = 404
+        not_found.text = "model unavailable"
+        not_found.json.return_value = {"error": {"message": "model unavailable", "code": 404}}
+        not_found.raise_for_status.side_effect = req_lib.HTTPError(response=not_found)
+
+        with patch(_RUNTIME, return_value=_runtime_ok()), \
+             patch("requests.get", side_effect=AssertionError("must not probe")), \
+             patch("requests.post",
+                   side_effect=[not_found, _mock_image_api_response()]) as mock_post, \
+             patch("plugins.image_gen.openrouter.save_b64_image", return_value=Path("/tmp/i.png")):
+            result = _openrouter_image_api().generate(prompt="a cover", aspect_ratio="square")
+
+        assert result["success"] is True
+        assert result["model"] == "krea/krea-2-medium-turbo"
+        assert [c.kwargs["json"]["model"] for c in mock_post.call_args_list] == [
+            "microsoft/mai-image-2.5", "krea/krea-2-medium-turbo"
+        ]
 
     def test_chat_model_still_uses_chat_completions(self):
         """The new surface must not capture the existing default chain."""

@@ -783,7 +783,7 @@ def _load_defaults():
         return (
             "deepseek/deepseek-v4-flash",
             "deepseek/deepseek-v4-flash-0731",
-            "bytedance-seed/seedream-4.5",
+            "microsoft/mai-image-2.7-flash",
         )
     return (
         FALLBACK_MODEL_DEFAULT,
