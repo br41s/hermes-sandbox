@@ -101,9 +101,8 @@ and VideoDesk finishes them) are requested with ``#publicar-short`` and ONE flat
 
 The same run uploads it as a YouTube Short (vertical, audio, 5-180 s, marked as
 synthetic media: the scenes are AI-generated) with its captions and cover, replies in
-the thread, and hands it to SocialBot in the shorts channel exactly as the blog Shorts
-(``buzz_share.post``: video, cover, YouTube link, the ``redes`` texts or else the
-description). They share the ledger, marked ``"kind": "short"``.
+the thread, and, with ``META_PUBLISH_MODE=live``, posts it as a Facebook and an
+Instagram Reel. They share the ledger, marked ``"kind": "short"``.
 
 Config (service env of the profile that runs the shorts jobs):
 
@@ -553,24 +552,9 @@ def _save_entry(ledger: dict[str, Any], key: str, entry: dict[str, Any]) -> None
     _save(ledger)
 
 
-def _hand_off(item: dict[str, Any], video: Path, cover: Optional[Path], youtube_url: str,
-              published: Optional[dict[str, str]] = None) -> list[str]:
-    """Post the Short to SocialBot in the shorts channel, as the blog Shorts are. Returns the attachments."""
-    files = {"master": str(video)}
-    if cover and cover.read_bytes()[:2] == b"\xff\xd8":      # the relay refuses a PNG
-        files["cover"] = str(cover)
-    entry = {"lang": item["idioma"], "title": item["titulo"], "request_id": item["short"],
-             "article_url": item["articulo"], "synthetic": True}
-    social = {net: text or item["descripcion"] for net, text in item["redes"].items()}
-    try:
-        return buzz_share.post(entry, files, social, youtube_url, published=published)["attached"]
-    except buzz_share.BuzzError as exc:
-        raise SeriesError(f"could not hand the short to SocialBot: {exc}") from exc
-
-
 def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cover: Optional[Path],
                    srt: Optional[Path], save: Callable[[], None], report: dict[str, Any]) -> None:
-    """Upload the Short and hand it to SocialBot; each step is recorded, so a retry does only what is left."""
+    """Upload the Short to YouTube, then Facebook and Instagram; each step is recorded, so a retry does only what is left."""
     from plugins.shorts.social import meta, youtube
 
     if not entry.get("youtube"):
@@ -593,7 +577,7 @@ def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cov
             save()
         else:
             warnings = entry["youtube"].setdefault("warnings", [])
-            warning = "Facebook: dura más de 90 s, Reels no lo admite; se lo pide a SocialBot"
+            warning = "Facebook: dura más de 90 s, Reels no lo admite; súbelo a mano"
             if warning not in warnings:
                 warnings.append(warning)
                 save()
@@ -606,7 +590,7 @@ def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cov
         except meta.MetaError as exc:
             entry["instagram"] = {"failed": str(exc)[:300], "at": datetime.now(UTC).isoformat(timespec="seconds")}
             warnings = entry["youtube"].setdefault("warnings", [])
-            warning = "Instagram: Meta rechazó la subida del vídeo; se lo pide a SocialBot"
+            warning = "Instagram: Meta rechazó la subida del vídeo; súbelo a mano"
             if warning not in warnings:
                 warnings.append(warning)
             save()
@@ -620,12 +604,6 @@ def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cov
     if meta.configured() and not meta_live:
         report["meta_shadow"].append({"short": item["short"], "facebook": text_fb[:120],
                                       "instagram": text_ig[:120]})
-    if not entry.get("handoff_at") and buzz_share.configured():
-        published = {net: entry[net]["url"] for net in ("facebook", "instagram")
-                     if (entry.get(net) or {}).get("url")} or None
-        entry["handoff"] = _hand_off(item, video, cover, entry["youtube"]["url"], published=published)
-        entry["handoff_at"] = datetime.now(UTC).isoformat(timespec="seconds")
-        save()
 
 
 def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any],
@@ -646,15 +624,6 @@ def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
             lines.append(f"{label}: {entry[net]['url']}")
     if done.get("warnings"):
         lines.append("Avisos: " + " · ".join(done["warnings"]))
-    if entry.get("handoff_at"):
-        left = [label for net, label in (("facebook", "Facebook"), ("instagram", "Instagram"))
-                if not (entry.get(net) or {}).get("url")]
-        lines.append(f"Entregado a SocialBot en el canal de shorts ({', '.join(entry['handoff'])}) "
-                     + (f"para {buzz_share._named(left + ['X'])}." if left else "solo para X."))
-        if item.get("portada") and "cover.jpg" not in entry["handoff"]:
-            lines.append("La portada no va adjunta: el relé de Buzz sólo acepta JPEG.")
-    else:
-        lines.append("No se ha entregado a SocialBot: falta SHORTS_BUZZ_CHANNEL en Hermes.")
     return "\n".join(lines)
 
 
@@ -701,7 +670,7 @@ def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
             entry["error"] = str(exc)[:400]
             if entry["attempts"] >= MAX_ATTEMPTS:
                 where = (f"El short {item['short']} está en YouTube ({entry['youtube']['url']}) pero no he podido "
-                         "terminar Facebook/Instagram o la entrega a SocialBot" if entry.get("youtube") else
+                         "terminar Facebook/Instagram" if entry.get("youtube") else
                          f"No he podido publicar el short {item['short']}")
                 _reply(item, f"{where} tras {MAX_ATTEMPTS} intentos: {entry['error']}. Necesita que alguien lo mire.")
                 entry["replied"] = True
@@ -714,7 +683,7 @@ def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
         entry["replied"] = True
         entry.pop("error", None)
         _save_entry(ledger, key, entry)
-        report["published"].append({"short": item["short"], "handoff": bool(entry.get("handoff_at")),
+        report["published"].append({"short": item["short"],
                                     **{k: entry["youtube"].get(k) for k in ("id", "url", "privacy")}})
 
 
