@@ -518,32 +518,6 @@ def test_shadow_mode_waits_and_publishes_nothing(env, drive, studio, published, 
     assert flow_inbox._load()[CARPETA]["state"] == "publishing"
 
 
-# ---------------------------------------------------------------------------
-# series._publish_short keeps downloading the srt for _publish_files
-# ---------------------------------------------------------------------------
-
-def test_publish_short_still_downloads_the_srt(monkeypatch, tmp_path):
-    seen = {}
-
-    def fake_download(url, dest):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"\xff\xd8cover" if dest.name == "cover.jpg" else b"video")
-        return dest
-
-    def fake_files(item, entry, video, cover, srt, save, report):
-        seen.update(video=video, cover=cover, srt=srt)
-
-    monkeypatch.setattr(series, "_download", fake_download)
-    monkeypatch.setattr(series, "_publish_files", fake_files)
-    item = {"short": CARPETA, "idioma": "es", "video": "https://relay/x.mp4",
-            "portada": "https://relay/cover.jpg", "srt": "https://relay/x.srt",
-            "titulo": "t", "descripcion": "d", "etiquetas": [], "redes": {},
-            "articulo": ARTICLE}
-    series._publish_short(item, {}, tmp_path, {}, "key", {"meta_shadow": []})
-    assert seen["srt"] is not None and seen["srt"].name == "short.srt"
-    assert seen["video"].name == "master.mp4" and seen["cover"].name == "cover.jpg"
-
-
 def test_preview_shows_qa_findings_from_the_owners_footage(env):
     """Footage findings pass QA as warnings, so the preview is the only place he sees them."""
     entry = {"duration_s": 34.5, "manifest_flags": {}, "texts": {"redes": {}},

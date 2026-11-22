@@ -474,7 +474,7 @@ def _approve(carpeta: str, entry: dict[str, Any], ledger: dict[str, Any], report
 
 def _publish(carpeta: str, entry: dict[str, Any], ledger: dict[str, Any], report: dict[str, Any],
              texts: Optional[dict[str, Any]] = None) -> None:
-    """Hand the collected files to series._publish_files, under the same gate and daily cap as series.run."""
+    """Hand the collected files to series._publish_files, under the publish mode and the Flow daily cap."""
     from plugins.shorts.social import youtube
     from plugins.shorts.studio_tool import publish_mode
 

@@ -200,7 +200,7 @@ GitHub for their 7-day retention. Packages and renders carry only published blog
 
 **Hermes owns Facebook and Instagram from 2026-11-13 (§3.6).** `META_*` alone
 changes nothing: Meta posts only with `META_PUBLISH_MODE=live`. Until then the
-series run lists what it would have posted under `meta_shadow` in its report;
+publishers list what they would have posted under `meta_shadow` in their report;
 the owner posts the other networks by hand. With `live`, Hermes publishes
 Facebook and Instagram directly, so one switch moves the network with no double
 post.
@@ -219,8 +219,7 @@ The 400 is also sometimes spurious: the container finishes anyway. So
 its 400 and publishes it if it finished, and sends the 2nd and 3rd attempts as a
 720p copy (warned in the reply). If all three fail, the short does not block: Hermes records
 `instagram.failed`, warns in the reply and leaves Instagram and X for the owner to post by
-hand, and it never tries Instagram again for that short. Series episodes go out as a
-regular Facebook Page video per language (`meta.facebook_video`).
+hand, and it never tries Instagram again for that short.
 
 Token: a system user in Meta Business (Business settings → Users → System
 users) gives a Page token that does not expire; steps 3–4 give one too. Beyond
@@ -313,9 +312,9 @@ retired. Until `META_PUBLISH_MODE=live` the table below is still the
 | | Owner | Why |
 |---|---|---|
 | Shorts from blog posts | **Hermes** (this studio) | runs in the cloud 24/7, checks every figure, QA-gates every render. VideoDesk in Buzz no longer makes them |
-| Bespoke videos, edits of Brais's recordings, clips | **VideoDesk** + **Guionista** (Buzz) | creative work that needs conversation and Brais's "aprobado vN" |
+| Flow shorts | **Brais** shoots them in Google Flow from the Hermes Guionista's packs (§3.10); Hermes renders and publishes (§3.9) | the Buzz fleet (VideoDesk, Guionista) was uninstalled on 2026-11-17 |
 | YouTube | **Hermes** | official API (§3.2) |
-| Facebook, Instagram | **Hermes** from `META_PUBLISH_MODE=live` (shorts: Reels; episodes: a Page video per language) | it already holds the master; SocialBot's containers cannot download it |
+| Facebook, Instagram | **Hermes** from `META_PUBLISH_MODE=live` (shorts: Reels) | it already holds the master |
 | Facebook and Instagram comments, the Diario posts, the daily FB/IG metrics | **Hermes**, job "Community — BigLobster" (`BIGLOBSTER_SETUP.md`), since 2026-11-14 | the same Meta token |
 | X | **Brais by hand**, from the X text in the Publisher report (Brais, 2026-11-14) | X API access is a follow-up (`xurl`) |
 | Reddit, community sites, Facebook groups, Messenger | **Brais by hand** | they need a browser session on the Mac |
@@ -325,55 +324,18 @@ line in its Telegram report; the owner posts X by hand. The Buzz hand-off to
 SocialBot is retired (2026-11-17). **Shadow mode never publishes**, so nothing
 goes out until `SHORTS_PUBLISH_MODE=live`.
 
-#### Series episodes: "Agentes BigLobster" (2026-10-16)
+#### Series episodes and Buzz requests: removed (2026-11-22)
 
-- **What they are:** long horizontal explainers (2–3 min, ES and EN), one per agent BigLobster rents. Guionista and VideoDesk make them in Buzz at zero cost (Fizz repo, `tasks/video-serie-agentes.md`); YouTube stays Hermes's.
-- **The request:** when an episode is finished in both languages, VideoDesk posts one message in the series channel. Its first line is `#publicar-episodio`, followed by a JSON block:
-  - `episodio` and `agente` (the page slug);
-  - per language, `video` (the relay `/media/` URL of the master), optional `srt`, `titulo`, `descripcion` and `etiquetas`.
-- **The Publisher's run:** it calls `shorts_studio` action `series`, and `plugins/shorts/series.py` does the rest:
-  1. Reads the requests, only from the pubkeys in `SERIES_BUZZ_FROM`.
-  2. Downloads each master with `buzz media get`. This path has no 20 MB cap; the gateway's inbound attachments do.
-  3. Checks that it is horizontal, has audio and lasts 30–900 s.
-  4. Uploads it as a regular video (`youtube.upload(..., short=False)`: no `#Shorts`, a `watch?v=` link), with the SRT as captions.
-  5. Replies in the request's thread with both links, mentioning the sender.
-- **Safety:**
-  - A ledger keyed by the message id (`workspace/shorts/series/ledger.json`) means nothing is uploaded twice, and a run that stops halfway is finished by the next one.
-  - A malformed request gets one reply listing every problem.
-  - After 3 failed attempts the sender is told once.
-  - Shadow mode publishes nothing.
-- **Quota:** an episode is about 4,000 units (two uploads and two caption tracks) and the shorts use about 4,100, so `SERIES_MAX_PER_DAY` defaults to 1.
-- **Where the links end up:** VideoDesk records the ids in the series queue. The website shows each video once its id is in `site/_data/videosAgentes.json` (biglobster repo).
-- **Optimisation (SEODesk):** once an episode is up, SEODesk posts `#actualizar-video` in the same channel, with a JSON block:
-  - `episodio` and `agente`;
-  - per language it rewrites (either or both), `id` (the YouTube id), `titulo`, `descripcion` (chapters, links, hashtags), `etiquetas` and optional `portada` (the relay `/media/` URL of a JPEG or PNG of 2 MB at most).
-  - The same `series` run applies it with `youtube.update` (`videos.update` plus `thumbnails.set`, about 100 units) and replies in the thread.
-  - Only from `SERIES_BUZZ_FROM` and only for ids in the series ledger, so it can never touch the blog Shorts or another video. Each request is applied once (`workspace/shorts/series/updates.json`), with the same 3 attempts. Privacy is never changed.
-  - A custom thumbnail needs a phone-verified channel; if YouTube refuses it, the reply says so and the rest still applies.
-  - **Blog Shorts too** (Brais, 18-10): the block carries `"short": "<request_id>"` instead of `episodio`/`agente`, plus the one language the Short is in. Applied only to ids the shorts ledger recorded as uploaded by Hermes.
-  - **Flow shorts too** (22-10): same block with `"short": "<Flow folder name>"`; they are in the series ledger, so they qualify.
-  - **Post-upload writes** (25-10; SEODesk's routine, because the bots have no YouTube write access): five more optional keys in the same block, per language entry or at the top of the request (`plugins/shorts/post_upload.py`; format, rules and costs in the `series.py` docstring). An entry that carries only these keys needs no `titulo`/`descripcion`/`etiquetas`.
-    - `localizaciones` (`{"id": {"titulo", "descripcion"}}`, in the `videos.update` call), `subtitulos` (`{"id": "<relay .srt URL>"}`, 400 units per language, a language with a track is skipped), `lista` (playlist title, created if missing, never a duplicate entry), `comentario` (one top-level comment per video; pinning is not in the API, Brais pins it) and `respuestas` (`[{"comentario_id", "texto"}]` on comments of Hermes's videos, at most `SERIES_REPLIES_MAX_PER_RUN` = 10 per run).
-    - Comment texts are data from another bot: length-checked, and no link unless it is an https `biglobster.top` one.
-    - Quota: each request is costed before it runs (`series/quota.json` plus the uploads started today). One that would leave less than 2,100 units for another short upload waits, with one reply to the sender. A quota refusal from YouTube ends that run's writes.
-    - Not possible by API, never tried: pinning a comment, a Short's related video, end screens.
-- **Flow shorts (`#publicar-short`, 2026-10-22):** from 22-10 no agent renders videos: Brais shoots shorts in Google Flow, VideoDesk finishes them (subtitles, logo, end card, cover) and asks Hermes to publish. They are vertical, so they have their own mark and a flat JSON block in the same series channel, from the same `SERIES_BUZZ_FROM` senders:
-  - `short` (the Flow folder name, e.g. `2026-10-21_es-ia-empleados-junior`), `idioma` (`es` or `en`), `articulo` (an https URL on biglobster.top), `video` (relay `/media/` URL of the mp4), optional `srt` and `portada` (JPEG or PNG of 2 MB at most, relay URLs), `titulo`, `descripcion`, `etiquetas` and optional `redes` (`instagram`, `facebook`, `x`).
-  - The same `series` run checks it is vertical, has audio and lasts 5–180 s, and uploads it with `youtube.upload(..., short=True, synthetic=True)` (`containsSyntheticMedia`: the scenes are AI-generated), `SERIES_YOUTUBE_PRIVACY`, the SRT as captions, the cover as thumbnail (if YouTube refuses it, the reply says so and the rest stands). Title and description go out exactly as written (Brais, 30-10): no `#Shorts` in the title, since YouTube tells a Short by its format, and no article link appended, since links in a Short's description are not clickable. The read-back warns above 8 hashtags (`youtube.MAX_HASHTAGS`).
-  - It replies in the thread with the `youtube.com/shorts/` link, mentioning the sender. With `META_PUBLISH_MODE=live` the same run posts it as a Facebook and an Instagram Reel; a Reel Meta refuses, or one over 90 s for Facebook, is flagged in the reply for the owner to upload by hand. The SocialBot hand-off (`buzz_share.post`) was removed on 2026-11-22.
-  - Same ledger (`"kind": "short"`, keyed by the message id), same 3 attempts and "sender told once". A failed Facebook or Instagram step is retried without uploading to YouTube again; a second message for a Flow folder already on YouTube is refused. A Short costs about 2,050 units (upload, captions, cover), so `SERIES_SHORTS_MAX_PER_DAY` (default 2) is its own cap, apart from `SERIES_MAX_PER_DAY`. With the blog shorts and one episode that adds up to more than the 10,000 daily units, so lower one of the caps when they all run.
-- **Flow shorts come from Drive since 2026-11-16 (§3.9).** The `#publicar-short` Buzz path stays in the code (the `series` run still understands it, for the SEODesk/VideoDesk keys), but it has no sender while the fleet is stopped.
+The "Agentes BigLobster" episodes, SEODesk's `#actualizar-video` optimisations and the
+`#publicar-short` requests all reached Hermes through a Buzz channel. Buzz was
+uninstalled for good, so `plugins/shorts/series.py` keeps only the Flow shorts'
+publishing helpers, the `series` action and `buzz_share.py` are gone, and
+`post_upload.py` keeps only the text check the social inbox uses. Publishing an
+episode again would need a new input, for example a Drive folder like the Flow
+shorts (§3.9). The ledger `workspace/shorts/series/ledger.json` stays: Flow packs read
+it to skip articles that already have a short.
+
 - **Shorts covers:** the Shorts shelf and tab show a frame YouTube picks, not the thumbnail set with `thumbnails.set` (that one only reaches search and the channel grid, and the Data API cannot set the shelf image). So every Short opens with its `Thumb` still for the first 15 frames (0.5 s, `COVER_FRAMES` in `remotion/src/Short.tsx`, under QA's 1 s freeze limit). It is the frame YouTube is most likely to pick and the one Brais chooses in Studio when it picks another.
-
-Setup, once:
-
-1. Add Hermes and SEODesk to the series channel (Media Forgery, the video team's channel), so Hermes can read it and SEODesk can post there.
-2. Coolify app env:
-   - `SERIES_BUZZ_CHANNEL` (that channel's UUID);
-   - `SERIES_BUZZ_FROM` (VideoDesk's and SEODesk's hex pubkeys, comma-separated);
-   - optional: `SERIES_YOUTUBE_PRIVACY` (default `public`), `SERIES_MAX_PER_DAY` (default 1), `SERIES_SHORTS_MAX_PER_DAY` (default 2, Flow shorts) and `SERIES_REPLIES_MAX_PER_RUN` (default 10, comment replies).
-   - The Buzz credentials are only read for the series channel; `SHORTS_BUZZ_CHANNEL` no longer matters to Flow shorts (the SocialBot hand-off was removed on 2026-11-22). Nothing goes in `INJECT`.
-3. Deploy and sync the Publisher prompt (`scripts/sync_prompt_drift.py --source shorts/biglobster-shorts-publisher.prompt`).
 
 ### 3.7 The presenter: Lucía and Martín (paid, optional)
 
@@ -626,7 +588,7 @@ still fail the render, because those are the farm's.
 **Caps and gates.**
 
 - `FLOW_MAX_PER_DAY` (default 2) published per UTC day — the YouTube quota.
-- The same publish gate as the series: in shadow mode (`SHORTS_PUBLISH_MODE`
+- The same publish gate as the Studio shorts: in shadow mode (`SHORTS_PUBLISH_MODE`
   unset) nothing is published.
 - The X text and media line go to the owner in the Publisher's Telegram report;
   he posts X by hand.

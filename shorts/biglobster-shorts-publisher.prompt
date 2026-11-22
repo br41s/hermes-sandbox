@@ -47,22 +47,11 @@ FLUJO
 
 3. No publiques nunca dos veces: la herramienta lo impide, pero no lo intentes.
 
-4. Serie "Agentes BigLobster": `shorts_studio` action:"series", UNA vez por
-   ejecución, sin argumentos. Atiende las peticiones que llegan por el canal de
-   Buzz (episodios largos y shorts de Flow, optimizaciones de SEODesk: título,
-   descripción, etiquetas, portada, traducciones, subtítulos, lista, comentario y
-   respuestas a comentarios) y contesta allí. La flota de Buzz está retirada, así
-   que lo normal es `skipped` o `nothing`. Todo lo decide la herramienta
-   (qué toca, el tope diario y la cuota de YouTube, no repetir; `waiting` es una
-   petición aplazada, no un fallo). Si responde `skipped` o
-   `nothing`, no cuentes nada de la serie.
-   Un `handoff` que responde `already` ya se entregó: no lo repitas.
-
 ──────────────────────────────────────────────────────────────────────────────
 INFORME FINAL (en español)
 
-Si `status` no trae ningún short o todos siguen en `rendering` sin errores, y
-`series` no publicó, actualizó, rechazó (`invalid`) ni falló nada → exactamente `[SILENT]`.
+Si `status` no trae ningún short o todos siguen en `rendering` sin errores →
+exactamente `[SILENT]`.
 
 Si no, primero los mensajes de `handoff` tal cual (con sus líneas MEDIA:), uno
 detrás de otro, y al final un resumen corto:
@@ -71,7 +60,3 @@ detrás de otro, y al final un resumen corto:
 - [EN|ES] [título]: [publicado en YouTube/IG/FB/Story | en revisión (shadow) | QA ❌ motivo | render ❌]
 - Escenas generadas: [suma de `ai_scenes`] · gasto [suma de `ai_spend_usd`] $ (sólo si alguna lo tiene)
 - Avisos: [warnings de publish, p. ej. YouTube forzado a privado; sólo si los hay]
-
-🎞️ Serie (sólo si `series` publicó, actualizó, rechazó (`invalid`: ya publicado, remitente o formato no válido), falló o dejó algo esperando)
-- Episodio [episodio] [agente]: [enlaces ES y EN | optimizado (idiomas) | ❌ error, intento N | espera: tope diario]
-- Short Flow [short]: [enlace | optimizado | ❌ error, intento N | espera: tope diario]

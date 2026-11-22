@@ -1,154 +1,21 @@
-"""Episodes of the "Agentes BigLobster" series: long horizontal explainers, from Buzz to YouTube.
-
-Who does what (shorts/STUDIO.md, "Who publishes where"): bespoke videos are made
-in Buzz by Guionista and VideoDesk; YouTube is Hermes's. Each episode explains
-one agent BigLobster rents, 2-3 minutes, 16:9, one video per language.
-
-When an episode is finished in both languages, VideoDesk posts ONE message in
-the series channel: its first line is ``#publicar-episodio`` and a JSON block
-follows::
-
-    {"episodio": "01", "agente": "content-gap-hunter",
-     "es": {"video": "<relay /media/ URL>", "srt": "<relay URL or null>",
-            "titulo": "...", "descripcion": "...", "etiquetas": ["..."]},
-     "en": {...}}
-
-The shorts Publisher calls ``shorts_studio`` action ``series`` on every run.
-This module then reads those messages (only from the senders allowed in
-``SERIES_BUZZ_FROM``), downloads both masters from the relay with the ``buzz``
-CLI, uploads each as a regular YouTube video (not a Short) and replies in the
-message's thread with the links, mentioning the sender. A ledger keyed by the
-message id makes every step idempotent: a video is never uploaded twice, and a
-run that stops halfway is finished by the next one.
-
-Optimising a published episode: SEODesk posts ``#actualizar-video`` with a JSON block, one
-entry per language it rewrites (either or both)::
-
-    {"episodio": "01", "agente": "content-gap-hunter",
-     "es": {"id": "<YouTube id>", "titulo": "...", "descripcion": "... (chapters, links, hashtags)",
-            "etiquetas": ["..."], "portada": "<relay /media/ URL of a JPEG, or null>"},
-     "en": {...}}
-
-The same run applies it with ``videos.update`` (title, description, tags) and
-``thumbnails.set``, and replies in the thread. Only from the allowed senders, and
-only for videos this module uploaded (ids in its ledger). About 100 units each.
-
-The blog Shorts are optimised the same way: instead of "episodio" and "agente" the
-block carries ``"short": "<request_id of the Short>"`` and the one language it is in::
-
-    {"short": "es-limite-decision-ia-pymes-2026-20261017040713",
-     "es": {"id": "<YouTube id>", "titulo": "...", "descripcion": "...", "etiquetas": [...], "portada": null}}
-
-Only for ids the shorts ledger recorded as uploaded by Hermes ("short" is the label
-used in the reply; the request_id is the natural one), and for the Flow shorts below
-(their "short" is the Flow folder name).
-
-Post-upload writes (SEODesk's routine; the bots have no YouTube write access). The same
-``#actualizar-video`` block takes five more optional keys, in a language entry or at the top of
-the request (a language's own key wins; ``respuestas`` of both levels are summed). A language entry
-that carries only these keys needs no ``titulo``/``descripcion``/``etiquetas``; one that carries any
-of the three still needs all three, as before, and only then may it carry a ``portada``::
-
-    {"episodio": "01", "agente": "content-gap-hunter",
-     "es": {"id": "<YouTube id>",
-            "localizaciones": {"id": {"titulo": "...", "descripcion": "..."}, "fil": {...}},
-            "subtitulos": {"id": "<relay /media/ URL of an .srt>"},
-            "lista": "Agentes BigLobster",
-            "comentario": "Text to pin. Hermes posts it; the sender pins it in Studio."},
-     "respuestas": [{"comentario_id": "<top-level comment id>", "texto": "..."}]}
-
-* ``localizaciones``: translated title (<= 100, no ``<``/``>``) and description per language code,
-  applied with ``videos.update`` (part snippet,localizations) next to the ones the video has. The
-  snippet is sent complete; a code equal to the video's own language is skipped with a warning.
-* ``subtitulos``: one ``captions.insert`` per language code (an ``.srt``, UTF-8, <= 1 MB, up to 6).
-  A language that already has a non-automatic track is skipped, never replaced.
-* ``lista``: a playlist title. Found among the channel's playlists (``playlists.list mine``), created
-  if missing, the video added (``playlistItems.insert``) unless it is already in it.
-* ``comentario``: a top-level comment as the channel (``commentThreads.insert``), once per video,
-  ever: ``series/posts.json`` and the channel's own comments on the video both count. The API
-  cannot pin it; the reply reminds the sender to.
-* ``respuestas``: replies (``comments.insert`` with ``parentId``) to top-level comments on a video
-  Hermes uploaded. Skipped, with the reason in the reply: an unknown or non-top-level comment, a
-  video that is not Hermes's, the channel's own comment, one the channel already answered. At most
-  ``SERIES_REPLIES_MAX_PER_RUN`` (default 10) per run and per request, logged; a request over what
-  the run has left waits for the next run.
-
-The text of a comment or reply is data from another bot: 1-1000 characters (replies 500), no
-control characters, no e-mail address, no link unless it is an https ``biglobster.top`` one. Each
-step is recorded as it succeeds, so a retry does only what is left, within ``MAX_ATTEMPTS`` and
-with the same one-line failure reply; a quota refusal ends the run's YouTube writes and the
-requests behind it wait. Nothing here runs outside ``SHORTS_PUBLISH_MODE=live``.
-
-Cost of a request, worst case, in YouTube units (a read is 1): ``titulo`` rewrite 50 (+50 with a
-``portada``, +1 with ``localizaciones``); ``localizaciones`` alone 51; ``subtitulos`` 50 + 400 per
-language; ``lista`` 102; ``comentario`` 52; each ``respuestas`` 52 (+1). The day (YouTube resets at
-midnight Pacific; the count uses UTC-8, so it errs high) is estimated as the uploads started today
-(2,050 per video) plus what this module spent (``series/quota.json``). A request that would leave
-less than 2,100 units, one more short upload, waits for another day, with one reply to the sender;
-one that could never fit is refused.
-
-Not possible through the API, so never attempted: pinning a comment, a Short's "related video"
-field, end screens.
-
-Flow shorts (from 2026-10-22 no agent renders videos: Brais shoots shorts in Google Flow
-and VideoDesk finishes them) are requested with ``#publicar-short`` and ONE flat block::
-
-    {"short": "2026-10-21_es-ia-empleados-junior", "idioma": "es",
-     "articulo": "https://biglobster.top/...", "video": "<relay /media/ URL of the mp4>",
-     "srt": "<relay URL or null>", "portada": "<relay URL of a JPEG/PNG <= 2 MB, or null>",
-     "titulo": "...", "descripcion": "...", "etiquetas": ["..."],
-     "redes": {"instagram": "...", "facebook": "...", "x": "..."}}      (redes is optional)
-
-The same run uploads it as a YouTube Short (vertical, audio, 5-180 s, marked as
-synthetic media: the scenes are AI-generated) with its captions and cover, replies in
-the thread, and, with ``META_PUBLISH_MODE=live``, posts it as a Facebook and an
-Instagram Reel. They share the ledger, marked ``"kind": "short"``.
-
-Config (service env of the profile that runs the shorts jobs):
-
-    SERIES_BUZZ_CHANNEL     UUID of the channel episodes are requested in
-    SERIES_BUZZ_FROM        hex pubkeys allowed to request (comma-separated; VideoDesk, SEODesk)
-    SERIES_YOUTUBE_PRIVACY  public | unlisted | private   (default public)
-    SERIES_MAX_PER_DAY      episodes started per UTC day (default 1)
-    SERIES_SHORTS_MAX_PER_DAY  Flow shorts started per UTC day, apart from the episodes (default 2)
-    SERIES_REPLIES_MAX_PER_RUN  comment replies posted per run (default 10)
-    BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG   as for the shorts hand-off
-
-Quota: an episode is two uploads and two caption tracks, about 4,000 of the
-10,000 daily units; the blog shorts use about 4,100 and a Flow short about 2,050
-(upload 1,600, captions 400, cover 50). One episode a day fits.
-Shadow mode (``SHORTS_PUBLISH_MODE`` not ``live``) publishes nothing.
+"""Publishing helpers for the Flow shorts: probe a vertical master, upload it to YouTube as a Short,
+post it as a Facebook and Instagram Reel when `META_PUBLISH_MODE=live`, and summarise the result.
+The shared ledger lives in `series/ledger.json` (Flow packs read it to skip articles that already
+have a short). The Buzz request path (`#publicar-episodio`, `#publicar-short`, `#actualizar-video`)
+was removed on 2026-11-22 with the Buzz fleet.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import re
-import shutil
-import subprocess
-import time
-from datetime import datetime, timezone, UTC
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
-from plugins.shorts import buzz_share
 from plugins.shorts._env import env
 
-logger = logging.getLogger(__name__)
-
-MARK = "#publicar-episodio"
-MARK_UPDATE = "#actualizar-video"
-MARK_SHORT = "#publicar-short"
-# A mark counts alone on its line or followed straight by the JSON: "#publicar-short EN LANZADO a
-# @Hermes" is a bot's status line, not a request (30-10: it was answered "the JSON block does not parse").
-MARK_END = r"[ \t]*(?:\r?\n|\{|`|$)"
-LANGS = ("es", "en")
-MAX_ATTEMPTS = 3            # per episode; after that the sender is told and it is left alone
-MIN_SECONDS, MAX_SECONDS = 30.0, 900.0
 SHORT_MIN_SECONDS, SHORT_MAX_SECONDS = 5.0, 180.0
-TIMEOUT = 600
 MAX_THUMB_BYTES = 2_000_000     # YouTube's limit for a custom thumbnail
 
 
@@ -160,31 +27,11 @@ class SeriesPending(SeriesError):
     """Instagram is still processing the reel: the next run resumes it, no attempt used."""
 
 
-def channel() -> str:
-    return env("SERIES_BUZZ_CHANNEL")
-
-
-def allowed() -> list[str]:
-    return [p.strip().lower() for p in env("SERIES_BUZZ_FROM").split(",") if re.fullmatch(r"[0-9a-fA-F]{64}", p.strip())]
-
-
-def configured() -> bool:
-    return bool(channel() and allowed() and all(env(n) for n in buzz_share._CREDENTIALS))
-
-
 def _cap(name: str, default: int) -> int:
     try:
         return max(0, int(env(name, str(default)) or str(default)))
     except ValueError:
         return default
-
-
-def _max_per_day() -> int:
-    return _cap("SERIES_MAX_PER_DAY", 1)
-
-
-def _max_shorts_per_day() -> int:
-    return _cap("SERIES_SHORTS_MAX_PER_DAY", 2)
 
 
 def _root() -> Path:
@@ -195,10 +42,6 @@ def _root() -> Path:
 
 def _ledger_path() -> Path:
     return _root() / "ledger.json"
-
-
-def _updates_path() -> Path:
-    return _root() / "updates.json"
 
 
 def _load(path: Optional[Path] = None) -> dict[str, Any]:
@@ -219,38 +62,8 @@ def _today() -> str:
 
 
 # ---------------------------------------------------------------------------
-# The request message
+# The request's fields
 # ---------------------------------------------------------------------------
-
-def _relay_origin() -> str:
-    url = env("BUZZ_RELAY_URL")
-    url = re.sub(r"^wss://", "https://", re.sub(r"^ws://", "http://", url))
-    m = re.match(r"^(https?://[^/]+)", url)
-    return m.group(1) if m else ""
-
-
-def _media_url(value: Any, what: str) -> str:
-    url = str(value or "").strip()
-    origin = _relay_origin()
-    if not origin or not url.startswith(origin + "/media/"):
-        raise SeriesError(f"{what}: not a media URL of this relay ({origin}/media/...)")
-    return url
-
-
-def _json_block(content: str, mark: str) -> dict[str, Any]:
-    text = (content or "").strip()
-    if not text.startswith(mark):
-        raise SeriesError(f"the message does not start with {mark}")
-    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
-    raw = fenced.group(1) if fenced else text[len(mark):].strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise SeriesError(f"the JSON block does not parse: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SeriesError("the JSON block is not an object")
-    return data
-
 
 def _metadata(part: dict[str, Any], lang: str, problems: list[str]) -> dict[str, Any]:
     """Title, description and tags of one language (``lang`` empty for a flat block), as YouTube accepts them."""
@@ -270,51 +83,6 @@ def _metadata(part: dict[str, Any], lang: str, problems: list[str]) -> dict[str,
     return {"titulo": titulo, "descripcion": descripcion, "etiquetas": [t.strip() for t in etiquetas][:15]}
 
 
-SHORT_ID = r"[a-z0-9][a-z0-9_-]{4,120}"
-
-
-def _short_ids() -> dict[str, str]:
-    """request_id -> YouTube id of every blog Short already on YouTube (shorts ledger)."""
-    from plugins.shorts import ledger
-
-    return {e["request_id"]: e["published"]["youtube"]["id"] for e in ledger.entries()
-            if (((e.get("published") or {}).get("youtube") or {}).get("id")) and e.get("request_id")}
-
-
-def _episode(data: dict[str, Any], problems: list[str]) -> dict[str, Any]:
-    agente = str(data.get("agente") or "")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", agente):
-        problems.append("agente: the agent's page slug, e.g. content-gap-hunter")
-    episodio = str(data.get("episodio") or "")
-    if not re.fullmatch(r"\d{1,3}", episodio):
-        problems.append("episodio: its number, e.g. 01")
-    return {"agente": agente, "episodio": episodio}
-
-
-def parse(content: str) -> dict[str, Any]:
-    """The episode request in a message, validated. Raises SeriesError with every problem."""
-    data = _json_block(content, MARK)
-    problems: list[str] = []
-    out = _episode(data, problems)
-    for lang in LANGS:
-        part = data.get(lang) or {}
-        try:
-            video = _media_url(part.get("video"), f"{lang}.video")
-        except SeriesError as exc:
-            problems.append(str(exc))
-            video = ""
-        srt = None
-        if part.get("srt"):
-            try:
-                srt = _media_url(part.get("srt"), f"{lang}.srt")
-            except SeriesError as exc:
-                problems.append(str(exc))
-        out[lang] = {"video": video, "srt": srt, **_metadata(part, lang, problems)}
-    if problems:
-        raise SeriesError("; ".join(problems))
-    return out
-
-
 def _article_url(value: Any, problems: list[str]) -> str:
     url = str(value or "").strip()
     try:
@@ -327,127 +95,9 @@ def _article_url(value: Any, problems: list[str]) -> str:
     return url
 
 
-def parse_short(content: str) -> dict[str, Any]:
-    """A Flow short request, validated. Raises SeriesError with every problem."""
-    data = _json_block(content, MARK_SHORT)
-    problems: list[str] = []
-    short = str(data.get("short") or "")
-    if not re.fullmatch(SHORT_ID, short):
-        problems.append("short: the Flow folder name, e.g. 2026-10-21_es-ia-empleados-junior")
-    idioma = str(data.get("idioma") or "")
-    if idioma not in LANGS:
-        problems.append("idioma: es or en")
-    out: dict[str, Any] = {"short": short, "idioma": idioma, "articulo": _article_url(data.get("articulo"), problems)}
-    for field in ("video", "srt", "portada"):
-        out[field] = None
-        if field == "video" or data.get(field):
-            try:
-                out[field] = _media_url(data.get(field), field)
-            except SeriesError as exc:
-                problems.append(str(exc))
-    redes = data.get("redes") or {}
-    if not isinstance(redes, dict) or not all(isinstance(redes.get(n) or "", str) for n in ("instagram", "facebook", "x")):
-        problems.append("redes: instagram, facebook and x, each a text")
-        redes = {}
-    out["redes"] = {n: str(redes.get(n) or "").strip() for n in ("instagram", "facebook", "x")}
-    out.update(_metadata(data, "", problems))
-    if problems:
-        raise SeriesError("; ".join(problems))
-    return out
-
-
-def parse_update(content: str) -> dict[str, Any]:
-    """An optimisation request (new metadata and thumbnail for published videos), validated."""
-    data = _json_block(content, MARK_UPDATE)
-    problems: list[str] = []
-    if data.get("short"):
-        out: dict[str, Any] = {"short": str(data["short"]), "agente": "", "episodio": ""}
-        if not re.fullmatch(SHORT_ID, out["short"]):
-            problems.append("short: the Short's id (a blog request_id, e.g. es-limite-decision-ia-pymes-2026-20261017040713, "
-                            "or a Flow folder name, e.g. 2026-10-21_es-ia-empleados-junior)")
-    else:
-        out = _episode(data, problems)
-    out["langs"] = [lang for lang in LANGS if data.get(lang)]
-    from plugins.shorts import post_upload
-
-    extras, out["respuestas"] = post_upload.parse(data, out["langs"], problems)
-    if not out["langs"] and not out["respuestas"]:
-        problems.append("at least one language (es, en)")
-    for lang in out["langs"]:
-        part = data[lang] if isinstance(data[lang], dict) else {}
-        video_id = str(part.get("id") or "")
-        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
-            problems.append(f"{lang}.id: the YouTube video id (11 characters)")
-        portada = None
-        if part.get("portada"):
-            try:
-                portada = _media_url(part.get("portada"), f"{lang}.portada")
-            except SeriesError as exc:
-                problems.append(str(exc))
-        # Title, description and tags are required, unless the entry only carries post-upload keys.
-        rewrites = any(k in part for k in post_upload.META_KEYS) or not extras[lang]
-        if portada and not rewrites:
-            problems.append(f"{lang}.portada: the cover goes with titulo, descripcion and etiquetas")
-        out[lang] = {"id": video_id, "portada": portada, **(_metadata(part, lang, problems) if rewrites else {}),
-                     **extras[lang]}
-    if problems:
-        raise SeriesError("; ".join(problems))
-    return out
-
-
 # ---------------------------------------------------------------------------
-# Buzz
+# Probing and publishing
 # ---------------------------------------------------------------------------
-
-def _buzz(args: list[str], content: Optional[str] = None) -> str:
-    binary = buzz_share.cli()
-    if not binary:
-        raise SeriesError("the buzz CLI is not installed in this image")
-    try:
-        done = subprocess.run([binary, *args], input=content, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=TIMEOUT, env=buzz_share._child_env(), check=False)
-    except subprocess.TimeoutExpired as exc:
-        raise SeriesError(f"buzz {args[0]} {args[1]} timed out after {TIMEOUT}s") from exc
-    if done.returncode != 0:
-        tail = " / ".join((done.stderr or done.stdout or "").strip().splitlines()[-4:])
-        raise SeriesError(f"buzz {args[0]} {args[1]} failed ({done.returncode}): {tail[:400]}")
-    return done.stdout or ""
-
-
-def _opens_with(content: str, mark: str) -> bool:
-    return re.match(re.escape(mark) + MARK_END, content.strip()) is not None
-
-
-def requests(limit: int = 200, mark: str = MARK) -> list[dict[str, Any]]:
-    """Requests with ``mark`` in the channel from allowed senders, oldest first (invalid ones carry ``error``)."""
-    parser = {MARK_UPDATE: parse_update, MARK_SHORT: parse_short}.get(mark, parse)
-    raw = _buzz(["messages", "get", "--channel", channel(), "--limit", str(limit)])
-    try:
-        events = json.loads(raw or "[]")
-    except json.JSONDecodeError as exc:
-        raise SeriesError(f"buzz messages get did not return JSON: {exc}") from exc
-    found = []
-    senders = set(allowed())
-    for ev in sorted(events if isinstance(events, list) else [], key=lambda e: e.get("created_at") or 0):
-        content = str(ev.get("content") or "")
-        if str(ev.get("pubkey") or "").lower() not in senders or not _opens_with(content, mark):
-            continue
-        item = {"event": ev.get("id"), "from": str(ev.get("pubkey")).lower(), "created_at": ev.get("created_at")}
-        try:
-            item.update(parser(content))
-        except SeriesError as exc:
-            item["error"] = str(exc)
-        found.append(item)
-    return found
-
-
-def _download(url: str, dest: Path) -> Path:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _buzz(["media", "get", url, "-o", str(dest)])
-    if not dest.is_file() or dest.stat().st_size == 0:
-        raise SeriesError(f"downloaded nothing from {url}")
-    return dest
-
 
 def _probe(path: Path, what: str) -> tuple:
     """(width, height, seconds) of a video that has audio."""
@@ -461,15 +111,6 @@ def _probe(path: Path, what: str) -> tuple:
         raise SeriesError(f"the {what} has no audio")
     return (int(video[0].get("width") or 0), int(video[0].get("height") or 0),
             float(info.get("format", {}).get("duration") or 0))
-
-
-def _check_video(path: Path) -> float:
-    width, height, seconds = _probe(path, "episode")
-    if width <= height:
-        raise SeriesError("an episode is horizontal (16:9); this video is not")
-    if not MIN_SECONDS <= seconds <= MAX_SECONDS:
-        raise SeriesError(f"an episode lasts {MIN_SECONDS:.0f}-{MAX_SECONDS:.0f} s; this one {seconds:.1f} s")
-    return seconds
 
 
 def _check_short(path: Path) -> float:
@@ -487,69 +128,6 @@ def _check_thumb(path: Path) -> None:
         raise SeriesError("the cover is not a JPEG or PNG")
     if path.stat().st_size > MAX_THUMB_BYTES:
         raise SeriesError(f"the cover weighs {path.stat().st_size // 1000} KB; YouTube takes up to 2 MB")
-
-
-def _reply(item: dict[str, Any], text: str) -> None:
-    _buzz(["messages", "send", "--channel", channel(), "--reply-to", item["event"],
-           *(["--mention", item["from"]] if item["from"] else []), "--content", "-"], content=text)
-
-
-# ---------------------------------------------------------------------------
-# Publishing
-# ---------------------------------------------------------------------------
-
-def _publish_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, Any]:
-    from plugins.shorts.social import youtube
-
-    part = item[lang]
-    video = _download(part["video"], work / f"{lang}.mp4")
-    seconds = _check_video(video)
-    srt = _download(part["srt"], work / f"{lang}.srt") if part.get("srt") else None
-    social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
-    result = youtube.upload(video, None, srt, social, lang, synthetic=False, short=False,
-                            privacy=env("SERIES_YOUTUBE_PRIVACY", "public") or "public")
-    return {**result, "seconds": round(seconds, 1), "at": datetime.now(UTC).isoformat(timespec="seconds")}
-
-
-def _summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
-    lines = [f"Episodio {item['episodio']} ({item['agente']}) publicado en YouTube por Hermes:"]
-    for lang in LANGS:
-        done = entry.get(lang) or {}
-        lines.append(f"{lang.upper()}: {done.get('url')} (id {done.get('id')}, {done.get('privacy') or '?'})")
-        if (done.get("facebook") or {}).get("url"):
-            lines.append(f"   Facebook: {done['facebook']['url']}")
-    warnings = [w for lang in LANGS for w in (entry.get(lang) or {}).get("warnings") or []]
-    if warnings:
-        lines.append("Avisos: " + " · ".join(warnings))
-    lines.append("Para la web: estos ids van en site/_data/videosAgentes.json de biglobster "
-                 f"(\"{item['agente']}\": es / en).")
-    return "\n".join(lines)
-
-
-def _update_language(item: dict[str, Any], lang: str, work: Path) -> dict[str, Any]:
-    from plugins.shorts import post_upload
-    from plugins.shorts.social import youtube
-
-    part = item[lang]
-    translations = part.get("localizaciones")
-    if "titulo" not in part:            # only translations: the video's own title and description stay
-        result = youtube.localize(part["id"], lang, translations)
-        post_upload.spend(post_upload.READ + post_upload.WRITE)
-        return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
-    thumb = _download(part["portada"], work / f"{lang}-portada") if part.get("portada") else None
-    if thumb:
-        _check_thumb(thumb)
-    social = {"youtube": {"title": part["titulo"], "description": part["descripcion"], "tags": part["etiquetas"]}}
-    extra = {"localizations": translations} if translations else {}      # update() is called as before without them
-    result = youtube.update(part["id"], social, lang, thumb, **extra)
-    post_upload.spend(post_upload.WRITE + post_upload.READ + (post_upload.WRITE if thumb else 0)   # READ: description read-back
-                      + (post_upload.READ if translations else 0))
-    return {**result, "at": datetime.now(UTC).isoformat(timespec="seconds")}
-
-
-def _save_entry(ledger: dict[str, Any], key: str, entry: dict[str, Any]) -> None:
-    ledger[key] = entry
-    _save(ledger)
 
 
 def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cover: Optional[Path],
@@ -606,15 +184,6 @@ def _publish_files(item: dict[str, Any], entry: dict[str, Any], video: Path, cov
                                       "instagram": text_ig[:120]})
 
 
-def _publish_short(item: dict[str, Any], entry: dict[str, Any], work: Path, ledger: dict[str, Any],
-                   key: str, report: dict[str, Any]) -> None:
-    """Download the Short's files, then publish it; each step is recorded, so a retry does only what is left."""
-    video = _download(item["video"], work / "master.mp4")
-    cover = _download(item["portada"], work / "cover.jpg") if item.get("portada") else None
-    srt = _download(item["srt"], work / "short.srt") if not entry.get("youtube") and item.get("srt") else None
-    _publish_files(item, entry, video, cover, srt, lambda: _save_entry(ledger, key, entry), report)
-
-
 def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     done = entry["youtube"]
     lines = [f"Short {item['short']} publicado en YouTube por Hermes:",
@@ -625,337 +194,3 @@ def _short_summary(item: dict[str, Any], entry: dict[str, Any]) -> str:
     if done.get("warnings"):
         lines.append("Avisos: " + " · ".join(done["warnings"]))
     return "\n".join(lines)
-
-
-def _publish_shorts(ledger: dict[str, Any], report: dict[str, Any]) -> None:
-    """Publish the pending Flow shorts this run may take, under their own daily cap."""
-    shorts = {k: e for k, e in ledger.items() if e.get("kind") == "short"}
-    started_today = sum(1 for e in shorts.values() if e.get("started") == _today())
-    for item in requests(mark=MARK_SHORT):
-        key = item["event"]
-        entry = ledger.get(key) or {}
-        if entry.get("replied"):
-            continue
-        problem = item.get("error")
-        if not problem and not entry.get("started"):
-            twin = next((e for k, e in shorts.items() if k != key and _short_key(e) == _short_key(item)
-                         and (e.get("youtube") or {}).get("id")), None)
-            if twin:
-                problem = f"{item['short']} ({item['idioma']}) is already on YouTube: {twin['youtube']['url']}"
-        if problem:
-            _reply(item, f"No puedo publicar este short: {problem}. Corrige el mensaje y vuelve a enviarlo.")
-            _save_entry(ledger, key, {"kind": "short", "rejected": True, "replied": True, "error": problem})
-            report["invalid"].append({"event": key, "error": problem})
-            continue
-        if not entry.get("started"):
-            if started_today >= _max_shorts_per_day():
-                report["waiting"].append({"short": item["short"],
-                                          "why": f"{_max_shorts_per_day()} short(s) a day (YouTube quota)"})
-                continue
-            entry = {"kind": "short", "short": item["short"], "idioma": item["idioma"], "started": _today(),
-                     "attempts": 0}
-            started_today += 1
-        entry["attempts"] = int(entry.get("attempts") or 0) + 1
-        _save_entry(ledger, key, entry)
-        shorts[key] = entry
-        work = _root() / key[:16]
-        try:
-            _publish_short(item, entry, work, ledger, key, report)
-        except SeriesPending:
-            entry["attempts"] -= 1
-            report["waiting"].append({"short": item["short"], "why": "Instagram still processing"})
-            _save_entry(ledger, key, entry)
-            continue
-        except Exception as exc:
-            entry["error"] = str(exc)[:400]
-            if entry["attempts"] >= MAX_ATTEMPTS:
-                where = (f"El short {item['short']} está en YouTube ({entry['youtube']['url']}) pero no he podido "
-                         "terminar Facebook/Instagram" if entry.get("youtube") else
-                         f"No he podido publicar el short {item['short']}")
-                _reply(item, f"{where} tras {MAX_ATTEMPTS} intentos: {entry['error']}. Necesita que alguien lo mire.")
-                entry["replied"] = True
-            _save_entry(ledger, key, entry)
-            report["failed"].append({"short": item["short"], "error": entry["error"], "attempt": entry["attempts"]})
-            continue
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-        _reply(item, _short_summary(item, entry))
-        entry["replied"] = True
-        entry.pop("error", None)
-        _save_entry(ledger, key, entry)
-        report["published"].append({"short": item["short"],
-                                    **{k: entry["youtube"].get(k) for k in ("id", "url", "privacy")}})
-
-
-def _short_key(item: dict[str, Any]) -> tuple[str, str]:
-    """A Flow folder holds an ES and an EN master: the folder alone is not one video, folder + language is."""
-    return str(item.get("short") or ""), str(item.get("idioma") or "")
-
-
-def _episode_twin(ledger: dict[str, Any], key: str, item: dict[str, Any]) -> dict[str, Any]:
-    """The other ledger entries of the same episode (number + agent) with at least one video on YouTube."""
-    return {k: e for k, e in ledger.items()
-            if k != key and e.get("kind") != "short" and e.get("episodio") == item["episodio"]
-            and e.get("agente") == item["agente"] and any((e.get(lang) or {}).get("id") for lang in LANGS)}
-
-
-def _what(item: dict[str, Any]) -> str:
-    return f"el short {item['short']}" if item.get("short") else f"el episodio {item['episodio']}"
-
-
-def _applied(item: dict[str, Any], entry: dict[str, Any]) -> list[str]:
-    """The reply lines for what an optimisation request has applied so far, one per video, then the warnings."""
-    from plugins.shorts import post_upload
-
-    lines = []
-    for lang in item["langs"]:
-        done, part = entry.get(lang) or {}, item[lang]
-        bits = (["título, descripción y etiquetas"] + (["portada"] if done.get("thumbnail") else [])
-                if "titulo" in part and done.get("id") else []) + post_upload.summary(item, entry, lang)
-        if bits:
-            lines.append(f"{lang.upper()}: {done.get('url') or 'https://www.youtube.com/watch?v=' + part['id']} · "
-                         + " · ".join(bits))
-    lines += post_upload.replies_summary(item, entry)
-    warnings = [w for lang in item["langs"] for w in (entry.get(lang) or {}).get("warnings") or []]
-    if warnings:
-        lines.append("Avisos: " + " · ".join(warnings))
-    return lines
-
-
-def _apply_updates(ledger: dict[str, Any], report: dict[str, Any]) -> None:
-    """Apply the optimisation requests, each once; only to videos this module published."""
-    from plugins.shorts import post_upload
-
-    ours = {(e.get(lang) or {}).get("id") for e in ledger.values() for lang in LANGS} - {None}
-    shorts = set(_short_ids().values()) | {e["youtube"]["id"] for e in ledger.values()
-                                           if e.get("kind") == "short" and (e.get("youtube") or {}).get("id")}
-    updates = _load(_updates_path())
-    run = post_upload.Run(ledger, ours | shorts)
-    for item in requests(mark=MARK_UPDATE):
-        key = item["event"]
-        entry = updates.get(key) or {}
-        if entry.get("replied"):
-            continue
-        if item.get("short"):
-            problem = item.get("error") or next(
-                (f"{lang}.id {item[lang]['id']} is not a Short uploaded by Hermes"
-                 for lang in item["langs"] if item[lang]["id"] not in shorts), None)
-        else:
-            problem = item.get("error") or next(
-                (f"{lang}.id {item[lang]['id']} is not a video of the series" for lang in item["langs"]
-                 if item[lang]["id"] not in ours), None)
-        if problem:
-            _reply(item, f"No puedo actualizar este vídeo: {problem}. Corrige el mensaje y vuelve a enviarlo.")
-            updates[key] = {"rejected": True, "replied": True, "error": problem}
-            _save(updates, _updates_path())
-            report["invalid"].append({"event": key, "error": problem})
-            continue
-        held = post_upload.gate(item, entry, run)
-        if held and held[0] == "reject":
-            _reply(item, f"No aplico este cambio: {held[1]}. Divídelo en peticiones más pequeñas y vuelve a enviarlo.")
-            updates[key] = {"rejected": True, "replied": True, "error": held[1]}
-            _save(updates, _updates_path())
-            report["invalid"].append({"event": key, "error": held[1]})
-            continue
-        if held:                                    # it fits another day (or run): left pending, the sender told once
-            if not entry.get("deferred"):
-                _reply(item, f"Cambio aplazado: {held[1]}. Se aplicará solo en una ejecución posterior.")
-                entry["deferred"] = True
-                updates[key] = entry
-                _save(updates, _updates_path())
-            report["waiting"].append({"update": key[:16], "why": held[1]})
-            continue
-        entry["attempts"] = int(entry.get("attempts") or 0) + 1
-        updates[key] = entry
-        _save(updates, _updates_path())
-        work = _root() / f"u-{key[:16]}"
-        try:
-            errors = []
-            for lang in item["langs"]:
-                part = item[lang]
-                if (entry.get(lang) or {}).get("id") or not ("titulo" in part or part.get("localizaciones")):
-                    continue
-                try:
-                    entry[lang] = _update_language(item, lang, work)
-                    _save(updates, _updates_path())
-                except Exception as exc:
-                    errors.append(f"{lang}: {exc}")
-                    post_upload.note_failure(run, exc)
-            errors += post_upload.apply(item, entry, run, work, lambda: _save(updates, _updates_path()))
-            if errors:
-                raise SeriesError("; ".join(errors))
-        except Exception as exc:
-            entry["error"] = str(exc)[:400]
-            if entry["attempts"] >= MAX_ATTEMPTS:
-                _reply(item, "\n".join([f"No he podido actualizar {_what(item)} tras {MAX_ATTEMPTS} intentos: "
-                                        f"{entry['error']}. Necesita que alguien lo mire.", *_applied(item, entry)]))
-                entry["replied"] = True
-            _save(updates, _updates_path())
-            report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "short": item.get("short"),
-                                     "update": True,
-                                     "error": entry["error"], "attempt": entry["attempts"]})
-            continue
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-        lines = [f"Short {item['short']} actualizado en YouTube por Hermes:" if item.get("short") else
-                 f"Episodio {item['episodio']} ({item['agente']}) actualizado en YouTube por Hermes:"]
-        _reply(item, "\n".join(lines + _applied(item, entry)))
-        entry["replied"] = True
-        entry.pop("error", None)
-        _save(updates, _updates_path())
-        done = ({"short": item["short"], "langs": item["langs"]} if item.get("short") else
-                {"episodio": item["episodio"], "agente": item["agente"], "langs": item["langs"]})
-        if post_upload.has_extras(item):
-            done["extras"] = entry.get("extras")
-        report["updated"].append(done)
-    run.finish(report)
-
-
-LOOKALIKE = re.compile(r"(?m)^\s*(?:#publicar-episodio|#actualizar-video|#publicar-short)" + MARK_END)
-LOOKALIKE_MAX_AGE = 2 * 3600   # seconds: only fresh messages are answered, never the channel's history
-
-
-def _reject_lookalikes(ledger: dict[str, Any], report: dict[str, Any]) -> None:
-    """Answer, once, every message that looks like a request but that ``requests()`` ignores.
-
-    Ignored for: the marker is not on the first line, the sender is not allowed, or it was posted in the
-    shorts channel instead of the series channel. Who may trigger an upload does not change: this only says why not.
-    """
-    senders, mine = set(allowed()), channel()
-    for chan in dict.fromkeys(c for c in (mine, buzz_share.channel()) if c):
-        try:
-            events = json.loads(_buzz(["messages", "get", "--channel", chan, "--limit", "200"]) or "[]")
-        except (SeriesError, json.JSONDecodeError) as exc:
-            logger.warning("lookalike scan of %s failed: %s", chan, exc)
-            continue
-        for ev in events if isinstance(events, list) else []:
-            content, sender = str(ev.get("content") or ""), str(ev.get("pubkey") or "").lower()
-            key = f"rejected-{ev.get('id')}"
-            if not LOOKALIKE.search(content) or "{" not in content or key in ledger or not ev.get("id"):
-                continue
-            try:
-                age = time.time() - float(ev.get("created_at") or 0)
-            except (TypeError, ValueError):
-                continue                                    # relay data: a bad timestamp must not stop the run
-            if age > LOOKALIKE_MAX_AGE:
-                continue                                    # old: the first deploy must not answer the backlog
-            first_line = any(_opens_with(content, m) for m in (MARK, MARK_UPDATE, MARK_SHORT))
-            if chan == mine and sender in senders and first_line:
-                continue                                    # a real request: requests() answers it
-            if chan != mine:
-                why = "las peticiones solo se leen en el canal de la serie, no en este"
-            elif sender not in senders:
-                why = "el remitente no está autorizado a pedir subidas o cambios en YouTube"
-            else:
-                why = "la marca (#publicar-episodio, #actualizar-video o #publicar-short) debe ir en la PRIMERA línea del mensaje, sin @menciones antes"
-            item = {"event": ev["id"], "from": sender}
-            try:
-                if chan == mine:
-                    _reply(item if sender in senders else {**item, "from": ""}, f"Petición ignorada: {why}.")
-                else:
-                    _buzz(["messages", "send", "--channel", chan, "--reply-to", ev["id"], "--content", "-"],
-                          content=f"Petición ignorada: {why}. Publícala en el canal de la serie.")
-            except SeriesError as exc:
-                logger.warning("could not answer ignored request %s: %s", ev["id"], exc)
-                continue
-            ledger[key] = {"kind": "ignored", "replied": True, "error": why}
-            _save(ledger)
-            report["invalid"].append({"event": ev["id"], "error": why})
-
-
-def run() -> dict[str, Any]:
-    """Publish the pending episodes this run may take. Returns what happened, for the Publisher's report."""
-    if not configured():
-        return {"skipped": "series not configured (SERIES_BUZZ_CHANNEL, SERIES_BUZZ_FROM, Buzz credentials)"}
-    from plugins.shorts.social import meta, youtube
-    from plugins.shorts.studio_tool import publish_mode
-
-    if publish_mode() != "live":
-        return {"skipped": "shadow mode: nothing is published"}
-    if not youtube.configured():
-        return {"skipped": "YouTube is not configured"}
-    meta_live = meta.publish_mode() == "live"
-    ledger = _load()
-    started_today = sum(1 for e in ledger.values() if e.get("kind") != "short" and e.get("started") == _today())
-    report: dict[str, Any] = {"published": [], "updated": [], "failed": [], "invalid": [], "waiting": [],
-                              "meta_shadow": []}
-    _reject_lookalikes(ledger, report)
-    for item in requests():
-        key = item["event"]
-        entry = ledger.get(key) or {}
-        if entry.get("replied"):
-            continue
-        if item.get("error"):
-            if not entry.get("rejected"):
-                _reply(item, f"No puedo publicar este episodio: {item['error']}. Corrige el mensaje y vuelve a enviarlo.")
-                ledger[key] = {"rejected": True, "replied": True, "error": item["error"]}
-                _save(ledger)
-            report["invalid"].append({"event": key, "error": item["error"]})
-            continue
-        twins = {} if entry.get("started") else _episode_twin(ledger, key, item)
-        if twins and all(any((e.get(lang) or {}).get("id") for e in twins.values()) for lang in LANGS):
-            ids = ", ".join(f"{lang.upper()} {next(e[lang]['id'] for e in twins.values() if (e.get(lang) or {}).get('id'))}"
-                            for lang in LANGS)
-            problem = f"already published: episodio {item['episodio']} ({item['agente']}) is on YouTube ({ids})"
-            _reply(item, f"No lo subo otra vez, {problem}. Si de verdad hay que rehacerlo, bórralo antes en YouTube.")
-            ledger[key] = {"rejected": True, "replied": True, "error": problem}
-            _save(ledger)
-            report["invalid"].append({"event": key, "error": problem})
-            continue
-        if not entry.get("started"):
-            if started_today >= _max_per_day():
-                report["waiting"].append({"episodio": item["episodio"], "agente": item["agente"],
-                                          "why": f"{_max_per_day()} episode(s) a day (YouTube quota)"})
-                continue
-            entry = {"agente": item["agente"], "episodio": item["episodio"], "started": _today(), "attempts": 0}
-            for lang in LANGS:          # a language an earlier message already published is reused, never uploaded again
-                done = next((e[lang] for e in twins.values() if (e.get(lang) or {}).get("id")), None)
-                if done:
-                    entry[lang] = {**done, "reused": True}
-            started_today += 1
-        entry["attempts"] = int(entry.get("attempts") or 0) + 1
-        ledger[key] = entry
-        _save(ledger)
-        work = _root() / key[:16]
-        try:
-            for lang in LANGS:
-                if meta.configured() and not meta_live and not (entry.get(lang) or {}).get("facebook"):
-                    report["meta_shadow"].append({"episodio": item["episodio"], "agente": item["agente"],
-                                                  "lang": lang, "facebook": item[lang]["titulo"][:120]})
-                if not (entry.get(lang) or {}).get("id"):
-                    entry[lang] = _publish_language(item, lang, work)
-                    ledger[key] = entry
-                    _save(ledger)
-                if (meta_live and meta.configured() and not entry[lang].get("reused")
-                        and not (entry[lang].get("facebook") or {}).get("id")):
-                    video = work / f"{lang}.mp4"
-                    if not video.exists():
-                        video = _download(item[lang]["video"], video)
-                    entry[lang] = {**entry[lang], "facebook": {
-                        **meta.facebook_video(video, item[lang]["titulo"], item[lang]["descripcion"]),
-                        "at": datetime.now(UTC).isoformat(timespec="seconds")}}
-                    ledger[key] = entry
-                    _save(ledger)
-        except Exception as exc:
-            entry["error"] = str(exc)[:400]
-            if entry["attempts"] >= MAX_ATTEMPTS:
-                _reply(item, f"No he podido publicar el episodio {item['episodio']} tras {MAX_ATTEMPTS} intentos: "
-                             f"{entry['error']}. Necesita que alguien lo mire.")
-                entry["replied"] = True
-            ledger[key] = entry
-            _save(ledger)
-            report["failed"].append({"episodio": item["episodio"], "agente": item["agente"], "error": entry["error"],
-                                     "attempt": entry["attempts"]})
-            continue
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-        _reply(item, _summary(item, entry))
-        entry["replied"] = True
-        entry.pop("error", None)
-        ledger[key] = entry
-        _save(ledger)
-        report["published"].append({"episodio": item["episodio"], "agente": item["agente"],
-                                    **{lang: {k: entry[lang].get(k) for k in ("id", "url", "privacy")} for lang in LANGS}})
-    _publish_shorts(ledger, report)
-    _apply_updates(ledger, report)
-    return {k: v for k, v in report.items() if v} or {"nothing": "no episode to publish"}

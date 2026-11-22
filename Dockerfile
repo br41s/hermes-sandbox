@@ -43,25 +43,6 @@ RUN apt-get -o Acquire::Retries=3 update && \
     make -j"$(nproc)" && \
     make install
 
-# Block's `buzz` CLI, the client the Buzz gateway adapter and the shorts
-# hand-off to SocialBot (plugins/shorts/buzz_share.py) both shell out to.
-# Block publishes no prebuilt Linux CLI, so it is built here from a pinned
-# commit (tag v0.5.2), with the Rust version its rust-toolchain.toml names.
-# Bookworm, like node_source, so the binary links against glibc 2.36 and runs
-# on the trixie runtime. Bump: change both ARGs together.
-FROM rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS buzz_cli
-ARG BUZZ_CLI_TAG=v0.5.2
-ARG BUZZ_CLI_COMMIT=3e48f1b2365d326ee1c9582448d86a99b44ecd5d
-WORKDIR /src
-RUN git init -q . \
-    && git remote add origin https://github.com/block/buzz \
-    && git fetch -q --depth 1 origin "${BUZZ_CLI_COMMIT}" \
-    && git checkout -q FETCH_HEAD \
-    && test "$(git rev-parse HEAD)" = "${BUZZ_CLI_COMMIT}" \
-    && cargo build --release --locked -p buzz-cli --bin buzz \
-    && strip target/release/buzz \
-    && ./target/release/buzz messages send --help >/dev/null
-
 # Same digest as sqlite_build: the built libsqlite must match this libc.
 FROM debian:trixie-20261020@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS runtime_base
 
@@ -228,9 +209,6 @@ RUN ARCH="$(dpkg --print-architecture)" && \
 SHELL ["/bin/sh", "-c"]
 
 RUN useradd -u 10000 -m -d /opt/data hermes
-
-# Fork: Block's buzz CLI, built in the buzz_cli stage above.
-COPY --chmod=0755 --from=buzz_cli /src/target/release/buzz /usr/local/bin/buzz
 
 
 WORKDIR /opt/hermes
