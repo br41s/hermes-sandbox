@@ -10,8 +10,8 @@ hermes-sandbox clone (prompt_source paths resolve against it).
 The job is deliberately created in the default store (no `-p`) and WITHOUT
 `workdir`, for the same reasons as the two Shorts jobs:
 
-* it runs in the default profile, whose process env carries the Meta and Buzz
-  keys straight from Zeabur — so META_* and BUZZ_* never have to be copied
+* it runs in the default profile, whose process env carries the Meta keys
+  straight from Coolify — so META_* never have to be copied
   into every profile's .env by the boot hook;
 * the default store's pool is unbounded, while a named profile's runs one job
   at a time (CLAUDE.md, "One cron job at a time per profile; profiles run side
