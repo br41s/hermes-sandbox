@@ -23,6 +23,8 @@ from agent.image_gen_provider import (
     DEFAULT_ASPECT_RATIO, ImageGenProvider, error_response, resolve_aspect_ratio, save_b64_image,
     save_url_image, success_response)
 from plugins.image_gen._common import error_factory, load_image_gen_config, post_json, record_token_usage
+from hermes_cli.fork_ext.openrouter_data_policy import with_openrouter_data_policy
+from utils import base_url_host_matches
 
 logger = logging.getLogger(__name__)
 
@@ -667,6 +669,8 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
         payload, notes = _build_image_api_payload(
             model_id=model_id, prompt=prompt, semantic_aspect=semantic_aspect,
             references=usable_refs, config_key=self._config_key, kwargs=kwargs)
+        if base_url_host_matches(base_url, "openrouter.ai"):
+            payload = with_openrouter_data_policy(payload)
         if unreadable:
             notes.insert(0, f"dropped unreadable reference image(s): {', '.join(unreadable)}")
 
@@ -738,6 +742,8 @@ class OpenRouterCompatImageProvider(ImageGenProvider):
                 "messages": [{"role": "user", "content": content}],
                 "image_config": {"aspect_ratio": _ASPECT_RATIOS.get(aspect, "1:1")},
             }
+            if base_url_host_matches(base_url, "openrouter.ai"):
+                payload = with_openrouter_data_policy(payload)
             result, failure = post_json(
                 f"{base_url}/chat/completions", headers=headers, payload=payload, timeout=_REQUEST_TIMEOUT,
                 label=self._display)
