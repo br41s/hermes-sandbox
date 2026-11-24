@@ -74,19 +74,55 @@ def public_dashboard(password_hash, monkeypatch):
     clear_providers()
 
 
-def test_https_public_url_enforces_host_prefix_and_secure_cookies_behind_http_proxy(
+def test_reconciled_trusted_proxies_turn_traefik_forwarded_headers_into_https_and_real_ip(
     public_dashboard,
 ):
-    """Even when the internal proxy hop arrives as http:// without X-Forwarded-Proto,
-    an https:// HERMES_DASHBOARD_PUBLIC_URL forces __Host- and Secure on session cookies."""
-    client = TestClient(web_server.app, base_url="http://hermes.biglobster.top")
-    login = client.post(
-        "/auth/password-login",
-        json={"provider": "basic", "username": "admin", "password": "hunter2"},
-    )
-    assert login.status_code == 200
-    cookies = login.headers.get_list("set-cookie")
-    assert any(c.startswith("__Host-hermes_session_at=") and "; Secure" in c for c in cookies)
+    """With boot_reconcile.DASHBOARD_TRUSTED_PROXIES configured, uvicorn's ProxyHeadersMiddleware
+    honours X-Forwarded-Proto: https and X-Forwarded-For from a Coolify Traefik bridge IP
+    (172.18.0.x / 10.x.x.x), emitting __Host- + Secure cookies and recording the real client IP."""
+    import asyncio
+    from starlette.requests import Request
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+    from hermes_cli.dashboard_auth.cookies import detect_https
+    from hermes_cli.dashboard_auth.request_utils import client_ip
+    from hermes_cli.fork_ext.boot_reconcile import DASHBOARD_TRUSTED_PROXIES
+    from hermes_cli.web_server_lifecycle import _dashboard_forwarded_allow_ips
+
+    trusted = _dashboard_forwarded_allow_ips({"trusted_proxies": DASHBOARD_TRUSTED_PROXIES})
+    observed: dict = {}
+
+    async def downstream(scope, receive, send):
+        req = Request(scope)
+        observed["https"] = detect_https(req)
+        observed["ip"] = client_ip(req)
+
+    middleware = ProxyHeadersMiddleware(downstream, trusted_hosts=trusted)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/auth/login",
+        "raw_path": b"/auth/login",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"x-forwarded-proto", b"https"),
+            (b"x-forwarded-for", b"203.0.113.42"),
+        ],
+        "client": ("172.18.0.5", 43120),
+        "server": ("hermes", 9119),
+    }
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(_message):
+        return None
+
+    asyncio.run(middleware(scope, receive, send))
+    assert observed == {"https": True, "ip": "203.0.113.42"}
 
 
 def test_spoofed_forwarded_prefix_ignored_when_public_url_is_set(public_dashboard):
