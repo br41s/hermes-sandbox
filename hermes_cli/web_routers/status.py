@@ -510,12 +510,15 @@ _WEBAPP_SIGNED_OUT_STATUS_KEYS = frozenset({
 
 
 async def _webapp_caller_signed_out(request: Request) -> bool:
-    """True when this request reached the gateway's Webapp behind its sign-in gate with no
-    session the gate would accept. ``/api/status`` is public, so the gate never verified one."""
+    """True when this request reached the gateway's Webapp (or an operator-declared public_url
+    dashboard) behind its sign-in gate with no session the gate would accept. ``/api/status``
+    is public, so the gate never verified one."""
+    from hermes_cli.dashboard_auth.prefix import resolve_public_url
     from hermes_cli.web_server import _require_token
     from hermes_cli.web_server_surface import surface
-    if request is None or surface(request.app.state) != "webapp" \
-            or not getattr(request.app.state, "auth_required", False):
+    if request is None or not getattr(request.app.state, "auth_required", False):
+        return False
+    if surface(request.app.state) != "webapp" and not resolve_public_url(request.app.state):
         return False
     if getattr(request.state, "session", None) is None:
         from hermes_cli.dashboard_auth.middleware import peek_session

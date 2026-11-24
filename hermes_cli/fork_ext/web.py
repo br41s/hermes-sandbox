@@ -15,10 +15,15 @@ resolved at call time instead.
 """
 
 import asyncio
+from collections import OrderedDict, deque
+import hashlib
 import hmac
 import importlib
+import json
 import logging
 import os
+import threading
+import time
 import urllib.parse
 from typing import Any, Dict, Optional, Tuple
 
@@ -226,13 +231,76 @@ class _DelegateRequest(BaseModel):
 # rather than letting anyone on the public host run arbitrary prompts.
 _DELEGATE_SECRET_ENV_VAR = "HERMES_CALLBACK_SECRET"
 _DELEGATE_SECRET_HEADER = "x-hermes-secret"
+_DEFAULT_CALLBACK_URL = "https://biglobster.top/api/hermes-callback"
+_DNS_REBIND_SUFFIXES = (
+    ".internal", ".local", ".localhost", ".nip.io", ".sslip.io", ".xip.io",
+    ".localtest.me", ".lvh.me",
+)
+
+# Per-IP brute-force throttle on failed /api/delegate authentication attempts.
+_DELEGATE_AUTH_MAX_FAILURES = 10
+_DELEGATE_AUTH_WINDOW_SEC = 60.0
+_DELEGATE_AUTH_MAX_BUCKETS = 4096
+_delegate_auth_failures: OrderedDict[str, deque[float]] = OrderedDict()
+_delegate_auth_lock = threading.Lock()
+
+
+def _delegate_client_ip(request: Request) -> str:
+    return request.client.host if request.client else "_unknown_"
+
+
+def _is_delegate_rate_limited(ip: str) -> bool:
+    now = time.monotonic()
+    cutoff = now - _DELEGATE_AUTH_WINDOW_SEC
+    with _delegate_auth_lock:
+        bucket = _delegate_auth_failures.get(ip or "_unknown_")
+        if not bucket:
+            return False
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        return len(bucket) >= _DELEGATE_AUTH_MAX_FAILURES
+
+
+def _record_delegate_auth_failure(ip: str) -> None:
+    now = time.monotonic()
+    cutoff = now - _DELEGATE_AUTH_WINDOW_SEC
+    key = ip or "_unknown_"
+    with _delegate_auth_lock:
+        if key not in _delegate_auth_failures and len(_delegate_auth_failures) >= _DELEGATE_AUTH_MAX_BUCKETS:
+            for k in list(_delegate_auth_failures.keys()):
+                b = _delegate_auth_failures[k]
+                while b and b[0] < cutoff:
+                    b.popleft()
+                if not b:
+                    _delegate_auth_failures.pop(k, None)
+            while key not in _delegate_auth_failures and len(_delegate_auth_failures) >= _DELEGATE_AUTH_MAX_BUCKETS:
+                _delegate_auth_failures.popitem(last=False)
+        bucket = _delegate_auth_failures.get(key)
+        if bucket is None:
+            bucket = deque()
+            _delegate_auth_failures[key] = bucket
+        else:
+            _delegate_auth_failures.move_to_end(key)
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        bucket.append(now)
+
+
+def _reset_delegate_rate_limit() -> None:
+    with _delegate_auth_lock:
+        _delegate_auth_failures.clear()
 
 
 def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
     """Return ``(status_code, detail)`` when the request should be rejected, else ``None``.
 
     A request with no secret header is a 401 before anything else, configured or not."""
-    if not request.headers.get(_DELEGATE_SECRET_HEADER, ""):
+    ip = _delegate_client_ip(request)
+    if _is_delegate_rate_limited(ip):
+        return 429, "Too many failed authentication attempts"
+    provided = request.headers.get(_DELEGATE_SECRET_HEADER, "")
+    if not provided:
+        _record_delegate_auth_failure(ip)
         return 401, "Unauthorized"
     secret = os.environ.get(_DELEGATE_SECRET_ENV_VAR, "").strip()
     if not secret:
@@ -240,41 +308,91 @@ def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
             "%s is not set — refusing /api/delegate requests", _DELEGATE_SECRET_ENV_VAR
         )
         return 503, "Delegate endpoint is not configured"
-    provided = request.headers.get(_DELEGATE_SECRET_HEADER, "")
-    if not provided or not hmac.compare_digest(provided.encode(), secret.encode()):
+    if not hmac.compare_digest(provided.encode(), secret.encode()):
+        _record_delegate_auth_failure(ip)
         return 401, "Unauthorized"
     return None
+
+
+def _is_unsafe_ip(ip) -> bool:
+    return bool(
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _resolve_webhook_host_ips(host: str) -> list[str]:
+    import socket
+
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    return [info[4][0] for info in infos if info and len(info) >= 5 and info[4]]
 
 
 def _validate_delegate_webhook_url(url: str) -> Optional[str]:
     """Return a rejection reason when ``url`` is unsafe to POST results to, else ``None``.
 
     The secret check above proves the *caller* is trusted; it says nothing about
-    where the caller wants the agent's output (and the callback secret itself)
-    delivered. A full domain allowlist isn't practical — different customer
-    profiles legitimately callback to different domains — so this only blocks
-    the shapes that would point the callback at the engine's own network:
-    non-https schemes and loopback/private/link-local/internal hosts.
+    where the caller wants the agent's output delivered. A full domain allowlist
+    isn't practical — different customer profiles legitimately callback to
+    different domains — so this blocks non-https schemes, credentials in URLs,
+    loopback/private/link-local/internal hosts, wildcard DNS-rebinding domains,
+    and hostnames that resolve to non-public IP addresses.
     """
     import ipaddress
 
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != "https":
         return "webhook_url must use https"
-    host = parsed.hostname
-    if not host:
+    if parsed.username is not None or parsed.password is not None:
+        return "webhook_url must not contain userinfo"
+    raw_host = parsed.hostname
+    if not raw_host:
         return "webhook_url is missing a host"
-    if host == "localhost" or host.endswith(".internal") or host.endswith(".local"):
+    host = raw_host.strip().lower().rstrip(".")
+    if host == "localhost" or host.endswith(_DNS_REBIND_SUFFIXES):
         return "webhook_url may not target an internal host"
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
-    if ip is not None and (
-        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast
-    ):
-        return "webhook_url may not target a loopback/private/link-local address"
+    if ip is not None:
+        if _is_unsafe_ip(ip):
+            return "webhook_url may not target a loopback/private/link-local address"
+        return None
+    for resolved_raw in _resolve_webhook_host_ips(host):
+        try:
+            resolved_ip = ipaddress.ip_address(resolved_raw.split("%", 1)[0])
+        except ValueError:
+            continue
+        if _is_unsafe_ip(resolved_ip):
+            return "webhook_url may not target a loopback/private/link-local address"
     return None
+
+
+def _is_trusted_callback_origin(webhook_url: str) -> bool:
+    """True only when ``webhook_url`` shares the origin of ``HERMES_CALLBACK_URL``
+    (or ``https://biglobster.top/api/hermes-callback`` when unset).
+
+    The raw ``x-hermes-secret`` grants full ``/api/delegate`` execution, so it
+    must never be sent to third-party or tenant webhook origins; external
+    callbacks receive ``x-hermes-signature`` (HMAC-SHA256) instead.
+    """
+    from hermes_cli.urllib_security import url_origin
+
+    configured = os.environ.get("HERMES_CALLBACK_URL", "").strip() or _DEFAULT_CALLBACK_URL
+    try:
+        target_origin = url_origin(webhook_url)
+        trusted_origin = url_origin(configured)
+    except ValueError:
+        return False
+    return bool(target_origin[1]) and target_origin == trusted_origin
 
 
 def _require_delegate_secret(request: Request) -> None:
@@ -302,14 +420,6 @@ async def post_delegate(request: Request, body: _DelegateRequest):
     see ``_verify_delegate_secret`` for why that, not the dashboard-auth
     allowlist, is the real gate on this endpoint.
     """
-    rejection = _verify_delegate_secret(request)
-    if rejection is not None:
-        status_code, detail = rejection
-        _log.warning(
-            "Rejected /api/delegate request for task_id=%s: %s", body.task_id, detail
-        )
-        raise HTTPException(status_code=status_code, detail=detail)
-
     webhook_reason = _validate_delegate_webhook_url(body.webhook_url)
     if webhook_reason:
         raise HTTPException(status_code=400, detail=f"Invalid webhook_url: {webhook_reason}")
@@ -346,12 +456,22 @@ async def _delegate_background(
 
     try:
         import httpx
-        callback_headers: dict = {}
-        callback_secret = os.environ.get("HERMES_CALLBACK_SECRET", "")
+        raw_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        callback_headers: dict = {"Content-Type": "application/json"}
+        callback_secret = os.environ.get("HERMES_CALLBACK_SECRET", "").strip()
         if callback_secret:
-            callback_headers["x-hermes-secret"] = callback_secret
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.post(webhook_url, json=payload, headers=callback_headers)
+            ts = str(int(time.time()))
+            sig = hmac.new(
+                callback_secret.encode("utf-8"),
+                ts.encode("utf-8") + b"." + raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+            callback_headers["x-hermes-timestamp"] = ts
+            callback_headers["x-hermes-signature"] = f"sha256={sig}"
+            if _is_trusted_callback_origin(webhook_url):
+                callback_headers["x-hermes-secret"] = callback_secret
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+            await client.post(webhook_url, content=raw_body, headers=callback_headers)
     except Exception:
         _log.exception(
             "Delegate webhook delivery failed for task_id=%s to %s", task_id, webhook_url

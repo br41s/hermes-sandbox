@@ -31,10 +31,17 @@ class _ScriptHashes(HTMLParser):
             self.script = None
 
 
+_DASHBOARD_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+
+
 def page_headers(request: Request, html: str, headers: dict) -> dict:
     """Only gateway-served Webapp HTML gets this policy; native Desktop is not served here."""
     if getattr(request.app.state, "ui_surface", None) != "webapp":
-        return headers
+        return {**_DASHBOARD_SECURITY_HEADERS, **headers}
     hashes = " ".join(_ScriptHashes(html).hashes)
     # Keep fetch and media sources open for voice, catalogs, Radio, update notes,
     # and local servers or sockets behind a Host-rewriting proxy.

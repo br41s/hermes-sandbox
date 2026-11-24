@@ -93,7 +93,8 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 | `HERMES_DEFAULT_MODEL` | Yes | Active model. Target: `deepseek/deepseek-v4.1-flash` (see *Model* below) |
 | `HERMES_MAX_ITERATIONS` | No | Max agent turns per task (default: 60) |
 | `HERMES_DASHBOARD` | Yes | Set to `1` to start the web dashboard on port 9119 |
-| `HERMES_DASHBOARD_INSECURE` | Yes | Set to `1`. Since the s6 upgrade, the dashboard **refuses to bind to `0.0.0.0`** without this (the OAuth gate engages on non-loopback binds and no auth provider is configured). Without it the dashboard never comes up. |
+| `HERMES_DASHBOARD_OAUTH_CLIENT_ID` | Yes | Nous Portal OAuth client ID (`agent:{id}`). Required for the non-loopback `0.0.0.0` dashboard bind (see [`ops/security/dashboard-auth-lockdown.md`](ops/security/dashboard-auth-lockdown.md)). (`HERMES_DASHBOARD_INSECURE` is retired and ignored.) |
+| `HERMES_DASHBOARD_PUBLIC_URL` | Yes | `https://hermes.biglobster.top` (no trailing slash). Drives the OAuth callback URI, `Host`/`Origin` validation, and cookie `Secure`/`__Host-` hardening. |
 | `TELEGRAM_BOT_TOKEN` | No | Token for direct CEO ↔ Hermes Telegram chat (@b_l_hermes_bot) |
 | `TELEGRAM_ALLOWED_USERS` | No | CEO's Telegram user ID for direct access |
 | `EXA_API_KEY` | No | Exa web search API key — activates the `web` toolset |

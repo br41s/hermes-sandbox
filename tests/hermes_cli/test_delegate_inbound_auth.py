@@ -22,6 +22,7 @@ SECRET = "test-delegate-secret"
 
 
 def _client():
+    fork_web._reset_delegate_rate_limit()
     prev_auth = getattr(web_server.app.state, "auth_required", None)
     prev_host = getattr(web_server.app.state, "bound_host", None)
     web_server.app.state.auth_required = True
@@ -144,6 +145,10 @@ def test_valid_secret_accepted(monkeypatch):
         "https://169.254.169.254/latest/meta-data",  # link-local / cloud metadata
         "https://hermes-sandbox.zeabur.internal:9119/steal",  # internal host
         "https://10.0.0.5/steal",  # private range
+        "https://0.0.0.0/steal",  # unspecified IP
+        "https://127.0.0.1.nip.io/steal",  # wildcard DNS rebinding
+        "https://10.0.0.1.sslip.io/steal",  # wildcard DNS rebinding
+        "https://user:pass@biglobster.top/api/hermes-callback",  # embedded credentials
     ],
 )
 def test_unsafe_webhook_url_rejected(monkeypatch, webhook_url):
@@ -163,3 +168,93 @@ def test_unsafe_webhook_url_rejected(monkeypatch, webhook_url):
     finally:
         _restore(pa, ph)
         client.close()
+
+
+def test_webhook_url_resolving_to_private_ip_rejected(monkeypatch):
+    monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
+    monkeypatch.setattr(fork_web, "_resolve_webhook_host_ips", lambda _host: ["172.18.0.5"])
+    scheduled = []
+    monkeypatch.setattr(fork_web, "_delegate_background",
+                        lambda *a, **kw: scheduled.append(a))
+    client, pa, ph = _client()
+    try:
+        resp = client.post(
+            "/api/delegate",
+            json=_body(webhook_url="https://rebind.attacker.example/hook"),
+            headers={"x-hermes-secret": SECRET},
+        )
+        assert resp.status_code == 400
+        assert "loopback/private/link-local" in resp.json()["detail"]
+        assert scheduled == []
+    finally:
+        _restore(pa, ph)
+        client.close()
+
+
+def test_delegate_failed_auth_rate_limited(monkeypatch):
+    monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
+    client, pa, ph = _client()
+    try:
+        for _ in range(fork_web._DELEGATE_AUTH_MAX_FAILURES):
+            resp = client.post(
+                "/api/delegate",
+                json=_body(),
+                headers={"x-hermes-secret": "wrong"},
+            )
+            assert resp.status_code == 401
+        throttled = client.post(
+            "/api/delegate",
+            json=_body(),
+            headers={"x-hermes-secret": SECRET},
+        )
+        assert throttled.status_code == 429
+    finally:
+        fork_web._reset_delegate_rate_limit()
+        _restore(pa, ph)
+        client.close()
+
+
+def test_delegate_callback_withholds_raw_secret_from_untrusted_origin(monkeypatch):
+    """BigLobster's own callback receives x-hermes-secret + HMAC; a third-party/tenant
+    webhook_url receives only the HMAC signature, never the master HERMES_CALLBACK_SECRET."""
+    import asyncio
+    from hermes_cli import delegate_core
+
+    monkeypatch.setenv("HERMES_CALLBACK_SECRET", SECRET)
+    monkeypatch.setenv("HERMES_CALLBACK_URL", "https://biglobster.top/api/hermes-callback")
+    monkeypatch.setattr(
+        delegate_core, "run_delegate_agent",
+        lambda task_id, prompt: {"final_response": "ok"},
+    )
+    deliveries = []
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, *, content=None, headers=None, **kw):
+            deliveries.append({"url": url, "headers": dict(headers or {}), "kwargs": self.kwargs})
+
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    asyncio.run(fork_web._delegate_background(
+        "t-own", "hi", "https://biglobster.top/api/hermes-callback", None
+    ))
+    asyncio.run(fork_web._delegate_background(
+        "t-ext", "hi", "https://customer.example.com/webhook", None
+    ))
+
+    own, ext = deliveries
+    assert own["kwargs"].get("follow_redirects") is False
+    assert own["headers"].get("x-hermes-secret") == SECRET
+    assert own["headers"].get("x-hermes-signature", "").startswith("sha256=")
+    assert "x-hermes-secret" not in ext["headers"]
+    assert ext["headers"].get("x-hermes-signature", "").startswith("sha256=")
+    assert ext["headers"].get("x-hermes-timestamp")

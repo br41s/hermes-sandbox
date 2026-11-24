@@ -77,7 +77,17 @@ def normalise_prefix(raw: Optional[str]) -> str:
 
 
 def prefix_from_request(request) -> str:
-    """Normalised ``X-Forwarded-Prefix`` from a Starlette request, or ``""``."""
+    """Normalised ``X-Forwarded-Prefix`` from a Starlette request, or ``""``.
+
+    When an operator has declared an explicit public URL (``HERMES_DASHBOARD_PUBLIC_URL`` /
+    ``dashboard.public_url``), that URL is the complete authority and its path component
+    decides the mount prefix — untrusted ``X-Forwarded-Prefix`` headers are ignored.
+    """
+    app = request.scope.get("app") if hasattr(request, "scope") else getattr(request, "app", None)
+    state = getattr(app, "state", None) if app is not None else None
+    public_url = resolve_public_url(state)
+    if public_url:
+        return normalise_prefix(urllib.parse.urlparse(public_url).path)
     return normalise_prefix(request.headers.get("x-forwarded-prefix"))
 
 

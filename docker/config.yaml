@@ -65,6 +65,10 @@ security:
   tirith_enabled: true
   tirith_fail_open: true
   allow_lazy_installs: true
+dashboard:
+  trusted_proxies:
+  - 172.16.0.0/12
+  - 10.0.0.0/8
 memory:
   memory_enabled: true
   user_profile_enabled: true

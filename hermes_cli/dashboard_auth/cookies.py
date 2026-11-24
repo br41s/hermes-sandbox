@@ -245,5 +245,11 @@ def clear_sso_attempt_cookie(response: Response, *, prefix: str = "", gateway: s
 
 
 def detect_https(request: Request) -> bool:
-    """``Secure`` flag decision (honours ``X-Forwarded-Proto`` under uvicorn ``proxy_headers``)."""
-    return request.url.scheme == "https"
+    """``Secure`` flag decision (honours ``X-Forwarded-Proto`` under uvicorn ``proxy_headers``,
+    or an operator-declared ``https://`` public URL when the proxy strips forwarded headers)."""
+    if request.url.scheme == "https":
+        return True
+    from hermes_cli.dashboard_auth.prefix import resolve_public_url
+    app = request.scope.get("app")
+    state = getattr(app, "state", None) if app is not None else None
+    return resolve_public_url(state).startswith("https://")
