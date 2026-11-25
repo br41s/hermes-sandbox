@@ -24,10 +24,14 @@ from collections import Counter
 from pathlib import Path
 
 REQUIRED = ("state.db", "config.yaml", ".env", "cron/jobs.json")
+# Never excused by their absence on disk: a wiped home must not rotate good copies out.
+ALWAYS = ("state.db", "config.yaml", ".env")
 LEVEL = 6  # 12 took over 28 min on 5 GB of state.db; the cron script limit is 60 min
 
 # A scratch dir name: scratch/tmp/tmpdl (+ suffix) or a leftover .cron-*tmp*.
 _SCRATCH = re.compile(r"(?:scratch|tmp|tmpdl)(?:[-_.].*)?|\.cron-.*tmp.*")
+
+_SECRET = re.compile(r"^\.env|^\.git-credentials$|\.(?:key|pem)$")
 
 
 class SlimError(Exception):
@@ -45,6 +49,9 @@ def drop_reason(name: str, home: Path) -> str | None:
     if name.startswith("_external/"):
         return None
     parts = name.split("/")
+    # Credentials may be untracked in a checkout, so no repo can restore them.
+    if _SECRET.search(parts[-1]):
+        return None
     dirs = parts[:-1]  # the file's own basename is never matched
     # rel is dirs relative to the member's own Hermes home (profile or main).
     rel = dirs[2:] if parts[0] == "profiles" and len(parts) >= 3 else dirs
@@ -70,19 +77,20 @@ def drop_reason(name: str, home: Path) -> str | None:
 
 
 def missing_required(names: set[str], home: Path) -> list[str]:
-    """Required files present and non-empty on disk but absent from `names`."""
+    """Required files absent from `names`: ALWAYS for the main home, the rest if on disk."""
     homes: list[tuple[str, Path]] = [("", home)]
     profiles = home / "profiles"
     if profiles.is_dir():
         for p in sorted(profiles.iterdir()):
             if p.is_dir():
                 homes.append((f"profiles/{p.name}/", p))
-    missing: list[str] = []
+    missing = [req for req in ALWAYS if req not in names]
     for prefix, h in homes:
         for req in REQUIRED:
             f = h / req
-            if f.is_file() and f.stat().st_size > 0 and prefix + req not in names:
-                missing.append(prefix + req)
+            full = prefix + req
+            if f.is_file() and f.stat().st_size > 0 and full not in names and full not in missing:
+                missing.append(full)
     return missing
 
 
@@ -108,7 +116,7 @@ def slim(zip_path: Path, home: Path) -> str:
             if len(set(names)) != len(names):
                 dupes = sorted(n for n, c in Counter(names).items() if c > 1)
                 raise SlimError("duplicate member names: " + ", ".join(dupes))
-            absent = missing_required(set(names), home)
+            absent = missing_required({i.filename for i in infos if i.file_size}, home)
             if absent:
                 raise SlimError("source zip is missing required files: " + ", ".join(absent))
             kept = [i for i in infos if drop_reason(i.filename, home) is None]

@@ -75,6 +75,9 @@ def _partials(tmp_path: Path) -> list[str]:
     ("workspace/shorts/A.MP4", "video"),
     ("profiles/work/workspace/shorts/a.mp4", "video"),
     # kept
+    ("checkouts/site/.env.local", None),  # untracked secrets: no repo has them
+    ("workspace/ghost/certs/tls.pem", None),
+    ("tmp/deploy.key", None),
     ("tmp_posts.json", None),
     ("workspace/social/x.json", None),
     ("workspace/growth/a.txt", None),  # no .git on disk
@@ -218,3 +221,20 @@ def test_main_usage_error_is_2(capsys: pytest.CaptureFixture[str]) -> None:
     assert backup_slim.main([]) == 2
     assert backup_slim.main(["only-one"]) == 2
     assert "usage:" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("bad", ["absent", "empty"])
+def test_wiped_home_never_counts_as_a_backup(tmp_path: Path, bad: str) -> None:
+    # No state.db on disk either: its absence must not excuse the archive.
+    home = tmp_path / "home"
+    home.mkdir()
+    members = {"config.yaml": b"a", ".env": b"b", "notes.md": b"c"}
+    if bad == "empty":
+        members["state.db"] = b""
+    zip_path = tmp_path / "hermes-backup-20261125-030000.zip"
+    _zip(zip_path, members)
+    before = zip_path.read_bytes()
+    with pytest.raises(backup_slim.SlimError, match="state.db"):
+        backup_slim.slim(zip_path, home)
+    assert zip_path.read_bytes() == before
+    assert _partials(tmp_path) == []

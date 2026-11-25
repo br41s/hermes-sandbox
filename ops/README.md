@@ -42,8 +42,9 @@ Two scripts, two homes:
   `workspace/<dir>` that has a `.git`; `hermes backup` never included `.git`, so unpushed
   commits were not in the zip before either), `scratch*`/`tmp*` directories, and the
   `.mp4` files under `workspace/shorts` (finished videos are in Drive `Flow/` and on
-  YouTube). It recompresses the rest with zstd and refuses, leaving the zip alone, unless
-  every profile's `state.db`, `config.yaml`, `.env` and `cron/jobs.json` is inside and every
+  YouTube); `.env*`, `.git-credentials`, `*.key` and `*.pem` are kept wherever they are. It recompresses the rest with zstd and refuses, leaving the zip alone, unless
+  the main `state.db`, `config.yaml` and `.env` are inside and not empty (even if gone from disk),
+  every profile's `state.db`, `config.yaml`, `.env` and `cron/jobs.json` is inside, and every
   member's CRC matches; the script then deletes that zip and alerts. `hermes import` in the
   Hermes image (Python 3.14) reads it directly; a Mac's `unzip` cannot, use
   `python3.14 -m zipfile -e <zip> <dir>`.
