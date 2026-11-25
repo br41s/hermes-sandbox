@@ -128,3 +128,36 @@ def test_dump_now_writes_without_a_signal(tmp_path):
         stackdump.dump_now(file=fh)
     body = out.read_text(encoding="utf-8")
     assert "test_dump_now_writes_without_a_signal" in body, body
+
+
+def _armed_then(tmp_path, body: str, before: str = "") -> list[Path]:
+    """Arm the dumper in a child that then runs *body*; the dump files it leaves behind."""
+    logs = tmp_path / "logs"
+    script = (f"import sys; sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+              "import os, signal, time\nfrom pathlib import Path\n"
+              f"logs = Path({str(logs)!r}); logs.mkdir()\n{before}\n"
+              "from hermes_cli.stackdump import install_stack_dumper\n"
+              f"install_stack_dumper(log_dir=logs)\n{body}\n")
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=60)
+    return sorted(logs.iterdir())
+
+
+def test_a_process_that_never_dumped_leaves_no_file(tmp_path):
+    """Every CLI command arms the dumper: without this each one leaves a file in logs/ for good."""
+    assert _armed_then(tmp_path, "") == []
+
+
+def test_a_dump_outlives_the_process_that_wrote_it(tmp_path):
+    left = _armed_then(tmp_path, "os.kill(os.getpid(), signal.SIGUSR1); time.sleep(0.2)")
+    assert len(left) == 1 and "most recent call first" in left[0].read_text(encoding="utf-8")
+
+
+def test_an_earlier_dump_under_the_same_pid_is_kept(tmp_path):
+    left = _armed_then(tmp_path, "", before="(logs / f'stackdump-{os.getpid()}.log').write_text('old dump')")
+    assert len(left) == 1 and left[0].read_text(encoding="utf-8").startswith("old dump")
+
+
+def test_a_forked_child_does_not_discard_its_parents_file(tmp_path):
+    body = ("pid = os.fork()\nif pid == 0: sys.exit(0)\nos.waitpid(pid, 0)\n"
+            "assert (logs / f'stackdump-{os.getpid()}.log').exists()")
+    assert _armed_then(tmp_path, body) == []
