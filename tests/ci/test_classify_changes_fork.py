@@ -31,7 +31,7 @@ def _fork(files: list[str]) -> dict[str, bool]:
 @pytest.mark.parametrize("files,desktop,mcp_catalog,ci_review", [
     (["apps/desktop/src/app.tsx"], True, False, False),
     (["apps/shared/src/x.ts"], True, False, False),
-    (["package-lock.json"], True, False, False),
+    (["pnpm-lock.yaml"], True, False, False),
     (["web/src/pages/CronPage.tsx"], False, False, False),
     (["ui-tui/src/entry.ts"], False, False, False),
     (["gateway/run.py"], False, False, False),
