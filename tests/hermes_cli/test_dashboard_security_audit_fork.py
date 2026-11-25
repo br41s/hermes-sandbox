@@ -2,9 +2,8 @@
 
 Covers the public-URL-declared ``hermes dashboard`` surface behind a container reverse
 proxy (Coolify/Traefik):
-- ``detect_https`` honours an ``https://`` ``HERMES_DASHBOARD_PUBLIC_URL`` even if a
-  proxy hop strips ``X-Forwarded-Proto``, so session and PKCE cookies still get ``__Host-``
-  and ``Secure``.
+- ``dashboard.trusted_proxies`` makes uvicorn honour Traefik's ``X-Forwarded-Proto`` and
+  ``X-Forwarded-For``, so session and PKCE cookies get ``__Host-`` and ``Secure``.
 - ``prefix_from_request``, ``serve_css`` and ``serve_spa`` ignore client-spoofed
   ``X-Forwarded-Prefix`` headers when ``HERMES_DASHBOARD_PUBLIC_URL`` is configured.
 - ``GET /api/status`` (and ``?profile=``) redacts profile lists, ``install_id``, and host
@@ -15,6 +14,8 @@ proxy (Coolify/Traefik):
   pre-login load but require an authenticated session when ``?profile=<name>`` is passed.
 - Cookie-authenticated writes enforce ``Origin`` against ``HERMES_DASHBOARD_PUBLIC_URL``
   even when ``Sec-Fetch-Site`` is absent.
+- All of it holds when the URL is declared as ``dashboard.public_url``, and none of it reaches
+  the gateway's Webapp, which has its own origin and prefix rules.
 - Dashboard HTML and ``/login`` emit ``X-Frame-Options: DENY``,
   ``X-Content-Type-Options: nosniff``, and ``Referrer-Policy``.
 """
@@ -220,3 +221,37 @@ def test_login_and_dashboard_emit_defensive_security_headers(public_dashboard):
     assert login_resp.headers.get("x-frame-options") == "DENY"
     assert login_resp.headers.get("x-content-type-options") == "nosniff"
     assert login_resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+
+def test_config_declared_public_url_hardens_like_the_env_var(public_dashboard, monkeypatch):
+    """``dashboard.public_url`` and the env var are one setting (``resolve_public_url``)."""
+    monkeypatch.delenv("HERMES_DASHBOARD_PUBLIC_URL")
+    monkeypatch.setattr("hermes_cli.dashboard_auth.prefix._load_dashboard_section",
+                        lambda: {"public_url": PUBLIC_URL})
+    client = TestClient(web_server.app, base_url=PUBLIC_URL)
+    assert "/evil" not in client.get("/login", headers={"X-Forwarded-Prefix": "/evil"}).text
+    assert "profiles" not in client.get("/api/status").json()
+    login = client.post(
+        "/auth/password-login",
+        json={"provider": "basic", "username": "admin", "password": "hunter2"},
+    )
+    assert login.status_code == 200
+    forged = client.post("/api/auth/ws-ticket", headers={"Origin": "https://evil.example"})
+    assert forged.status_code == 403
+
+
+@pytest.mark.parametrize("state", [
+    {"ui_surface": "webapp"},
+    {"listener_public_url": ""},
+    {"listener_public_url": "https://app.example.com"},
+])
+def test_dashboard_public_url_never_describes_another_listener(monkeypatch, state):
+    from types import SimpleNamespace
+    from hermes_cli.dashboard_auth.prefix import dashboard_public_url, prefix_from_request
+
+    monkeypatch.setenv("HERMES_DASHBOARD_PUBLIC_URL", PUBLIC_URL + "/dash")
+    assert dashboard_public_url(SimpleNamespace()) == PUBLIC_URL + "/dash"
+    app = SimpleNamespace(state=SimpleNamespace(**state))
+    assert dashboard_public_url(app.state) == ""
+    request = SimpleNamespace(scope={"app": app}, headers={"x-forwarded-prefix": "/ingress"})
+    assert prefix_from_request(request) == "/ingress"
