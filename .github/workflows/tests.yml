@@ -191,7 +191,7 @@ jobs:
         # The state.db suites skip on a WAL-reset-vulnerable SQLite; fail
         # instead of reporting green over zero coverage. (Same step as upstream.)
         run: |
-          "$HERMES_PYTHON" -c "import sqlite3, hermes_state_wal as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
+          "$HERMES_PYTHON" -c "import sqlite3, hermes_agent.compat as compat; compat.install(); import sqlite_support as w; print('sqlite', sqlite3.sqlite_version); assert not w.is_sqlite_wal_reset_vulnerable()"
 
       - name: Run messaging-gated gateway cases
         # Same step as upstream (tests/ci/test_messaging_gated_selection.py). These gateway files
