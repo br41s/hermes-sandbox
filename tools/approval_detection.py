@@ -220,9 +220,12 @@ HARDLINE_PATTERNS = [
     # matched anywhere after `commit`; the short `-n` form only before any quote, so a `-n` inside a
     # commit message never trips it. (biglobster's post-commit doc-sync uses --no-verify INSIDE the
     # hook subprocess, not via the terminal tool, so it is unaffected.)
-    (r'\bgit\b[^;&|\n`]*\bcommit\b[^;&|\n`]*--no-verify\b',
+    # Built on upstream's ``_GIT`` prefix (global options, ``git -C dir``) and stopping the commit's
+    # own arguments at the next ``git`` word, so a run of repeated ``git`` words is scanned once,
+    # not once per word (tests/tools/test_approval_git_global_options.py, upstream v0.23.x).
+    (rf'{_GIT}commit\b(?:(?!\bgit\b)[^;&|\n`])*--no-verify\b',
      "git commit --no-verify (bypasses the commit guard)"),
-    (r'\bgit\b[^;&|\n`]*\bcommit\b[^;&|\n`\'"]*\s-[a-z]*n[a-z]*\b',
+    (rf'{_GIT}commit\b(?:(?!\bgit\b)[^;&|\n`\'"])*\s-[a-z]*n[a-z]*\b',
      "git commit -n / --no-verify (bypasses the commit guard)"),
     *windows_hardline_patterns(_CMDPOS),
 ]
