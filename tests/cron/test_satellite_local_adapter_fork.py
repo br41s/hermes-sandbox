@@ -79,7 +79,7 @@ def _deliver(adapters):
     job = {"id": "ce583d11dedd", "name": "Gap Hunter", "deliver": f"telegram:{CHAT}:{THREAD}"}
     with patch("gateway.config.load_gateway_config", return_value=config), \
          patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
-         patch("tools.send_message_tool._send_to_platform", _no_standalone), \
+         patch("gateway.outbound.send._send_to_platform", _no_standalone), \
          patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro):
         return _deliver_result(job, "hello", adapters=adapters, loop=loop)
 

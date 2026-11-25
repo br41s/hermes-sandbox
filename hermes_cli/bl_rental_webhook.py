@@ -214,7 +214,7 @@ def _notify_ceo(text: str) -> None:
     swallowed: the HTTP response is the authoritative signal to BigLobster.
     """
     try:
-        from tools.send_message_tool import send_message_tool
+        from gateway.outbound.send import send_message_tool
 
         send_message_tool({"action": "send", "target": "telegram", "message": text})
     except Exception:

@@ -119,12 +119,12 @@ def _fire_under_multiplex(home, job, adapter, *, during_run=None):
     with patch.object(sched, "_run_job_impl", fake_run_job_impl), \
          patch.object(sched, "save_job_output", lambda *_a: str(home / "out.txt")), \
          patch.object(sched, "mark_job_run", fake_mark), \
-         patch("tools.send_message_tool._send_to_platform", fake_standalone), \
+         patch("gateway.outbound.send._send_to_platform", fake_standalone), \
          patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro), \
          _profile_cron_scope(home):
         # tick_adapters_for(default_profile) hands the tick the live adapter map.
         sched.run_one_job(job, adapters={Platform.TELEGRAM: adapter}, loop=loop)
-    with patch("tools.send_message_tool._send_to_platform", fake_standalone), \
+    with patch("gateway.outbound.send._send_to_platform", fake_standalone), \
          patch("asyncio.run_coroutine_threadsafe", side_effect=fake_run_coro), \
          _profile_runtime_scope(home):
         sched.drain_delivery_queue({Platform.TELEGRAM: adapter}, loop)
