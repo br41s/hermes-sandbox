@@ -148,8 +148,11 @@ def _http_row(route: dict) -> dict:
 
 
 def rows(facts: dict) -> list[dict]:
-    out = [{"handler": f"{' '.join(route['methods'])} {route['path']}", "kind": route["kind"], **_http_row(route)}
-           for route in facts["routes"]]
+    # fork: our "Run now" route is mounted ahead of upstream's on the same path; the first one serves.
+    serving: dict[str, dict] = {}
+    for route in facts["routes"]:
+        serving.setdefault(f"{' '.join(route['methods'])} {route['path']}", route)
+    out = [{"handler": handler, "kind": route["kind"], **_http_row(route)} for handler, route in serving.items()]
     out += [{"handler": method, "kind": "rpc", **_rpc_row(method, facts)}
             for method in sorted(set(facts["legacy"]) | set(facts["served"]))]
     out += [{"handler": name, "kind": "rpc", "current_path": "authority (after its own verbs); standalone: unknown method",

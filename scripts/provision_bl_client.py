@@ -97,7 +97,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("HERMES_HOME", os.path.join(os.path.expanduser("~"), ".hermes"))
 
-from hermes_cli.profiles import (
+from hermes_cli.profiles import (  # profile-create: ok — a rental gets no bundled skills or default plugins
     create_profile,
     normalize_profile_name,
     profile_exists,
@@ -719,7 +719,8 @@ def provision(
     # config). None → _resolve_fal_model() uses the FAL default.
     resolved_image_model = image_model or _read_panel_image_model(site_url)
 
-    profile_dir = create_profile(canon, no_skills=True, description=f"bl-site-package rental: {client_name}")
+    profile_dir = create_profile(  # profile-create: ok — this script writes SOUL, config and .env itself
+        canon, no_skills=True, description=f"bl-site-package rental: {client_name}")
     (profile_dir / "SOUL.md").write_text(
         SOUL_TEMPLATE.format(client_name=client_name), encoding="utf-8"
     )

@@ -2,7 +2,7 @@
  "counts": {
   "http": {
    "keep-host-wide": 1,
-   "undecided": 353
+   "undecided": 357
   },
   "rpc": {
    "authority": 113,
@@ -197,6 +197,7 @@
   {"current_path": "hermes_cli.dashboard_auth.routes:auth_native_authorize", "decision": "undecided", "handler": "GET /auth/native/authorize", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:serve_profile_plugin_asset", "decision": "undecided", "handler": "GET /dashboard-plugins/@{profile}/{plugin_name}/{file_path:path}", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:serve_plugin_asset", "decision": "undecided", "handler": "GET /dashboard-plugins/{plugin_name}/{file_path:path}", "kind": "http", "ref": ""},
+  {"current_path": "hermes_cli.fork_ext.web:health_check", "decision": "undecided", "handler": "GET /health", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.dashboard_auth.routes:login_page", "decision": "undecided", "handler": "GET /login", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.gateway_connections_reach:oauth_callback; surface: gateway_connections", "decision": "undecided", "handler": "GET /webapp/gateway-connections/oauth/callback", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.webapp:launch_page", "decision": "undecided", "handler": "GET /webapp/launch", "kind": "http", "ref": ""},
@@ -217,6 +218,7 @@
   {"current_path": "hermes_cli.web_routers.audio:tts_lease", "decision": "undecided", "handler": "POST /api/audio/tts-lease", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.audio:create_voice_live_session", "decision": "undecided", "handler": "POST /api/audio/voice-live/session", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.dashboard_auth.routes:api_auth_ws_ticket", "decision": "undecided", "handler": "POST /api/auth/ws-ticket", "kind": "http", "ref": ""},
+  {"current_path": "hermes_cli.bl_rental_webhook:post_bl_rental_provision", "decision": "undecided", "handler": "POST /api/bl/rental/provision", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.uploads:upload_chat_file; surface: browser_files", "decision": "undecided", "handler": "POST /api/chat/file-upload", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.files:upload_chat_image", "decision": "undecided", "handler": "POST /api/chat/image-upload", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.ops:add_credential_pool_entry", "decision": "undecided", "handler": "POST /api/credentials/pool", "kind": "http", "ref": ""},
@@ -224,9 +226,10 @@
   {"current_path": "hermes_cli.web_routers.cron:cron_fire_webhook", "decision": "undecided", "handler": "POST /api/cron/fire", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.cron:create_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.cron:cancel_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/cancel", "kind": "http", "ref": ""},
+  {"current_path": "hermes_cli.fork_ext.web:copy_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/copy", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.cron:pause_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/pause", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.cron:resume_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/resume", "kind": "http", "ref": ""},
-  {"current_path": "hermes_cli.web_routers.cron:trigger_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/trigger", "kind": "http", "ref": ""},
+  {"current_path": "hermes_cli.fork_ext.web:trigger_cron_job", "decision": "undecided", "handler": "POST /api/cron/jobs/{job_id}/trigger", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.status:run_curator", "decision": "undecided", "handler": "POST /api/curator/run", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:post_agent_plugin_activate", "decision": "undecided", "handler": "POST /api/dashboard/agent-plugins/activate", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:post_agent_plugin_install", "decision": "undecided", "handler": "POST /api/dashboard/agent-plugins/install", "kind": "http", "ref": ""},
@@ -235,6 +238,7 @@
   {"current_path": "hermes_cli.web_routers.dashboard_ui:post_agent_plugin_enable", "decision": "undecided", "handler": "POST /api/dashboard/agent-plugins/{name:path}/enable", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:post_agent_plugin_update", "decision": "undecided", "handler": "POST /api/dashboard/agent-plugins/{name:path}/update", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.dashboard_ui:post_plugin_visibility", "decision": "undecided", "handler": "POST /api/dashboard/plugins/{name:path}/visibility", "kind": "http", "ref": ""},
+  {"current_path": "hermes_cli.fork_ext.web:post_delegate", "decision": "undecided", "handler": "POST /api/delegate", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.desktop_plugins:reconcile_desktop_plugins; surface: desktop_plugins", "decision": "undecided", "handler": "POST /api/desktop-plugins/reconcile", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.config_env:reveal_env_var", "decision": "undecided", "handler": "POST /api/env/reveal", "kind": "http", "ref": ""},
   {"current_path": "hermes_cli.web_routers.files:create_managed_directory", "decision": "undecided", "handler": "POST /api/files/mkdir", "kind": "http", "ref": ""},

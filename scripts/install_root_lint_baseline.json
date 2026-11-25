@@ -1,5 +1,6 @@
 {
   "root_from_file": {
+    "cron/fork_ext/prompt_sync.py": 1,
     "cron/scheduler.py": 1,
     "gateway/platforms/base.py": 1,
     "hermes_bootstrap.py": 2,
@@ -8,6 +9,7 @@
     "hermes_cli/_launchers.py": 3,
     "hermes_cli/_old_updater.py": 1,
     "hermes_cli/_startup_fast.py": 1,
+    "hermes_cli/fork_ext/boot_reconcile.py": 1,
     "hermes_cli/linux_desktop_entry.py": 1,
     "hermes_cli/main.py": 1,
     "hermes_cli/source_completion.py": 1,
@@ -17,6 +19,7 @@
     "hermes_cli/update_pause_record.py": 1,
     "hermes_cli/venv_sync.py": 1,
     "hermes_constants.py": 2,
+    "plugins/shorts/studio/presenter.py": 1,
     "pm/environments.py": 1,
     "pm/launch.py": 1,
     "pm/paths.py": 1,
@@ -35,6 +38,7 @@
     "pm/launch.py": 1
   },
   "reasons": {
+    "cron/fork_ext/prompt_sync.py": "fork: prompt sources resolve against the checkout the module was loaded from",
     "cron/scheduler.py": "sys.path bootstrap before the first Hermes import (group C, part 2b)",
     "gateway/platforms/base.py": "sys.path bootstrap before the first Hermes import (group C, part 2b)",
     "hermes_bootstrap.py": "runs before any Hermes package imports",
@@ -44,6 +48,7 @@
     "hermes_cli/_old_updater.py": "frozen old-updater surface, runs against an old or half-swapped tree",
     "hermes_cli/_startup_fast.py": "the owner",
     "hermes_cli/cron.py": "module-level sys.path edit left for part 2b",
+    "hermes_cli/fork_ext/boot_reconcile.py": "fork: container boot hook; reads plugin-catalog/ beside its own package",
     "hermes_cli/linux_desktop_entry.py": "keeps the unresolved path so shim text matches the installer on symlinked homes",
     "hermes_cli/main.py": "bootstrap that puts the root on sys.path before the first import",
     "hermes_cli/source_completion.py": "run as a script across the update swap",
@@ -56,6 +61,7 @@
     "hermes_constants.py": "runs before any Hermes package imports",
     "plugins/platforms/raft/adapter.py": "module-level sys.path edit left for part 2b",
     "plugins/platforms/slack/adapter.py": "module-level sys.path edit left for part 2b",
+    "plugins/shorts/studio/presenter.py": "fork: also runs on the GitHub Actions renderer, without Hermes installed",
     "pm/environments.py": "pm must not import hermes_cli",
     "pm/launch.py": "pm must not import hermes_cli",
     "pm/paths.py": "pm must not import hermes_cli; the Docker tool stage ships without it",
