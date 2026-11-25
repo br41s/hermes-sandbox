@@ -66,3 +66,27 @@ class TestIsUpstreamServerError:
     def test_unrelated_failure_is_not_upstream_server_error(self):
         exc = Exception("some unrelated failure")
         assert _is_upstream_server_error(exc) is False
+
+
+class TestUpstreamServerErrorFallbackRung:
+    """fork (#51) re-anchored on upstream v0.23.x's ``auxiliary_error_policy.fallback_label``.
+
+    Upstream's classifier files these as ``unknown`` (no fallback); without the fork rung the
+    auxiliary ladder re-raised them instead of trying the fallback chain (2026-06-18 incident).
+    """
+
+    @staticmethod
+    def _label(exc):
+        from agent import auxiliary_error_policy as aux_errors
+        verdict = aux_errors.classify_attempt(exc, "openrouter", model="some/model")
+        return aux_errors.fallback_label(aux_errors.Failure(exc, verdict))
+
+    def test_provider_returned_error_falls_back(self):
+        assert self._label(RuntimeError("Provider returned error")) == "upstream server error"
+
+    def test_bad_gateway_falls_back(self):
+        assert self._label(RuntimeError("502 Bad Gateway")) is not None
+
+    def test_validation_error_inside_wrapper_does_not_fall_back(self):
+        exc = RuntimeError("Provider returned error: unsupported parameter 'temperature'")
+        assert self._label(exc) != "upstream server error"

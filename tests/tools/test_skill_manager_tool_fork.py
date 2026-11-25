@@ -20,8 +20,9 @@ def _curator_pass(tmp_path, *, monkeypatch):
     skills_root = hermes_home / "skills"
     skills_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    with patch("tools.skill_manager_tool.SKILLS_DIR", skills_root), \
-         patch("tools.skills_tool.SKILLS_DIR", skills_root), \
+    # upstream v0.23.x: skill_manager_tool resolves through skills_tool._skills_dir(), which
+    # honours a patched skills_tool.SKILLS_DIR; it no longer has a SKILLS_DIR of its own.
+    with patch("tools.skills_tool.SKILLS_DIR", skills_root), \
          patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]), \
          patch("tools.skill_provenance.is_background_review", return_value=True):
         yield skills_root
@@ -183,7 +184,7 @@ class TestOverBudgetSkillRemediation:
         skills_root = tmp_path / ".hermes" / "skills"
         skills_root.mkdir(parents=True)
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-        with patch("tools.skill_manager_tool.SKILLS_DIR", skills_root), \
+        with patch("tools.skills_tool.SKILLS_DIR", skills_root), \
              patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
             skill_dir = skills_root / "obese"
             skill_dir.mkdir()
@@ -272,7 +273,7 @@ class TestUnrecordedSkillOwnership:
         skills_root = tmp_path / ".hermes" / "skills"
         skills_root.mkdir(parents=True)
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-        with patch("tools.skill_manager_tool.SKILLS_DIR", skills_root), \
+        with patch("tools.skills_tool.SKILLS_DIR", skills_root), \
              patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
             skill_dir = skills_root / "handwritten"
             skill_dir.mkdir()

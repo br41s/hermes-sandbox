@@ -92,6 +92,9 @@ _PIN_OK_MARKER = "pin-literal-ok"
 _UPSTREAM_FIXTURE_PIN_FILES = {
     "tests/hermes_cli/test_early_recovery.py",
     "tests/hermes_cli/test_update_self_lock.py",
+    # upstream v0.23.x: synthetic lockfiles / pyprojects for the PM's own resolver tests.
+    "tests/pm/test_core_lock_convergence.py",
+    "tests/pm/test_previous_generation_extras.py",
 }
 
 

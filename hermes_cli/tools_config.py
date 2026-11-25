@@ -39,9 +39,9 @@ def _pip_install(
     args: list[str], *, timeout: int = 300, capture_output: bool = True
 ) -> NoReturn:
     # Shim to suppress old updater work until relaunch, not install or report success.
-    from hermes_cli._old_updater import stop_for_relaunch
+    from hermes_cli._old_updater import stop_historical_updater
 
-    stop_for_relaunch()
+    stop_historical_updater("hermes_cli.tools_config._pip_install", ImportError)
 
 
 logger = logging.getLogger(__name__)
@@ -50,14 +50,16 @@ logger = logging.getLogger(__name__)
 def install_cua_driver(*args, **kwargs) -> NoReturn:
     # A running pre-PM updater can still import the vendor installer here.
     # Stop it before any old retry or completion branch can run.
-    from hermes_cli._old_updater import stop_for_relaunch
+    from hermes_cli._old_updater import stop_historical_updater
 
-    stop_for_relaunch()
+    stop_historical_updater("hermes_cli.tools_config.install_cua_driver", ImportError)
 
 # Platforms already warned about an all-invalid platform_toolsets list (warn once, not per resolution).
 _warned_invalid_platform_toolsets: set[str] = set()
 
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+from hermes_cli._startup_fast import project_root_str
+
+PROJECT_ROOT = Path(project_root_str())
 
 # Platform display config derived from the canonical registry (dict-of-dicts for ``PLATFORMS[key]["label"]``).
 PLATFORMS = {k: {"label": info.label, "default_toolset": info.default_toolset} for k, info in _PLATFORMS_REGISTRY.items()}
@@ -89,7 +91,6 @@ CONFIGURABLE_TOOLSETS = [
     ("cronjob",         "⏰ Cron Jobs",                 "create/list/update/pause/resume/run, with optional attached skills"),
     ("discord",         "💬 Discord (read/participate)", "fetch messages, search members, create thread"),
     ("discord_admin",   "🛡️  Discord Server Admin",    "list channels/roles, pin, assign roles"),
-    ("yuanbao",          "🤖 Yuanbao",                  "group info, member queries, DM"),
     ("computer_use",     "🖱️  Computer Use (macOS/Windows/Linux)", "background desktop control via cua-driver"),
 ]
 
@@ -618,7 +619,9 @@ def _get_platform_tools(config: dict, platform: str, *, include_default_mcp_serv
         enabled_toolsets = _composite_toolsets(toolset_names, platform, explicitly_configured)
 
     _recover_platform_native_toolsets(enabled_toolsets, platform, skip=configurable_keys | plugin_ts_keys | platform_default_keys)
-    if plugin_ts_keys:
+    # fork: an explicit EMPTY list means zero plugin toolsets too. They are on by default, so ``shorts``
+    # (bundled here, with a publishing tool) was added to it.
+    if plugin_ts_keys and not (explicitly_configured and not toolset_names):
         enabled_toolsets |= _enabled_plugin_toolsets(config, platform, toolset_names, plugin_ts_keys)
 
     # Context-engine tools are runtime-provided, not in any static composite: keep them for a non-default
@@ -628,7 +631,10 @@ def _get_platform_tools(config: dict, platform: str, *, include_default_mcp_serv
 
     # Explicit non-configurable entries (custom toolsets, MCP server names) pass through.
     explicit_passthrough = {ts for ts in toolset_names if ts not in explicit_known_keys and ts not in platform_default_keys}
-    enabled_toolsets |= _merge_mcp_servers(config, toolset_names, explicit_passthrough, include_default_mcp_servers)
+    # An explicitly saved empty list means zero toolsets with no MCP merge
+    # (#82010); falling through to every enabled server would be fail-open.
+    if not (explicitly_configured and not toolset_names):
+        enabled_toolsets |= _merge_mcp_servers(config, toolset_names, explicit_passthrough, include_default_mcp_servers)
 
     # Legacy profile opt-in is a fallback only. A saved platform list (even
     # empty) is authoritative, so a later disable cannot silently re-enable it.
@@ -670,10 +676,10 @@ def _prune_toolsets_stripped_by_disabled(enabled_toolsets: set[str], disabled_na
 def _disabled_entry_tools(name: str) -> set[str]:
     """Tools one ``agent.disabled_toolsets`` entry removes at runtime: legacy names (``terminal_tools``)
     and the bundle/posture non-core delta included, which ``resolve_toolset`` alone gets wrong."""
-    from model_tools import _LEGACY_TOOLSET_MAP, _apply_toolset_selection
-    from toolsets import resolve_toolset
+    from model_tools import _apply_toolset_selection
 
-    universe = set(resolve_toolset(name)) | set(_LEGACY_TOOLSET_MAP.get(name, ()))
+    universe: set[str] = set()
+    _apply_toolset_selection(universe, [name], quiet_mode=True, disable=False)
     kept = set(universe)
     _apply_toolset_selection(kept, [name], quiet_mode=True, disable=True)
     return universe - kept

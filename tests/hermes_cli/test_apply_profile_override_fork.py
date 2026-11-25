@@ -1,4 +1,4 @@
-"""Fork: the global -p/--profile selector stops at the subcommand.
+"""Fork: the global -p/--profile selector stops at `hermes cron`.
 
 Moved out of test_apply_profile_override.py so upstream's file merges clean.
 """
@@ -11,13 +11,12 @@ from pathlib import Path
 
 
 class TestApplyProfileOverrideSubcommandBoundary:
-    """A subcommand's own --profile must not be hijacked by the global selector.
+    """A --profile after `hermes cron` must not be hijacked by the global selector.
 
-    The global -p/--profile selector applies only BEFORE the subcommand. A
-    --profile that appears after the subcommand belongs to that subcommand
-    (e.g. `hermes cron edit <id> --profile <name>` sets the cron job's run
-    profile) and must NOT switch the CLI's HERMES_HOME — that previously made
-    the job lookup read the wrong (empty) store and fail with "Job not found".
+    It must NOT switch the CLI's HERMES_HOME: that made the job lookup read the
+    wrong (empty) store and fail with "Job not found". After any other
+    subcommand the flag selects the profile, as upstream's does
+    (`hermes acp -p other`, `hermes gateway -p coder run`).
     """
 
     def test_profile_after_subcommand_is_not_hijacked(self, tmp_path, monkeypatch):
@@ -40,6 +39,21 @@ class TestApplyProfileOverrideSubcommandBoundary:
         assert sys.argv == argv, (
             "post-subcommand --profile must remain in argv for the subparser"
         )
+
+    def test_profile_after_another_subcommand_selects_it(self, tmp_path, monkeypatch):
+        """`hermes gateway -p coder run` is upstream's form: container boot and `hermes-acp` rely on it."""
+        (tmp_path / ".hermes" / "profiles" / "coder").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".hermes" / "profiles" / "coder" / "config.yaml").write_text("{}\n")  # identity marker
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        monkeypatch.setattr(sys, "argv", ["hermes", "gateway", "-p", "coder", "run"])
+
+        from hermes_cli.main import _apply_profile_override
+        _apply_profile_override()
+
+        result = os.environ.get("HERMES_HOME")
+        assert result is not None and result.endswith("coder")
+        assert sys.argv == ["hermes", "gateway", "run"]
 
     def test_global_profile_before_subcommand_still_applies(self, tmp_path, monkeypatch):
         """`hermes -p coder cron list` must still switch HERMES_HOME to coder

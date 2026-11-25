@@ -127,4 +127,5 @@ class TestTier1AppliesToTerminalPath:
             result_env = build_subprocess_env()
 
         assert "PROSPECTOR_GMAIL_APP_PASSWORD" not in result_env
-        assert result_env.get("PATH") == "/usr/bin:/bin"
+        # upstream v0.23.x puts the running interpreter's bin dir first; the caller's PATH survives.
+        assert result_env.get("PATH", "").endswith("/usr/bin:/bin")

@@ -315,12 +315,19 @@ _UPSTREAM_CI_LAYOUT_TESTS = frozenset({
     "tests/ci/test_classify_changes.py"
     "::test_ci_jobs_only_gate_on_detect_outputs_that_detect_actually_declares",
     "tests/ci/test_classify_changes.py::test_real_update_suites_gate_the_merge_when_their_lane_fires",
+    # upstream v0.23.x: reads the sparse checkout of upstream's ci.yaml detect job (fork: ci.yml).
+    "tests/ci/test_classify_changes.py::test_classifier_runs_in_the_detect_jobs_sparse_checkout",
+    # upstream v0.23.x: read upstream's ci.yaml orchestrator or its staged-release docker.yml; the fork
+    # runs ci.yml and its own docker.yml.
+    "tests/ci/test_canary_e2e.py::test_artifacts_are_named_for_the_commit_under_test",
+    "tests/ci/test_ci_concurrency_cancel.py::test_only_pr_and_side_branch_dispatch_runs_are_superseded",
+    "tests/ci/test_docker_release_concurrency.py::test_release_calls_are_isolated_by_caller_run_and_phase",
+    "tests/ci/test_docker_release_concurrency.py::test_standalone_calls_keep_ref_or_pr_scoped_concurrency",
+    "tests/ci/test_timings_report_running_job.py::test_ci_yaml_cuts_the_gate_at_a_step_it_runs_before_the_report",
+    "tests/ci/test_tree_guard_routing.py::test_a_one_file_pr_runs_every_tree_guard_once",
+    "tests/ci/test_update_ci_routing.py::test_a_canary_e2e_run_reaches_every_e2e_suite",
     "tests/ci/test_clean_worktree_check.py::test_every_checkout_job_ends_with_the_clean_worktree_step",
     "tests/ci/test_e2e_tmux_required.py::test_the_e2e_job_requires_tmux",
-    # upstream v0.23.0: asserts the node_modules-cache + vitest-history steps of upstream's
-    # single JS job; the fork's js-tests.yml keeps its per-package matrix (no restored tree).
-    "tests/ci/test_js_tests_vitest_history.py"
-    "::test_restored_trees_lose_their_vitest_history_before_any_check",
     "tests/ci/test_live_comment.py::test_the_merge_gate_never_shows_as_a_job_in_the_comment",
     "tests/ci/test_stable_release_commit_threading.py::test_every_call_forwards_the_commit",
     "tests/ci/test_stable_release_commit_threading.py::test_every_checkout_follows_the_commit_input",

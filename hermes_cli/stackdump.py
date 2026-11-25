@@ -33,10 +33,12 @@ COST
 
 A registered signal handler. No thread, no polling, no measurable overhead —
 which is why this is always on instead of behind a flag nobody sets before the
-incident they needed it for.
+incident they needed it for. A process that exits normally without a dump takes
+its file with it, so one-shot commands leave nothing behind in ``logs/``.
 """
 from __future__ import annotations
 
+import atexit
 import faulthandler
 import os
 import signal
@@ -48,6 +50,8 @@ from typing import Optional
 # whenever the signal arrives, so closing this would turn the dump into a
 # crash at exactly the moment we need it.
 _DUMP_FILE = None
+
+_ARMED_LINE = "\n=== stack dumper armed: pid {pid} ===\n"
 
 
 def dump_path(log_dir: Optional[Path] = None, pid: Optional[int] = None) -> Path:
@@ -88,11 +92,12 @@ def install_stack_dumper(log_dir: Optional[Path] = None) -> Optional[Path]:
         return None
 
     try:
-        handle.write(f"\n=== stack dumper armed: pid {os.getpid()} ===\n")
+        handle.write(_ARMED_LINE.format(pid=os.getpid()))
         faulthandler.register(sigusr1, file=handle, all_threads=True, chain=False)
         # A hard crash should land in the same file rather than vanishing into
         # a container's stderr.
         faulthandler.enable(file=handle, all_threads=True)
+        armed_size = handle.tell()
     except (OSError, RuntimeError, ValueError):
         try:
             handle.close()
@@ -101,7 +106,23 @@ def install_stack_dumper(log_dir: Optional[Path] = None) -> Optional[Path]:
         return None
 
     _DUMP_FILE = handle
+    atexit.register(_discard_if_unused, path, os.getpid(), armed_size)
     return path
+
+
+def _discard_if_unused(path: Path, pid: int, armed_size: int) -> None:
+    """At a normal exit, remove a dump file that holds nothing but its own ``armed`` line.
+
+    A forked child inherits this hook, so only the process that armed the file acts. A file an
+    earlier process with the same pid left a dump in is kept: its size is past one armed line.
+    """
+    if os.getpid() != pid or armed_size > len(_ARMED_LINE.format(pid=pid).encode()):
+        return
+    try:
+        if path.stat().st_size == armed_size:
+            path.unlink()
+    except OSError:
+        pass
 
 
 def dump_now(file=None) -> None:

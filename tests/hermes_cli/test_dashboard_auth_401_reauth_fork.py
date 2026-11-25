@@ -48,8 +48,8 @@ class TestRefreshOutageOnDocumentNavigation:
         clear_providers()
         register_provider(UnreachableProvider())
         gated_app.cookies.clear()
-        gated_app.cookies.set(SESSION_RT_COOKIE, "opaque-refresh-token")
-        gated_app.cookies.set(SESSION_PROVIDER_COOKIE, "unreachable")
+        gated_app.cookies.set(f"__Host-{SESSION_RT_COOKIE}", "opaque-refresh-token")
+        gated_app.cookies.set(f"__Host-{SESSION_PROVIDER_COOKIE}", "unreachable")
         return gated_app
 
     def test_refresh_outage_on_document_nav_returns_html_not_json(self, gated_app):
@@ -83,7 +83,7 @@ class TestRefreshOutageOnDocumentNavigation:
 
         assert response.status_code == 503
         assert "location" not in response.headers
-        assert client.cookies.get(SESSION_RT_COOKIE) == "opaque-refresh-token"
+        assert client.cookies.get(f"__Host-{SESSION_RT_COOKIE}") == "opaque-refresh-token"
 
     def test_refresh_outage_api_json_envelope_is_unchanged(self, gated_app):
         """The /api/* contract the SPA reads must not shift."""

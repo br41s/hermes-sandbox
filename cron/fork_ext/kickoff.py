@@ -49,7 +49,7 @@ def send_to_targets(job: dict, targets: list[dict], text: str, media_files: list
     from cron import scheduler as sched
     from cron.scheduler_delivery import _resolve_target_transport
     from gateway.config import Platform
-    from tools.send_message_tool import _send_to_platform
+    from gateway.outbound.send import _send_to_platform
 
     errors: list[str] = []
     for target in targets:
