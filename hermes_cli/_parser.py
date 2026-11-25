@@ -476,7 +476,8 @@ def scan_profile_flag(argv: list) -> tuple:
         )
         if not takes_value and not arg.startswith("-"):
             saw_subcommand = True
-            break  # fork (#57): first positional = the subcommand; a later --profile is its own
+            if arg == "cron":
+                break  # fork (#57): a --profile after `hermes cron` never switches the store it edits
         i += 2 if takes_value else 1
     return None, 0, None
 
