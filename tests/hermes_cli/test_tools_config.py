@@ -103,7 +103,7 @@ def test_explicit_empty_platform_toolsets_merge_no_mcp_servers():
     assert _get_platform_tools(config, "cli") == set()
 
     config["platform_toolsets"]["cli"] = ["no_mcp"]
-    assert _get_platform_tools(config, "cli") == set()
+    assert _get_platform_tools(config, "cli") - {"shorts"} == set()  # fork: a default-on plugin toolset
 
 
 def test_explicit_empty_gateway_platform_toolsets_keep_mcp_controls():
@@ -115,10 +115,10 @@ def test_explicit_empty_gateway_platform_toolsets_keep_mcp_controls():
     assert {"alpha", "beta"} <= _get_platform_tools({"mcp_servers": servers}, "email")
     assert _get_platform_tools(
         {"mcp_servers": servers, "platform_toolsets": {"email": ["terminal", "alpha"]}}, "email",
-    ) == {"terminal", "alpha"}
+    ) - {"shorts"} == {"terminal", "alpha"}  # fork: as above
     assert _get_platform_tools(
         {"mcp_servers": servers, "platform_toolsets": {"email": ["terminal"]}}, "email",
-    ) == {"terminal", "alpha", "beta"}
+    ) - {"shorts"} == {"terminal", "alpha", "beta"}  # fork: as above
 
 
 def test_scalar_platform_toolsets_fall_back_to_platform_default():
