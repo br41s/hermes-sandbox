@@ -89,11 +89,12 @@ A client-side pre-commit guard (`scripts/git-guard/`, installed into every agent
 |----------|----------|-------------|
 | `OPENROUTER_API_KEY` | Yes | OpenRouter API key |
 | `HERMES_CALLBACK_SECRET` | Yes | Shared secret for callback auth. Must match BigLobster's value. |
-| `HERMES_CALLBACK_URL` | Yes | `https://biglobster.top/api/hermes-callback` |
+| `HERMES_CALLBACK_URL` | Yes | `https://biglobster.top/api/hermes-callback`. Its origin is the only one that receives the raw `x-hermes-secret` on a callback (see *Delegate callbacks*). |
 | `HERMES_DEFAULT_MODEL` | Yes | Active model. Target: `deepseek/deepseek-v4.1-flash` (see *Model* below) |
 | `HERMES_MAX_ITERATIONS` | No | Max agent turns per task (default: 60) |
 | `HERMES_DASHBOARD` | Yes | Set to `1` to start the web dashboard on port 9119 |
-| `HERMES_DASHBOARD_INSECURE` | Yes | Set to `1`. Since the s6 upgrade, the dashboard **refuses to bind to `0.0.0.0`** without this (the OAuth gate engages on non-loopback binds and no auth provider is configured). Without it the dashboard never comes up. |
+| `HERMES_DASHBOARD_OAUTH_CLIENT_ID` | Yes | Nous Portal OAuth client ID (`agent:{id}`). Required for the non-loopback `0.0.0.0` dashboard bind (see [`ops/security/dashboard-auth-lockdown.md`](ops/security/dashboard-auth-lockdown.md)). (`HERMES_DASHBOARD_INSECURE` is retired and ignored.) |
+| `HERMES_DASHBOARD_PUBLIC_URL` | Yes | `https://hermes.biglobster.top` (no trailing slash). Drives the OAuth callback URI, `Host`/`Origin` validation, and the public-dashboard hardening: own-origin cookie writes, `X-Forwarded-Prefix` ignored, anonymous `/api/status` redacted. Cookie `Secure`/`__Host-` comes from `dashboard.trusted_proxies` (pinned on `main` at boot). |
 | `TELEGRAM_BOT_TOKEN` | No | Token for direct CEO ↔ Hermes Telegram chat (@b_l_hermes_bot) |
 | `TELEGRAM_ALLOWED_USERS` | No | CEO's Telegram user ID for direct access |
 | `EXA_API_KEY` | No | Exa web search API key — activates the `web` toolset |
@@ -515,7 +516,8 @@ SELECT * FROM agent_tasks WHERE request_id = 'hermes-1779505977261';
 # Container health probe (always returns 200 if process is alive)
 curl https://hermes.biglobster.top/health
 
-# Richer status (gateway state, active sessions, model)
+# Anonymous status: version, gateway state, components, auth shape. Profiles, install id
+# and host figures need a signed-in session.
 curl https://hermes.biglobster.top/api/status
 
 # Manual delegate (from BigLobster or any app on the coolify network)
@@ -532,7 +534,17 @@ curl -X POST http://hermes:9119/api/delegate \
     "webhook_url": "https://biglobster.top/api/hermes-callback"
   }'
 # Expected: {"task_id":"test-001","status":"accepted"}
+# 10 failed secrets from one IP in 60s -> 429 for that IP until the window passes.
 ```
+
+### Delegate callbacks
+
+- `webhook_url` must be https, with no userinfo, on a host that resolves to public addresses only.
+  It is checked when the task is accepted and again when the result is sent; redirects are not followed.
+- Every callback carries `x-hermes-timestamp` and `x-hermes-signature: sha256=<hex>`, the
+  HMAC-SHA256 of `<timestamp>.<raw body>` keyed on `HERMES_CALLBACK_SECRET`.
+- `x-hermes-secret` is sent only to the origin of `HERMES_CALLBACK_URL`: whoever holds it can run
+  `/api/delegate`. A receiver on any other origin verifies the signature instead.
 
 ---
 

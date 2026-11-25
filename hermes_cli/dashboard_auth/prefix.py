@@ -76,8 +76,27 @@ def normalise_prefix(raw: Optional[str]) -> str:
     return p
 
 
+def dashboard_public_url(state) -> str:
+    """:func:`resolve_public_url` for the standalone dashboard only. ``""`` for a listener with its
+    own ``listener_public_url`` or on the gateway's Webapp, which keep their own origin and prefix
+    rules: the dashboard's setting never describes them."""
+    if (state is None or getattr(state, "listener_public_url", None) is not None
+            or getattr(state, "ui_surface", None) == "webapp"):
+        return ""
+    return resolve_public_url()
+
+
 def prefix_from_request(request) -> str:
-    """Normalised ``X-Forwarded-Prefix`` from a Starlette request, or ``""``."""
+    """Normalised ``X-Forwarded-Prefix`` from a Starlette request, or ``""``.
+
+    When an operator has declared the dashboard's public URL, it is the complete authority and
+    its path component decides the mount prefix: any client can send ``X-Forwarded-Prefix``.
+    """
+    app = request.scope.get("app") if hasattr(request, "scope") else getattr(request, "app", None)
+    state = getattr(app, "state", None) if app is not None else None
+    public_url = dashboard_public_url(state)
+    if public_url:
+        return normalise_prefix(urllib.parse.urlparse(public_url).path)
     return normalise_prefix(request.headers.get("x-forwarded-prefix"))
 
 

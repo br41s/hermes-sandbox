@@ -502,20 +502,24 @@ def _fts_rebuild_status() -> Optional[dict[str, Any]]:
 #: What the gateway's Webapp answers a caller who has not signed in: liveness, version and the
 #: sign-in shape (the native-app login probe and uptime checks read nothing else). Profile names,
 #: the install id and host figures wait for sign-in, since a Webapp on a wildcard bind is reachable
-#: by everyone on the network. The standalone dashboard keeps its public body: Hermes Cloud reads
-#: the profile list there without a session (#60585).
+#: by everyone on the network. fork: so does a standalone dashboard that declares a public URL.
+#: Without one it keeps its public body: Hermes Cloud reads the profile list there without a
+#: session (#60585).
 _WEBAPP_SIGNED_OUT_STATUS_KEYS = frozenset({
     "version", "release_date", "gateway_running", "gateway_state", "overall", "components",
     "auth_required", "auth_providers", "auth_flows"})
 
 
 async def _webapp_caller_signed_out(request: Request) -> bool:
-    """True when this request reached the gateway's Webapp behind its sign-in gate with no
-    session the gate would accept. ``/api/status`` is public, so the gate never verified one."""
+    """True when this request reached the gateway's Webapp (or an operator-declared public_url
+    dashboard) behind its sign-in gate with no session the gate would accept. ``/api/status``
+    is public, so the gate never verified one."""
+    from hermes_cli.dashboard_auth.prefix import dashboard_public_url
     from hermes_cli.web_server import _require_token
     from hermes_cli.web_server_surface import surface
-    if request is None or surface(request.app.state) != "webapp" \
-            or not getattr(request.app.state, "auth_required", False):
+    if request is None or not getattr(request.app.state, "auth_required", False):
+        return False
+    if surface(request.app.state) != "webapp" and not dashboard_public_url(request.app.state):
         return False
     if getattr(request.state, "session", None) is None:
         from hermes_cli.dashboard_auth.middleware import peek_session
