@@ -314,66 +314,55 @@ def _verify_delegate_secret(request: Request) -> Optional[tuple[int, str]]:
     return None
 
 
-def _is_unsafe_ip(ip) -> bool:
-    return bool(
-        ip.is_loopback
-        or ip.is_private
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+def _webhook_host_block_reason(host: str) -> Optional[str]:
+    """Why ``host`` may not receive a callback, else ``None``. Blocking (DNS): call it off the loop.
 
-
-def _resolve_webhook_host_ips(host: str) -> list[str]:
-    import socket
+    Classification is ``tools.url_safety``'s, with its ``allow_private_urls`` opt-out ignored: that
+    setting is about what the agent may fetch, not about where an API caller may aim results.
+    """
+    from tools import url_safety
 
     try:
-        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except OSError:
-        return []
-    return [info[4][0] for info in infos if info and len(info) >= 5 and info[4]]
+        answers = list(url_safety._iter_resolved_ips(url_safety._getaddrinfo(host)))
+    except (OSError, UnicodeError):  # UnicodeError: a label IDNA cannot encode
+        answers = []
+    if not answers:
+        return "webhook_url host does not resolve"
+    if any(ip is None or url_safety._resolved_ip_block_reason(ip, allow_private=False)
+           for _raw, _ip_str, ip in answers):
+        return "webhook_url may not target a loopback/private/link-local address"
+    return None
 
 
-def _validate_delegate_webhook_url(url: str) -> Optional[str]:
+async def _validate_delegate_webhook_url(url: str) -> Optional[str]:
     """Return a rejection reason when ``url`` is unsafe to POST results to, else ``None``.
 
     The secret check above proves the *caller* is trusted; it says nothing about
     where the caller wants the agent's output delivered. A full domain allowlist
     isn't practical — different customer profiles legitimately callback to
-    different domains — so this blocks non-https schemes, credentials in URLs,
-    loopback/private/link-local/internal hosts, wildcard DNS-rebinding domains,
-    and hostnames that resolve to non-public IP addresses.
+    different domains — so this blocks non-https schemes, URLs two parsers could
+    read differently (userinfo included), internal and wildcard DNS-rebinding
+    names, and hosts that do not resolve or resolve to a non-public address.
+    Delivery re-checks at connect time (``_delegate_background``).
     """
-    import ipaddress
+    from tools import url_safety
 
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "https":
-        return "webhook_url must use https"
-    if parsed.username is not None or parsed.password is not None:
-        return "webhook_url must not contain userinfo"
-    raw_host = parsed.hostname
-    if not raw_host:
-        return "webhook_url is missing a host"
-    host = raw_host.strip().lower().rstrip(".")
-    if host == "localhost" or host.endswith(_DNS_REBIND_SUFFIXES):
-        return "webhook_url may not target an internal host"
     try:
-        ip = ipaddress.ip_address(host)
+        scheme = urllib.parse.urlsplit(url).scheme
+        if scheme != "https":
+            return "webhook_url must use https"
+        ambiguity = url_safety._authority_ambiguity(url)
+        host = url_safety._url_hostname(url)
     except ValueError:
-        ip = None
-    if ip is not None:
-        if _is_unsafe_ip(ip):
-            return "webhook_url may not target a loopback/private/link-local address"
-        return None
-    for resolved_raw in _resolve_webhook_host_ips(host):
-        try:
-            resolved_ip = ipaddress.ip_address(resolved_raw.split("%", 1)[0])
-        except ValueError:
-            continue
-        if _is_unsafe_ip(resolved_ip):
-            return "webhook_url may not target a loopback/private/link-local address"
-    return None
+        return "webhook_url is not a valid URL"
+    if ambiguity is not None:
+        return f"webhook_url has an invalid authority ({ambiguity})"
+    if not host:
+        return "webhook_url is missing a host"
+    if (host == "localhost" or host in url_safety._BLOCKED_HOSTNAMES
+            or host.endswith(_DNS_REBIND_SUFFIXES)):
+        return "webhook_url may not target an internal host"
+    return await asyncio.to_thread(_webhook_host_block_reason, host)
 
 
 def _is_trusted_callback_origin(webhook_url: str) -> bool:
@@ -420,7 +409,7 @@ async def post_delegate(request: Request, body: _DelegateRequest):
     see ``_verify_delegate_secret`` for why that, not the dashboard-auth
     allowlist, is the real gate on this endpoint.
     """
-    webhook_reason = _validate_delegate_webhook_url(body.webhook_url)
+    webhook_reason = await _validate_delegate_webhook_url(body.webhook_url)
     if webhook_reason:
         raise HTTPException(status_code=400, detail=f"Invalid webhook_url: {webhook_reason}")
 
@@ -455,7 +444,7 @@ async def _delegate_background(
         payload = {"task_id": task_id, "status": "error", "error": str(exc)}
 
     try:
-        import httpx
+        from tools.url_safety import create_ssrf_safe_async_client
         raw_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         callback_headers: dict = {"Content-Type": "application/json"}
         callback_secret = os.environ.get("HERMES_CALLBACK_SECRET", "").strip()
@@ -470,7 +459,9 @@ async def _delegate_background(
             callback_headers["x-hermes-signature"] = f"sha256={sig}"
             if _is_trusted_callback_origin(webhook_url):
                 callback_headers["x-hermes-secret"] = callback_secret
-        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        # The host was vetted when the task was accepted, possibly minutes ago; the guarded client
+        # resolves and vets it again at connect time, so a DNS answer that changed cannot be dialed.
+        async with create_ssrf_safe_async_client(timeout=30, follow_redirects=False) as client:
             await client.post(webhook_url, content=raw_body, headers=callback_headers)
     except Exception:
         _log.exception(
