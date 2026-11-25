@@ -184,8 +184,19 @@ COPY --chmod=0755 docker/tini-shim.sh /usr/bin/tini
 # change the interpreter for eleven instructions for no gain. hadolint DL4006.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Install xurl (X Developer Platform CLI)
-RUN curl -fsSL https://raw.githubusercontent.com/xdevplatform/xurl/main/install.sh | bash
+# Install xurl (X Developer Platform CLI). fork: fetched to a file and checked against the
+# release's own checksums.txt before extracting (scripts/ci/check_dockerfile_downloads.py,
+# upstream v0.23.x, refuses a download piped into a shell or extractor). It used to run the
+# install.sh from xurl's main branch, which does this same download without the check.
+RUN tmp="$(mktemp -d)" && \
+    base="https://github.com/xdevplatform/xurl/releases/latest/download" && \
+    curl -fsSL --retry 3 -o "$tmp/xurl_Linux_x86_64.tar.gz" "$base/xurl_Linux_x86_64.tar.gz" && \
+    curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/checksums.txt" && \
+    (cd "$tmp" && grep ' xurl_Linux_x86_64.tar.gz$' checksums.txt | sha256sum -c -) && \
+    tar -xzf "$tmp/xurl_Linux_x86_64.tar.gz" -C "$tmp" xurl && \
+    install -m 0755 "$tmp/xurl" /usr/local/bin/xurl && \
+    rm -rf "$tmp" && \
+    test -x /usr/local/bin/xurl
 
 # Install GitHub CLI (gh) — lets cron jobs / agents open PRs (e.g. the blog
 # "Content Gap Hunter") with `gh pr create` instead of a hand-rolled
@@ -201,8 +212,14 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     GH_VER="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+' || true)" && \
     GH_VER="${GH_VER:-${GH_CLI_FALLBACK_VERSION}}" && \
     echo "Installing gh ${GH_VER} for ${ARCH}" && \
-    curl -fsSL --retry 3 "https://github.com/cli/cli/releases/download/v${GH_VER}/gh_${GH_VER}_linux_${ARCH}.tar.gz" \
-      | tar -xz -f - -C /usr/local/bin --strip-components=2 "gh_${GH_VER}_linux_${ARCH}/bin/gh" && \
+    tmp="$(mktemp -d)" && \
+    base="https://github.com/cli/cli/releases/download/v${GH_VER}" && \
+    tarball="gh_${GH_VER}_linux_${ARCH}.tar.gz" && \
+    curl -fsSL --retry 3 -o "$tmp/$tarball" "$base/$tarball" && \
+    curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/gh_${GH_VER}_checksums.txt" && \
+    (cd "$tmp" && grep " ${tarball}\$" checksums.txt | sha256sum -c -) && \
+    tar -xzf "$tmp/$tarball" -C /usr/local/bin --strip-components=2 "gh_${GH_VER}_linux_${ARCH}/bin/gh" && \
+    rm -rf "$tmp" && \
     gh --version
 
 # Restore the default shell — see the SHELL note above the xurl install.
