@@ -460,10 +460,13 @@ def build_profile_secret_scope(hermes_home: Path) -> dict[str, str]:
         secrets.setdefault("GATEWAY_ALLOW_ALL_USERS", bridged)
     # Fork: the launch profile keeps its process env under multiplex (Zeabur injects keys that
     # never reach .env). hermes_cli/fork_ext/process_env_scope.py; .env still wins.
-    from hermes_cli.fork_ext import process_env_scope as _fork_process_env
-    if _fork_process_env.enabled() and _is_process_home(hermes_home):
-        for name, value in _fork_process_env.process_env_fallback().items():
-            secrets.setdefault(name, value)
+    # Imported only with the flag set: an updater that has moved the checkout builds a scope too, and
+    # must import nothing from it (test_update_post_swap_imports).
+    if os.environ.get("HERMES_FORK_SCOPE_PROCESS_ENV"):
+        from hermes_cli.fork_ext import process_env_scope as _fork_process_env
+        if _fork_process_env.enabled() and _is_process_home(hermes_home):
+            for name, value in _fork_process_env.process_env_fallback().items():
+                secrets.setdefault(name, value)
     # Administrator-managed ``.env`` LAST, with override: the launch process applies it that way
     # (``env_loader._apply_managed_env``) so policy beats a user's own value. Under multiplex
     # semantics ``get_secret`` never reads ``os.environ`` on a scope miss, so a scope built from
