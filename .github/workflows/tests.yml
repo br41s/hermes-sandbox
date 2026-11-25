@@ -77,6 +77,9 @@ jobs:
         # here left the extras (fal, modal, ...) out of the interpreter that ran the tests.
         uses: ./.github/actions/setup-pm
         with:
+          # Tests that drive the real scripts/build/node-deps.mjs need pnpm (and
+          # with it PM's Node) on PATH. (Same as upstream.)
+          packages: pnpm
           extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
           test-environment: 'true'
           prune-python-cache: true
