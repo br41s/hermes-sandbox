@@ -74,6 +74,24 @@ for f in "$OUT"/*; do
 done
 echo "== staged (root-only): $OUT"; ls -la "$OUT"; du -sh "$OUT"
 
+# Retention in Drive (Brais, 2026-11-25): keep 3, the oldest removed BEFORE the upload,
+# because the 15 GB quota is shared with Gmail and Photos and counts trashed files too.
+# Pruning to 2 first means a failed upload can never take Drive below 3-1 copies; only
+# stamp-named directories count, and no stamp at all leaves it untouched.
+DRIVE_KEEP=3
+drive_list=$($RCLONE lsf "hermesdrive:/VolumeBackups/" --dirs-only)
+stamps=""
+while read -r n; do
+  n=${n%/}
+  [[ $n =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+  stamps="$stamps$n"$'\n'
+done <<<"$drive_list"
+while read -r n; do
+  [ -n "$n" ] || continue
+  echo "prune drive: $n"
+  $RCLONE purge "hermesdrive:/VolumeBackups/$n" --drive-use-trash=false
+done <<<"$(printf '%s' "$stamps" | sort -r | tail -n +"$DRIVE_KEEP")"
+
 # Off-host copy from the host itself; the container is not involved. `check` fails
 # the run unless Drive holds every staged file with matching size and hash.
 $RCLONE copy "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --transfers 1
@@ -81,19 +99,14 @@ $RCLONE check "$OUT" "hermesdrive:/VolumeBackups/$STAMP" --one-way
 echo "== drive: VolumeBackups/$STAMP verified"
 $RCLONE lsl "hermesdrive:/VolumeBackups/$STAMP"
 
-# Retention (Brais, 2026-10-06): 14 days on the host, 30 in Drive. Only reached after
-# the upload above verified, so a failing night never prunes. Only stamp-named
-# directories are considered, by their UTC date in the name.
-HOST_KEEP_DAYS=14; DRIVE_KEEP_DAYS=30
+# Retention (Brais, 2026-11-25): 3 in Drive, oldest removed before the upload; 14 days
+# on the host, after the upload verified (so a failing night never prunes). Coolify's
+# R2 keeps 30 days of the databases. Only stamp-named directories are considered.
+HOST_KEEP_DAYS=14
 host_cutoff=$(date -u -d "$HOST_KEEP_DAYS days ago" +%Y%m%d)
-drive_cutoff=$(date -u -d "$DRIVE_KEEP_DAYS days ago" +%Y%m%d)
 for d in "$STAGE"/*/; do
   n=$(basename "$d")
   [[ $n =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
   if [ "${n:0:8}" -lt "$host_cutoff" ]; then echo "prune host: $n"; rm -rf -- "$STAGE/$n"; fi
 done
-$RCLONE lsf "hermesdrive:/VolumeBackups/" --dirs-only | tr -d '/' | while read -r n; do
-  [[ $n =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
-  if [ "${n:0:8}" -lt "$drive_cutoff" ]; then echo "prune drive: $n"; $RCLONE purge "hermesdrive:/VolumeBackups/$n"; fi
-done
-echo "== retention: host keeps >= $host_cutoff, drive keeps >= $drive_cutoff"
+echo "== retention: host keeps >= $host_cutoff, drive keeps $DRIVE_KEEP newest"
