@@ -257,11 +257,12 @@ def mount_spa(application: FastAPI):
     # BEFORE the StaticFiles mount and rewrite when a prefix is in play.
     @application.get("/assets/{filename}.css")
     async def serve_css(filename: str, request: Request):
+        from hermes_cli.dashboard_auth.prefix import prefix_from_request
         dist = web_dist()
         css_path = dist / "assets" / f"{filename}.css"
         if not css_path.is_file() or not css_path.resolve().is_relative_to(dist.resolve()):
             return JSONResponse({"error": "not found"}, status_code=404)
-        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix"))
+        prefix = prefix_from_request(request)
         css = css_path.read_text(encoding="utf-8-sig")
         if prefix:
             for asset_dir in ("/fonts/", "/fonts-terminal/", "/ds-assets/", "/assets/"):
@@ -295,7 +296,8 @@ def mount_spa(application: FastAPI):
 
     @application.get("/{full_path:path}")
     async def serve_spa(full_path: str, request: Request):
-        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix"))
+        from hermes_cli.dashboard_auth.prefix import prefix_from_request
+        prefix = prefix_from_request(request)
         # An unmatched /api/* path is a missing endpoint, not a client-side route: return a
         # real 404 JSON instead of index.html (which breaks JSON clients with a SyntaxError).
         if full_path == "api" or full_path.startswith("api/"):

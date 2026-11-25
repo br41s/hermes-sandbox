@@ -54,6 +54,12 @@ _GATE_PUBLIC_PREFIXES: tuple[str, ...] = (
 # and log an auto-SSO ``login_start`` with no sign-in behind it.
 _GATE_PUBLIC_ICONS: frozenset[str] = frozenset({"/apple-touch-icon.png"})
 
+# Public bootstrap routes that accept an optional ``?profile=`` query parameter. The default
+# pre-login load carries no profile; inspecting a specific named profile requires an
+# authenticated session so anonymous callers cannot enumerate or probe customer profiles.
+_PROFILE_SCOPED_PUBLIC_API_PATHS: frozenset[str] = frozenset({
+    "/api/config/schema", "/api/model/info", "/api/dashboard/themes", "/api/dashboard/plugins"})
+
 
 def _path_is_public(path: str) -> bool:
     """:data:`PUBLIC_API_PATHS` (shared with the legacy middleware) and :data:`_GATE_PUBLIC_ICONS`
@@ -61,6 +67,14 @@ def _path_is_public(path: str) -> bool:
     :data:`_GATE_PUBLIC_PREFIXES` prefix-matched."""
     return path in PUBLIC_API_PATHS or path in _GATE_PUBLIC_ICONS or any(
         path == p or path.startswith(p) for p in _GATE_PUBLIC_PREFIXES)
+
+
+def _public_path_requires_profile_auth(request: Request) -> bool:
+    """True when a request to a public read route specifies a named ``?profile=``."""
+    if request.url.path not in _PROFILE_SCOPED_PUBLIC_API_PATHS:
+        return False
+    requested = (request.query_params.get("profile") or "").strip().lower()
+    return bool(requested and requested != "current")
 
 
 def _safe_next_target(request: Request) -> str:
@@ -95,10 +109,14 @@ def _provider_unreachable_response(request: Request, provider_name: str) -> Resp
     return HTMLResponse(render_provider_unreachable_html(), status_code=503)
 
 
-#: The 403 detail for a cookie write from another origin; only the gateway's Webapp checks
+#: The 403 detail for a cookie write from another origin on the gateway's Webapp
 #: (``SurfacePolicy.own_origin_cookie_writes``), so it names the public URL that listener reads.
 _CROSS_ORIGIN_WRITE_DETAIL = ("Cookie-authenticated writes must come from the Webapp's own origin. "
                               "Behind a reverse proxy, set webapp.public_url to the URL the browser uses.")
+#: fork: the same on a dashboard that declares a public URL.
+_DASHBOARD_CROSS_ORIGIN_WRITE_DETAIL = (
+    "Cookie-authenticated writes must come from the dashboard's own origin: the URL in "
+    "HERMES_DASHBOARD_PUBLIC_URL / dashboard.public_url.")
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 #: The 403 detail for a cookie write the browser itself says another page made, on a surface
 #: without the Webapp's own-origin check.
@@ -109,8 +127,9 @@ _OTHER_PAGE_FETCH_SITES = frozenset({"same-site", "cross-site"})
 
 
 def _own_origin_writes(request: Request) -> bool:
+    from hermes_cli.dashboard_auth.prefix import dashboard_public_url
     from hermes_cli.web_server_surface import policy
-    return policy(request.app.state).own_origin_cookie_writes
+    return policy(request.app.state).own_origin_cookie_writes or bool(dashboard_public_url(request.app.state))
 
 
 def _browser_says_other_page(request: Request) -> bool:
@@ -270,7 +289,10 @@ def _cookie_write_refusal(
     if not has_cookies or request.method in _SAFE_METHODS:
         return None
     if own_origin and not cookie_origin_is_allowed(request):
-        return JSONResponse(status_code=403, content={"detail": _CROSS_ORIGIN_WRITE_DETAIL})
+        from hermes_cli.web_server_surface import policy
+        detail = (_CROSS_ORIGIN_WRITE_DETAIL if policy(request.app.state).own_origin_cookie_writes
+                  else _DASHBOARD_CROSS_ORIGIN_WRITE_DETAIL)  # fork: a dashboard with a public URL
+        return JSONResponse(status_code=403, content={"detail": detail})
     if other_page:
         return JSONResponse(status_code=403, content={"detail": _OTHER_PAGE_WRITE_DETAIL})
     return None
@@ -309,7 +331,7 @@ async def gated_auth_middleware(
     own_origin = _own_origin_writes(request)
     other_page = not own_origin and _browser_says_other_page(request)
     cookie_logout = (own_origin or other_page) and request.url.path == "/auth/logout"
-    if _path_is_public(request.url.path) and not cookie_logout:
+    if _path_is_public(request.url.path) and not cookie_logout and not _public_path_requires_profile_auth(request):
         return await call_next(request)
     # RFC 8252 native-app bearer path: the same provider-minted access token the cookie flow
     # stores, verified with the same provider stack, no cookie read or set. A presented-but-

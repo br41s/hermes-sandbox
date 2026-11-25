@@ -325,3 +325,16 @@ def test_main_keeps_its_unbounded_cron_pool():
     cfg = {}
     br.reconcile_cfg(cfg, "main", {}, profiles_src=Path("/nonexistent"))
     assert "max_parallel_jobs" not in (cfg.get("cron") or {})
+
+
+def test_main_trusts_docker_bridge_proxies_for_forwarded_headers(home):
+    """Coolify's Traefik reverse proxy reaches hermes:9119 from the Docker bridge ranges,
+    never 127.0.0.1. Reconcile dashboard.trusted_proxies on main so uvicorn honours
+    X-Forwarded-Proto (Secure/__Host- cookies) and X-Forwarded-For (real client IP)."""
+    (home / "config.yaml").write_text("{}\n", encoding="utf-8")
+    _profile(home, "grow-shop", cfg={})
+    br.reconcile_configs(home, {}, profiles_src=home / "none")
+    assert _cfg(home / "config.yaml")["dashboard"]["trusted_proxies"] == br.DASHBOARD_TRUSTED_PROXIES
+    assert "dashboard" not in _cfg(home / "profiles" / "grow-shop" / "config.yaml")
+    seed = yaml.safe_load((REPO_ROOT / "docker" / "config.yaml").read_text(encoding="utf-8"))
+    assert seed["dashboard"]["trusted_proxies"] == br.DASHBOARD_TRUSTED_PROXIES

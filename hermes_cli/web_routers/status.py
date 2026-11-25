@@ -528,8 +528,9 @@ def _fts_rebuild_status() -> Optional[dict[str, Any]]:
 #: What the gateway's Webapp answers a caller who has not signed in: liveness, version and the
 #: sign-in shape (the native-app login probe and uptime checks read nothing else). Profile names,
 #: the install id and host figures wait for sign-in, since a Webapp on a wildcard bind is reachable
-#: by everyone on the network. The standalone dashboard keeps its public body: Hermes Cloud reads
-#: the profile list there without a session (#60585).
+#: by everyone on the network. fork: so does a standalone dashboard that declares a public URL.
+#: Without one it keeps its public body: Hermes Cloud reads the profile list there without a
+#: session (#60585).
 _WEBAPP_SIGNED_OUT_STATUS_KEYS = frozenset({
     "version", "release_date", "gateway_running", "gateway_state", "overall", "components",
     "auth_required", "auth_providers", "auth_flows"})
@@ -553,10 +554,12 @@ async def _status_caller_verified(request: Request) -> bool:
 
 
 def _webapp_caller_signed_out(request: Request, verified: bool) -> bool:
-    """True when this request reached the gateway's Webapp behind its sign-in gate unverified."""
+    """True when this request reached the gateway's Webapp (fork: or a standalone dashboard that
+    declares a public URL) behind its sign-in gate unverified."""
+    from hermes_cli.dashboard_auth.prefix import dashboard_public_url
     from hermes_cli.web_server_surface import surface
-    return (not verified and surface(request.app.state) == "webapp"
-            and bool(getattr(request.app.state, "auth_required", False)))
+    return (not verified and bool(getattr(request.app.state, "auth_required", False))
+            and (surface(request.app.state) == "webapp" or bool(dashboard_public_url(request.app.state))))
 
 
 @router.get("/api/status")

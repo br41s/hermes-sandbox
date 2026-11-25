@@ -52,7 +52,12 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate"}
+_NO_STORE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
 _NATIVE_EXPIRED_DETAIL = "Native login expired or unknown; restart sign-in."
 
 

@@ -201,6 +201,10 @@ AUDITOR_OPENROUTER_REQUEST_TIMEOUT = 420
 # OpenRouter providers the auditor never routes to (see reconcile_cfg). auditor/llm.py mirrors it;
 # tests/test_auditor_provider_pinning.py keeps the two equal.
 AUDITOR_IGNORED_PROVIDERS = ["open-inference"]
+# Docker bridge networks (Coolify's Traefik proxy reaches hermes:9119 from these ranges, never
+# 127.0.0.1). Without them uvicorn ignores X-Forwarded-Proto/X-Forwarded-For, dropping Secure and
+# __Host- on session cookies and collapsing client_ip() to the proxy's internal address.
+DASHBOARD_TRUSTED_PROXIES = ["172.16.0.0/12", "10.0.0.0/8"]
 GSC_SERVER = {
     "command": "/opt/hermes/.venv/bin/python",
     "args": ["/opt/hermes/optional-mcps/gsc/server.py"],
@@ -876,6 +880,10 @@ def reconcile_cfg(
     # actively shed it so the owner drops the biglobster.top credential and
     # the tool can't run in the wrong lane. Idempotent on clean volumes.
     if label == "main":
+        dash = _section(cfg, "dashboard")
+        if dash.get("trusted_proxies") != DASHBOARD_TRUSTED_PROXIES:
+            dash["trusted_proxies"] = list(DASHBOARD_TRUSTED_PROXIES)
+            changed = True
         servers = cfg.get("mcp_servers")
         if isinstance(servers, dict) and "gsc" in servers:
             del servers["gsc"]
