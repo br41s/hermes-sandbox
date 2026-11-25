@@ -204,7 +204,8 @@ class TestTriggerCronJobSecurityInvariants:
                 resp = await cli.post(
                     "/webhooks/r", json={}, headers={"X-GitHub-Delivery": "d-noauth"}
                 )
-                assert resp.status == 401
+                # upstream v0.23: a bad signature answers like an unknown route, so it names none.
+                assert resp.status == 404
             mock_dispatch.assert_not_called()
 
     @pytest.mark.asyncio

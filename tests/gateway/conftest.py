@@ -115,6 +115,9 @@ _TURN_START_ACK_OFF = frozenset({
     # upstream v0.23
     "test_authority_lane_moves_on", "test_detached_conversation_lifecycle",
     "test_detached_conversation_results",
+    # upstream v0.23.4
+    "test_busy_followup_own_post_delivery", "test_native_redelivery_after_restart",
+    "test_relay_native_recovery_and_passthrough", "test_slack_replay_display_name",
 })
 
 

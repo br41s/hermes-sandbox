@@ -33,12 +33,13 @@ not on process state.
 
 import os
 import shutil
-import subprocess
+from unittest.mock import patch
 
 import pytest
 
 from tools import terminal_tool
 from tools.environments import base as env_base
+from tools.environments import local as env_local
 from tools.environments.local import LocalEnvironment
 
 
@@ -60,18 +61,17 @@ def _make_profile_home(tmp_path, name: str, email: str):
     return home
 
 
-def _run_wrapped(env_obj, command: str, spawn_home: str) -> str:
-    """Run *command* through the real snapshot wrapper with HOME=*spawn_home*,
-    the way ``_make_run_env`` would hand it to bash."""
+def _run_wrapped(env_obj, command: str, spawn_home: str, hermes_home: str | None = "") -> str:
+    """Run *command* through the real wrapper and spawn path with the env ``_make_run_env`` would
+    resolve: HOME=*spawn_home* and HERMES_HOME beside it (``None``: unset). The spawn is the real one
+    because it fills in the file descriptors the wrapper sources the snapshot from."""
+    run_env = {**os.environ, "HOME": spawn_home, "HERMES_HOME": os.path.dirname(spawn_home)}
+    if hermes_home is None:
+        del run_env["HERMES_HOME"]
     script = env_obj._wrap_command(command, str(env_obj.cwd))
-    proc = subprocess.run(
-        [BASH, "-c", script],
-        capture_output=True,
-        text=True,
-        env={**os.environ, "HOME": spawn_home, "HERMES_HOME": os.path.dirname(spawn_home)},
-        cwd=str(env_obj.cwd), check=False
-    )
-    return proc.stdout
+    with patch.object(env_local, "_make_run_env", lambda _env: run_env):
+        proc = env_obj._run_bash(script)
+    return env_obj._wait_for_process(proc, timeout=30)["output"]
 
 
 # ---------------------------------------------------------------------------
@@ -161,16 +161,10 @@ def test_unset_pinned_var_is_not_exported_as_empty(tmp_path):
         fh.write('declare -x HERMES_HOME="/from/snapshot"\n')
     env_obj._snapshot_ready = True
 
-    script = env_obj._wrap_command('printf "HH=%s\\n" "${HERMES_HOME-UNSET}"', str(workdir))
-    spawn_env = {k: v for k, v in os.environ.items() if k != "HERMES_HOME"}
-    spawn_env["HOME"] = str(home)
-    proc = subprocess.run(
-        [BASH, "-c", script], capture_output=True, text=True,
-        env=spawn_env, cwd=str(workdir), check=False
-    )
+    out = _run_wrapped(env_obj, 'printf "HH=%s\\n" "${HERMES_HOME-UNSET}"', str(home), hermes_home=None)
     # Nothing to pin, so the snapshot value is inherited as before -- the guard
     # must not export an empty string over it.
-    assert "HH=/from/snapshot" in proc.stdout
+    assert "HH=/from/snapshot" in out
 
 
 # ---------------------------------------------------------------------------

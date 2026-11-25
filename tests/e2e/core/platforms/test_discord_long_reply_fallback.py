@@ -38,7 +38,8 @@ def test_refused_upload_sends_the_whole_reply_through_a_429(tmp_path):
     llm = FakeLLMServer(director)
     llm.start()
     cfg = merge(drv.gateway_config(), {"streaming": {"enabled": False},
-                                       "display": {"platforms": {"discord": {"streaming": False}}}})
+                                       "display": {"platforms": {"discord": {"streaming": False,
+                                                                             "turn_start_ack": False}}}})  # fork
     gw = GatewayUnderTest(tmp_path / "rig", llm_base_url=llm.base_url, config=cfg, env=drv.gateway_env(),
                           ready=drv.connected)
     st, texts = drv.standin, {"n": 0}

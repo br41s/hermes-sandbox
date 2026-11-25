@@ -28,7 +28,8 @@ def rig(tmp_path):
     llm = FakeLLMServer(director)
     llm.start()
     cfg = merge(drv.gateway_config(), {"streaming": {"enabled": True, "edit_interval": 0.3, "transport": "edit"},
-                                       "display": {"platforms": {"telegram": {"streaming": True}}}})
+                                       "display": {"platforms": {"telegram": {"streaming": True,
+                                                                              "turn_start_ack": False}}}})  # fork
     gw = GatewayUnderTest(tmp_path / "rig", llm_base_url=llm.base_url, config=cfg, env=drv.gateway_env(),
                           ready=drv.connected)
     try:
