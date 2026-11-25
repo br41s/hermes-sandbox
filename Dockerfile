@@ -185,13 +185,19 @@ COPY --chmod=0755 docker/tini-shim.sh /usr/bin/tini
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install xurl (X Developer Platform CLI). fork: fetched to a file and checked against the
-# release's own checksums.txt before extracting (scripts/ci/check_dockerfile_downloads.py,
+# release's own checksum file before extracting (scripts/ci/check_dockerfile_downloads.py,
 # upstream v0.23.x, refuses a download piped into a shell or extractor). It used to run the
 # install.sh from xurl's main branch, which does this same download without the check.
+# The checksum file is goreleaser's ``xurl_<version>_checksums.txt`` (the same scheme as gh's
+# below), else a plain ``checksums.txt``; no checksum file at all fails the build.
 RUN tmp="$(mktemp -d)" && \
-    base="https://github.com/xdevplatform/xurl/releases/latest/download" && \
+    tag="$(curl -fsSL --retry 3 -o /dev/null -w '%{url_effective}' https://github.com/xdevplatform/xurl/releases/latest)" && \
+    tag="${tag##*/}" && ver="${tag#v}" && \
+    echo "Installing xurl ${tag}" && \
+    base="https://github.com/xdevplatform/xurl/releases/download/${tag}" && \
     curl -fsSL --retry 3 -o "$tmp/xurl_Linux_x86_64.tar.gz" "$base/xurl_Linux_x86_64.tar.gz" && \
-    curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/checksums.txt" && \
+    { curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/xurl_${ver}_checksums.txt" \
+      || curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/checksums.txt"; } && \
     (cd "$tmp" && grep ' xurl_Linux_x86_64.tar.gz$' checksums.txt | sha256sum -c -) && \
     tar -xzf "$tmp/xurl_Linux_x86_64.tar.gz" -C "$tmp" xurl && \
     install -m 0755 "$tmp/xurl" /usr/local/bin/xurl && \
