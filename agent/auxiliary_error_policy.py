@@ -92,6 +92,9 @@ def fallback_label(failure: Failure, *, rung_spent: bool = False) -> Optional[st
         return "connection error" if context.get("transport") == "connection" else "request timed out"
     if reason in _LABELS:
         return _LABELS[reason]
+    from hermes_cli.fork_ext.aux_upstream_errors import is_upstream_server_error  # fork (#51)
+    if reason is not _R.content_policy_blocked and is_upstream_server_error(failure.error):
+        return "upstream server error"
     # Terminal: every provider would get the same request (a safety refusal is of the content itself).
     if reason is _R.content_policy_blocked or not (verdict.retryable or verdict.should_fallback):
         return None

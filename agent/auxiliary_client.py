@@ -27,6 +27,7 @@ from urllib.parse import urlparse, parse_qs, urlunparse
 from agent.local_prompt_progress import (
     PromptReadingClock, current_prompt_reading_hook, prompt_progress, prompt_reading_hook, with_prompt_progress)
 from agent import auxiliary_call_outcome, auxiliary_error_policy as aux_errors
+from hermes_cli.fork_ext.aux_upstream_errors import is_upstream_server_error as _is_upstream_server_error  # noqa: F401  fork (#51)
 from agent.error_classifier import (
     FailoverReason,
     UNSUPPORTED_PARAM_MARKERS,
