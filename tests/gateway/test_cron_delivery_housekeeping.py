@@ -135,14 +135,16 @@ def test_multiplex_housekeeping_uses_primary_routes_for_credentialless_satellite
         yield
 
     class FakeSharedRouteAdapters:
-        def __new__(cls, adapters, routes, own_adapters=None):
+        def __new__(cls, adapters, routes, dispatch_routes=None, own_adapters=None):
             calls.append(("routed", adapters, routes))
             return routed
 
     monkeypatch.setattr(gateway_run, "_profile_runtime_scope", fake_scope)
+    # fork: the drain goes through satellite_delivery_adapters, which layers the satellite's own
+    # LOCAL adapter over the borrowed routes (cron/scheduler_preflight.py).
     monkeypatch.setattr(sched_preflight, "SharedRouteAdapters", FakeSharedRouteAdapters)
-    monkeypatch.setattr(sched_preflight, "_primary_profile_routes_for_current_home",
-        lambda: ["route-to-secondary"],
+    monkeypatch.setattr(sched_preflight, "_primary_route_tables_for_current_home",
+        lambda: (["route-to-secondary"], []),
     )
     monkeypatch.setattr(
         scheduler,
@@ -216,7 +218,7 @@ def test_primary_drain_delivers_credentialless_satellite_queue_row_through_prima
     runner = SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True), _profile_adapters={"satellite": {}})
     monkeypatch.setattr(gateway_run, "_handoff_watch_scopes", lambda _r: [("satellite", satellite_home)])
     try:
-        with patch("tools.send_message_tool._send_to_platform", _standalone), \
+        with patch("gateway.outbound.send._send_to_platform", _standalone), \
              patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}):
             gateway_run._drain_restart_safe_cron_deliveries({Platform.DISCORD: PrimaryDiscord()}, loop, runner)
     finally:

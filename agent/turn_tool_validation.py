@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agent.message_metadata import append_message
-from agent.message_sanitization import (close_interrupted_tool_sequence, coalesce_tool_call_id,
-                                          normalize_provider_tool_call_ids)
+from agent.message_sanitization import close_interrupted_tool_sequence, normalize_provider_tool_call_ids
+from session_rules.turns import coalesce_tool_call_id
 from agent.turn_failure_copy import site_copy, stamp_failure
 from hermes_constants import FINISH_REASON_LENGTH
 
@@ -38,6 +38,23 @@ class ToolValidationVerdict:
     mixed_invalid_batch: bool
 
 
+# fork (#211): recovery nudge for a tool call whose ARGUMENTS were cut off mid-JSON. The
+# ``finish_reason == "length"`` path retries with a bigger output budget, but here the router
+# has rewritten finish_reason (OpenRouter reports "tool_calls"/"error"), so the cap is usually
+# the model's own ceiling and there is no larger budget to ask for. The only real recovery is
+# a SMALLER write. (Lived in agent/conversation_loop.py until upstream moved its nudges to
+# session_rules/turns.py in v0.23.x.)
+_TRUNCATED_TOOL_ARGS_NUDGE = (
+    "[System: Your previous tool call was cut off mid-argument because it hit "
+    "the maximum output length, so it was discarded and never executed. Do "
+    "NOT retry it with the same large payload — it will be cut off again. "
+    "Write the content in several smaller tool calls instead (create the file "
+    "with the first chunk, then append the rest), keeping each call's "
+    "arguments under ~8K tokens.]"
+)
+
+
+
 def _preview_name(name: str) -> str:
     return name[:80] + "..." if len(name) > 80 else name
 
@@ -51,6 +68,31 @@ def _append_tool_error_results(messages, tool_calls, content_for) -> None:
             "tool_call_id": coalesce_tool_call_id(tc),
             "content": content_for(tc),
         })
+
+
+def _route_deferred_call(agent, tc) -> bool:
+    """Rewrite a call to a deferred tool by its real name into the ``tool_call`` bridge call, so
+    the executor's scope check, schema probe and hooks run on it as on a model-written one."""
+    from agent.tool_executor import _canonical_tool_name, _tool_search_scoped_names
+    from tools.tool_search_catalog import TOOL_CALL_NAME
+
+    # A legacy alias (``process``) names a deferred tool too, and hints still spell it that way.
+    name = _canonical_tool_name(tc.function.name)
+    if TOOL_CALL_NAME not in agent.valid_tool_names or name not in _tool_search_scoped_names(agent):
+        return False
+    args = tc.function.arguments or "{}"
+    if isinstance(args, str):
+        try:
+            args = json.loads(args.strip() or "{}")
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(args, dict):
+        return False
+    tc.function.name = TOOL_CALL_NAME
+    tc.function.arguments = json.dumps({"calls": [{"name": name, "arguments": args}]}, ensure_ascii=False)
+    agent._vprint(f"{agent.log_prefix}🔧 Routed deferred tool '{name}' through '{TOOL_CALL_NAME}'",
+                  force=True, diagnostic=True)
+    return True
 
 
 def _partial_exit(agent, messages, conversation_history, api_call_count, final_response: str) -> dict[str, Any]:
@@ -102,12 +144,20 @@ def validate_tool_calls(
     repaired_ids = set()
     for tc in tool_calls:
         if tc.function.name not in valid_names:
+            if _route_deferred_call(agent, tc):
+                repaired_ids.add(id(tc))
+                continue
             repaired = agent._repair_tool_call(tc.function.name)
             if repaired:
                 agent._vprint(f"{agent.log_prefix}🔧 Auto-repaired tool name: '{tc.function.name}' -> '{repaired}'",
                               force=True, diagnostic=True)
                 tc.function.name = repaired
                 repaired_ids.add(id(tc))
+    # Signed-thinking turns replay the native sidecar blocks, not tool_calls: every rename must reach them.
+    if repaired_ids and (provider_data := getattr(assistant_message, "provider_data", None)):
+        from agent.tool_call_batches import replace_native_tool_blocks
+        replace_native_tool_blocks(provider_data, {coalesce_tool_call_id(tc): [tc] for tc in tool_calls
+                                                   if id(tc) in repaired_ids})
     # Counted here, before any exit or normalization, so every emitted call is seen once as the model sent it.
     from hermes_cli.observability.shared_metrics_model import record_tool_call_quality
     record_tool_call_quality(agent, tool_calls, repaired_ids)
@@ -188,7 +238,6 @@ def validate_tool_calls(
             # fork (#211): refusing on the FIRST occurrence left no recovery at all -- a
             # cron agent that wrote one oversized file simply died (BigLobster gap-hunter,
             # four runs lost to a single ~65K-token call). Ask for smaller writes, twice.
-            from agent.conversation_loop import _TRUNCATED_TOOL_ARGS_NUDGE
             _trunc_retries = getattr(agent, "_truncated_tool_args_retries", 0)
             if _trunc_retries < 2:
                 agent._truncated_tool_args_retries = _trunc_retries + 1

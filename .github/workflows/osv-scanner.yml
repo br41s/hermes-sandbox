@@ -1,6 +1,6 @@
 name: OSV-Scanner
 
-# Scans lockfiles (uv.lock, package-lock.json) against the OSV vulnerability
+# Scans lockfiles (uv.lock, pnpm-lock.yaml, package-lock.json) against the OSV vulnerability
 # database. Runs on every PR/push (via the ci.yml orchestrator's workflow_call)
 # and on a weekly schedule against main.
 #
@@ -59,7 +59,7 @@ jobs:
             --output=results.json
             --format=json
             --lockfile=uv.lock
-            --lockfile=package-lock.json
+            --lockfile=pnpm-lock.yaml
             --lockfile=website/package-lock.json
             --lockfile=plugins/platforms/photon/sidecar/package-lock.json
             --lockfile=scripts/whatsapp-bridge/package-lock.json
