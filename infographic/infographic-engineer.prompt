@@ -513,6 +513,11 @@ STEP 7 — Report
 The cron delivers your final message; do not send anything yourself. Report in
 the article's language.
 
+Never put a `MEDIA:` line in the report. Your checkout is deleted before the
+message is delivered, so the attachment path no longer exists and Telegram marks
+the run `delivery_failed`. Describe the image in text; the PR or the live page
+carries it.
+
   ✅ Infographic added
   - Article: <title> (<slug>, <published|draft>)
   - Lane: <repo|client>   Format: <poster|svg|table>
