@@ -34,11 +34,12 @@ def state_file(tmp_path):
     return tmp_path / "workspace" / "seo-tech" / "estado.json"
 
 
-def html_page(canonical, title="Página", description="Descripción", robots=None,
-              body=None, alternates=""):
+def html_page(canonical, title="Página de prueba sobre agentes en alquiler",
+              description="Descripción de prueba con la longitud mínima necesaria para pasar la comprobación.",
+              robots=None, body=None, alternates="", links=""):
     desc = "" if description is None else f'<meta name="description" content="{description}">'
     rob = "" if robots is None else f'<meta name="robots" content="{robots}">'
-    body = body if body is not None else "x" * 4000
+    body = body if body is not None else links + "x" * 4000
     return (
         "<!doctype html><html><head>"
         f"<title>{title}</title>{desc}{rob}"
@@ -233,6 +234,177 @@ def test_duplicate_titles_name_up_to_three_urls():
     assert urls[3] not in line
 
 
+# --- links, JSON-LD and <main> parsing ------------------------------------
+
+
+def test_parse_page_collects_links_jsonld_and_main_words():
+    html = (
+        "<html><head>"
+        '<script type="application/ld+json">{"@type": "WebSite"}</script>'
+        "</head><body>"
+        '<a href="/a" target="_blank" rel="noopener">A</a><a name="ancla">sin href</a>'
+        "<main><p>uno dos tres</p>"
+        "<script>no cuenta</script><style>tampoco</style>"
+        "<noscript>ni esto</noscript><template>ni esto</template>"
+        "<svg><text>ni esto</text></svg>"
+        "</main></body></html>"
+    )
+    page = mod.parse_page(html)
+    assert page["links"] == [("/a", "_blank", "noopener")]
+    assert page["jsonld"] == ['{"@type": "WebSite"}']
+    assert page["main_words"] == 3
+
+
+def test_jsonld_type_is_matched_case_insensitively():
+    html = '<html><body><script type=" Application/LD+JSON ">{"a": 1}</script></body></html>'
+    assert mod.parse_page(html)["jsonld"] == ['{"a": 1}']
+
+
+def test_parse_page_without_main_has_no_main_words():
+    page = mod.parse_page("<html><body><p>texto</p></body></html>")
+    assert page["main_words"] is None
+    assert page["links"] == []
+    assert page["jsonld"] == []
+
+
+# --- title and description length -----------------------------------------
+
+
+def test_title_length_bounds():
+    url = f"{SITE}/a"
+    short = mod.check_lengths(url, {"title": "x" * 29})
+    assert [fp for fp, _line in short] == [f"pagina:titulo-corto:{url}"]
+    assert short[0][1] == f"Título corto (29 caracteres, mín. 30): {url}"
+    assert mod.check_lengths(url, {"title": "x" * 30}) == []
+    assert mod.check_lengths(url, {"title": "x" * 65}) == []
+    assert [fp for fp, _line in mod.check_lengths(url, {"title": "x" * 66})] == [
+        f"pagina:titulo-largo:{url}"
+    ]
+
+
+def test_description_length_bounds():
+    url = f"{SITE}/a"
+    short = mod.check_lengths(url, {"title": "", "description": "x" * 69})
+    assert [fp for fp, _line in short] == [f"pagina:description-corta:{url}"]
+    assert "Meta description corta (69 caracteres, mín. 70)" in short[0][1]
+    assert mod.check_lengths(url, {"title": "", "description": "x" * 70}) == []
+    assert mod.check_lengths(url, {"title": "", "description": "x" * 160}) == []
+    assert [fp for fp, _line in mod.check_lengths(url, {"title": "", "description": "x" * 161})] == [
+        f"pagina:description-larga:{url}"
+    ]
+
+
+def test_length_checks_skip_empty_title_and_missing_description():
+    url = f"{SITE}/a"
+    assert mod.check_lengths(url, {"title": "", "description": None}) == []
+    assert mod.check_lengths(url, {"title": "x" * 40, "description": "   "}) == []
+
+
+# --- JSON-LD --------------------------------------------------------------
+
+
+def test_valid_jsonld_gives_nothing():
+    page = {"jsonld": ['{"@type": "WebSite", "name": "BigLobster"}']}
+    assert mod.check_jsonld(f"{SITE}/a", page) == []
+
+
+def test_jsonld_reference_node_is_valid():
+    page = {"jsonld": ['{"@type":"WebSite","@id":"x"}']}
+    assert mod.check_jsonld(f"{SITE}/a", page) == []
+
+
+def test_broken_jsonld_names_the_block():
+    page = {"jsonld": ['{"@type": "WebSite"}', "{roto"]}
+    findings = mod.check_jsonld(f"{SITE}/a", page)
+    assert [fp for fp, _line in findings] == [f"jsonld:invalido:{SITE}/a"]
+    assert "bloque 2" in findings[0][1]
+
+
+def test_whitespace_only_jsonld_is_invalid():
+    findings = mod.check_jsonld(f"{SITE}/a", {"jsonld": ["   \n "]})
+    assert [fp for fp, _line in findings] == [f"jsonld:invalido:{SITE}/a"]
+
+
+# --- target=_blank without noopener ---------------------------------------
+
+
+def test_blank_link_without_rel_is_a_finding():
+    page = {"links": [("/a", "_blank", "")]}
+    findings = mod.check_blank_links(f"{SITE}/", page)
+    assert [fp for fp, _line in findings] == [f"enlace:sin-noopener:{SITE}/"]
+    assert "1 enlace(s)" in findings[0][1]
+    assert "/a" in findings[0][1]
+
+
+def test_blank_link_with_noopener_or_noreferrer_is_fine():
+    for rel in ("noopener", "noreferrer", "NOOPENER noreferrer"):
+        assert mod.check_blank_links(f"{SITE}/", {"links": [("/a", "_blank", rel)]}) == []
+
+
+def test_link_without_target_is_ignored():
+    assert mod.check_blank_links(f"{SITE}/", {"links": [("/a", "", "")]}) == []
+
+
+def test_blank_links_are_counted():
+    page = {"links": [("/a", "_blank", ""), ("/b", "_BLANK", ""), ("/c", "", "")]}
+    [(_fp, line)] = mod.check_blank_links(f"{SITE}/", page)
+    assert "2 enlace(s)" in line
+
+
+# --- thin <main> ----------------------------------------------------------
+
+
+def test_thin_main_text_is_a_finding():
+    url = f"{SITE}/a"
+    assert [fp for fp, _line in mod.check_thin(url, {"main_words": 149})] == [
+        f"pagina:poco-texto:{url}"
+    ]
+    assert mod.check_thin(url, {"main_words": 150}) == []
+    assert mod.check_thin(url, {"main_words": None}) == []
+
+
+# --- orphan pages ---------------------------------------------------------
+
+
+def test_page_linked_only_by_its_hreflang_twin_is_an_orphan():
+    a, b = f"{SITE}/a.html", f"{SITE}/es/a.html"
+    pages = {
+        a: {"links": [(b, "", "")], "alternates": [("es", b)]},
+        b: {"links": [(a, "", "")], "alternates": [("en", a)]},
+    }
+    assert [fp for fp, _line in mod.check_orphans(pages)] == [
+        f"pagina:huerfana:{a}",
+        f"pagina:huerfana:{b}",
+    ]
+
+
+def test_page_linked_by_a_third_page_is_not_an_orphan():
+    home, a, b = f"{SITE}/", f"{SITE}/a.html", f"{SITE}/b.html"
+    pages = {
+        home: {
+            "links": [("a.html", "", ""), (f"{SITE}/b.html#seccion", "", "")],
+            "alternates": [],
+        },
+        a: {"links": [], "alternates": []},
+        b: {"links": [], "alternates": []},
+    }
+    assert mod.check_orphans(pages) == []
+
+
+def test_home_pages_are_never_orphans():
+    pages = {
+        f"{SITE}/": {"links": [], "alternates": []},
+        f"{SITE}/es/": {"links": [], "alternates": []},
+    }
+    assert mod.check_orphans(pages) == []
+
+
+def test_self_link_alone_does_not_save_a_page():
+    a = f"{SITE}/a.html"
+    pages = {a: {"links": [(a, "", "")], "alternates": []}}
+    assert [fp for fp, _line in mod.check_orphans(pages)] == [f"pagina:huerfana:{a}"]
+
+
 # --- hreflang -------------------------------------------------------------
 
 
@@ -349,6 +521,52 @@ def test_psi_values_under_thresholds_give_nothing():
     assert mod.check_psi(f"{SITE}/", lab) == []
 
 
+def test_psi_lcp_lazy_loaded_audit_is_a_finding():
+    data = {"lighthouseResult": {"audits": {"lcp-lazy-loaded": {"score": 0}}}}
+    assert [fp for fp, _line in mod.check_psi(f"{SITE}/", data)] == [
+        f"psi:lcp-descubrimiento:{SITE}/"
+    ]
+
+
+def test_psi_lcp_discovery_insight_audit_is_a_finding():
+    data = {"lighthouseResult": {"audits": {"lcp-discovery-insight": {"score": 0}}}}
+    findings = mod.check_psi(f"{SITE}/", data)
+    assert [fp for fp, _line in findings] == [f"psi:lcp-descubrimiento:{SITE}/"]
+    assert "lcp-discovery-insight" in findings[0][1]
+
+
+def test_psi_lcp_audit_without_score_gives_nothing():
+    data = {"lighthouseResult": {"audits": {"lcp-lazy-loaded": {"score": None}}}}
+    assert mod.check_psi(f"{SITE}/", data) == []
+
+
+def test_psi_both_lcp_audits_failing_give_one_finding():
+    data = {
+        "lighthouseResult": {
+            "audits": {
+                "lcp-lazy-loaded": {"score": 0},
+                "lcp-discovery-insight": {"score": 0},
+            }
+        }
+    }
+    findings = mod.check_psi(f"{SITE}/", data)
+    assert [fp for fp, _line in findings] == [f"psi:lcp-descubrimiento:{SITE}/"]
+    assert "lcp-lazy-loaded" in findings[0][1]
+
+
+def test_psi_lcp_audit_with_field_data_keeps_field_findings():
+    data = {
+        "loadingExperience": {
+            "metrics": {"LARGEST_CONTENTFUL_PAINT_MS": {"percentile": 4100}}
+        },
+        "lighthouseResult": {"audits": {"lcp-lazy-loaded": {"score": 0}}},
+    }
+    assert {fp for fp, _line in mod.check_psi(f"{SITE}/", data)} == {
+        f"psi:lcp-descubrimiento:{SITE}/",
+        f"psi:lcp:{SITE}/",
+    }
+
+
 def test_psi_429_is_a_note_without_a_finding(home, monkeypatch, capsys):
     url = f"{SITE}/a"
     routes = sitemap_routes({url: html_page(url, description=None)})
@@ -405,8 +623,10 @@ def test_first_run_reports_new_second_is_silent_third_reports_resolved(
         home, monkeypatch, capsys):
     a, b = f"{SITE}/a", f"{SITE}/b"
     broken = sitemap_routes({
-        a: html_page(a, title="A", description=None),
-        b: html_page(b, title="B", description=None),
+        a: html_page(a, title="Página A de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{b}">B</a>'),
+        b: html_page(b, title="Página B de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{a}">A</a>'),
     })
     install_fetch(monkeypatch, broken)
     install_psi(monkeypatch, data={})
@@ -420,8 +640,10 @@ def test_first_run_reports_new_second_is_silent_third_reports_resolved(
     assert capsys.readouterr().out == ""
 
     fixed = sitemap_routes({
-        a: html_page(a, title="A"),
-        b: html_page(b, title="B", description=None),
+        a: html_page(a, title="Página A de prueba sobre agentes en alquiler",
+                     links=f'<a href="{b}">B</a>'),
+        b: html_page(b, title="Página B de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{a}">A</a>'),
     })
     install_fetch(monkeypatch, fixed)
     assert mod.main() == 0
@@ -441,8 +663,10 @@ def test_psi_unavailable_keeps_existing_psi_finding_as_persisting(
     )
     a, b = f"{SITE}/a", f"{SITE}/b"
     routes = sitemap_routes({
-        a: html_page(a, title="A", description=None),
-        b: html_page(b, title="B"),
+        a: html_page(a, title="Página A de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{b}">B</a>'),
+        b: html_page(b, title="Página B de prueba sobre agentes en alquiler",
+                     links=f'<a href="{a}">A</a>'),
     })
     install_fetch(monkeypatch, routes)
     install_psi(monkeypatch, error="429")
@@ -486,8 +710,10 @@ def test_corrupt_state_is_treated_as_empty(home, monkeypatch, capsys):
     path.write_text("{no es json", encoding="utf-8")
     a, b = f"{SITE}/a", f"{SITE}/b"
     routes = sitemap_routes({
-        a: html_page(a, title="A", description=None),
-        b: html_page(b, title="B", description=None),
+        a: html_page(a, title="Página A de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{b}">B</a>'),
+        b: html_page(b, title="Página B de prueba sobre agentes en alquiler",
+                     description=None, links=f'<a href="{a}">A</a>'),
     })
     install_fetch(monkeypatch, routes)
     install_psi(monkeypatch, data={})
@@ -514,3 +740,26 @@ def test_remote_text_in_report_lines_is_one_short_line():
     [(_fp, line)] = [f for f in mod.check_page("https://biglobster.top/a", 200, {}, page) if "soft404" in f[0]]
     assert "\n" not in line and "\r" not in line
     assert len(line) < 220
+
+
+# --- main: new checks reach the report ------------------------------------
+
+
+def test_main_reports_an_orphan_and_a_short_title(home, monkeypatch, capsys):
+    entry, orphan, short = f"{SITE}/", f"{SITE}/sola.html", f"{SITE}/corta.html"
+    routes = sitemap_routes({
+        entry: html_page(entry, links=f'<a href="{short}">Corta</a>'),
+        orphan: html_page(orphan),
+        short: html_page(short, title="Corta"),
+    })
+    install_fetch(monkeypatch, routes)
+    install_psi(monkeypatch, data={})
+
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "Nuevos:" in out
+    assert (
+        "Huérfana: ninguna página del sitemap la enlaza (sin contar su par de idioma): "
+        f"{orphan}"
+    ) in out
+    assert f"Título corto (5 caracteres, mín. 30): {short}" in out

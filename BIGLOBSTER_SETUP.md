@@ -859,10 +859,15 @@ This keeps the two checks of the retired Buzz bot SEODesk that earned their keep
 **What it checks, on the live site:**
 - every sitemap URL: status, redirects, soft 404, title, description, canonical, `noindex`;
 - duplicate titles;
+- title outside 30–65 characters, meta description outside 70–160 (Google's cut-offs, not an "ideal" band);
+- JSON-LD that does not parse (an `{"@type","@id"}` reference node is valid and not reported);
+- `target="_blank"` links without `rel` noopener/noreferrer;
+- under 150 words inside `<main>` (legal and newsletter pages sit near this floor);
+- orphans: sitemap pages no other sitemap page links to. A link from the page's hreflang twin does not count, because the language switcher links every translation. The paginated blog archive is not in the sitemap, so a post reached only through it is reported too;
 - hreflang coverage and broken targets;
 - robots.txt: Google, Bing, Apple and the AI crawlers must be allowed;
 - llms.txt links;
-- PageSpeed mobile for the home pages, the pricing pages and the heaviest page. It uses Google's "poor" thresholds and prefers field data.
+- PageSpeed mobile for the home pages, the pricing pages and the heaviest page. It uses Google's "poor" thresholds and prefers field data. It also reports an LCP image loaded late or without priority, from Lighthouse's `lcp-lazy-loaded` or `lcp-discovery-insight` audit of the rendered page. A static guess from the HTML would take a below-the-fold card for the LCP, as a third-party audit did on 2026-11-26.
 
 **What it reports:**
 - only what changed since last week: new findings in full, plus counts of the persisting and resolved ones;
