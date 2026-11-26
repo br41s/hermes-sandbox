@@ -37,6 +37,10 @@ Two scripts, two homes:
   past the newest 2 are deleted only after `rclone check --one-way` (size + MD5) finds
   the newest one in Drive. The script passes `--keep 0` so `hermes backup` prunes nothing
   itself. A zip over 1.6 GB prints a `WARN` (three copies must fit).
+  **2026-11-26**: every profile's `state.db` was moved to the compact search-index layout
+  with `hermes sessions optimize-storage` (Hermes stopped 02:07-02:31 UTC, row counts and
+  `quick_check` equal before and after; main 2,350 -> 866 MB, bl-shoroban 1,387 -> 475).
+  Copies of the old files are in `/data/hermes/pre-optimize-20261125/` on the host.
   **`backup_slim.py`** (same directory, live copy `/opt/data/scripts/backup_slim.py`) drops
   what can be rebuilt: `.npm`, `.next` and pnpm caches, git checkouts (`checkouts/`, and
   `workspace/<dir>` that has a `.git`; `hermes backup` never included `.git`, so unpushed
