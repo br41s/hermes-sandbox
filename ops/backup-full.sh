@@ -48,6 +48,7 @@ fi
 if [ "$STATUS" = OK ]; then
   # Drop regenerable files and recompress with zstd. An unslimmed ~5 GB zip must
   # never be uploaded: it would fill the Drive quota and block Gmail too.
+  # Deleting it bounds local disk (~6 GB a night); older zips stay and the ALERT fires.
   if ! "$PYTHON" -I "$SLIM" "$ZIP" "$HERMES_HOME" >>"$LOG" 2>&1; then
     STATUS=FAIL
     rm -f "$ZIP"

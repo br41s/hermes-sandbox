@@ -77,9 +77,12 @@ echo "== staged (root-only): $OUT"; ls -la "$OUT"; du -sh "$OUT"
 # Retention in Drive (Brais, 2026-11-25): keep 3, the oldest removed BEFORE the upload,
 # because the 15 GB quota is shared with Gmail and Photos and counts trashed files too.
 # Pruning to 2 first means a failed upload can never take Drive below 3-1 copies; only
-# stamp-named directories count, and no stamp at all leaves it untouched.
+# stamp-named directories count, and no stamp at all leaves it untouched. A failed
+# listing or purge never stops tonight's upload (a full folder beats no off-host copy):
+# it is remembered and fails the run at the end, so the host log says FAILED.
 DRIVE_KEEP=3
-drive_list=$($RCLONE lsf "hermesdrive:/VolumeBackups/" --dirs-only)
+prune_failed=0
+drive_list=$($RCLONE lsf "hermesdrive:/VolumeBackups/" --dirs-only) || { echo "prune: lsf failed" >&2; prune_failed=1; drive_list=""; }
 stamps=""
 while read -r n; do
   n=${n%/}
@@ -89,7 +92,7 @@ done <<<"$drive_list"
 while read -r n; do
   [ -n "$n" ] || continue
   echo "prune drive: $n"
-  $RCLONE purge "hermesdrive:/VolumeBackups/$n" --drive-use-trash=false
+  $RCLONE purge "hermesdrive:/VolumeBackups/$n" --drive-use-trash=false || { echo "prune failed: $n" >&2; prune_failed=1; }
 done <<<"$(printf '%s' "$stamps" | sort -r | tail -n +"$DRIVE_KEEP")"
 
 # Off-host copy from the host itself; the container is not involved. `check` fails
@@ -110,3 +113,4 @@ for d in "$STAGE"/*/; do
   if [ "${n:0:8}" -lt "$host_cutoff" ]; then echo "prune host: $n"; rm -rf -- "$STAGE/$n"; fi
 done
 echo "== retention: host keeps >= $host_cutoff, drive keeps $DRIVE_KEEP newest"
+[ "$prune_failed" = 0 ] || { echo "Drive prune failed earlier; upload verified, Drive may hold more than $DRIVE_KEEP" >&2; exit 1; }
