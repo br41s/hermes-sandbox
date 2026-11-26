@@ -320,6 +320,12 @@ def test_broken_jsonld_names_the_block():
     assert "bloque 2" in findings[0][1]
 
 
+def test_deeply_nested_jsonld_is_a_finding_not_a_crash():
+    findings = mod.check_jsonld(f"{SITE}/a", {"jsonld": ["[" * 100000 + "]" * 100000]})
+    assert [fp for fp, _line in findings] == [f"jsonld:invalido:{SITE}/a"]
+    assert "RecursionError" in findings[0][1]
+
+
 def test_whitespace_only_jsonld_is_invalid():
     findings = mod.check_jsonld(f"{SITE}/a", {"jsonld": ["   \n "]})
     assert [fp for fp, _line in findings] == [f"jsonld:invalido:{SITE}/a"]

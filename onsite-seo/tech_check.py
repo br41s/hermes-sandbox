@@ -388,7 +388,8 @@ def check_jsonld(url, page):
     for i, block in enumerate(page.get("jsonld") or [], 1):
         try:
             json.loads(block)
-        except ValueError as exc:
+        # RecursionError: deeply nested JSON must be a finding, not abort the run.
+        except (ValueError, RecursionError) as exc:
             return [
                 (
                     f"jsonld:invalido:{url}",
