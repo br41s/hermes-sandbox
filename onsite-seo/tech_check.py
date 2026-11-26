@@ -11,9 +11,15 @@ It checks, against the live site:
   * the sitemap (following a sitemapindex, at most two levels) against the live
     pages: status, redirects, title/description/canonical/robots, soft 404s and
     duplicate titles;
+  * title and meta description length outside the recommended window;
+  * JSON-LD blocks that do not parse;
+  * target=_blank links without rel=noopener/noreferrer;
+  * pages whose <main> carries too little text;
+  * orphan pages no other sitemap page links to, ignoring language twins;
   * hreflang: alternates that do not link back and broken targets;
   * llms.txt: status and links outside the sitemap that do not answer 200;
   * PageSpeed (mobile) for a few key pages, field data first, lab as fallback.
+  * PageSpeed's LCP image audit: loaded late or without priority.
 
 WHY THIS EXISTS: the cron sandbox forbids `python -c`, and the folder name has
 a hyphen (not importable as a module), so the job invokes this committed script
@@ -33,7 +39,7 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from html.parser import HTMLParser
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -62,6 +68,15 @@ BOTS = [
 ]
 MAX_LISTED = 30
 PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+
+TITLE_MIN = 30
+TITLE_MAX = 65
+DESC_MIN = 70
+DESC_MAX = 160
+THIN_MAIN_WORDS = 150
+HOME_PATHS = ("/", "/es/")  # entry points, never reported as orphans
+# Tags whose text never counts as <main> copy.
+_MAIN_SKIP_TAGS = ("script", "style", "noscript", "template", "svg")
 
 _MD_LINK_RE = re.compile(r"\]\(\s*(https?://[^)\s]+)")
 _BARE_LINK_RE = re.compile(re.escape(SITE) + r"/[^\s)\]<>\"']+")
@@ -156,9 +171,17 @@ class _PageParser(HTMLParser):
         self.canonical = None
         self.robots = ""
         self.alternates = []
+        self.links = []
+        self.jsonld = []
         self._in_title = False
         self._title_done = False
         self._svg_depth = 0
+        self._in_jsonld = False
+        self._jsonld_parts = []
+        self._has_main = False
+        self._main_depth = 0
+        self._main_skip = 0
+        self._main_parts = []
 
     def handle_starttag(self, tag, attrs):
         values = {key.lower(): (val or "") for key, val in attrs}
@@ -182,6 +205,21 @@ class _PageParser(HTMLParser):
                 href = values.get("href")
                 if lang and href:
                     self.alternates.append((lang, href))
+        elif tag == "a":
+            href = values.get("href", "")
+            if href:
+                self.links.append(
+                    (href, values.get("target", ""), values.get("rel", ""))
+                )
+        elif tag == "script":
+            if values.get("type", "").strip().lower() == "application/ld+json":
+                self._in_jsonld = True
+                self._jsonld_parts = []
+        elif tag == "main":
+            self._has_main = True
+            self._main_depth += 1
+        if tag in _MAIN_SKIP_TAGS and self._main_depth:
+            self._main_skip += 1
 
     def handle_endtag(self, tag):
         if tag == "svg":
@@ -190,15 +228,31 @@ class _PageParser(HTMLParser):
         elif tag == "title" and self._in_title:
             self._in_title = False
             self._title_done = True
+        elif tag == "script" and self._in_jsonld:
+            self._in_jsonld = False
+            self.jsonld.append("".join(self._jsonld_parts))
+            self._jsonld_parts = []
+        elif tag == "main":
+            if self._main_depth:
+                self._main_depth -= 1
+        if tag in _MAIN_SKIP_TAGS and self._main_skip:
+            self._main_skip -= 1
 
     def handle_data(self, data):
         if self._in_title:
             self.title += data
+        if self._in_jsonld:
+            self._jsonld_parts.append(data)
+        if self._main_depth and not self._main_skip:
+            self._main_parts.append(data)
 
 
 def parse_page(html):
     parser = _PageParser()
     parser.feed(html)
+    main_words = None
+    if parser._has_main:
+        main_words = len(re.findall(r"\w+", "".join(parser._main_parts)))
     return {
         "title": parser.title.strip(),
         "description": parser.description,
@@ -206,6 +260,9 @@ def parse_page(html):
         "robots": parser.robots,
         "alternates": parser.alternates,
         "body_len": len(html.encode("utf-8")),
+        "links": parser.links,
+        "jsonld": parser.jsonld,
+        "main_words": main_words,
     }
 
 
@@ -281,6 +338,140 @@ def check_duplicate_titles(pages):
             (
                 f"titulo-duplicado:{_limpio(title, 80)}",
                 f"Título duplicado en {len(urls)} páginas ({shown})",
+            )
+        )
+    return findings
+
+
+def check_lengths(url, page):
+    """Title and meta description outside the recommended length window."""
+    findings = []
+    title = page.get("title") or ""
+    if title:
+        n = len(title)
+        if n < TITLE_MIN:
+            findings.append(
+                (
+                    f"pagina:titulo-corto:{url}",
+                    f"Título corto ({n} caracteres, mín. {TITLE_MIN}): {url}",
+                )
+            )
+        elif n > TITLE_MAX:
+            findings.append(
+                (
+                    f"pagina:titulo-largo:{url}",
+                    f"Título largo ({n} caracteres, máx. {TITLE_MAX}): {url}",
+                )
+            )
+    description = (page.get("description") or "").strip()
+    if description:
+        n = len(description)
+        if n < DESC_MIN:
+            findings.append(
+                (
+                    f"pagina:description-corta:{url}",
+                    f"Meta description corta ({n} caracteres, mín. {DESC_MIN}): {url}",
+                )
+            )
+        elif n > DESC_MAX:
+            findings.append(
+                (
+                    f"pagina:description-larga:{url}",
+                    f"Meta description larga ({n} caracteres, máx. {DESC_MAX}): {url}",
+                )
+            )
+    return findings
+
+
+def check_jsonld(url, page):
+    """First JSON-LD block that does not parse. Content rules are not checked."""
+    for i, block in enumerate(page.get("jsonld") or [], 1):
+        try:
+            json.loads(block)
+        # RecursionError: deeply nested JSON must be a finding, not abort the run.
+        except (ValueError, RecursionError) as exc:
+            return [
+                (
+                    f"jsonld:invalido:{url}",
+                    f"JSON-LD ilegible (bloque {i}, {type(exc).__name__}): {url}",
+                )
+            ]
+    return []
+
+
+def check_blank_links(url, page):
+    """target=_blank links that carry neither noopener nor noreferrer in rel."""
+    bare = []
+    for href, target, rel in page.get("links") or []:
+        if target.strip().lower() != "_blank":
+            continue
+        tokens = rel.lower().split()
+        if "noopener" in tokens or "noreferrer" in tokens:
+            continue
+        bare.append(href)
+    if not bare:
+        return []
+    return [
+        (
+            f"enlace:sin-noopener:{url}",
+            f"{len(bare)} enlace(s) target=_blank sin rel=noopener en {url} "
+            f"(p. ej. {_limpio(bare[0], 80)})",
+        )
+    ]
+
+
+def check_thin(url, page):
+    """Pages with a <main> but too little copy inside it. No <main>, no finding."""
+    words = page.get("main_words")
+    if words is None or words >= THIN_MAIN_WORDS:
+        return []
+    return [
+        (
+            f"pagina:poco-texto:{url}",
+            f"Poco texto en <main> ({words} palabras, mín. {THIN_MAIN_WORDS}): {url}",
+        )
+    ]
+
+
+def check_orphans(parsed_pages):
+    """Sitemap pages no other sitemap page links to, ignoring language twins.
+
+    A link from S to T does not count when T is one of S's hreflang alternates or
+    S is one of T's: every page reaches its translation through the language
+    switcher, which otherwise hides real orphans.
+    """
+    by_normalized = {}
+    for url in parsed_pages:
+        by_normalized.setdefault(normalize_url(url), url)
+    alternates = {
+        url: {normalize_url(href) for _lang, href in page.get("alternates") or []}
+        for url, page in parsed_pages.items()
+    }
+    inbound = {url: set() for url in parsed_pages}
+    for source, page in parsed_pages.items():
+        for href, _target, _rel in page.get("links") or []:
+            resolved = urlsplit(urljoin(source, href))
+            clean = urlunsplit((resolved.scheme, resolved.netloc, resolved.path, "", ""))
+            if resolved.scheme != "https" or not _same_site(clean):
+                continue
+            target = by_normalized.get(normalize_url(clean))
+            if target is None or target == source:
+                continue
+            if (normalize_url(target) in alternates[source]
+                    or normalize_url(source) in alternates[target]):
+                continue
+            inbound[target].add(source)
+    findings = []
+    for url in parsed_pages:
+        if urlsplit(normalize_url(url)).path in HOME_PATHS:
+            continue
+        if inbound[url]:
+            continue
+        findings.append(
+            (
+                f"pagina:huerfana:{url}",
+                f"Huérfana: ninguna página del sitemap la enlaza "
+                f"(sin contar su par de idioma): {url}",
             )
         )
     return findings
@@ -494,6 +685,24 @@ def check_psi(url, data):
     data = data or {}
     metrics = (data.get("loadingExperience") or {}).get("metrics") or {}
     findings = []
+    audits = (data.get("lighthouseResult") or {}).get("audits") or {}
+    # lighthouseResult is present with or without field data. The first id is the
+    # legacy Lighthouse audit, the second its replacement: whichever exists.
+    for audit_id in ("lcp-lazy-loaded", "lcp-discovery-insight"):
+        audit = audits.get(audit_id)
+        if not isinstance(audit, dict):
+            continue
+        score = audit.get("score")
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            continue
+        if score < 0.9:
+            findings.append(
+                (
+                    f"psi:lcp-descubrimiento:{url}",
+                    f"Imagen LCP tardía o sin prioridad en {url} (PageSpeed: {audit_id})",
+                )
+            )
+            break
     if metrics:
         lcp = _metric_percentile(metrics, "LARGEST_CONTENTFUL_PAINT_MS")
         if lcp is not None and lcp > 4000:
@@ -506,7 +715,6 @@ def check_psi(url, data):
             findings.append((f"psi:inp:{url}", f"INP {inp:.0f} ms en {url} (campo)"))
         return findings
 
-    audits = (data.get("lighthouseResult") or {}).get("audits") or {}
     lcp = _audit_value(audits, "largest-contentful-paint")
     if lcp is not None and lcp > 4000:
         findings.append(
@@ -585,7 +793,12 @@ def _check_pages(client, sitemap_urls, findings):
         if status == 200:
             parsed_pages[url] = page
             titles.append((url, page["title"]))
+            findings.update(check_lengths(url, page))
+            findings.update(check_jsonld(url, page))
+            findings.update(check_blank_links(url, page))
+            findings.update(check_thin(url, page))
     findings.update(check_duplicate_titles(titles))
+    findings.update(check_orphans(parsed_pages))
 
     alternates = {
         url: [href for _lang, href in page["alternates"]]
