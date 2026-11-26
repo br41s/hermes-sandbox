@@ -27,15 +27,33 @@ Two scripts, two homes:
 - **`backup-full.sh` runs from the volume; this directory holds the versioned copy.**
   The live file is `/opt/data/scripts/backup-full.sh`, run nightly by the default
   profile's cron job `3f6f866ce1af` (no agent). It zips `/opt/data` with `hermes backup`,
-  mirrors the newest to Drive `hermesdrive:/HermesBackups`
-  with `/opt/data/scripts/bin/rclone`, and keeps 7 on Drive and 2 locally. The zip excludes `backups/` itself.
-  **2026-10-21**: a local zip past the newest 2 is deleted only after `rclone check
-  --one-way` (size + MD5) finds it on Drive. A zip missing from Drive (a failed night)
-  is uploaded again and re-checked; one that still does not verify stays local and
-  raises `DRIVE SYNC FAILED`, while the others are pruned. Before that, `hermes backup` pruned its own zips to 3 (`--keep`
-  defaults to 3) before anything was uploaded; the script now passes `--keep 0`. After editing
-  `ops/backup-full.sh`, copy it to the volume path as root and keep it `10000:10000`, or
-  the next run fails on permissions.
+  shrinks it with `backup_slim.py`, and mirrors the newest to Drive `hermesdrive:/HermesBackups`
+  with `/opt/data/scripts/bin/rclone`. The zip excludes `backups/` itself.
+  **Drive keeps 3, local keeps 2** (Brais, 2026-11-25: Drive goes to 15 GB shared with
+  Gmail and Photos, and a full quota also stops incoming mail). Once the new zip is built,
+  slimmed and verified, the oldest Drive zip goes **before** the upload, with
+  `--drive-use-trash=false` because trashed files count against the quota. It only ever
+  prunes to 2, so nights whose upload fails never leave fewer than 2 in Drive. Local zips
+  past the newest 2 are deleted only after `rclone check --one-way` (size + MD5) finds
+  the newest one in Drive. The script passes `--keep 0` so `hermes backup` prunes nothing
+  itself. A zip over 1.6 GB prints a `WARN` (three copies must fit).
+  **2026-11-26**: every profile's `state.db` was moved to the compact search-index layout
+  with `hermes sessions optimize-storage` (Hermes stopped 02:07-02:31 UTC, row counts and
+  `quick_check` equal before and after; main 2,350 -> 866 MB, bl-shoroban 1,387 -> 475).
+  Copies of the old files are in `/data/hermes/pre-optimize-20261125/` on the host.
+  **`backup_slim.py`** (same directory, live copy `/opt/data/scripts/backup_slim.py`) drops
+  what can be rebuilt: `.npm`, `.next` and pnpm caches, git checkouts (`checkouts/`, and
+  `workspace/<dir>` that has a `.git`; `hermes backup` never included `.git`, so unpushed
+  commits were not in the zip before either), `scratch*`/`tmp*` directories, and the
+  `.mp4` files under `workspace/shorts` (finished videos are in Drive `Flow/` and on
+  YouTube); `.env*`, `.git-credentials`, `*.key` and `*.pem` are kept wherever they are. It recompresses the rest with zstd and refuses, leaving the zip alone, unless
+  the main `state.db`, `config.yaml` and `.env` are inside and not empty (even if gone from disk),
+  every profile's `state.db`, `config.yaml`, `.env` and `cron/jobs.json` is inside, and every
+  member's CRC matches; the script then deletes that zip and alerts. `hermes import` in the
+  Hermes image (Python 3.14) reads it directly; a Mac's `unzip` cannot, use
+  `python3.14 -m zipfile -e <zip> <dir>`.
+  After editing `ops/backup-full.sh` or `ops/backup_slim.py`, copy it to the volume path as
+  root and keep it `10000:10000`, or the next run fails on permissions.
   **2026-10-06**: `hermes backup` exits non-zero when a file vanishes between its scan
   and the archive (cron output pruned mid-run) but still writes the zip atomically; the
   script deleted that zip, so 7 of the 10 nights before the fix had no backup at all.
@@ -76,8 +94,9 @@ Two scripts, two homes:
   newest dated folder in Drive must be under 50h old and hold the three Postgres dumps,
   or the Incidents topic gets a brief. A night whose final `rclone check` failed after
   the dumps had landed still shows only in this log. **Retention** (Brais,
-  2026-10-06): 14 days of stamps on the host, 30 in Drive, pruned by the script itself
-  only after that night's upload verified. All three dumps were restored from Drive into
+  2026-11-25): 3 stamps in Drive, the oldest purged (no trash) before the upload once every
+  staged dump has passed its checks; 14 days of stamps on the host, pruned only after that
+  night's upload verified. All three dumps were restored from Drive into
   throwaway containers on 2026-11-05, row counts equal to live.
 - **Coolify also uploads the three Postgres databases to R2** (`vps-db-backups`, 03:00 UTC,
   30 days). It does not cover the volumes above, and the watcher does not read it.

@@ -1,9 +1,10 @@
-"""ops/backup-full.sh local retention: delete a local zip only once Drive has it.
+"""ops/backup-full.sh retention: Drive keeps 3 (oldest removed before the upload).
 
-Until 2026-10-21 `hermes backup` pruned hermes-backup-*.zip to its default 3
-before the script uploaded anything, so local deletion never depended on the
-Drive copy. The script now passes `--keep 0`, keeps the newest LOCAL_KEEP zips,
-and deletes older ones only after `rclone check --one-way` verifies them.
+Drive dropped to 15 GB shared with Gmail and Photos, so three slim copies are the
+budget. The oldest Drive zip is deleted BEFORE the upload (make_room prunes to
+KEEP-1, never KEEP), the newest zip is then uploaded and verified, and only then
+are local zips past the newest LOCAL_KEEP deleted. Nothing local is deleted when
+the Drive copy does not verify.
 
 Hermetic: a fake rclone backed by a directory stands in for Drive.
 """
@@ -22,16 +23,16 @@ BACKUP_FULL = REPO_ROOT / "ops" / "backup-full.sh"
 BASH = shutil.which("bash")
 
 FAKE_RCLONE = r'''#!PYTHON
-import filecmp, os, shutil, sys
+import filecmp, fnmatch, os, shutil, sys
 drive = os.environ["FAKE_DRIVE"]
-args = [a for a in sys.argv[1:]]
+args = list(sys.argv[1:])
 if args[:1] == ["--config"]:
     args = args[2:]
 with open(os.environ["FAKE_RCLONE_LOG"], "a") as log:
     log.write(" ".join(args) + "\n")
 
-def remote(p):
-    return os.path.join(drive, p.split(":", 1)[1].lstrip("/").split("/", 1)[1]) if ":" in p else p
+def opt(name):
+    return args[args.index(name) + 1]
 
 cmd = args[0]
 if cmd == "copy":
@@ -42,13 +43,27 @@ if cmd == "copy":
         sys.exit(1)  # --immutable: never overwrite a differing file
     shutil.copy2(args[1], dest)
 elif cmd == "check":
-    name = args[args.index("--include") + 1].lstrip("/")
+    name = opt("--include").lstrip("/")
     src, dst = os.path.join(args[1], name), os.path.join(drive, name)
+    if os.environ.get("FAKE_CHECK_FAIL"):
+        sys.exit(1)
     sys.exit(0 if os.path.exists(dst) and filecmp.cmp(src, dst, shallow=False) else 1)
 elif cmd == "lsf":
-    print("\n".join(sorted(os.listdir(drive))))
+    if os.environ.get("FAKE_LSF_FAIL"):
+        sys.exit(1)
+    pattern = opt("--include") if "--include" in args else None
+    for name in sorted(os.listdir(drive)):
+        if pattern is None or fnmatch.fnmatch("/" + name, pattern):
+            print(name)
 elif cmd == "deletefile":
-    os.remove(remote(args[1]))
+    if os.environ.get("FAKE_DELETE_FAIL"):
+        sys.exit(1)
+    os.remove(os.path.join(drive, os.path.basename(args[1])))
+'''
+
+FAKE_SLIM = r'''#!PYTHON
+import os, sys
+sys.exit(1 if os.environ.get("FAKE_SLIM_FAIL") else 0)
 '''
 
 
@@ -64,7 +79,7 @@ pytestmark = pytest.mark.skipif(_bash_major() < 4, reason="backup-full.sh uses m
 
 
 def _exe(path: Path, body: str) -> Path:
-    path.write_text(body)
+    path.write_text(body.replace("#!PYTHON", f"#!{sys.executable}"))
     path.chmod(0o755)
     return path
 
@@ -81,12 +96,16 @@ def _setup(tmp_path: Path, old: dict[str, bytes], on_drive: dict[str, bytes]):
     for name, data in on_drive.items():
         (drive / name).write_bytes(data)
     hermes = _exe(tmp_path / "hermes", '#!/bin/sh\necho "$*" >"$HERMES_ARGV"\necho new >"$3"\n')
-    rclone = _exe(tmp_path / "rclone", FAKE_RCLONE.replace("#!PYTHON", f"#!{sys.executable}"))
+    slim = _exe(tmp_path / "backup_slim.py", FAKE_SLIM)
+    rclone = _exe(tmp_path / "rclone", FAKE_RCLONE)
     conf = tmp_path / "rclone.conf"
     conf.write_text("[hermesdrive]\ntype = drive\n")
     env = {
         **os.environ,
         "BACKUP_HERMES": str(hermes),
+        "BACKUP_PYTHON": sys.executable,
+        "BACKUP_SLIM": str(slim),
+        "BACKUP_HERMES_HOME": str(tmp_path),
         "BACKUP_OUTDIR": str(outdir),
         "BACKUP_RCLONE": str(rclone),
         "BACKUP_RCLONE_CONF": str(conf),
@@ -105,6 +124,14 @@ def _local(outdir: Path) -> list[str]:
     return sorted(p.name for p in outdir.glob("hermes-backup-*.zip"))
 
 
+def _log(tmp_path: Path) -> list[str]:
+    return (tmp_path / "rclone.log").read_text().splitlines()
+
+
+def _new_zip(outdir: Path) -> str:
+    return next(n for n in _local(outdir) if n not in OLD)
+
+
 OLD = {
     "hermes-backup-20261018-130038.zip": b"a",
     "hermes-backup-20261019-130038.zip": b"b",
@@ -118,53 +145,100 @@ def test_hermes_backup_runs_without_its_own_prune(tmp_path: Path) -> None:
     assert "--keep 0" in Path(env["HERMES_ARGV"]).read_text()
 
 
-def test_verified_old_zips_are_pruned_to_two(tmp_path: Path) -> None:
+def test_drive_keeps_three_and_the_oldest_goes_before_the_upload(tmp_path: Path) -> None:
     env, outdir, drive = _setup(tmp_path, OLD, OLD)
     proc = _run(env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert proc.stdout == ""
-    local = _local(outdir)
-    assert len(local) == 2
-    assert "hermes-backup-20261020-130046.zip" in local  # newest old one stays
-    assert set(local) <= {p.name for p in drive.iterdir()}  # both are on Drive too
+    assert proc.stdout == ""  # silent on full success
+    new = _new_zip(outdir)
+    on_drive = sorted(p.name for p in drive.iterdir())
+    assert len(on_drive) == 3
+    assert on_drive == ["hermes-backup-20261019-130038.zip",
+                        "hermes-backup-20261020-130046.zip", new]
+    # Retention: the newest is verified, so local keeps only LOCAL_KEEP.
+    assert len(_local(outdir)) == 2
+    # Order: the delete precedes the upload, and it is not a trashed delete.
+    log = _log(tmp_path)
+    delete_at = next(i for i, line in enumerate(log) if line.startswith("deletefile "))
+    copy_at = next(i for i, line in enumerate(log) if line.startswith("copy "))
+    assert delete_at < copy_at
+    assert log[delete_at] == ("deletefile hermesdrive:/HermesBackups/"
+                              "hermes-backup-20261018-130038.zip --drive-use-trash=false")
 
 
-def test_zip_that_missed_drive_is_uploaded_then_pruned(tmp_path: Path) -> None:
-    # A failed night left 20261018 off Drive; only the newest zip is uploaded
-    # each night, so without the retry it would block pruning forever.
-    on_drive = {k: v for k, v in OLD.items() if "20261018" not in k}
-    env, outdir, drive = _setup(tmp_path, OLD, on_drive)
+def test_drive_with_seven_old_zips_ends_with_three(tmp_path: Path) -> None:
+    seven = {f"hermes-backup-202610{d:02d}-130000.zip": b"x" for d in range(1, 8)}
+    env, outdir, drive = _setup(tmp_path, OLD, seven)
     proc = _run(env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert (drive / "hermes-backup-20261018-130038.zip").read_bytes() == b"a"
-    assert len(_local(outdir)) == 2
+    on_drive = sorted(p.name for p in drive.iterdir())
+    assert len(on_drive) == 3
+    assert on_drive == ["hermes-backup-20261006-130000.zip",
+                        "hermes-backup-20261007-130000.zip", _new_zip(outdir)]
 
 
-def test_mismatched_drive_copy_is_kept_locally_and_alerts(tmp_path: Path) -> None:
-    corrupt = {**OLD, "hermes-backup-20261019-130038.zip": b"truncated"}
-    env, outdir, drive = _setup(tmp_path, OLD, corrupt)
-    proc = _run(env)
-    assert proc.returncode == 1
-    assert "DRIVE SYNC FAILED" in proc.stdout
-    assert "not verified" in proc.stdout
-    local = _local(outdir)
-    assert "hermes-backup-20261019-130038.zip" in local  # unverified: kept
-    assert "hermes-backup-20261018-130038.zip" not in local  # verified: pruned anyway
-    assert (drive / "hermes-backup-20261019-130038.zip").read_bytes() == b"truncated"
-
-
-def test_drive_is_pruned_to_seven_even_when_a_zip_is_unverified(tmp_path: Path) -> None:
-    extra = {f"hermes-backup-202610{d:02d}-130000.zip": b"x" for d in range(1, 9)}
-    corrupt = {**extra, **OLD, "hermes-backup-20261019-130038.zip": b"truncated"}
-    env, _, drive = _setup(tmp_path, OLD, corrupt)
-    assert _run(env).returncode == 1
-    assert len(list(drive.iterdir())) == 7
-
-
-def test_failed_upload_deletes_nothing(tmp_path: Path) -> None:
-    env, outdir, _ = _setup(tmp_path, OLD, OLD)
+def test_failed_upload_keeps_two_in_drive_and_every_local_zip(tmp_path: Path) -> None:
+    env, outdir, drive = _setup(tmp_path, OLD, OLD)
     env["FAKE_COPY_FAIL"] = "1"
     proc = _run(env)
     assert proc.returncode == 1
     assert "DRIVE SYNC FAILED" in proc.stdout
+    assert sorted(p.name for p in drive.iterdir()) == [
+        "hermes-backup-20261019-130038.zip", "hermes-backup-20261020-130046.zip"]
+    assert len(_local(outdir)) == 4  # three old + tonight's, none deleted
+
+
+def test_three_failed_uploads_never_take_drive_below_two(tmp_path: Path) -> None:
+    env, _, drive = _setup(tmp_path, OLD, OLD)
+    env["FAKE_COPY_FAIL"] = "1"
+    for _ in range(3):
+        assert _run(env).returncode == 1
+    assert sorted(p.name for p in drive.iterdir()) == [
+        "hermes-backup-20261019-130038.zip", "hermes-backup-20261020-130046.zip"]
+
+
+def test_slim_failure_alerts_and_uploads_nothing(tmp_path: Path) -> None:
+    env, outdir, _ = _setup(tmp_path, OLD, OLD)
+    env["FAKE_SLIM_FAIL"] = "1"
+    proc = _run(env)
+    assert proc.returncode == 1
+    assert "ALERT: Hermes full backup FAILED at" in proc.stdout
+    assert not (tmp_path / "rclone.log").exists()  # Drive is never contacted
+    assert _local(outdir) == sorted(OLD)  # tonight's zip removed, old ones intact
+
+
+def test_unverified_drive_copy_alerts_and_deletes_nothing_local(tmp_path: Path) -> None:
+    env, outdir, _drive = _setup(tmp_path, OLD, OLD)
+    env["FAKE_CHECK_FAIL"] = "1"
+    proc = _run(env)
+    assert proc.returncode == 1
+    assert "DRIVE SYNC FAILED" in proc.stdout
+    assert f"Drive copy not verified; kept locally: {_new_zip(outdir)}" in proc.stdout
     assert len(_local(outdir)) == 4
+
+
+def test_lsf_failure_alerts_but_still_uploads(tmp_path: Path) -> None:
+    env, outdir, drive = _setup(tmp_path, OLD, OLD)
+    env["FAKE_LSF_FAIL"] = "1"
+    proc = _run(env)
+    assert proc.returncode == 1
+    assert "DRIVE SYNC FAILED" in proc.stdout
+    assert (drive / _new_zip(outdir)).read_bytes() == b"new\n"
+
+
+def test_oversize_backup_warns(tmp_path: Path) -> None:
+    env, _, _ = _setup(tmp_path, OLD, OLD)
+    env["BACKUP_WARN_BYTES"] = "1"
+    proc = _run(env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert ("WARN: Hermes backup is" in proc.stdout
+            and "MB; three copies must fit in Drive (15 GB shared with Gmail and Photos)."
+            in proc.stdout)
+
+
+def test_notes_txt_on_drive_is_never_deleted(tmp_path: Path) -> None:
+    env, _outdir, drive = _setup(tmp_path, OLD, {**OLD, "notes.txt": b"keep me"})
+    proc = _run(env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (drive / "notes.txt").read_bytes() == b"keep me"
+    assert len([p for p in drive.iterdir() if p.name.startswith("hermes-backup-")]) == 3

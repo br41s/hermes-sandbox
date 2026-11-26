@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -169,8 +170,13 @@ def _run_backup(tmp_path: Path, conf_mode: int):
     conf = tmp_path / "rclone.conf"
     conf.write_text("[hermesdrive]\ntype = drive\n")
     conf.chmod(conf_mode)
+    slim = tmp_path / "backup_slim.py"  # the zip is empty: skip the real slimming
+    slim.write_text("")
     env = {
         **os.environ,
+        "BACKUP_PYTHON": sys.executable,
+        "BACKUP_SLIM": str(slim),
+        "BACKUP_HERMES_HOME": str(tmp_path),
         "BACKUP_HERMES": str(hermes),
         "BACKUP_OUTDIR": str(outdir),
         "BACKUP_RCLONE": str(rclone),
